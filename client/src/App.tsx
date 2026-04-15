@@ -51,9 +51,9 @@ export default function App() {
   }, [date]);
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div style={{ minHeight: "100vh", background: "#f5f5f7" }}>
       <Header date={date} onDateChange={handleDateChange} />
-      <main className="max-w-4xl mx-auto px-6 py-6 space-y-4">
+      <main style={{ maxWidth: 960, margin: "0 auto", padding: "24px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
         <SummaryCards data={summary} loading={summaryLoading} />
         <DigestPanel
           date={date}

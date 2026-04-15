@@ -49,6 +49,7 @@ export interface DigestData {
   generated_at: string | null;
   stale: boolean;
   cached: boolean;
+  generating?: boolean;
 }
 
 export interface SessionsResponse {

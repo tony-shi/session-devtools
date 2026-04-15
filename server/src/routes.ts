@@ -2,6 +2,9 @@ import { getDb } from "./db";
 import { backfillDigests, findDatesMissingDigest, generateDigest } from "./digest";
 import { runSync, runSyncForDate } from "./sync";
 
+// Track dates currently being generated to avoid duplicate LLM calls
+const _generatingDates = new Set<string>();
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -56,11 +59,49 @@ export async function handleRequest(req: Request): Promise<Response | null> {
   }
 
   // ── Digest for date ──────────────────────────────────────────────────────────
+  // LLM calls can take 30-120s. Strategy:
+  // - If cached (stale=0) and not force: return immediately
+  // - Otherwise: kick off background generation, return {generating:true} immediately
+  // - Frontend polls until generating:false
   if (path === "/api/sessions/digest" && req.method === "GET") {
     const date = q.get("date") ?? new Date().toISOString().slice(0, 10);
     const force = q.get("force") === "true";
-    const result = await generateDigest(date, force);
-    return json(result);
+
+    // Check cache first
+    if (!force) {
+      const db = getDb();
+      const cached = db
+        .query<{ summary: string; pair_count: number; model: string; mock: number; generated_at: string; stale: number }, [string]>(
+          "SELECT * FROM daily_digest WHERE date = ? AND stale = 0",
+        )
+        .get(date);
+      if (cached) {
+        return json({
+          date,
+          summary: cached.summary,
+          pair_count: cached.pair_count,
+          model: cached.model,
+          mock: cached.mock === 1,
+          generated_at: cached.generated_at,
+          stale: false,
+          cached: true,
+          generating: false,
+        });
+      }
+    }
+
+    // Check if already generating
+    if (_generatingDates.has(date)) {
+      return json({ date, summary: null, pair_count: 0, model: "", mock: true, generated_at: null, stale: false, cached: false, generating: true });
+    }
+
+    // Start background generation
+    _generatingDates.add(date);
+    generateDigest(date, force)
+      .catch((e) => console.warn(`[digest] Background generation failed for ${date}: ${e?.message}`))
+      .finally(() => _generatingDates.delete(date));
+
+    return json({ date, summary: null, pair_count: 0, model: "", mock: true, generated_at: null, stale: false, cached: false, generating: true });
   }
 
   // ── Daily summary ────────────────────────────────────────────────────────────
