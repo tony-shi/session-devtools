@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { getDb, initDigestSchema } from "./db";
+import { getDb, initDigestSchema, serializeWrite } from "./db";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -222,10 +222,12 @@ export async function generateDigest(
   const { summary, isMock } = await callLlm(prompt, cfg);
   const generatedAt = new Date().toISOString();
 
-  db.prepare(`
-    INSERT OR REPLACE INTO daily_digest (date, summary, pair_count, model, mock, generated_at, stale)
-    VALUES (?, ?, ?, ?, ?, ?, 0)
-  `).run(date, summary, pairs.length, cfg.model, isMock ? 1 : 0, generatedAt);
+  await serializeWrite(() => {
+    db.prepare(`
+      INSERT OR REPLACE INTO daily_digest (date, summary, pair_count, model, mock, generated_at, stale)
+      VALUES (?, ?, ?, ?, ?, ?, 0)
+    `).run(date, summary, pairs.length, cfg.model, isMock ? 1 : 0, generatedAt);
+  });
 
   return {
     date,

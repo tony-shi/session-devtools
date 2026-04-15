@@ -68,7 +68,7 @@ async function syncFile(
 
   try {
     const { session, turns } = await parser(filePath);
-    upsertSession(session, turns, filePath);
+    await upsertSession(session, turns, filePath);
     return { file: filePath, tool, status: "ok", turns: turns.length };
   } catch (e: any) {
     console.warn(`[sync] Failed to sync ${filePath}: ${e?.message}`);

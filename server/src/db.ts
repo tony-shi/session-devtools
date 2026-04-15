@@ -21,8 +21,22 @@ export function getDb(): Database {
     _db = new Database(SESSIONS_DB_PATH, { create: true });
     _db.exec("PRAGMA journal_mode=WAL");
     _db.exec("PRAGMA foreign_keys=ON");
+    _db.exec("PRAGMA busy_timeout=10000"); // wait up to 10s instead of failing immediately
   }
   return _db;
+}
+
+// ── Write serialization queue ─────────────────────────────────────────────────
+// bun:sqlite Database is not concurrent-safe for writes. All write operations
+// must be serialized through this queue to avoid "database is locked" errors.
+
+let _writeQueue: Promise<unknown> = Promise.resolve();
+
+export function serializeWrite<T>(fn: () => T | Promise<T>): Promise<T> {
+  const next = _writeQueue.then(() => fn());
+  // Swallow errors in the queue chain so one failure doesn't block subsequent writes
+  _writeQueue = next.catch(() => {});
+  return next;
 }
 
 // ── Schema init ───────────────────────────────────────────────────────────────
@@ -161,6 +175,14 @@ export function initDigestSchema(): void {
 // ── Upsert session + turns ────────────────────────────────────────────────────
 
 export function upsertSession(
+  session: Session,
+  turns: Turn[],
+  filePath: string,
+): Promise<void> {
+  return serializeWrite(() => _upsertSessionSync(session, turns, filePath));
+}
+
+function _upsertSessionSync(
   session: Session,
   turns: Turn[],
   filePath: string,
