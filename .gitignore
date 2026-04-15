@@ -1,10 +1,7 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
+# Node / Bun
+node_modules/
 dist/
-wheels/
-*.egg-info
+server/public/
 
-# Virtual environments
-.venv
+# Local config with secrets
+digest.cfg
