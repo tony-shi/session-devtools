@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { SpanTree, parseJsonl } from "@session-dashboard/agent-viz";
+import type { AgentSpan } from "@session-dashboard/agent-viz";
 import { api } from "../api";
 import type { StatsResponse, Turn, TurnsResponse } from "../types";
 
@@ -7,6 +9,8 @@ interface Props {
   date: string;
   onClose: () => void;
 }
+
+// ── Classic turn-pair view ────────────────────────────────────────────────────
 
 interface TracePair {
   user: Turn | null;
@@ -21,7 +25,6 @@ function groupIntoPairs(turns: Turn[]): TracePair[] {
 
   function flush() {
     if (!currentUser && loopTurns.length === 0) return;
-    // Find final: last assistant turn
     let final: Turn | null = null;
     const loop: Turn[] = [];
     for (let i = loopTurns.length - 1; i >= 0; i--) {
@@ -31,7 +34,6 @@ function groupIntoPairs(turns: Turn[]): TracePair[] {
         loop.unshift(loopTurns[i]);
       }
     }
-    // If we only have assistant_tool turns, last one is final
     if (!final && loopTurns.length > 0) {
       final = loopTurns[loopTurns.length - 1];
       loopTurns.slice(0, -1).forEach((t) => loop.push(t));
@@ -49,7 +51,6 @@ function groupIntoPairs(turns: Turn[]): TracePair[] {
     }
   }
   flush();
-
   return pairs;
 }
 
@@ -75,23 +76,15 @@ function LoopStep({ turn }: { turn: Turn }) {
 
   return (
     <div className="relative pl-6">
-      {/* Vertical connector */}
       <div className="absolute left-2 top-0 bottom-0 w-px bg-gray-200" />
-      {/* Dot */}
       <div className={`absolute left-0.5 top-2 w-3 h-3 rounded-full ${dotColor} ring-2 ring-white`} />
-
       <div className="pb-3">
-        <div
-          className="flex items-center gap-2 cursor-pointer group"
-          onClick={() => setExpanded(!expanded)}
-        >
+        <div className="flex items-center gap-2 cursor-pointer group" onClick={() => setExpanded(!expanded)}>
           <span className="text-xs font-medium text-gray-500">{label}</span>
           {turn.tool_names?.length > 0 && (
             <div className="flex gap-1 flex-wrap">
               {turn.tool_names.map((n, i) => (
-                <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-mono">
-                  {n}
-                </span>
+                <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 font-mono">{n}</span>
               ))}
             </div>
           )}
@@ -101,17 +94,11 @@ function LoopStep({ turn }: { turn: Turn }) {
               {turn.output_tokens > 0 && ` out:${turn.output_tokens}`}
             </span>
           )}
-          <svg
-            className={`w-3 h-3 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`}
-            fill="none" stroke="currentColor" viewBox="0 0 24 24"
-          >
+          <svg className={`w-3 h-3 text-gray-400 transition-transform ${expanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>
         </div>
-
-        {!expanded && preview && (
-          <p className="text-xs text-gray-500 mt-0.5 truncate">{preview}</p>
-        )}
+        {!expanded && preview && <p className="text-xs text-gray-500 mt-0.5 truncate">{preview}</p>}
         {expanded && turn.content && (
           <pre className="mt-1 text-xs text-gray-700 whitespace-pre-wrap break-words bg-gray-50 rounded-md p-2 max-h-64 overflow-y-auto">
             {turn.content}
@@ -124,92 +111,87 @@ function LoopStep({ turn }: { turn: Turn }) {
 
 function TracePairView({ pair, index }: { pair: TracePair; index: number }) {
   const [loopOpen, setLoopOpen] = useState(false);
-
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden">
-      {/* User input header */}
       {pair.user && (
         <div className="flex items-start gap-3 p-4 bg-indigo-50 border-b border-indigo-100">
           <div className="w-5 h-5 rounded-full bg-indigo-500 flex items-center justify-center flex-shrink-0 mt-0.5">
             <span className="text-white text-xs font-bold">{index + 1}</span>
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm text-indigo-900 font-medium leading-relaxed">
-              {pair.user.content || "(empty)"}
-            </p>
+            <p className="text-sm text-indigo-900 font-medium leading-relaxed">{pair.user.content || "(empty)"}</p>
             <p className="text-xs text-indigo-500 mt-1">
               {pair.user.timestamp ? new Date(pair.user.timestamp).toLocaleTimeString("zh-CN") : ""}
             </p>
           </div>
         </div>
       )}
-
-      {/* Loop (collapsible) */}
       {pair.loop.length > 0 && (
         <div className="border-b border-gray-100">
           <button
             onClick={() => setLoopOpen(!loopOpen)}
             className="w-full flex items-center gap-2 px-4 py-2 text-xs text-gray-500 hover:bg-gray-50 transition-colors"
           >
-            <svg
-              className={`w-3 h-3 transition-transform ${loopOpen ? "rotate-90" : ""}`}
-              fill="none" stroke="currentColor" viewBox="0 0 24 24"
-            >
+            <svg className={`w-3 h-3 transition-transform ${loopOpen ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
             <span>{pair.loop.length} 步工具调用</span>
             <div className="flex gap-1 ml-1">
               {Array.from(new Set(pair.loop.flatMap((t) => t.tool_names ?? []))).slice(0, 5).map((n) => (
-                <span key={n} className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-mono">
-                  {n}
-                </span>
+                <span key={n} className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-mono">{n}</span>
               ))}
             </div>
           </button>
           {loopOpen && (
             <div className="px-4 py-2">
-              {pair.loop.map((t) => (
-                <LoopStep key={t.id} turn={t} />
-              ))}
+              {pair.loop.map((t) => <LoopStep key={t.id} turn={t} />)}
             </div>
           )}
         </div>
       )}
-
-      {/* Final response (always visible) */}
       {pair.final && (
         <div className="p-4">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-4 h-4 rounded-full bg-violet-500 flex-shrink-0" />
             <span className="text-xs font-medium text-gray-500">AI 最终回复</span>
             {pair.final.output_tokens > 0 && (
-              <span className="text-xs text-gray-400 ml-auto">
-                {pair.final.output_tokens} tokens
-              </span>
+              <span className="text-xs text-gray-400 ml-auto">{pair.final.output_tokens} tokens</span>
             )}
           </div>
-          <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">
-            {pair.final.content || "(empty)"}
-          </p>
+          <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{pair.final.content || "(empty)"}</p>
         </div>
       )}
     </div>
   );
 }
 
+// ── Main component ────────────────────────────────────────────────────────────
+
+type ViewTab = "turns" | "spans";
+
 export function SessionDetail({ sessionId, date, onClose }: Props) {
   const [turnsData, setTurnsData] = useState<TurnsResponse | null>(null);
   const [stats, setStats] = useState<StatsResponse | null>(null);
+  const [spans, setSpans] = useState<AgentSpan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [tab, setTab] = useState<ViewTab>("spans");
 
   useEffect(() => {
     setLoading(true);
     setError("");
-    Promise.all([api.stats(sessionId, date), api.turns(sessionId, date)])
-      .then(([s, t]) => {
+    setSpans([]);
+
+    Promise.all([
+      api.stats(sessionId, date),
+      api.turns(sessionId, date),
+      api.raw(sessionId),
+    ])
+      .then(([s, t, r]) => {
         setStats(s);
         setTurnsData(t);
+        const tool = (t.session.tool ?? "claude") as "claude" | "codex" | "gemini";
+        setSpans(parseJsonl(r.raw, { tool }));
       })
       .catch((e) => setError(String(e?.message)))
       .finally(() => setLoading(false));
@@ -219,12 +201,10 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex">
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
 
-      {/* Panel */}
       <div className="relative ml-auto w-full max-w-2xl bg-white shadow-2xl flex flex-col h-full">
-        {/* Panel header */}
+        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-gray-900 truncate">
@@ -232,10 +212,7 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
             </p>
             <p className="text-xs text-gray-400 truncate">{sessionId}</p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-600 flex-shrink-0"
-          >
+          <button onClick={onClose} className="p-1.5 rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-600 flex-shrink-0">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
@@ -256,22 +233,46 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
           </div>
         )}
 
+        {/* Tab bar */}
+        <div className="flex border-b border-gray-200 flex-shrink-0">
+          {(["spans", "turns"] as ViewTab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`px-4 py-2 text-xs font-medium transition-colors ${
+                tab === t
+                  ? "border-b-2 border-indigo-500 text-indigo-600"
+                  : "text-gray-400 hover:text-gray-600"
+              }`}
+            >
+              {t === "spans" ? "Span Tree" : "对话视图"}
+            </button>
+          ))}
+        </div>
+
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <div className="flex-1 overflow-hidden min-h-0">
           {loading && (
-            <div className="space-y-3">
-              {[1, 2, 3].map((i) => (
-                <div key={i} className="h-24 bg-gray-100 rounded-xl animate-pulse" />
-              ))}
+            <div className="p-5 space-y-3">
+              {[1, 2, 3].map((i) => <div key={i} className="h-24 bg-gray-100 rounded-xl animate-pulse" />)}
             </div>
           )}
-          {error && <p className="text-sm text-red-500">{error}</p>}
-          {!loading && pairs.length === 0 && (
-            <p className="text-sm text-gray-400 text-center py-8">当天无对话数据</p>
+          {error && <p className="p-5 text-sm text-red-500">{error}</p>}
+
+          {!loading && !error && tab === "spans" && (
+            <div className="h-full overflow-hidden">
+              <SpanTree spans={spans} defaultExpanded={true} />
+            </div>
           )}
-          {pairs.map((pair, i) => (
-            <TracePairView key={i} pair={pair} index={i} />
-          ))}
+
+          {!loading && !error && tab === "turns" && (
+            <div className="h-full overflow-y-auto p-5 space-y-4">
+              {pairs.length === 0 && (
+                <p className="text-sm text-gray-400 text-center py-8">当天无对话数据</p>
+              )}
+              {pairs.map((pair, i) => <TracePairView key={i} pair={pair} index={i} />)}
+            </div>
+          )}
         </div>
       </div>
     </div>

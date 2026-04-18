@@ -302,5 +302,22 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     });
   }
 
+  // ── Session raw JSONL ────────────────────────────────────────────────────────
+  const rawMatch = path.match(/^\/api\/sessions\/([^/]+)\/raw$/);
+  if (rawMatch && req.method === "GET") {
+    const sessionId = decodeURIComponent(rawMatch[1]);
+    const db = getDb();
+    const sessionRow = db.query<{ source_file: string }, [string]>(
+      "SELECT source_file FROM sessions WHERE id = ?",
+    ).get(sessionId);
+    if (!sessionRow) return json({ error: "session not found" }, 404);
+
+    const file = Bun.file(sessionRow.source_file);
+    if (!(await file.exists())) return json({ error: "source file not found" }, 404);
+
+    const raw = await file.text();
+    return json({ raw });
+  }
+
   return null; // not handled
 }

@@ -38,4 +38,7 @@ export const api = {
     get<DigestData>(`/api/sessions/digest?date=${date}${force ? "&force=true" : ""}`),
 
   sync: () => get<{ synced: number; skipped: number; errors: number }>("/api/sessions/sync"),
+
+  raw: (sessionId: string) =>
+    get<{ raw: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/raw`),
 };

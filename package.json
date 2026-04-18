@@ -2,6 +2,7 @@
   "name": "session-dashboard",
   "version": "0.1.0",
   "private": true,
+  "workspaces": ["packages/*", "client"],
   "scripts": {
     "dev": "concurrently \"bun run server:dev\" \"bun run client:dev\"",
     "server:dev": "bun --watch server/index.ts",

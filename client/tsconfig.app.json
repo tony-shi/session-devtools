@@ -15,6 +15,11 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Workspace packages */
+    "paths": {
+      "@session-dashboard/agent-viz": ["../packages/agent-viz/src/index.ts"]
+    },
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
