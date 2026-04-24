@@ -89,8 +89,10 @@ export async function parseCodexSession(filePath: string): Promise<ParseResult> 
     const evType: string = rec.type ?? rec.event ?? "";
 
     if (evType === "session_meta" || evType === "meta") {
-      cwd = rec.cwd ?? rec.workdir ?? cwd;
-      model = rec.model ?? model;
+      // Codex JSONL wraps metadata in a `payload` object; fall back to top-level for older formats
+      const p = rec.payload ?? rec;
+      cwd = p.cwd ?? p.workdir ?? cwd;
+      model = p.model ?? p.model_provider ?? p.model_id ?? model;
     } else if (evType === "turn_context" || evType === "user_message") {
       flushAssistant();
       flushUser();

@@ -50,4 +50,9 @@ export const api = {
         }
       >;
     }>(`/api/sessions/${encodeURIComponent(sessionId)}/raw`),
+
+  context: (sessionId: string) =>
+    get<{ traces: import("./components/ContextTimeline/types").AgentContextTrace[] }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/context`,
+    ),
 };

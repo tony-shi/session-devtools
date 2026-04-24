@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   TraceViewer,
   claudeJsonlToTraceViewerData,
@@ -8,6 +8,8 @@ import "@session-dashboard/agent-viz/prism.css";
 import { api } from "../api";
 import type { StatsResponse, Turn, TurnsResponse } from "../types";
 import { TraceTimeline } from "./TraceTimeline";
+import { ContextTimeline } from "./ContextTimeline";
+import type { AgentContextTrace } from "./ContextTimeline/types";
 
 interface Props {
   sessionId: string;
@@ -172,16 +174,19 @@ function TracePairView({ pair, index }: { pair: TracePair; index: number }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-type ViewTab = "turns" | "spans" | "timeline";
+type ViewTab = "turns" | "spans" | "timeline" | "context";
 
 export function SessionDetail({ sessionId, date, onClose }: Props) {
   const [turnsData, setTurnsData] = useState<TurnsResponse | null>(null);
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [traceData, setTraceData] = useState<TraceViewerData[]>([]);
   const [irSpans, setIrSpans] = useState<AgentSpan[]>([]);
+  const [contextTraces, setContextTraces] = useState<AgentContextTrace[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<ViewTab>("timeline");
+  // Shared selection state — span id selected across Timeline / Context views
+  const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -192,10 +197,12 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
       api.stats(sessionId, date),
       api.turns(sessionId, date),
       api.raw(sessionId),
+      api.context(sessionId),
     ])
-      .then(([s, t, r]) => {
+      .then(([s, t, r, ctx]) => {
         setStats(s);
         setTurnsData(t);
+        setContextTraces(ctx.traces ?? []);
         const tool = (t.session.tool ?? "claude") as "claude" | "codex" | "gemini";
         if (tool === "claude") {
           const { traceRecord, spans, irSpans } = claudeJsonlToTraceViewerData(
@@ -214,6 +221,45 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
       .catch((e) => setError(String(e?.message)))
       .finally(() => setLoading(false));
   }, [sessionId, date]);
+
+  // Map from IR span id → {agentId, turnIndex} for cross-view selection
+  // An assistant turn span's id is its JSONL uuid; context snapshots are indexed by turnIndex.
+  // We match by position: the Nth assistant span in agent X ↔ snapshot[N] in that agent's trace.
+  const spanTurnMap = useMemo(() => {
+    const map = new Map<string, { agentId: string; turnIndex: number }>();
+    if (!irSpans.length || !contextTraces.length) return map;
+
+    // Group assistant turn spans by agentId, in order
+    const byAgent = new Map<string, AgentSpan[]>();
+    for (const s of irSpans) {
+      if (s.kind !== "turn") continue;
+      const agentId = (s.attributes?.["claude.subagent.id"] as string) ?? "main";
+      if (!byAgent.has(agentId)) byAgent.set(agentId, []);
+      byAgent.get(agentId)!.push(s);
+    }
+
+    for (const trace of contextTraces) {
+      const agentSpans = byAgent.get(trace.agentId) ?? [];
+      // Filter to assistant turns only (not user_input)
+      const assistantSpans = agentSpans.filter(
+        (s) => s.attributes?.["gen_ai.operation.name"] === "chat",
+      );
+      trace.snapshots.forEach((snap, i) => {
+        const span = assistantSpans[i];
+        if (span) map.set(span.id, { agentId: trace.agentId, turnIndex: snap.turnIndex });
+      });
+    }
+    return map;
+  }, [irSpans, contextTraces]);
+
+  // Reverse map: {agentId, turnIndex} → spanId
+  const turnSpanMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [spanId, { agentId, turnIndex }] of spanTurnMap) {
+      map.set(`${agentId}:${turnIndex}`, spanId);
+    }
+    return map;
+  }, [spanTurnMap]);
 
   const pairs = turnsData ? groupIntoPairs(turnsData.turns) : [];
 
@@ -253,7 +299,7 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
 
         {/* Tab bar */}
         <div className="flex border-b border-gray-200 flex-shrink-0">
-          {(["timeline", "spans", "turns"] as ViewTab[]).map((t) => (
+          {(["timeline", "spans", "context", "turns"] as ViewTab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -267,6 +313,8 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
                 ? "Timeline"
                 : t === "spans"
                 ? "Span Tree"
+                : t === "context"
+                ? "Context"
                 : "对话视图"}
             </button>
           ))}
@@ -284,10 +332,38 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
           {!loading && !error && tab === "timeline" && (
             <div className="h-full overflow-hidden">
               {irSpans.length > 0 ? (
-                <TraceTimeline spans={irSpans} />
+                <TraceTimeline
+                  spans={irSpans}
+                  selectedSpanId={selectedSpanId}
+                  onSpanSelect={(id) => {
+                    setSelectedSpanId(id);
+                    // If the selected span maps to a context turn, switch to context tab
+                    // (don't auto-switch — just update state so context tab highlights it)
+                  }}
+                />
               ) : (
                 <p className="p-5 text-sm text-gray-400">
                   Timeline 暂不支持 {turnsData?.session.tool ?? "该 CLI"} 的数据
+                </p>
+              )}
+            </div>
+          )}
+
+          {!loading && !error && tab === "context" && (
+            <div className="h-full overflow-hidden">
+              {contextTraces.length > 0 ? (
+                <ContextTimeline
+                  traces={contextTraces}
+                  selectedSpanId={selectedSpanId}
+                  spanTurnMap={spanTurnMap}
+                  onTurnClick={(agentId, turnIndex) => {
+                    const spanId = turnSpanMap.get(`${agentId}:${turnIndex}`);
+                    if (spanId) setSelectedSpanId(spanId);
+                  }}
+                />
+              ) : (
+                <p className="p-5 text-sm text-gray-400">
+                  Context 暂不支持 {turnsData?.session.tool ?? "该 CLI"} 的数据
                 </p>
               )}
             </div>

@@ -115,13 +115,75 @@ function stringifyToolResult(content: unknown): string | undefined {
 
 /**
  * Claude Code writes the launched subagent's internal id into the Agent tool's
- * result text: "Async agent launched successfully.\nagentId: aea56747a0b..."
+ * result text for async agents: "Async agent launched successfully.\nagentId: aea56747a0b..."
+ *
+ * Synchronous / built-in subagent types (Explore, Plan, general-purpose, etc.)
+ * return their output directly — no "agentId:" line. For those we fall back to
+ * matching by tool_use_id against the subagents map (see call site).
  */
 function extractAgentIdFromToolResult(output: unknown): string | undefined {
   const text = stringifyToolResult(output);
   if (!text) return undefined;
   const m = /agentId:\s*([A-Za-z0-9_-]+)/.exec(text);
   return m?.[1];
+}
+
+/**
+ * For built-in subagent types (Explore, Plan, etc.) the tool_result contains
+ * the agent's final answer, not an agentId line.  We identify the matching
+ * subagent by looking for a subagent whose JSONL's last assistant record
+ * has output that starts with the beginning of the tool_result text.
+ * Simpler fallback: if there is exactly one unmatched subagent, use it.
+ *
+ * TODO: This matching is heuristic and has known gaps:
+ *
+ * 1. Single-unvisited shortcut assumes one Agent tool_use ↔ one subagent file,
+ *    which breaks if Claude Code launches multiple sync subagents in the same
+ *    turn (parallel built-in agents).
+ *
+ * 2. Content-prefix matching (60-char prefix of last assistant block) can
+ *    collide when two subagents produce similar opening sentences, or fail
+ *    when Claude Code truncates / reformats the tool_result before writing
+ *    it to JSONL (observed with some Explore responses that get summarised).
+ *
+ * 3. There is no ground-truth binding between a tool_use block and its
+ *    subagent file for sync agents — Claude Code only writes "agentId: <id>"
+ *    for async agents. The only reliable fix is upstream: Claude Code should
+ *    emit agentId for ALL agent types, not just async ones.
+ *
+ * 4. If matching fails silently (returns undefined), the subagent JSONL is
+ *    dropped from the span tree with no warning. Consider emitting a synthetic
+ *    "unmatched subagent" span so the gap is visible rather than invisible.
+ */
+function matchSubagentByContent(
+  output: unknown,
+  subagents: Record<string, SubagentInput>,
+  visitedAgentIds: Set<string>,
+): string | undefined {
+  const unvisited = Object.keys(subagents).filter((id) => !visitedAgentIds.has(id));
+  if (unvisited.length === 1) return unvisited[0];
+  if (unvisited.length === 0) return undefined;
+
+  // Multiple unvisited: try to match by checking if the subagent's last
+  // assistant text block starts with the first 120 chars of the tool_result.
+  const resultText = stringifyToolResult(output)?.slice(0, 120);
+  if (!resultText) return undefined;
+
+  for (const id of unvisited) {
+    const jsonl = subagents[id].jsonl;
+    for (const line of jsonl.split("\n").reverse()) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const r = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: unknown } };
+        if (r.type !== "assistant") continue;
+        const text = stringifyToolResult(r.message?.content)?.slice(0, 120) ?? "";
+        if (text && resultText.startsWith(text.slice(0, 60))) return id;
+      } catch { /* skip */ }
+      break;
+    }
+  }
+  return undefined;
 }
 
 export interface ClaudeParseOptions {
@@ -322,7 +384,12 @@ function walkRecords(
             toolSpan.attributes["gen_ai.tool.name"] === "Agent" &&
             subagents
           ) {
-            const subAgentId = extractAgentIdFromToolResult(block.content);
+            // Async agents write "agentId: xxx" into their result.
+            // Sync/built-in agents (Explore, Plan, etc.) return their output
+            // directly — fall back to content-based matching.
+            const subAgentId =
+              extractAgentIdFromToolResult(block.content) ??
+              matchSubagentByContent(block.content, subagents, visitedAgentIds);
             if (
               subAgentId &&
               subagents[subAgentId] &&

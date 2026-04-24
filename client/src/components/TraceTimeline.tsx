@@ -10,6 +10,8 @@ import type { AgentSpan } from "@session-dashboard/agent-viz";
 
 interface Props {
   spans: AgentSpan[];
+  selectedSpanId?: string | null;
+  onSpanSelect?: (spanId: string) => void;
 }
 
 interface Lane {
@@ -43,7 +45,7 @@ function laneKey(s: AgentSpan): { id: string; label: string; kind: "main" | "sub
   return { id: "main", label: "main", kind: "main" };
 }
 
-export function TraceTimeline({ spans }: Props) {
+export function TraceTimeline({ spans, selectedSpanId, onSpanSelect }: Props) {
   const [hover, setHover] = useState<AgentSpan | null>(null);
 
   const { lanes, tMin, tMax } = useMemo(() => {
@@ -164,6 +166,7 @@ export function TraceTimeline({ spans }: Props) {
                   0,
                   ((end - s.startTime) / total) * 100,
                 );
+                const isSelected = selectedSpanId === s.id;
                 const color =
                   s.status === "error"
                     ? "bg-red-500"
@@ -175,13 +178,18 @@ export function TraceTimeline({ spans }: Props) {
                 return (
                   <div
                     key={s.id}
-                    className={`absolute top-1.5 bottom-1.5 rounded-sm ${color} opacity-80 hover:opacity-100 cursor-pointer`}
+                    className={`absolute top-1.5 bottom-1.5 rounded-sm ${color} cursor-pointer transition-opacity ${
+                      isSelected
+                        ? "opacity-100 ring-2 ring-white ring-offset-1 ring-offset-indigo-500 z-10"
+                        : "opacity-70 hover:opacity-100"
+                    }`}
                     style={{
                       left: `${leftPct}%`,
                       width: `max(${MIN_BAR_PX}px, ${widthPct}%)`,
                     }}
                     onMouseEnter={() => setHover(s)}
                     onMouseLeave={() => setHover(null)}
+                    onClick={() => onSpanSelect?.(s.id)}
                   />
                 );
               })}

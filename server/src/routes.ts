@@ -172,7 +172,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
         `SELECT COUNT(DISTINCT s.id) as cnt FROM sessions s ${whereSql}`,
       ).get(...dateParams) as any)?.cnt ?? 0;
       rows = db.query(
-        `SELECT DISTINCT s.* FROM sessions s ${whereSql} ORDER BY s.started_at DESC LIMIT ? OFFSET ?`,
+        `SELECT DISTINCT s.* FROM sessions s ${whereSql} ORDER BY COALESCE(s.ended_at, s.started_at) DESC LIMIT ? OFFSET ?`,
       ).all(...dateParams, limit, offset) as any[];
     } else {
       const where = filterConds.length
@@ -182,7 +182,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
         `SELECT COUNT(*) as cnt FROM sessions ${where}`,
       ).get(...filterParams) as any)?.cnt ?? 0;
       rows = db.query(
-        `SELECT * FROM sessions ${where} ORDER BY started_at DESC LIMIT ? OFFSET ?`,
+        `SELECT * FROM sessions ${where} ORDER BY COALESCE(ended_at, started_at) DESC LIMIT ? OFFSET ?`,
       ).all(...filterParams, limit, offset) as any[];
     }
 
@@ -300,6 +300,52 @@ export async function handleRequest(req: Request): Promise<Response | null> {
         content: t.content,
       })),
     });
+  }
+
+  // ── Session context traces ───────────────────────────────────────────────────
+  const contextMatch = path.match(/^\/api\/sessions\/([^/]+)\/context$/);
+  if (contextMatch && req.method === "GET") {
+    const sessionId = decodeURIComponent(contextMatch[1]);
+    const db = getDb();
+    const sessionRow = db.query<{ source_file: string; tool: string }, [string]>(
+      "SELECT source_file, tool FROM sessions WHERE id = ?",
+    ).get(sessionId);
+    if (!sessionRow) return json({ error: "session not found" }, 404);
+    if (sessionRow.tool !== "claude") return json({ traces: [] });
+
+    const file = Bun.file(sessionRow.source_file);
+    if (!(await file.exists())) return json({ error: "source file not found" }, 404);
+    const raw = await file.text();
+
+    const subagents: Record<string, { jsonl: string; meta: unknown }> = {};
+    try {
+      const { readdir, readFile } = await import("node:fs/promises");
+      const { join, dirname, basename } = await import("node:path");
+      const subDir = join(dirname(sessionRow.source_file), basename(sessionRow.source_file, ".jsonl"), "subagents");
+      const entries = await readdir(subDir).catch(() => [] as string[]);
+      for (const name of entries) {
+        if (!name.endsWith(".jsonl")) continue;
+        const agentId = name.replace(/^agent-/, "").replace(/\.jsonl$/, "");
+        const jsonl = await readFile(join(subDir, name), "utf8").catch(() => "");
+        if (!jsonl) continue;
+        const metaRaw = await readFile(join(subDir, `agent-${agentId}.meta.json`), "utf8").catch(() => "");
+        let meta: unknown = null;
+        if (metaRaw) { try { meta = JSON.parse(metaRaw); } catch { /* ignore */ } }
+        subagents[agentId] = { jsonl, meta };
+      }
+    } catch { /* no subagents */ }
+
+    const { computeAgentContextTraces } = await import(
+      "../../packages/agent-viz/src/ir/context.ts"
+    );
+    const tracesMap = computeAgentContextTraces(
+      raw,
+      subagents as Record<string, { jsonl: string; meta: { agentType?: string; description?: string; name?: string } | null }>,
+      sessionId,
+    );
+
+    const traces = Array.from(tracesMap.values());
+    return json({ traces });
   }
 
   // ── Session raw JSONL ────────────────────────────────────────────────────────
