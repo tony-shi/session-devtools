@@ -40,5 +40,14 @@ export const api = {
   sync: () => get<{ synced: number; skipped: number; errors: number }>("/api/sessions/sync"),
 
   raw: (sessionId: string) =>
-    get<{ raw: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/raw`),
+    get<{
+      raw: string;
+      subagents?: Record<
+        string,
+        {
+          jsonl: string;
+          meta: { agentType?: string; description?: string; name?: string } | null;
+        }
+      >;
+    }>(`/api/sessions/${encodeURIComponent(sessionId)}/raw`),
 };

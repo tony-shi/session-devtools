@@ -1,0 +1,3 @@
+[install.scopes]
+# agent-prism packages only live on the public registry.
+"@evilmartians" = "https://registry.npmjs.org/"

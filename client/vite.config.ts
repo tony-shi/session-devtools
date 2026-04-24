@@ -6,9 +6,16 @@ import { resolve } from "path";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: {
-      "@session-dashboard/agent-viz": resolve(__dirname, "../packages/agent-viz/src/index.ts"),
-    },
+    alias: [
+      {
+        find: "@session-dashboard/agent-viz/prism.css",
+        replacement: resolve(__dirname, "../packages/agent-viz/src/prism/prism.css"),
+      },
+      {
+        find: "@session-dashboard/agent-viz",
+        replacement: resolve(__dirname, "../packages/agent-viz/src/index.ts"),
+      },
+    ],
   },
   server: {
     port: 5173,

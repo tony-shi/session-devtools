@@ -2,30 +2,37 @@
   "name": "@session-dashboard/agent-viz",
   "version": "0.1.0",
   "type": "module",
-  "main": "./dist/agent-viz.js",
-  "module": "./dist/agent-viz.js",
-  "types": "./dist/index.d.ts",
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": {
-      "import": "./dist/agent-viz.js",
-      "types": "./dist/index.d.ts"
-    }
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    },
+    "./prism.css": "./src/prism/prism.css"
   },
-  "files": ["dist"],
+  "files": ["src"],
   "scripts": {
-    "build": "vite build",
-    "dev": "vite build --watch"
+    "tsc": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
     "react": ">=18.0.0",
     "react-dom": ">=18.0.0"
   },
+  "dependencies": {
+    "@evilmartians/agent-prism-data": "0.0.9",
+    "@evilmartians/agent-prism-types": "0.0.9",
+    "@radix-ui/react-collapsible": "^1.1.11",
+    "@radix-ui/react-tabs": "^1.1.13",
+    "classnames": "2.5.1",
+    "lucide-react": "^0.534.0",
+    "react-json-pretty": "^2.2.0",
+    "react-resizable-panels": "^3.0.6"
+  },
   "devDependencies": {
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "typescript": "~6.0.2",
-    "vite": "^8.0.4",
-    "vite-plugin-dts": "^4.5.4"
+    "typescript": "~6.0.2"
   }
 }

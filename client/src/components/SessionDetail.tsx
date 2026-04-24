@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
-import { SpanTree, parseJsonl } from "@session-dashboard/agent-viz";
-import type { AgentSpan } from "@session-dashboard/agent-viz";
+import {
+  TraceViewer,
+  claudeJsonlToTraceViewerData,
+} from "@session-dashboard/agent-viz";
+import type { AgentSpan, TraceViewerData } from "@session-dashboard/agent-viz";
+import "@session-dashboard/agent-viz/prism.css";
 import { api } from "../api";
 import type { StatsResponse, Turn, TurnsResponse } from "../types";
+import { TraceTimeline } from "./TraceTimeline";
 
 interface Props {
   sessionId: string;
@@ -167,20 +172,21 @@ function TracePairView({ pair, index }: { pair: TracePair; index: number }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-type ViewTab = "turns" | "spans";
+type ViewTab = "turns" | "spans" | "timeline";
 
 export function SessionDetail({ sessionId, date, onClose }: Props) {
   const [turnsData, setTurnsData] = useState<TurnsResponse | null>(null);
   const [stats, setStats] = useState<StatsResponse | null>(null);
-  const [spans, setSpans] = useState<AgentSpan[]>([]);
+  const [traceData, setTraceData] = useState<TraceViewerData[]>([]);
+  const [irSpans, setIrSpans] = useState<AgentSpan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<ViewTab>("spans");
+  const [tab, setTab] = useState<ViewTab>("timeline");
 
   useEffect(() => {
     setLoading(true);
     setError("");
-    setSpans([]);
+    setTraceData([]);
 
     Promise.all([
       api.stats(sessionId, date),
@@ -191,7 +197,19 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
         setStats(s);
         setTurnsData(t);
         const tool = (t.session.tool ?? "claude") as "claude" | "codex" | "gemini";
-        setSpans(parseJsonl(r.raw, { tool }));
+        if (tool === "claude") {
+          const { traceRecord, spans, irSpans } = claudeJsonlToTraceViewerData(
+            r.raw,
+            {
+              sessionId,
+              sessionName: t.session.project ?? sessionId.slice(0, 8),
+              agentDescription: t.session.project ?? "claude-code",
+              subagents: r.subagents,
+            },
+          );
+          setTraceData([{ traceRecord, spans }]);
+          setIrSpans(irSpans);
+        }
       })
       .catch((e) => setError(String(e?.message)))
       .finally(() => setLoading(false));
@@ -203,7 +221,7 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
     <div className="fixed inset-0 z-50 flex">
       <div className="absolute inset-0 bg-black/30" onClick={onClose} />
 
-      <div className="relative ml-auto w-full max-w-2xl bg-white shadow-2xl flex flex-col h-full">
+      <div className="relative ml-auto w-full max-w-6xl bg-white shadow-2xl flex flex-col h-full">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 flex-shrink-0">
           <div className="min-w-0">
@@ -235,7 +253,7 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
 
         {/* Tab bar */}
         <div className="flex border-b border-gray-200 flex-shrink-0">
-          {(["spans", "turns"] as ViewTab[]).map((t) => (
+          {(["timeline", "spans", "turns"] as ViewTab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -245,7 +263,11 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
                   : "text-gray-400 hover:text-gray-600"
               }`}
             >
-              {t === "spans" ? "Span Tree" : "对话视图"}
+              {t === "timeline"
+                ? "Timeline"
+                : t === "spans"
+                ? "Span Tree"
+                : "对话视图"}
             </button>
           ))}
         </div>
@@ -259,9 +281,27 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
           )}
           {error && <p className="p-5 text-sm text-red-500">{error}</p>}
 
+          {!loading && !error && tab === "timeline" && (
+            <div className="h-full overflow-hidden">
+              {irSpans.length > 0 ? (
+                <TraceTimeline spans={irSpans} />
+              ) : (
+                <p className="p-5 text-sm text-gray-400">
+                  Timeline 暂不支持 {turnsData?.session.tool ?? "该 CLI"} 的数据
+                </p>
+              )}
+            </div>
+          )}
+
           {!loading && !error && tab === "spans" && (
             <div className="h-full overflow-hidden">
-              <SpanTree spans={spans} defaultExpanded={true} />
+              {traceData.length > 0 ? (
+                <TraceViewer data={traceData} />
+              ) : (
+                <p className="p-5 text-sm text-gray-400">
+                  Span Tree 暂不支持 {turnsData?.session.tool ?? "该 CLI"} 的数据
+                </p>
+              )}
             </div>
           )}
 

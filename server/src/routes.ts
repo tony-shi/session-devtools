@@ -316,7 +316,32 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     if (!(await file.exists())) return json({ error: "source file not found" }, 404);
 
     const raw = await file.text();
-    return json({ raw });
+
+    // Load Claude Code subagent transcripts (side-files under `<session>/subagents/`).
+    // Shape: `{agentId: {jsonl, meta}}`. Only present for Claude sessions.
+    const subagents: Record<string, { jsonl: string; meta: unknown }> = {};
+    try {
+      const { readdir, readFile } = await import("node:fs/promises");
+      const { join, dirname, basename } = await import("node:path");
+      const srcPath = sessionRow.source_file;
+      const subDir = join(dirname(srcPath), basename(srcPath, ".jsonl"), "subagents");
+      const entries = await readdir(subDir).catch(() => [] as string[]);
+      for (const name of entries) {
+        if (!name.endsWith(".jsonl")) continue;
+        const agentId = name.replace(/^agent-/, "").replace(/\.jsonl$/, "");
+        const jsonl = await readFile(join(subDir, name), "utf8").catch(() => "");
+        if (!jsonl) continue;
+        const metaRaw = await readFile(
+          join(subDir, `agent-${agentId}.meta.json`),
+          "utf8",
+        ).catch(() => "");
+        let meta: unknown = null;
+        if (metaRaw) { try { meta = JSON.parse(metaRaw); } catch { /* ignore */ } }
+        subagents[agentId] = { jsonl, meta };
+      }
+    } catch { /* no subagents dir — fine */ }
+
+    return json({ raw, subagents });
   }
 
   return null; // not handled
