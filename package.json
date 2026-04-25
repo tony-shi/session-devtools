@@ -1,7 +1,12 @@
 {
   "name": "session-dashboard",
   "version": "0.1.0",
-  "private": true,
+  "description": "Local dashboard for visualizing Claude Code, Codex CLI, and Gemini CLI sessions",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tony-shi/session-dashboard"
+  },
   "workspaces": ["packages/*", "client"],
   "scripts": {
     "dev": "concurrently \"bun run server:dev\" \"bun run client:dev\"",

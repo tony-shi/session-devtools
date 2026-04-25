@@ -5,3 +5,24 @@ server/public/
 
 # Local config with secrets
 digest.cfg
+
+# AI assistant working files (local only)
+CLAUDE.md
+
+# Internal design docs (local only)
+token_tracking.md
+visualization.md
+visualization-phase2.md
+visualization-phase2-p0a.md
+
+# Python virtualenv
+.venv/
+.python-version
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp
