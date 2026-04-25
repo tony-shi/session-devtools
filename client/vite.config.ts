@@ -1,31 +1,38 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
 
-export default defineConfig({
-  plugins: [react(), tailwindcss()],
-  resolve: {
-    alias: [
-      {
-        find: "@session-dashboard/agent-viz/prism.css",
-        replacement: resolve(__dirname, "../packages/agent-viz/src/prism/prism.css"),
-      },
-      {
-        find: "@session-dashboard/agent-viz",
-        replacement: resolve(__dirname, "../packages/agent-viz/src/index.ts"),
-      },
-    ],
-  },
-  server: {
-    port: parseInt(process.env.VITE_PORT ?? "5173"),
-    open: true,
-    proxy: {
-      "/api": `http://localhost:${process.env.PORT ?? "5051"}`,
+export default defineConfig(({ mode }) => {
+  // Load .env from repo root (one level up from client/)
+  const env = loadEnv(mode, resolve(__dirname, ".."), "");
+  const SERVER_PORT = env.PORT ?? "5051";
+  const CLIENT_PORT = parseInt(env.VITE_PORT ?? "5173");
+
+  return {
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: [
+        {
+          find: "@session-dashboard/agent-viz/prism.css",
+          replacement: resolve(__dirname, "../packages/agent-viz/src/prism/prism.css"),
+        },
+        {
+          find: "@session-dashboard/agent-viz",
+          replacement: resolve(__dirname, "../packages/agent-viz/src/index.ts"),
+        },
+      ],
     },
-  },
-  build: {
-    outDir: "../server/public",
-    emptyOutDir: true,
-  },
+    server: {
+      port: CLIENT_PORT,
+      open: true,
+      proxy: {
+        "/api": `http://localhost:${SERVER_PORT}`,
+      },
+    },
+    build: {
+      outDir: "../server/public",
+      emptyOutDir: true,
+    },
+  };
 });
