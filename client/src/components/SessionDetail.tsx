@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   TraceViewer,
   claudeJsonlToTraceViewerData,
@@ -117,6 +118,7 @@ function LoopStep({ turn }: { turn: Turn }) {
 }
 
 function TracePairView({ pair, index }: { pair: TracePair; index: number }) {
+  const { t, i18n } = useTranslation();
   const [loopOpen, setLoopOpen] = useState(false);
   return (
     <div className="border border-gray-200 rounded-xl overflow-hidden">
@@ -128,7 +130,7 @@ function TracePairView({ pair, index }: { pair: TracePair; index: number }) {
           <div className="flex-1 min-w-0">
             <p className="text-sm text-indigo-900 font-medium leading-relaxed">{pair.user.content || "(empty)"}</p>
             <p className="text-xs text-indigo-500 mt-1">
-              {pair.user.timestamp ? new Date(pair.user.timestamp).toLocaleTimeString("zh-CN") : ""}
+              {pair.user.timestamp ? new Date(pair.user.timestamp).toLocaleTimeString(i18n.language) : ""}
             </p>
           </div>
         </div>
@@ -142,7 +144,7 @@ function TracePairView({ pair, index }: { pair: TracePair; index: number }) {
             <svg className={`w-3 h-3 transition-transform ${loopOpen ? "rotate-90" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
-            <span>{pair.loop.length} 步工具调用</span>
+            <span>{t("sessionDetail.toolSteps", { count: pair.loop.length })}</span>
             <div className="flex gap-1 ml-1">
               {Array.from(new Set(pair.loop.flatMap((t) => t.tool_names ?? []))).slice(0, 5).map((n) => (
                 <span key={n} className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-mono">{n}</span>
@@ -160,7 +162,7 @@ function TracePairView({ pair, index }: { pair: TracePair; index: number }) {
         <div className="p-4">
           <div className="flex items-center gap-2 mb-2">
             <div className="w-4 h-4 rounded-full bg-violet-500 flex-shrink-0" />
-            <span className="text-xs font-medium text-gray-500">AI 最终回复</span>
+            <span className="text-xs font-medium text-gray-500">{t("sessionDetail.aiReply")}</span>
             {pair.final.output_tokens > 0 && (
               <span className="text-xs text-gray-400 ml-auto">{pair.final.output_tokens} tokens</span>
             )}
@@ -177,6 +179,7 @@ function TracePairView({ pair, index }: { pair: TracePair; index: number }) {
 type ViewTab = "turns" | "spans" | "timeline" | "context";
 
 export function SessionDetail({ sessionId, date, onClose }: Props) {
+  const { t } = useTranslation();
   const [turnsData, setTurnsData] = useState<TurnsResponse | null>(null);
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [traceData, setTraceData] = useState<TraceViewerData[]>([]);
@@ -223,13 +226,10 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
   }, [sessionId, date]);
 
   // Map from IR span id → {agentId, turnIndex} for cross-view selection
-  // An assistant turn span's id is its JSONL uuid; context snapshots are indexed by turnIndex.
-  // We match by position: the Nth assistant span in agent X ↔ snapshot[N] in that agent's trace.
   const spanTurnMap = useMemo(() => {
     const map = new Map<string, { agentId: string; turnIndex: number }>();
     if (!irSpans.length || !contextTraces.length) return map;
 
-    // Group assistant turn spans by agentId, in order
     const byAgent = new Map<string, AgentSpan[]>();
     for (const s of irSpans) {
       if (s.kind !== "turn") continue;
@@ -240,7 +240,6 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
 
     for (const trace of contextTraces) {
       const agentSpans = byAgent.get(trace.agentId) ?? [];
-      // Filter to assistant turns only (not user_input)
       const assistantSpans = agentSpans.filter(
         (s) => s.attributes?.["gen_ai.operation.name"] === "chat",
       );
@@ -262,6 +261,13 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
   }, [spanTurnMap]);
 
   const pairs = turnsData ? groupIntoPairs(turnsData.turns) : [];
+
+  const tabLabels: Record<ViewTab, string> = {
+    timeline: t("sessionDetail.tabs.timeline"),
+    spans: t("sessionDetail.tabs.spans"),
+    context: t("sessionDetail.tabs.context"),
+    turns: t("sessionDetail.tabs.turns"),
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex">
@@ -286,36 +292,30 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
         {/* Token stats */}
         {stats && (
           <div className="flex gap-4 px-5 py-3 bg-gray-50 border-b border-gray-200 text-xs text-gray-500 flex-shrink-0">
-            <span>输入 <strong className="text-gray-700">{stats.tokens.input.toLocaleString()}</strong></span>
-            <span>输出 <strong className="text-gray-700">{stats.tokens.output.toLocaleString()}</strong></span>
+            <span>{t("sessionDetail.tokens.input")} <strong className="text-gray-700">{stats.tokens.input.toLocaleString()}</strong></span>
+            <span>{t("sessionDetail.tokens.output")} <strong className="text-gray-700">{stats.tokens.output.toLocaleString()}</strong></span>
             {stats.tokens.cache_read > 0 && (
-              <span>缓存读 <strong className="text-gray-700">{stats.tokens.cache_read.toLocaleString()}</strong></span>
+              <span>{t("sessionDetail.tokens.cacheRead")} <strong className="text-gray-700">{stats.tokens.cache_read.toLocaleString()}</strong></span>
             )}
             {stats.tool_calls.total > 0 && (
-              <span>工具调用 <strong className="text-gray-700">{stats.tool_calls.total}</strong></span>
+              <span>{t("sessionDetail.tokens.toolCalls")} <strong className="text-gray-700">{stats.tool_calls.total}</strong></span>
             )}
           </div>
         )}
 
         {/* Tab bar */}
         <div className="flex border-b border-gray-200 flex-shrink-0">
-          {(["timeline", "spans", "context", "turns"] as ViewTab[]).map((t) => (
+          {(["timeline", "spans", "context", "turns"] as ViewTab[]).map((tabKey) => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
+              key={tabKey}
+              onClick={() => setTab(tabKey)}
               className={`px-4 py-2 text-xs font-medium transition-colors ${
-                tab === t
+                tab === tabKey
                   ? "border-b-2 border-indigo-500 text-indigo-600"
                   : "text-gray-400 hover:text-gray-600"
               }`}
             >
-              {t === "timeline"
-                ? "Timeline"
-                : t === "spans"
-                ? "Span Tree"
-                : t === "context"
-                ? "Context"
-                : "对话视图"}
+              {tabLabels[tabKey]}
             </button>
           ))}
         </div>
@@ -337,13 +337,11 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
                   selectedSpanId={selectedSpanId}
                   onSpanSelect={(id) => {
                     setSelectedSpanId(id);
-                    // If the selected span maps to a context turn, switch to context tab
-                    // (don't auto-switch — just update state so context tab highlights it)
                   }}
                 />
               ) : (
                 <p className="p-5 text-sm text-gray-400">
-                  Timeline 暂不支持 {turnsData?.session.tool ?? "该 CLI"} 的数据
+                  {t("sessionDetail.notSupported", { view: "Timeline", tool: turnsData?.session.tool ?? "CLI" })}
                 </p>
               )}
             </div>
@@ -363,7 +361,7 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
                 />
               ) : (
                 <p className="p-5 text-sm text-gray-400">
-                  Context 暂不支持 {turnsData?.session.tool ?? "该 CLI"} 的数据
+                  {t("sessionDetail.notSupported", { view: "Context", tool: turnsData?.session.tool ?? "CLI" })}
                 </p>
               )}
             </div>
@@ -375,7 +373,7 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
                 <TraceViewer data={traceData} />
               ) : (
                 <p className="p-5 text-sm text-gray-400">
-                  Span Tree 暂不支持 {turnsData?.session.tool ?? "该 CLI"} 的数据
+                  {t("sessionDetail.notSupported", { view: "Span Tree", tool: turnsData?.session.tool ?? "CLI" })}
                 </p>
               )}
             </div>
@@ -384,7 +382,7 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
           {!loading && !error && tab === "turns" && (
             <div className="h-full overflow-y-auto p-5 space-y-4">
               {pairs.length === 0 && (
-                <p className="text-sm text-gray-400 text-center py-8">当天无对话数据</p>
+                <p className="text-sm text-gray-400 text-center py-8">{t("sessionDetail.noTurns")}</p>
               )}
               {pairs.map((pair, i) => <TracePairView key={i} pair={pair} index={i} />)}
             </div>

@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../api";
+import i18n from "../i18n";
 
 interface Props {
   date: string;
@@ -13,10 +15,12 @@ function addDays(date: string, n: number): string {
 }
 
 export function Header({ date, onDateChange }: Props) {
+  const { t } = useTranslation();
   const today = new Date().toISOString().slice(0, 10);
   const isToday = date === today;
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
+  const [lang, setLang] = useState(i18n.language);
 
   const navBtnStyle: React.CSSProperties = {
     display: "flex", alignItems: "center", justifyContent: "center",
@@ -36,6 +40,13 @@ export function Header({ date, onDateChange }: Props) {
     } finally {
       setSyncing(false);
     }
+  }
+
+  function toggleLang() {
+    const next = lang === "zh-CN" ? "en" : "zh-CN";
+    i18n.changeLanguage(next);
+    localStorage.setItem("lang", next);
+    setLang(next);
   }
 
   return (
@@ -60,7 +71,7 @@ export function Header({ date, onDateChange }: Props) {
 
       {/* Date nav */}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <button onClick={() => onDateChange(addDays(date, -1))} style={navBtnStyle} title="前一天">
+        <button onClick={() => onDateChange(addDays(date, -1))} style={navBtnStyle} title={t("header.prevDay")}>
           <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
@@ -75,7 +86,7 @@ export function Header({ date, onDateChange }: Props) {
           }}
         />
         <button onClick={() => onDateChange(addDays(date, 1))} disabled={isToday}
-          style={{ ...navBtnStyle, opacity: isToday ? 0.3 : 1 }} title="后一天">
+          style={{ ...navBtnStyle, opacity: isToday ? 0.3 : 1 }} title={t("header.nextDay")}>
           <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
@@ -85,11 +96,11 @@ export function Header({ date, onDateChange }: Props) {
             fontSize: 13, padding: "4px 10px", borderRadius: 6,
             background: "#f3e8ff", color: "#7c3aed", border: "none",
             cursor: "pointer", fontWeight: 500,
-          }}>今天</button>
+          }}>{t("header.today")}</button>
         )}
       </div>
 
-      {/* Sync */}
+      {/* Right controls: Sync + Lang toggle */}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         {syncMsg && <span style={{ fontSize: 12, color: "#6b7280" }}>{syncMsg}</span>}
         <button onClick={handleSync} disabled={syncing} style={{
@@ -103,7 +114,20 @@ export function Header({ date, onDateChange }: Props) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
-          {syncing ? "同步中…" : "同步"}
+          {syncing ? t("header.syncing") : t("header.sync")}
+        </button>
+
+        {/* Language toggle */}
+        <button
+          onClick={toggleLang}
+          title={t("header.langLabel")}
+          style={{
+            fontSize: 12, padding: "5px 10px", borderRadius: 6,
+            background: "#f3f4f6", color: "#374151", border: "none",
+            cursor: "pointer", fontWeight: 500, letterSpacing: "0.02em",
+          }}
+        >
+          {lang === "zh-CN" ? "EN" : "中文"}
         </button>
       </div>
 
