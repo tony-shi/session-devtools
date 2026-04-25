@@ -7,9 +7,6 @@ server/public/
 digest.cfg
 .env
 
-# AI assistant working files (local only)
-CLAUDE.md
-
 # Internal design docs (local only)
 docs/draft
 
