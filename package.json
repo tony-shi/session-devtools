@@ -13,7 +13,8 @@
     "server:dev": "bun --watch server/index.ts",
     "client:dev": "cd client && bun run dev",
     "build": "cd client && bun run build",
-    "start": "bun server/index.ts"
+    "start": "bun server/index.ts",
+    "env:init": "[ -f .env ] || cp .env.example .env && echo 'Created .env from .env.example'"
   },
   "devDependencies": {
     "bun-types": "^1.3.12",

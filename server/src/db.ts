@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync, statSync } from "fs";
+import { existsSync, mkdirSync, statSync } from "fs";
 import { join } from "path";
 import type { Session, Turn } from "./parsers/index";
 
@@ -294,4 +294,39 @@ export function fileChanged(filePath: string): boolean {
 export function markDigestStale(date: string): void {
   const db = getDb();
   db.prepare("UPDATE daily_digest SET stale = 1 WHERE date = ? AND stale = 0").run(date);
+}
+
+// ── DB health check ───────────────────────────────────────────────────────────
+
+const REQUIRED_TABLES = ["sessions", "turns", "sync_state", "daily_digest"];
+const REQUIRED_INDEXES = ["idx_sessions_started", "idx_turns_session", "idx_turns_timestamp"];
+
+export type DbHealthResult =
+  | { status: "missing" }
+  | { status: "ok"; sessions: number; turns: number }
+  | { status: "incomplete"; missing: string[] };
+
+export function checkDbHealth(): DbHealthResult {
+  if (!existsSync(SESSIONS_DB_PATH)) return { status: "missing" };
+
+  const db = getDb();
+
+  const existing = new Set(
+    db
+      .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type IN ('table','index')")
+      .all()
+      .map((r) => r.name),
+  );
+
+  const missing = [
+    ...REQUIRED_TABLES.filter((t) => !existing.has(t)),
+    ...REQUIRED_INDEXES.filter((i) => !existing.has(i)),
+  ];
+
+  if (missing.length > 0) return { status: "incomplete", missing };
+
+  const { sessions } = db.query<{ sessions: number }, []>("SELECT COUNT(*) as sessions FROM sessions").get()!;
+  const { turns } = db.query<{ turns: number }, []>("SELECT COUNT(*) as turns FROM turns").get()!;
+
+  return { status: "ok", sessions, turns };
 }
