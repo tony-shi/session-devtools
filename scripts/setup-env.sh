@@ -32,7 +32,14 @@ fi
 # ── Derive config from branch name ───────────────────────────────────────────
 
 BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
-SLUG=$(echo "$BRANCH" | sed 's|/|-|g' | tr -cs 'a-zA-Z0-9-' '-' | sed 's/-\+/-/g' | sed 's/-$//')
+# Normalize: Claude Code encodes "/" as "+" in branch names; strip leading "worktree-" prefix
+SLUG=$(echo "$BRANCH" \
+  | sed 's|^worktree-||' \
+  | sed 's|+|-|g' \
+  | sed 's|/|-|g' \
+  | tr -cs 'a-zA-Z0-9-' '-' \
+  | sed 's/-\+/-/g' \
+  | sed 's/-$//')
 
 # Deterministic port: cksum % 900 + 5100 (range 5100–5999)
 # Vite port: server port + 10000 (range 15100–15999, no overlap)
