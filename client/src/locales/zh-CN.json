@@ -1,0 +1,49 @@
+{
+  "header": {
+    "prevDay": "前一天",
+    "nextDay": "后一天",
+    "today": "今天",
+    "syncing": "同步中…",
+    "sync": "同步",
+    "langLabel": "语言"
+  },
+  "summary": {
+    "totalSessions": "总会话数",
+    "totalTurns": "总轮次",
+    "activeTools": "活跃工具"
+  },
+  "sessionList": {
+    "title": "会话列表",
+    "count": "{{count}} 条",
+    "empty": "当天无会话数据"
+  },
+  "digest": {
+    "title": "LLM 日报",
+    "generating": "生成中…",
+    "requesting": "请求中…",
+    "regenerate": "重新生成",
+    "llmGenerating": "LLM 正在生成日报，通常需要 30-60 秒…",
+    "noData": "当天无会话数据",
+    "noReport": "暂无日报，点击重新生成",
+    "generatedAt": "生成于 {{time}}",
+    "pairCount": "，共 {{count}} 对对话"
+  },
+  "sessionDetail": {
+    "aiReply": "AI 最终回复",
+    "toolSteps": "{{count}} 步工具调用",
+    "noTurns": "当天无对话数据",
+    "notSupported": "{{view}} 暂不支持 {{tool}} 的数据",
+    "tabs": {
+      "timeline": "Timeline",
+      "spans": "Span Tree",
+      "context": "Context",
+      "turns": "对话视图"
+    },
+    "tokens": {
+      "input": "输入",
+      "output": "输出",
+      "cacheRead": "缓存读",
+      "toolCalls": "工具调用"
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "header": {
+    "prevDay": "Previous day",
+    "nextDay": "Next day",
+    "today": "Today",
+    "syncing": "Syncing…",
+    "sync": "Sync",
+    "langLabel": "Language"
+  },
+  "summary": {
+    "totalSessions": "Total Sessions",
+    "totalTurns": "Total Turns",
+    "activeTools": "Active Tools"
+  },
+  "sessionList": {
+    "title": "Sessions",
+    "count_one": "{{count}} item",
+    "count_other": "{{count}} items",
+    "count": "{{count}} items",
+    "empty": "No sessions for this day"
+  },
+  "digest": {
+    "title": "LLM Daily Report",
+    "generating": "Generating…",
+    "requesting": "Requesting…",
+    "regenerate": "Regenerate",
+    "llmGenerating": "LLM is generating the report, usually takes 30–60 seconds…",
+    "noData": "No sessions for this day",
+    "noReport": "No report yet, click to regenerate",
+    "generatedAt": "Generated at {{time}}",
+    "pairCount_one": ", {{count}} conversation pair",
+    "pairCount_other": ", {{count}} conversation pairs"
+  },
+  "sessionDetail": {
+    "aiReply": "AI Final Reply",
+    "toolSteps_one": "{{count}} tool step",
+    "toolSteps_other": "{{count}} tool steps",
+    "noTurns": "No conversation data for this day",
+    "notSupported": "{{view}} does not support {{tool}} data yet",
+    "tabs": {
+      "timeline": "Timeline",
+      "spans": "Span Tree",
+      "context": "Context",
+      "turns": "Turns"
+    },
+    "tokens": {
+      "input": "Input",
+      "output": "Output",
+      "cacheRead": "Cache read",
+      "toolCalls": "Tool calls"
+    }
+  }
+}

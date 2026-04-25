@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "../api";
 import type { DigestData } from "../types";
 
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export function DigestPanel({ date, data, loading, onRefresh }: Props) {
+  const { t, i18n } = useTranslation();
   const [requesting, setRequesting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -62,14 +64,14 @@ export function DigestPanel({ date, data, loading, onRefresh }: Props) {
     <div className="bg-white rounded-xl border border-gray-200 p-5">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-gray-900">LLM 日报</h2>
+          <h2 className="text-sm font-semibold text-gray-900">{t("digest.title")}</h2>
           {isGenerating && (
             <span className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-200 flex items-center gap-1">
               <svg className="w-3 h-3 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              生成中…
+              {t("digest.generating")}
             </span>
           )}
           {!isGenerating && data?.mock && data.summary && (
@@ -95,7 +97,7 @@ export function DigestPanel({ date, data, loading, onRefresh }: Props) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
-          {requesting ? "请求中…" : "重新生成"}
+          {requesting ? t("digest.requesting") : t("digest.regenerate")}
         </button>
       </div>
 
@@ -110,19 +112,19 @@ export function DigestPanel({ date, data, loading, onRefresh }: Props) {
           <div className="h-4 bg-blue-100 rounded animate-pulse w-3/4" />
           <div className="h-4 bg-blue-100 rounded animate-pulse w-full" />
           <div className="h-4 bg-blue-100 rounded animate-pulse w-5/6" />
-          <p className="text-xs text-blue-400 mt-1">LLM 正在生成日报，通常需要 30-60 秒…</p>
+          <p className="text-xs text-blue-400 mt-1">{t("digest.llmGenerating")}</p>
         </div>
       ) : !data?.summary ? (
         <p className="text-sm text-gray-400">
-          {data?.pair_count === 0 ? "当天无会话数据" : "暂无日报，点击重新生成"}
+          {data?.pair_count === 0 ? t("digest.noData") : t("digest.noReport")}
         </p>
       ) : (
         <div>
           <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{data.summary}</p>
           {data.generated_at && (
             <p className="text-xs text-gray-400 mt-3">
-              生成于 {new Date(data.generated_at).toLocaleString("zh-CN")}
-              {data.pair_count > 0 && `，共 ${data.pair_count} 对对话`}
+              {t("digest.generatedAt", { time: new Date(data.generated_at).toLocaleString(i18n.language) })}
+              {data.pair_count > 0 && t("digest.pairCount", { count: data.pair_count })}
             </p>
           )}
         </div>

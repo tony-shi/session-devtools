@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { SummaryData } from "../types";
 
 const TOOL_COLORS: Record<string, { bg: string; color: string }> = {
@@ -23,12 +24,13 @@ function Skeleton() {
 }
 
 export function SummaryCards({ data, loading }: Props) {
+  const { t } = useTranslation();
   const tools = data ? Object.keys(data.by_tool) : [];
 
   return (
     <div style={{ display: "flex", gap: 16 }}>
       <div style={cardStyle}>
-        <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>总会话数</p>
+        <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>{t("summary.totalSessions")}</p>
         {loading ? <Skeleton /> : (
           <p style={{ fontSize: 28, fontWeight: 700, color: "#111827", lineHeight: 1 }}>
             {data?.total_sessions ?? 0}
@@ -37,7 +39,7 @@ export function SummaryCards({ data, loading }: Props) {
       </div>
 
       <div style={cardStyle}>
-        <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>总轮次</p>
+        <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>{t("summary.totalTurns")}</p>
         {loading ? <Skeleton /> : (
           <p style={{ fontSize: 28, fontWeight: 700, color: "#111827", lineHeight: 1 }}>
             {data?.total_turns ?? 0}
@@ -46,7 +48,7 @@ export function SummaryCards({ data, loading }: Props) {
       </div>
 
       <div style={cardStyle}>
-        <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 10 }}>活跃工具</p>
+        <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 10 }}>{t("summary.activeTools")}</p>
         {loading ? <Skeleton /> : tools.length === 0 ? (
           <p style={{ fontSize: 14, color: "#9ca3af" }}>—</p>
         ) : (

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { Session, SessionsResponse } from "../types";
 import { SessionDetail } from "./SessionDetail";
 
@@ -8,12 +9,12 @@ const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
   gemini: { bg: "#d1fae5", color: "#065f46" },
 };
 
-function fmt(ts: string) {
+function fmt(ts: string, locale: string) {
   if (!ts) return "—";
-  return new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  return new Date(ts).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
 }
 
-function SessionRow({ session, onClick }: { session: Session; onClick: () => void }) {
+function SessionRow({ session, onClick, locale }: { session: Session; onClick: () => void; locale: string }) {
   const [hovered, setHovered] = useState(false);
   const badge = TOOL_BADGE[session.tool] ?? { bg: "#f3f4f6", color: "#374151" };
   const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
@@ -66,7 +67,7 @@ function SessionRow({ session, onClick }: { session: Session; onClick: () => voi
         {session.tool_call_count > 0 && (
           <span>🔧 {session.tool_call_count}</span>
         )}
-        <span>{fmt(session.started_at)}</span>
+        <span>{fmt(session.started_at, locale)}</span>
         <svg width="14" height="14" fill="none" stroke={hovered ? "#6b7280" : "#d1d5db"} viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
@@ -82,6 +83,7 @@ interface Props {
 }
 
 export function SessionList({ data, loading, date }: Props) {
+  const { t, i18n } = useTranslation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   return (
@@ -90,8 +92,12 @@ export function SessionList({ data, loading, date }: Props) {
         display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "12px 20px", borderBottom: "1px solid #f3f4f6",
       }}>
-        <h2 style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>会话列表</h2>
-        {data && <span style={{ fontSize: 12, color: "#9ca3af" }}>{data.total} 条</span>}
+        <h2 style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>{t("sessionList.title")}</h2>
+        {data && (
+          <span style={{ fontSize: 12, color: "#9ca3af" }}>
+            {t("sessionList.count", { count: data.total })}
+          </span>
+        )}
       </div>
 
       {loading ? (
@@ -107,11 +113,11 @@ export function SessionList({ data, loading, date }: Props) {
           ))}
         </div>
       ) : !data || data.sessions.length === 0 ? (
-        <p style={{ fontSize: 14, color: "#9ca3af", textAlign: "center", padding: "40px 0" }}>当天无会话数据</p>
+        <p style={{ fontSize: 14, color: "#9ca3af", textAlign: "center", padding: "40px 0" }}>{t("sessionList.empty")}</p>
       ) : (
         <div>
           {data.sessions.map((s) => (
-            <SessionRow key={s.id} session={s} onClick={() => setSelectedId(s.id)} />
+            <SessionRow key={s.id} session={s} onClick={() => setSelectedId(s.id)} locale={i18n.language} />
           ))}
         </div>
       )}
