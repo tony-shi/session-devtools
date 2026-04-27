@@ -575,6 +575,19 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     return json({ injected, daemonStatus, pid, port, health });
   }
 
+  // 读取 settings.json env 块的辅助函数（供 install/start/uninstall 子进程继承）
+  const loadSettingsEnv = async (): Promise<Record<string, string>> => {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const settingsPath = join(homedir(), ".claude", "settings.json");
+    if (!existsSync(settingsPath)) return {};
+    try {
+      const s = JSON.parse(readFileSync(settingsPath, "utf8"));
+      return (s?.env && typeof s.env === "object") ? s.env : {};
+    } catch { return {}; }
+  };
+
   // 执行安装（dry-run 可选）
   if (path === "/api/proxy/setup/install" && req.method === "POST") {
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
@@ -586,12 +599,16 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     const args = ["run", scriptPath, "--no-daemon"];
     if (dryRun) args.push("--dry-run");
 
+    // 合并 settings.json env，让安装器能看到用户已有的代理配置
+    const settingsEnv = await loadSettingsEnv();
+    const childEnv = { ...settingsEnv, ...process.env };
+
     const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
-      const child = spawn("bun", args, { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn("bun", args, { env: childEnv, stdio: ["ignore", "pipe", "pipe"] }) as any;
       let out = "";
       child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
       child.stderr?.on("data", (d: Buffer) => (out += d.toString()));
-      child.on("close", (code) => resolve({ ok: code === 0, output: out }));
+      child.on("close", (code: number) => resolve({ ok: code === 0, output: out }));
     });
     return json(result);
   }
@@ -602,12 +619,15 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     const { join } = await import("node:path");
 
     const scriptPath = join(import.meta.dir, "proxy/cli/uninstall.ts");
+    const settingsEnv = await loadSettingsEnv();
+    const childEnv = { ...settingsEnv, ...process.env };
+
     const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
-      const child = spawn("bun", ["run", scriptPath], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn("bun", ["run", scriptPath], { env: childEnv, stdio: ["ignore", "pipe", "pipe"] }) as any;
       let out = "";
       child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
       child.stderr?.on("data", (d: Buffer) => (out += d.toString()));
-      child.on("close", (code) => resolve({ ok: code === 0, output: out }));
+      child.on("close", (code: number) => resolve({ ok: code === 0, output: out }));
     });
     return json(result);
   }
@@ -620,13 +640,15 @@ export async function handleRequest(req: Request): Promise<Response | null> {
 
     const distPath = join(import.meta.dir, "proxy/dist/start.mjs");
     if (!existsSync(distPath)) {
-      // 先 build
       await new Promise<void>((resolve) => {
-        const b = spawn("bun", ["run", "proxy:build"], { cwd: join(import.meta.dir, "../.."), env: process.env, stdio: "ignore" });
+        const b = spawn("bun", ["run", "proxy:build"], { cwd: join(import.meta.dir, "../.."), env: process.env, stdio: "ignore" }) as any;
         b.on("close", () => resolve());
       });
     }
-    const child = spawn("node", [distPath], { detached: true, stdio: "ignore", env: process.env });
+    // daemon 需要继承 settings.json 的 env（特别是 API_DASHBOARD_PROXY_UPSTREAM）
+    const settingsEnv = await loadSettingsEnv();
+    const childEnv = { ...settingsEnv, ...process.env };
+    const child = spawn("node", [distPath], { detached: true, stdio: "ignore", env: childEnv });
     child.unref();
     return json({ ok: true, pid: child.pid });
   }
@@ -653,8 +675,25 @@ export async function handleRequest(req: Request): Promise<Response | null> {
   // 运行 preflight 检查（不写盘）
   if (path === "/api/proxy/setup/preflight" && req.method === "GET") {
     const { runPreflight } = await import("./proxy/preflight");
+    const { existsSync, readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
     const portArg = Number(q.get("port") ?? process.env.API_DASHBOARD_PROXY_PORT ?? 38421);
-    const report = await runPreflight({ ourPort: portArg });
+
+    // settings.json 的 env 块由 Claude Code 在启动时注入，不在 server 的 process.env 里。
+    // preflight 需要看到用户真实配置的代理，所以手动读取并合并。
+    let settingsEnv: Record<string, string> = {};
+    const settingsPath = join(homedir(), ".claude", "settings.json");
+    if (existsSync(settingsPath)) {
+      try {
+        const s = JSON.parse(readFileSync(settingsPath, "utf8"));
+        if (s?.env && typeof s.env === "object") settingsEnv = s.env;
+      } catch {}
+    }
+    // process.env 优先（shell 直接设置的变量权重更高），settings.json 作为补充
+    const mergedEnv = { ...settingsEnv, ...process.env };
+
+    const report = await runPreflight({ env: mergedEnv, ourPort: portArg });
     return json(report);
   }
 
