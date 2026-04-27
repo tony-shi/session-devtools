@@ -1,11 +1,11 @@
 // Proxy 安装管理面板 —— 独立 tab。
-// 展示：当前状态（未安装 / OK / DEGRADED / DOWN）+ preflight 检查 + 安装/卸载/启停按钮。
+// 当前阶段 proxy 由 session-dashboard server 托管，跟随 dashboard 启停。
 import { useEffect, useRef, useState } from "react";
 
 // 集中文案（AGENTS.md §5 过渡期方案）
 const T = {
   title:        { zh: "代理管理", en: "Proxy Setup" },
-  subtitle:     { zh: "MITM 代理 — 本机内部工具", en: "MITM Proxy — Local Internal Tool" },
+  subtitle:     { zh: "MITM 代理 — 跟随 Session Dashboard 运行", en: "MITM Proxy — Managed by Session Dashboard" },
   statusLabel:  { zh: "当前状态", en: "Status" },
   notInstalled: { zh: "未安装", en: "Not Installed" },
   ok:           { zh: "运行中", en: "Running" },
@@ -14,8 +14,8 @@ const T = {
   install:      { zh: "安装并启动", en: "Install & Start" },
   uninstall:    { zh: "卸载", en: "Uninstall" },
   start:        { zh: "启动", en: "Start" },
-  stop:         { zh: "停止（临时）", en: "Stop (temp)" },
-  stopHint:     { zh: "⚠ 停止后 settings.json 仍指向代理端口。重启 Claude Code 前请先「启动」或「卸载」，否则 API 请求会失败。", en: "⚠ settings.json still points to proxy after stop. Start or Uninstall before restarting Claude Code." },
+  stop:         { zh: "停止代理", en: "Stop Proxy" },
+  stopHint:     { zh: "⚠ 停止后 settings.json 仍指向代理端口。继续使用 Claude Code 前请先启动 dashboard/proxy 或卸载配置。", en: "⚠ settings.json still points to proxy after stop. Start dashboard/proxy or uninstall before using Claude Code." },
   preflight:    { zh: "运行检查", en: "Run Checks" },
   dryRun:       { zh: "预览变更（不写盘）", en: "Preview changes (dry-run)" },
   loading:      { zh: "处理中…", en: "Processing…" },
@@ -28,7 +28,7 @@ const T = {
   settingsInjected: { zh: "settings.json 已注入", en: "settings.json injected" },
   settingsNotInjected: { zh: "settings.json 未注入", en: "settings.json not injected" },
   warning:      { zh: "⚠ 内部工具：仅供本机使用，流量明文存储在本地。", en: "⚠ Internal tool: local use only, traffic stored in plaintext." },
-  restartHint:  { zh: "安装完成后需重启 Claude Code 使 settings.json 生效。", en: "Restart Claude Code after install for settings.json to take effect." },
+  restartHint:  { zh: "安装完成后需重启 Claude Code 使 settings.json 生效；proxy 会随 dashboard server 启停。", en: "Restart Claude Code after install; proxy follows the dashboard server lifecycle." },
 };
 
 type Lang = "zh" | "en";
@@ -48,6 +48,7 @@ interface SetupStatus {
   pid: number | null;
   port: number | null;
   health: Record<string, unknown> | null;
+  managed?: boolean;
 }
 
 interface CheckResult {
@@ -97,11 +98,13 @@ export function ProxySetup() {
     try {
       const r = await fetch("/api/proxy/setup/status");
       setStatus(await r.json());
-    } catch {}
+    } catch {
+      setStatus(null);
+    }
     setStatusLoading(false);
   };
 
-  useEffect(() => { fetchStatus(); }, []);
+  useEffect(() => { void Promise.resolve().then(fetchStatus); }, []);
 
   // 自动滚动输出到底部
   useEffect(() => {
@@ -114,7 +117,9 @@ export function ProxySetup() {
     try {
       const r = await fetch("/api/proxy/setup/preflight");
       setPreflight(await r.json());
-    } catch {}
+    } catch {
+      setPreflight(null);
+    }
     setPreflightLoading(false);
   };
 
@@ -135,16 +140,16 @@ export function ProxySetup() {
       const data = await r.json();
       setOutput(data.output ?? (data.ok ? "完成" : data.reason ?? "失败"));
       await fetchStatus();
-    } catch (e: any) {
-      setOutput(`请求失败: ${e.message}`);
+    } catch (e: unknown) {
+      setOutput(`请求失败: ${e instanceof Error ? e.message : String(e)}`);
     }
     setActionLoading(false);
   };
 
   // 三个独立维度：
   // - settingsInjected: settings.json 已写入（安装器跑过）
-  // - daemonRunning: daemon 进程实际在运行（无论 settings 是否注入）
-  // - daemonStatus: OK / DEGRADED / DOWN
+  // - daemonRunning: proxy 进程实际在运行（无论 settings 是否注入）
+  // - daemonStatus: OK / DEGRADED / DOWN（字段名暂保持兼容）
   const settingsInjected = status?.injected ?? false;
   const daemonStatus: DaemonStatus = status?.daemonStatus ?? "DOWN";
   const isDaemonRunning = daemonStatus === "OK" || daemonStatus === "DEGRADED";
@@ -195,11 +200,18 @@ export function ProxySetup() {
           />
           {status?.pid && <StatusBadge label={t("pid", lang)} value={String(status.pid)} color="#007aff" />}
           {status?.port && <StatusBadge label={t("port", lang)} value={String(status.port)} color="#007aff" />}
+          {isDaemonRunning && (
+            <StatusBadge
+              label="lifecycle"
+              value={status?.managed ? "dashboard managed" : "external process"}
+              color={status?.managed ? "#34c759" : "#ff9f0a"}
+            />
+          )}
         </div>
-        {/* daemon 运行但 settings 未注入时提示 */}
+        {/* proxy 运行但 settings 未注入时提示 */}
         {isDaemonRunning && !settingsInjected && (
           <div style={{ marginBottom: 16, padding: "8px 12px", borderRadius: 6, background: "#fff3cd", border: "1px solid #ffc107", fontSize: 12, color: "#856404" }}>
-            ⚠ Daemon 正在运行，但 settings.json 尚未注入。Claude Code 重启后不会自动走代理。建议点击「安装并启动」完成完整安装。
+            ⚠ Proxy 正在运行，但 settings.json 尚未注入。Claude Code 重启后不会自动走代理。建议点击「安装并启动」完成完整配置。
           </div>
         )}
 

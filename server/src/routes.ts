@@ -1,9 +1,16 @@
 import { getDb } from "./db";
 import { backfillDigests, findDatesMissingDigest, generateDigest } from "./digest";
+import {
+  getManagedProxyStatus,
+  readClaudeSettingsEnv,
+  startManagedProxy,
+  stopManagedProxy,
+} from "./proxy/managed";
 import { runSync, runSyncForDate } from "./sync";
 
 // Track dates currently being generated to avoid duplicate LLM calls
 const _generatingDates = new Set<string>();
+type SqlParam = string | number | bigint | boolean | null | Uint8Array;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -148,7 +155,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
 
     const db = getDb();
     const filterConds: string[] = [];
-    const filterParams: unknown[] = [];
+    const filterParams: SqlParam[] = [];
     if (tool) { filterConds.push("s.tool = ?"); filterParams.push(tool); }
     if (project) { filterConds.push("s.project = ?"); filterParams.push(project); }
     const filterSql = filterConds.length ? "AND " + filterConds.join(" AND ") : "";
@@ -168,7 +175,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
             )
           )
       `;
-      total = (db.query<{ cnt: number }, unknown[]>(
+      total = (db.query<{ cnt: number }, SqlParam[]>(
         `SELECT COUNT(DISTINCT s.id) as cnt FROM sessions s ${whereSql}`,
       ).get(...dateParams) as any)?.cnt ?? 0;
       rows = db.query(
@@ -178,7 +185,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
       const where = filterConds.length
         ? "WHERE " + filterConds.map((c) => c.replace("s.", "")).join(" AND ")
         : "";
-      total = (db.query<{ cnt: number }, unknown[]>(
+      total = (db.query<{ cnt: number }, SqlParam[]>(
         `SELECT COUNT(*) as cnt FROM sessions ${where}`,
       ).get(...filterParams) as any)?.cnt ?? 0;
       rows = db.query(
@@ -336,7 +343,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     } catch { /* no subagents */ }
 
     const { computeAgentContextTraces } = await import(
-      "../../packages/agent-viz/src/ir/context.ts"
+      "../../packages/agent-viz/src/ir/context"
     );
     const tracesMap = computeAgentContextTraces(
       raw,
@@ -529,86 +536,12 @@ export async function handleRequest(req: Request): Promise<Response | null> {
 
   // 查询当前安装状态（preflight + daemon health + settings 检测）
   if (path === "/api/proxy/setup/status" && req.method === "GET") {
-    const { existsSync, readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const { homedir } = await import("node:os");
-    const httpMod = await import("node:http");
-    const httpGet = httpMod.default?.get ?? httpMod.get;
-
-    // proxy 路径固定为全局路径（不随 worktree API_DASHBOARD_DIR 变化）
-    const proxyHome = join(homedir(), ".api-dashboard", "proxy");
-    const pidFile = join(proxyHome, "proxy.pid");
-    const portFile = join(proxyHome, "proxy.port");
-    const settingsPath = join(homedir(), ".claude", "settings.json");
-
-    // 读 pid / port
-    let pid: number | null = null;
-    let port: number | null = null;
-    if (existsSync(pidFile)) { const n = Number(readFileSync(pidFile, "utf8").trim()); if (n > 0) pid = n; }
-    if (existsSync(portFile)) { const n = Number(readFileSync(portFile, "utf8").trim()); if (n > 0) port = n; }
-
-    // 检查进程存活
-    let pidAlive = false;
-    if (pid) { try { process.kill(pid, 0); pidAlive = true; } catch {} }
-
-    // ping /_health，同时记录端口是否有任何响应（用于区分"旧版 daemon"和"真的没有进程"）
-    const { health, portResponding } = await new Promise<{ health: Record<string, unknown> | null; portResponding: boolean }>((resolve) => {
-      if (!port) return resolve({ health: null, portResponding: false });
-      const t = setTimeout(() => { req2.destroy(); resolve({ health: null, portResponding: false }); }, 2000);
-      const req2 = httpGet(`http://127.0.0.1:${port}/_health`, (res: any) => {
-        let buf = ""; res.on("data", (c: any) => (buf += c));
-        res.on("end", () => {
-          clearTimeout(t);
-          // 端口有响应（无论状态码）
-          try { resolve({ health: JSON.parse(buf), portResponding: true }); }
-          catch  { resolve({ health: null, portResponding: true }); } // 响应了但不是 JSON（旧版本）
-        });
-      });
-      req2.on("error", () => { clearTimeout(t); resolve({ health: null, portResponding: false }); });
-    });
-
-    // 读 settings.json 判断是否已注入
-    let injected = false;
-    if (existsSync(settingsPath)) {
-      try {
-        const s = JSON.parse(readFileSync(settingsPath, "utf8"));
-        injected = !!(s?.env?.NODE_EXTRA_CA_CERTS);
-      } catch {}
-    }
-
-    // 状态判断优先级：
-    // 1. /_health 返回 ok:true → OK
-    // 2. 端口有响应但非 JSON（旧版 daemon）→ DEGRADED + 提示需重建
-    // 3. pid 文件进程存活但端口无响应 → DEGRADED
-    // 4. 端口和进程都无响应 → DOWN
-    let daemonStatus: "OK" | "DEGRADED" | "DOWN";
-    let statusHint: string | undefined;
-    if (health?.ok) {
-      daemonStatus = "OK";
-    } else if (portResponding) {
-      daemonStatus = "DEGRADED";
-      statusHint = "daemon 在运行但不支持 /_health（旧版本），请点击「停止」后重新「启动」以更新。";
-    } else if (pidAlive) {
-      daemonStatus = "DEGRADED";
-      statusHint = "进程存活但端口无响应。";
-    } else {
-      daemonStatus = "DOWN";
-    }
-
-    return json({ injected, daemonStatus, statusHint, pid, port, health });
+    return json(await getManagedProxyStatus());
   }
 
   // 读取 settings.json env 块的辅助函数（供 install/start/uninstall 子进程继承）
   const loadSettingsEnv = async (): Promise<Record<string, string>> => {
-    const { existsSync, readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const { homedir } = await import("node:os");
-    const settingsPath = join(homedir(), ".claude", "settings.json");
-    if (!existsSync(settingsPath)) return {};
-    try {
-      const s = JSON.parse(readFileSync(settingsPath, "utf8"));
-      return (s?.env && typeof s.env === "object") ? s.env : {};
-    } catch { return {}; }
+    return readClaudeSettingsEnv();
   };
 
   // 执行安装（dry-run 可选）
@@ -619,7 +552,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     const { join } = await import("node:path");
 
     const scriptPath = join(import.meta.dir, "proxy/cli/install.ts");
-    const args = ["run", scriptPath, "--no-daemon"];
+    const args = ["run", scriptPath];
     if (dryRun) args.push("--dry-run");
 
     // 合并 settings.json env，让安装器能看到用户已有的代理配置
@@ -633,6 +566,12 @@ export async function handleRequest(req: Request): Promise<Response | null> {
       child.stderr?.on("data", (d: Buffer) => (out += d.toString()));
       child.on("close", (code: number) => resolve({ ok: code === 0, output: out }));
     });
+    if (result.ok && !dryRun) {
+      const started = await startManagedProxy();
+      result.output += started.ok
+        ? `\n[managed] proxy 已由 dashboard 托管启动，PID=${started.pid ?? "unknown"}\n`
+        : `\n[managed] proxy 托管启动失败：${started.reason ?? "unknown"}\n`;
+    }
     return json(result);
   }
 
@@ -640,6 +579,8 @@ export async function handleRequest(req: Request): Promise<Response | null> {
   if (path === "/api/proxy/setup/uninstall" && req.method === "POST") {
     const { spawn } = await import("node:child_process");
     const { join } = await import("node:path");
+
+    await stopManagedProxy();
 
     const scriptPath = join(import.meta.dir, "proxy/cli/uninstall.ts");
     const settingsEnv = await loadSettingsEnv();
@@ -655,44 +596,14 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     return json(result);
   }
 
-  // 启动 daemon（仅构建 + 启动，不写 settings）
+  // 启动 dashboard 托管 proxy（仅构建 + 启动，不写 settings）
   if (path === "/api/proxy/setup/start" && req.method === "POST") {
-    const { spawn } = await import("node:child_process");
-    const { join } = await import("node:path");
-    const { existsSync } = await import("node:fs");
-
-    const distPath = join(import.meta.dir, "proxy/dist/start.mjs");
-    if (!existsSync(distPath)) {
-      await new Promise<void>((resolve) => {
-        const b = spawn("bun", ["run", "proxy:build"], { cwd: join(import.meta.dir, "../.."), env: process.env, stdio: "ignore" }) as any;
-        b.on("close", () => resolve());
-      });
-    }
-    // daemon 需要继承 settings.json 的 env（特别是 API_DASHBOARD_PROXY_UPSTREAM）
-    const settingsEnv = await loadSettingsEnv();
-    const childEnv = { ...settingsEnv, ...process.env };
-    const child = spawn("node", [distPath], { detached: true, stdio: "ignore", env: childEnv });
-    child.unref();
-    return json({ ok: true, pid: child.pid });
+    return json(await startManagedProxy());
   }
 
-  // 停止 daemon
+  // 停止 dashboard 托管 proxy；如果发现旧版本遗留进程占用配置端口，也会尝试停止。
   if (path === "/api/proxy/setup/stop" && req.method === "POST") {
-    const { existsSync, readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const { homedir } = await import("node:os");
-    const proxyHome = process.env.API_DASHBOARD_DIR
-      ? join(process.env.API_DASHBOARD_DIR, "proxy")
-      : join(homedir(), ".api-dashboard", "proxy");
-    const pidFile = join(proxyHome, "proxy.pid");
-    if (!existsSync(pidFile)) return json({ ok: false, reason: "pid 文件不存在" });
-    const pid = Number(readFileSync(pidFile, "utf8").trim());
-    try {
-      process.kill(pid, "SIGTERM");
-      return json({ ok: true, pid });
-    } catch (e: any) {
-      return json({ ok: false, reason: e.message });
-    }
+    return json(await stopManagedProxy());
   }
 
   // 运行 preflight 检查（不写盘）

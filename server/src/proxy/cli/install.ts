@@ -1,13 +1,15 @@
 // 安装器 —— 设计文档 §5.1 / §5.3。
-// 流程：preflight → 备份 settings → 迁移 HTTPS_PROXY → 写入 5 个 env key → 起 daemon。
+// 流程：preflight → 备份 settings → 迁移 HTTPS_PROXY → 写入 5 个 env key。
+//
+// 当前阶段 proxy 不再安装为 LaunchAgent/systemd 常驻服务，而是由 session-dashboard server
+// 托管子进程。这样 `bun run dev` 退出时 proxy 会一起退出，避免本地代理在后台残留。
 // --dry-run: 打印 diff，不写盘。
 import { existsSync, mkdirSync, readFileSync, writeFileSync, cpSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { spawn } from "node:child_process";
 import { DEFAULT_LISTEN_PORT, PATHS } from "../config";
 import { runPreflight } from "../preflight";
-import { installDaemon } from "./daemon";
+import { uninstallDaemon } from "./daemon";
 
 const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
 // 我们注入的 5 个 env key（精确匹配，卸载时只删这些）
@@ -117,27 +119,9 @@ export function buildEnvPatch(
   return patch;
 }
 
-// 起 daemon（node start.mjs），返回子进程 PID。
-function startDaemon(port: number, detach: boolean): number {
-  // proxy:build 产物
-  const distPath = join(import.meta.dir, "../dist/start.mjs");
-  if (!existsSync(distPath)) {
-    throw new Error(`daemon 产物不存在: ${distPath}，请先运行 bun run proxy:build`);
-  }
-  const child = spawn("node", [distPath, "--port", String(port)], {
-    detached: detach,
-    stdio: detach ? "ignore" : "inherit",
-    env: { ...process.env },
-  });
-  if (detach) child.unref();
-  log(`daemon 已启动，PID=${child.pid}，port=${port}`);
-  return child.pid!;
-}
-
 async function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
-  const noDaemon = args.includes("--no-daemon");
   const portArg = args.indexOf("--port");
   const port = portArg >= 0 ? Number(args[portArg + 1]) : DEFAULT_LISTEN_PORT;
 
@@ -194,24 +178,11 @@ async function main() {
   writeSettings(newSettings);
   log(`settings.json 已更新（${SETTINGS_PATH}）`);
 
-  // ── 8. 安装平台 daemon 包装并起服务 ─────────────────────────────────────
-  if (!noDaemon) {
-    log("安装并启动 daemon...");
-    try {
-      // A2: 安装 LaunchAgent（macOS）或 systemd unit（Linux）
-      installDaemon(port);
-      // 等一下让 daemon 写 pid/port 文件
-      await new Promise((r) => setTimeout(r, 1200));
-      if (existsSync(PATHS.pidFile)) {
-        log(`daemon PID=${readFileSync(PATHS.pidFile, "utf8").trim()}`);
-      }
-    } catch (err) {
-      console.warn(`[install] daemon 安装失败: ${(err as Error).message}`);
-      console.warn("[install] 可手动运行: bun run proxy:start");
-    }
-  }
+  // 清理旧版本安装过的常驻服务。当前阶段由 dashboard 托管 proxy，不能再让 LaunchAgent/systemd
+  // 在 dashboard 退出后把 proxy 留在后台。
+  uninstallDaemon();
 
-  log("安装完成。重启 Claude Code 后生效。");
+  log("安装完成。proxy 将由 session-dashboard server 托管启动。重启 Claude Code 后 settings.json 生效。");
   log(`卸载: bun run proxy:uninstall`);
   log(`状态: bun run proxy:status`);
   log(`白名单诊断: bun run proxy:whitelist`);

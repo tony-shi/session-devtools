@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { checkDbHealth, initDb } from "./src/db";
+import { startManagedProxyIfConfigured, stopManagedProxyIfRunning } from "./src/proxy/managed";
 import { handleRequest } from "./src/routes";
 import { runSync, startAutoSync } from "./src/sync";
 
@@ -56,9 +57,15 @@ if (health.status === "missing") {
 
 startAutoSync();
 
+// ── Managed proxy ────────────────────────────────────────────────────────────
+// 当前阶段 proxy 跟随 dashboard server 存活，不再作为 LaunchAgent/systemd 常驻服务。
+// 如果 settings.json 已经被安装器注入，server 启动时自动拉起 proxy；Ctrl+C 时一起停。
+
+await startManagedProxyIfConfigured();
+
 // ── HTTP server ───────────────────────────────────────────────────────────────
 
-Bun.serve({
+const server = Bun.serve({
   port: PORT,
   async fetch(req) {
     const url = new URL(req.url);
@@ -89,3 +96,16 @@ Bun.serve({
 });
 
 console.log(`[server] Session Dashboard running at http://localhost:${PORT}`);
+
+let stopping = false;
+async function shutdown(signal: string) {
+  if (stopping) return;
+  stopping = true;
+  console.log(`[server] received ${signal}, shutting down...`);
+  await stopManagedProxyIfRunning();
+  server.stop(true);
+  process.exit(0);
+}
+
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
