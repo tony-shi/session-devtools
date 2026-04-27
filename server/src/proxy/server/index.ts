@@ -320,6 +320,22 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
   req.on("end", () => {
     const reqBody = Buffer.concat(reqChunks);
 
+    // 清理代理专用 headers + transfer-encoding（我们用 content-length 替代，避免 chunked 导致目标 400）
+    const STRIP_HEADERS = new Set(["proxy-connection", "proxy-authorization", "proxy-authenticate", "transfer-encoding"]);
+    const forwardHeaders: Record<string, string | string[]> = {};
+    for (const [k, v] of Object.entries(req.headers)) {
+      if (!STRIP_HEADERS.has(k.toLowerCase()) && v !== undefined) {
+        forwardHeaders[k] = v as string | string[];
+      }
+    }
+    forwardHeaders["host"] = targetUrl.host;
+    // 显式设置 content-length，防止 Node.js 自动改用 chunked transfer-encoding
+    if (reqBody.length > 0) {
+      forwardHeaders["content-length"] = String(reqBody.length);
+    }
+    // 强制 connection:close，兼容不支持 HTTP/1.1 keep-alive 的目标服务（如本地 Python 网关）
+    forwardHeaders["connection"] = "close";
+
     // 转发到目标（直连，不再走 egress 避免循环）
     const fwdReq = http.request(
       {
@@ -327,7 +343,7 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
         port,
         path: targetUrl.pathname + targetUrl.search,
         method: req.method,
-        headers: { ...req.headers, host: targetUrl.host },
+        headers: forwardHeaders,
       },
       (fwdRes) => {
         res.writeHead(fwdRes.statusCode ?? 502, fwdRes.headers as any);
