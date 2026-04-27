@@ -268,31 +268,22 @@ const P9_upstreamReach: CheckFn = async ({ layers }) => {
 
 // ── P11 端口可用性 ────────────────────────────────────────────────────────────
 
-// 判断端口是否被我们自己的 daemon 占着（三种路径之一成立即可）：
+// 判断端口是否被我们自己的 daemon 占着：
 // 1. settings 层的 HTTPS_PROXY 已指向我们（已安装状态）
-// 2. PATHS.pidFile（当前 API_DASHBOARD_DIR 下）的进程存活
-// 3. 默认路径 ~/.api-dashboard/proxy/proxy.pid 的进程存活
-//    （worktree 环境下 daemon 可能写在默认路径而非 worktree 专属路径）
+// 2. PATHS.pidFile 的进程存活（proxy 路径已固定为全局路径，无需多路径查找）
 function isPortOccupiedByUs(layers: EnvLayers, ourPort: number): boolean {
-  // 路径 1：settings 层已写入
   const settingsProxy = layers.settings.HTTPS_PROXY ?? layers.settings.https_proxy;
   const url = parseProxyUrl(settingsProxy);
   if (url?.hostname === "127.0.0.1" && Number(url.port) === ourPort) return true;
 
-  // 路径 2 & 3：检查所有可能的 pid 文件位置
-  const defaultPidFile = join(homedir(), ".api-dashboard", "proxy", "proxy.pid");
-  const pidFiles = [PATHS.pidFile, defaultPidFile].filter((p, i, arr) => arr.indexOf(p) === i); // 去重
-  for (const pidFile of pidFiles) {
-    if (!existsSync(pidFile)) continue;
+  if (existsSync(PATHS.pidFile)) {
     try {
-      const pid = Number(readFileSync(pidFile, "utf8").trim());
+      const pid = Number(readFileSync(PATHS.pidFile, "utf8").trim());
       if (pid > 0) {
-        process.kill(pid, 0); // 不抛错 = 进程存活
+        process.kill(pid, 0);
         return true;
       }
-    } catch {
-      // 进程不存在，pid 文件是残留
-    }
+    } catch {}
   }
   return false;
 }

@@ -2,23 +2,27 @@
 // 全部路径与端口都从此处读，禁止散落在其它文件里硬编码。
 //
 // 命名规范：所有 env 变量与项目本体共享 API_DASHBOARD_ 前缀（见 .env.example、AGENTS.md §1）。
+//
+// 重要：proxy 是机器级全局基础设施（CA 证书、pid 文件、traffic.jsonl、settings.json 注入），
+// 路径固定为 ~/.api-dashboard/proxy，不随 worktree 的 API_DASHBOARD_DIR 变化。
+// 原因：不可能并发开发多个 proxy 实例；路径随 worktree 变只会造成路径不一致的 bug。
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
-
-// 与项目本体共享一份 home 目录；默认 ~/.api-dashboard/，可被 env 覆盖。
-const projectHome = process.env.API_DASHBOARD_DIR
-  ? expandHome(process.env.API_DASHBOARD_DIR)
-  : join(homedir(), ".api-dashboard");
 
 function expandHome(p: string): string {
   if (p.startsWith("~/") || p === "~") return join(homedir(), p.slice(1));
   return p;
 }
 
-export const PROJECT_HOME = projectHome;
-export const PROXY_HOME = join(projectHome, "proxy");
-export const BACKUPS_HOME = join(projectHome, "backups");
+// sessions DB 等项目数据随 worktree 隔离，proxy 数据固定在全局路径。
+export const PROJECT_HOME = process.env.API_DASHBOARD_DIR
+  ? expandHome(process.env.API_DASHBOARD_DIR)
+  : join(homedir(), ".api-dashboard");
+
+// proxy 固定在 ~/.api-dashboard/proxy，不受 API_DASHBOARD_DIR 影响
+export const PROXY_HOME = join(homedir(), ".api-dashboard", "proxy");
+export const BACKUPS_HOME = join(homedir(), ".api-dashboard", "backups");
 
 export const PATHS = {
   projectHome: PROJECT_HOME,
