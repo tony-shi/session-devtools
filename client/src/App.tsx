@@ -5,6 +5,7 @@ import { Header } from "./components/Header";
 import { SessionList } from "./components/SessionList";
 import { SummaryCards } from "./components/SummaryCards";
 import { ProxyTraffic } from "./components/ProxyTraffic";
+import { ProxySetup } from "./components/ProxySetup";
 import type { DigestData, SessionsResponse, SummaryData } from "./types";
 
 function getInitialDate(): string {
@@ -13,8 +14,7 @@ function getInitialDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-// B2.3: 页面 tab 状态（sessions / proxy）
-type Tab = "sessions" | "proxy";
+type Tab = "sessions" | "proxy" | "setup";
 
 export default function App() {
   const [date, setDate] = useState(getInitialDate);
@@ -61,23 +61,27 @@ export default function App() {
       {/* Tab 切换 */}
       <div style={{ maxWidth: 960, margin: "0 auto", padding: "12px 24px 0" }}>
         <div style={{ display: "flex", gap: 0, borderBottom: "2px solid #e5e5e5" }}>
-          {(["sessions", "proxy"] as Tab[]).map((t) => (
+          {([
+            { id: "sessions", label: "会话" },
+            { id: "proxy",    label: "代理流量" },
+            { id: "setup",    label: "代理管理" },
+          ] as { id: Tab; label: string }[]).map(({ id, label }) => (
             <button
-              key={t}
-              onClick={() => setTab(t)}
+              key={id}
+              onClick={() => setTab(id)}
               style={{
                 padding: "8px 20px",
                 border: "none",
                 background: "none",
                 cursor: "pointer",
                 fontSize: 14,
-                fontWeight: tab === t ? 600 : 400,
-                color: tab === t ? "#007aff" : "#666",
-                borderBottom: tab === t ? "2px solid #007aff" : "2px solid transparent",
+                fontWeight: tab === id ? 600 : 400,
+                color: tab === id ? "#007aff" : "#666",
+                borderBottom: tab === id ? "2px solid #007aff" : "2px solid transparent",
                 marginBottom: -2,
               }}
             >
-              {t === "sessions" ? "会话" : "代理流量"}
+              {label}
             </button>
           ))}
         </div>
@@ -94,8 +98,10 @@ export default function App() {
             />
             <SessionList data={sessions} loading={sessionsLoading} date={date} />
           </>
-        ) : (
+        ) : tab === "proxy" ? (
           <ProxyTraffic />
+        ) : (
+          <ProxySetup />
         )}
       </main>
     </div>

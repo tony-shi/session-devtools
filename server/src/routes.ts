@@ -525,5 +525,138 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     return json({ ok: true, hosts: userHosts });
   }
 
+  // ── Proxy 安装管理 API ────────────────────────────────────────────────────────
+
+  // 查询当前安装状态（preflight + daemon health + settings 检测）
+  if (path === "/api/proxy/setup/status" && req.method === "GET") {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const http = await import("node:http");
+
+    const proxyHome = process.env.API_DASHBOARD_DIR
+      ? join(process.env.API_DASHBOARD_DIR, "proxy")
+      : join(homedir(), ".api-dashboard", "proxy");
+    const pidFile = join(proxyHome, "proxy.pid");
+    const portFile = join(proxyHome, "proxy.port");
+    const settingsPath = join(homedir(), ".claude", "settings.json");
+
+    // 读 pid / port
+    let pid: number | null = null;
+    let port: number | null = null;
+    if (existsSync(pidFile)) { const n = Number(readFileSync(pidFile, "utf8").trim()); if (n > 0) pid = n; }
+    if (existsSync(portFile)) { const n = Number(readFileSync(portFile, "utf8").trim()); if (n > 0) port = n; }
+
+    // 检查进程存活
+    let pidAlive = false;
+    if (pid) { try { process.kill(pid, 0); pidAlive = true; } catch {} }
+
+    // ping /_health
+    const health = await new Promise<Record<string, unknown> | null>((resolve) => {
+      if (!port) return resolve(null);
+      const t = setTimeout(() => { req2.destroy(); resolve(null); }, 2000);
+      const req2 = (http as any).default.get(`http://127.0.0.1:${port}/_health`, (res: any) => {
+        let buf = ""; res.on("data", (c: any) => (buf += c));
+        res.on("end", () => { clearTimeout(t); try { resolve(JSON.parse(buf)); } catch { resolve(null); } });
+      });
+      req2.on("error", () => { clearTimeout(t); resolve(null); });
+    });
+
+    // 读 settings.json 判断是否已注入
+    let injected = false;
+    if (existsSync(settingsPath)) {
+      try {
+        const s = JSON.parse(readFileSync(settingsPath, "utf8"));
+        injected = !!(s?.env?.NODE_EXTRA_CA_CERTS);
+      } catch {}
+    }
+
+    const daemonStatus = health?.ok ? "OK" : pidAlive ? "DEGRADED" : "DOWN";
+    return json({ injected, daemonStatus, pid, port, health });
+  }
+
+  // 执行安装（dry-run 可选）
+  if (path === "/api/proxy/setup/install" && req.method === "POST") {
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+    const dryRun = body.dryRun === true;
+    const { spawn } = await import("node:child_process");
+    const { join } = await import("node:path");
+
+    const scriptPath = join(import.meta.dir, "proxy/cli/install.ts");
+    const args = ["run", scriptPath, "--no-daemon"];
+    if (dryRun) args.push("--dry-run");
+
+    const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
+      const child = spawn("bun", args, { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+      let out = "";
+      child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
+      child.stderr?.on("data", (d: Buffer) => (out += d.toString()));
+      child.on("close", (code) => resolve({ ok: code === 0, output: out }));
+    });
+    return json(result);
+  }
+
+  // 执行卸载
+  if (path === "/api/proxy/setup/uninstall" && req.method === "POST") {
+    const { spawn } = await import("node:child_process");
+    const { join } = await import("node:path");
+
+    const scriptPath = join(import.meta.dir, "proxy/cli/uninstall.ts");
+    const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
+      const child = spawn("bun", ["run", scriptPath], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+      let out = "";
+      child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
+      child.stderr?.on("data", (d: Buffer) => (out += d.toString()));
+      child.on("close", (code) => resolve({ ok: code === 0, output: out }));
+    });
+    return json(result);
+  }
+
+  // 启动 daemon（仅构建 + 启动，不写 settings）
+  if (path === "/api/proxy/setup/start" && req.method === "POST") {
+    const { spawn } = await import("node:child_process");
+    const { join } = await import("node:path");
+    const { existsSync } = await import("node:fs");
+
+    const distPath = join(import.meta.dir, "proxy/dist/start.mjs");
+    if (!existsSync(distPath)) {
+      // 先 build
+      await new Promise<void>((resolve) => {
+        const b = spawn("bun", ["run", "proxy:build"], { cwd: join(import.meta.dir, "../.."), env: process.env, stdio: "ignore" });
+        b.on("close", () => resolve());
+      });
+    }
+    const child = spawn("node", [distPath], { detached: true, stdio: "ignore", env: process.env });
+    child.unref();
+    return json({ ok: true, pid: child.pid });
+  }
+
+  // 停止 daemon
+  if (path === "/api/proxy/setup/stop" && req.method === "POST") {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const proxyHome = process.env.API_DASHBOARD_DIR
+      ? join(process.env.API_DASHBOARD_DIR, "proxy")
+      : join(homedir(), ".api-dashboard", "proxy");
+    const pidFile = join(proxyHome, "proxy.pid");
+    if (!existsSync(pidFile)) return json({ ok: false, reason: "pid 文件不存在" });
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    try {
+      process.kill(pid, "SIGTERM");
+      return json({ ok: true, pid });
+    } catch (e: any) {
+      return json({ ok: false, reason: e.message });
+    }
+  }
+
+  // 运行 preflight 检查（不写盘）
+  if (path === "/api/proxy/setup/preflight" && req.method === "GET") {
+    const { runPreflight } = await import("./proxy/preflight");
+    const portArg = Number(q.get("port") ?? process.env.API_DASHBOARD_PROXY_PORT ?? 38421);
+    const report = await runPreflight({ ourPort: portArg });
+    return json(report);
+  }
+
   return null; // not handled
 }
