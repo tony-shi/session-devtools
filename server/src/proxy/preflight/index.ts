@@ -49,14 +49,16 @@ const P3_nodeExtraCa: CheckFn = ({ env }) => {
   );
 };
 
+// A5.1: ANTHROPIC_BASE_URL 从 BLOCK 改为 OK + 提示"将一并 MITM"。
+// 安装器会在启动时把该 hostname 并入 MITM 白名单（L0 层），无需用户手动 unset。
 const P4_baseUrl: CheckFn = ({ env }) => {
   if (!env.ANTHROPIC_BASE_URL) return ok("P4", "ANTHROPIC_BASE_URL", "未设置");
-  return block(
-    "P4",
-    "ANTHROPIC_BASE_URL",
-    `已设置为 ${env.ANTHROPIC_BASE_URL}`,
-    "会让 Claude Code 跳过 api.anthropic.com，绕过我们的白名单。请先 unset。",
-  );
+  try {
+    const hostname = new URL(env.ANTHROPIC_BASE_URL).hostname;
+    return ok("P4", "ANTHROPIC_BASE_URL", `已设置为 ${env.ANTHROPIC_BASE_URL}，将一并 MITM ${hostname}`);
+  } catch {
+    return warn("P4", "ANTHROPIC_BASE_URL", `已设置但无法解析: ${env.ANTHROPIC_BASE_URL}`, "格式应为 https://hostname[:port]，自定义 host 无法自动并入白名单。");
+  }
 };
 
 const P5_authToken: CheckFn = ({ env }) => {

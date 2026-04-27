@@ -199,3 +199,64 @@ export function stopAutoSync(): void {
     _syncTimer = null;
   }
 }
+
+// ── B2.1: Proxy traffic.jsonl 增量同步 ───────────────────────────────────────
+
+export async function syncProxyTraffic(): Promise<{ inserted: number; errors: number }> {
+  const { parseTrafficFile } = await import("./parsers/proxy-traffic");
+  const { initProxySchema, serializeWrite, getDb } = await import("./db");
+  const { join } = await import("node:path");
+  const { homedir } = await import("node:os");
+
+  const proxyHome = process.env.API_DASHBOARD_DIR
+    ? join(process.env.API_DASHBOARD_DIR, "proxy")
+    : join(homedir(), ".api-dashboard", "proxy");
+  const trafficLog = join(proxyHome, "traffic.jsonl");
+
+  const db = getDb();
+  initProxySchema();
+
+  // 读取上次同步到的行号
+  const stateRow = db
+    .query<{ last_line: number }, [string]>(
+      "SELECT last_line FROM proxy_sync_state WHERE source_file = ?",
+    )
+    .get(trafficLog);
+  const lastLine = stateRow?.last_line ?? 0;
+
+  const records = await parseTrafficFile(trafficLog);
+  const newRecords = records.slice(lastLine);
+  if (newRecords.length === 0) return { inserted: 0, errors: 0 };
+
+  let inserted = 0, errors = 0;
+  await serializeWrite(() => {
+    const insert = db.prepare(`
+      INSERT INTO proxy_requests
+        (ts, sni, method, url, status, bytes_in, bytes_out, duration_ms,
+         req_headers, res_headers, req_body, res_body, sse_event_count, is_stream)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    db.transaction(() => {
+      for (const r of newRecords) {
+        try {
+          insert.run(
+            r.ts, r.sni, r.method, r.url, r.status,
+            r.bytes_in, r.bytes_out, r.duration_ms,
+            r.req_headers, r.res_headers, r.req_body, r.res_body,
+            r.sse_event_count, r.is_stream ? 1 : 0,
+          );
+          inserted++;
+        } catch {
+          errors++;
+        }
+      }
+      // 更新同步状态
+      db.prepare(`
+        INSERT OR REPLACE INTO proxy_sync_state (source_file, last_line, synced_at)
+        VALUES (?, ?, ?)
+      `).run(trafficLog, lastLine + inserted, new Date().toISOString());
+    })();
+  });
+
+  return { inserted, errors };
+}

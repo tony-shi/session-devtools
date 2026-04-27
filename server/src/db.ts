@@ -155,6 +155,41 @@ export function initDb(): void {
   `);
 
   initDigestSchema();
+  initProxySchema();
+}
+
+// B2.2: proxy_requests 表
+export function initProxySchema(): void {
+  const db = getDb();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS proxy_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      sni TEXT NOT NULL,
+      method TEXT NOT NULL DEFAULT 'GET',
+      url TEXT NOT NULL,
+      status INTEGER,
+      bytes_in INTEGER DEFAULT 0,
+      bytes_out INTEGER DEFAULT 0,
+      duration_ms INTEGER,
+      req_headers TEXT DEFAULT '{}',
+      res_headers TEXT DEFAULT '{}',
+      req_body TEXT DEFAULT '',
+      res_body TEXT DEFAULT '',
+      sse_event_count INTEGER DEFAULT 0,
+      is_stream INTEGER DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_proxy_ts ON proxy_requests(ts);
+    CREATE INDEX IF NOT EXISTS idx_proxy_sni ON proxy_requests(sni);
+    CREATE INDEX IF NOT EXISTS idx_proxy_status ON proxy_requests(status);
+
+    CREATE TABLE IF NOT EXISTS proxy_sync_state (
+      source_file TEXT PRIMARY KEY,
+      last_line INTEGER DEFAULT 0,
+      synced_at TEXT
+    );
+  `);
 }
 
 export function initDigestSchema(): void {
