@@ -222,9 +222,14 @@ export async function syncProxyTraffic(): Promise<{ inserted: number; errors: nu
       "SELECT last_line FROM proxy_sync_state WHERE source_file = ?",
     )
     .get(trafficLog);
-  const lastLine = stateRow?.last_line ?? 0;
+  const storedLine = stateRow?.last_line ?? 0;
 
   const records = await parseTrafficFile(trafficLog);
+
+  // P2 修复：maybeRotate() 可能把旧文件改名并新建空文件。
+  // 若当前文件总行数 < storedLine，说明发生了轮转，从头同步。
+  const lastLine = records.length < storedLine ? 0 : storedLine;
+
   const newRecords = records.slice(lastLine);
   if (newRecords.length === 0) return { inserted: 0, errors: 0 };
 

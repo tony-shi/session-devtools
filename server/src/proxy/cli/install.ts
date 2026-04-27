@@ -215,7 +215,10 @@ async function main() {
   log(`白名单诊断: bun run proxy:whitelist`);
 }
 
-main().catch((err) => {
-  console.error("[install] 致命错误:", err);
-  process.exit(1);
-});
+// import.meta.main 在 bun test 下为 false，保证测试 import buildEnvPatch 时不触发真实安装。
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error("[install] 致命错误:", err);
+    process.exit(1);
+  });
+}

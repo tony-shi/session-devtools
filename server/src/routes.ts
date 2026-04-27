@@ -451,11 +451,14 @@ export async function handleRequest(req: Request): Promise<Response | null> {
           } catch { clearInterval(heartbeat); }
         }, 15000);
 
-        // 监听新 proxy 流量（轮询 DB，每 2s 一次）
+        // 监听新 proxy 流量（轮询：先同步 JSONL → 再查 DB，每 2s 一次）
         let lastId = 0;
         const poll = setInterval(async () => {
           if (closed) { clearInterval(poll); return; }
           try {
+            // P2 修复：每次 poll 先把 traffic.jsonl 的新行同步进 DB，再查询
+            const { syncProxyTraffic } = await import("./sync");
+            await syncProxyTraffic();
             const db = getDb();
             const rows = db.query(
               "SELECT * FROM proxy_requests WHERE id > ? ORDER BY id ASC LIMIT 20",
