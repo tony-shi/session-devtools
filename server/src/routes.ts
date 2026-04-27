@@ -6,6 +6,7 @@ import {
   startManagedProxy,
   stopManagedProxy,
 } from "./proxy/managed";
+import { PATHS as PROXY_PATHS } from "./proxy/config";
 import { runSync, runSyncForDate } from "./sync";
 
 // Track dates currently being generated to avoid duplicate LLM calls
@@ -500,16 +501,10 @@ export async function handleRequest(req: Request): Promise<Response | null> {
   // B5.1: 白名单管理 API（供 UI Capture Targets 页使用）
   if (path === "/api/proxy/whitelist" && req.method === "GET") {
     const { existsSync, readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const { homedir } = await import("node:os");
-    const proxyHome = process.env.API_DASHBOARD_DIR
-      ? join(process.env.API_DASHBOARD_DIR, "proxy")
-      : join(homedir(), ".api-dashboard", "proxy");
-    const hostsFile = join(proxyHome, "mitm-hosts.json");
     let hosts: string[] = [];
-    if (existsSync(hostsFile)) {
+    if (existsSync(PROXY_PATHS.mitmHostsFile)) {
       try {
-        const raw = JSON.parse(readFileSync(hostsFile, "utf8"));
+        const raw = JSON.parse(readFileSync(PROXY_PATHS.mitmHostsFile, "utf8"));
         if (Array.isArray(raw.hosts)) hosts = raw.hosts;
       } catch {}
     }
@@ -519,16 +514,10 @@ export async function handleRequest(req: Request): Promise<Response | null> {
   if (path === "/api/proxy/whitelist" && (req.method === "POST" || req.method === "PUT")) {
     const body = await req.json().catch(() => null);
     if (!body || !Array.isArray(body.hosts)) return json({ error: "invalid body" }, 400);
-    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const { homedir } = await import("node:os");
-    const proxyHome = process.env.API_DASHBOARD_DIR
-      ? join(process.env.API_DASHBOARD_DIR, "proxy")
-      : join(homedir(), ".api-dashboard", "proxy");
-    mkdirSync(proxyHome, { recursive: true, mode: 0o700 });
-    const hostsFile = join(proxyHome, "mitm-hosts.json");
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    mkdirSync(PROXY_PATHS.home, { recursive: true, mode: 0o700 });
     const userHosts = (body.hosts as string[]).filter((h) => h !== "api.anthropic.com");
-    writeFileSync(hostsFile, JSON.stringify({ hosts: userHosts }, null, 2) + "\n");
+    writeFileSync(PROXY_PATHS.mitmHostsFile, JSON.stringify({ hosts: userHosts }, null, 2) + "\n");
     return json({ ok: true, hosts: userHosts });
   }
 

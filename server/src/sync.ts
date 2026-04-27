@@ -205,13 +205,12 @@ export function stopAutoSync(): void {
 export async function syncProxyTraffic(): Promise<{ inserted: number; errors: number }> {
   const { parseTrafficFile } = await import("./parsers/proxy-traffic");
   const { initProxySchema, serializeWrite, getDb } = await import("./db");
-  const { join } = await import("node:path");
-  const { homedir } = await import("node:os");
+  const { PATHS: PROXY_PATHS } = await import("./proxy/config");
 
-  const proxyHome = process.env.API_DASHBOARD_DIR
-    ? join(process.env.API_DASHBOARD_DIR, "proxy")
-    : join(homedir(), ".api-dashboard", "proxy");
-  const trafficLog = join(proxyHome, "traffic.jsonl");
+  // proxy 是机器级全局设施，traffic.jsonl 固定在 ~/.api-dashboard/proxy。
+  // 这里不能跟随 worktree 的 API_DASHBOARD_DIR，否则 UI 会读取旧 worktree 日志，
+  // 与当前 dashboard 托管的运行中 proxy 脱节。
+  const trafficLog = PROXY_PATHS.trafficLog;
 
   const db = getDb();
   initProxySchema();

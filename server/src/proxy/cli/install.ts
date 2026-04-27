@@ -51,6 +51,32 @@ function printDiff(before: Record<string, unknown>, after: Record<string, unknow
   }
 }
 
+function collectCaptureHosts(existingEnv: Record<string, string>): Set<string> {
+  const hosts = new Set<string>(["api.anthropic.com"]);
+  const baseUrl = existingEnv.ANTHROPIC_BASE_URL;
+  if (baseUrl) {
+    try {
+      const parsed = new URL(baseUrl);
+      if (parsed.hostname) hosts.add(parsed.hostname.toLowerCase());
+    } catch {
+      // 非法 base URL 由 preflight 报告；安装器这里不额外失败。
+    }
+  }
+  return hosts;
+}
+
+function noProxyPatternMatchesHost(pattern: string, host: string): boolean {
+  const normalized = pattern.toLowerCase().trim();
+  if (!normalized) return false;
+  if (normalized === "*") return true;
+  const withoutPort = normalized.includes(":") ? normalized.split(":")[0]! : normalized;
+  if (withoutPort.startsWith(".")) {
+    const suffix = withoutPort.slice(1);
+    return host === suffix || host.endsWith(withoutPort);
+  }
+  return host === withoutPort;
+}
+
 // 读取 settings.json，不存在时返回空对象。
 function readSettings(): Record<string, unknown> {
   if (!existsSync(SETTINGS_PATH)) return {};
@@ -105,11 +131,16 @@ export function buildEnvPatch(
   patch.HTTPS_PROXY = ourProxy;
   patch.HTTP_PROXY = ourProxy;
 
-  // 合并 NO_PROXY：保留用户已有的值，追加我们的最小集
+  // 合并 NO_PROXY：保留用户已有的值，追加我们的最小集。
+  // 注意：被 MITM 的目标 host 不能出现在 NO_PROXY 中，否则 Claude Code 会绕过我们直连。
+  // 典型场景是 claude-free / 公司网关写在 ANTHROPIC_BASE_URL，同时旧配置里有
+  // NO_PROXY=internal-llm.example，结果请求直接打到网关，traffic.jsonl 里看不到。
+  const captureHosts = collectCaptureHosts(existingEnv);
   const userNoProxy = (existingEnv.NO_PROXY ?? existingEnv.no_proxy ?? "")
     .split(",")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((entry) => ![...captureHosts].some((host) => noProxyPatternMatchesHost(entry, host)));
   const mergedNoProxy = [...new Set([...userNoProxy, ...OUR_NO_PROXY_MIN])];
   patch.NO_PROXY = mergedNoProxy.join(",");
 

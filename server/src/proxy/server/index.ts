@@ -93,7 +93,7 @@ export async function startProxy(opts: StartOptions): Promise<{ close: () => Pro
     const wl = getMitmWhitelist();
     if (wl.has(host) || wl.has(`${host}:${port}`)) {
       try {
-        await mitmIntercept(clientSock, head, host, httpServer);
+        await mitmIntercept(clientSock, head, host, port, httpServer);
       } catch (err) {
         debug("mitm intercept fail:", (err as Error).message);
         clientSock.destroy();
@@ -144,7 +144,7 @@ function cleanupPidFiles(): void {
   } catch {}
 }
 
-async function mitmIntercept(clientSock: any, head: Buffer, host: string, httpServer: http.Server): Promise<void> {
+async function mitmIntercept(clientSock: any, head: Buffer, host: string, port: number, httpServer: http.Server): Promise<void> {
   const { cert, key } = await issueLeaf(host);
   const ctx = tls.createSecureContext({ cert, key });
   // CONNECT ack 之后客户端通常立刻发 TLS Client Hello；如果在主入口 'connect' 事件给我们的 head 里已经有，先回灌。
@@ -155,6 +155,7 @@ async function mitmIntercept(clientSock: any, head: Buffer, host: string, httpSe
     ALPNProtocols: ["http/1.1"],
   } as any);
   (tlsSock as any)._mitmHost = host;
+  (tlsSock as any)._mitmPort = port;
   tlsSock.on("error", (e) => debug("tlsSock err for", host, ":", e.message));
   tlsSock.once("secure", () => httpServer.emit("connection", tlsSock));
 }
@@ -173,9 +174,13 @@ async function handleTransparentTunnel(client: net.Socket, host: string, port: n
 function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   const sock = req.socket as any;
   const host = (sock?._mitmHost as string | undefined) || (req.headers.host?.split(":")[0] ?? "");
-  const port = 443;
+  // CONNECT 目标端口是上游真实端口。这里不能写死 443：
+  // 自定义网关常见形态是 https://host:8742，若丢失端口会把已解密请求发到 host:443，
+  // 网关通常返回 openresty 400，UI 看起来像"已拦截但请求坏了"。
+  const port = Number(sock?._mitmPort ?? 443);
   const sni = host;
   const startedAt = Date.now();
+  const origin = port === 443 ? `https://${host}` : `https://${host}:${port}`;
 
   const reqHeaders: Record<string, string> = {};
   for (let i = 0; i < req.rawHeaders.length; i += 2) {
@@ -255,7 +260,7 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
                 ts: new Date().toISOString(),
                 kind: "sse_event",
                 sni,
-                url: `https://${host}${req.url}`,
+                url: `${origin}${req.url}`,
                 sseEventType: eventType,
                 sseData: data,
                 sseIndex: idx,
@@ -273,7 +278,7 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
             kind: "response",
             sni,
             method: req.method,
-            url: `https://${host}${req.url}`,
+            url: `${origin}${req.url}`,
             status: proxyRes.statusCode,
             reqHeaders,
             resHeaders,
@@ -298,7 +303,7 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
         kind: "event",
         msg: "mitm_upstream_error",
         sni,
-        url: `https://${host}${req.url}`,
+        url: `${origin}${req.url}`,
         meta: { error: err.message, code },
       });
     });
