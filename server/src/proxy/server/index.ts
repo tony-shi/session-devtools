@@ -287,7 +287,7 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
                 sseIndex: idx,
               });
             }, sseState);
-          } else if (resBytes < 2 * 1024 * 1024) {
+          } else {
             resChunks.push(c);
           }
         });
@@ -432,7 +432,7 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
                 sseIndex: idx,
               });
             }, sseState);
-          } else if (!isStream && resBytes < 2 * 1024 * 1024) {
+          } else if (!isStream) {
             resChunks.push(c);
           }
         });
@@ -480,7 +480,7 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
 
 function safeBody(buf: Buffer): string {
   if (buf.length === 0) return "";
-  if (buf.length > 256 * 1024) return `[truncated ${buf.length} bytes]`;
+  // 二进制检测：取前 64 字节采样，含控制字符则标记为 binary（不截断，记录真实大小）
   const sample = buf.subarray(0, Math.min(buf.length, 64)).toString("utf8");
   // eslint-disable-next-line no-control-regex
   if (/[\x00-\x08\x0E-\x1F]/.test(sample)) return `[binary ${buf.length} bytes]`;
