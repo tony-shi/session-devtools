@@ -1,5 +1,5 @@
 // 代理流量列表 + 单请求详情（lazy load）。
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const T = {
   title:          { zh: "代理流量", en: "Proxy Traffic" },
@@ -68,6 +68,7 @@ function classifyRequest(url: string, sni: string): Category {
 interface ProxyRequest {
   id: number;
   ts: string;
+  started_at?: string;
   sni: string;
   method: string;
   url: string;
@@ -106,6 +107,22 @@ function pathFromUrl(url: string): string {
   try { return new URL(url).pathname; } catch { return url; }
 }
 
+function requestStartedAt(req: ProxyRequest): string {
+  return req.started_at || req.ts;
+}
+
+function mergeRequests(prev: ProxyRequest[], incoming: ProxyRequest[]): ProxyRequest[] {
+  const byId = new Map<number, ProxyRequest>();
+  for (const req of prev) byId.set(req.id, req);
+  for (const req of incoming) byId.set(req.id, req);
+  return [...byId.values()]
+    .sort((a, b) => {
+      const byStartedAt = requestStartedAt(b).localeCompare(requestStartedAt(a));
+      return byStartedAt !== 0 ? byStartedAt : b.id - a.id;
+    })
+    .slice(0, 500);
+}
+
 // ── 懒加载消息体 ──────────────────────────────────────────────────────────────
 
 function LazyBody({ value, lang }: { value: string; lang: Lang }) {
@@ -133,7 +150,7 @@ function LazyBody({ value, lang }: { value: string; lang: Lang }) {
   }
 
   let pretty = value;
-  try { pretty = JSON.stringify(JSON.parse(value), null, 2); } catch {}
+  try { pretty = JSON.stringify(JSON.parse(value), null, 2); } catch { void 0; }
 
   return (
     <div>
@@ -185,7 +202,7 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
             </div>
             <div style={{ fontSize: 12, color: "#666", wordBreak: "break-all" }}>{req.url}</div>
             <div style={{ fontSize: 11, color: "#999" }}>
-              {req.ts} · {req.duration_ms != null ? `${req.duration_ms}ms` : "—"} · {formatBytes(req.bytes_out || req.bytes_in)}
+              {requestStartedAt(req)} · {req.duration_ms != null ? `${req.duration_ms}ms` : "—"} · {formatBytes(req.bytes_out || req.bytes_in)}
               {req.sse_event_count > 0 && ` · ${req.sse_event_count} SSE events`}
             </div>
           </div>
@@ -261,7 +278,7 @@ function CaptureTargets({ lang, onSaved }: { lang: Lang; onSaved: () => void }) 
         body: JSON.stringify({ hosts }),
       });
       setSaved(true); setTimeout(() => setSaved(false), 3000); onSaved();
-    } catch {}
+    } catch { void 0; }
     setSaving(false);
   };
 
@@ -371,35 +388,59 @@ export function ProxyTraffic() {
   const [live, setLive] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [catFilter, setCatFilter] = useState<Category | "all">("all");
+  const [trafficReady, setTrafficReady] = useState(false);
   const evtRef = useRef<EventSource | null>(null);
+  const streamCursorRef = useRef<{ startedAt: string; id: number }>({ startedAt: "", id: 0 });
 
   useEffect(() => {
     fetch("/api/proxy/requests?limit=100")
       .then((r) => r.json())
-      .then((d) => setRequests(d.requests ?? []))
-      .catch(() => {});
+      .then((d) => {
+        const initial = (d.requests ?? []) as ProxyRequest[];
+        setRequests(initial);
+        const newest = initial[0];
+        const maxId = initial.reduce((max, req) => Math.max(max, req.id), 0);
+        streamCursorRef.current = newest
+          ? { startedAt: requestStartedAt(newest), id: maxId }
+          : { startedAt: new Date().toISOString(), id: 0 };
+        setTrafficReady(true);
+      })
+      .catch(() => setTrafficReady(true));
   }, []);
 
   useEffect(() => {
+    if (!trafficReady) return;
     if (!live) { evtRef.current?.close(); evtRef.current = null; return; }
-    const es = new EventSource("/api/proxy/stream");
+    const cursor = streamCursorRef.current;
+    const params = new URLSearchParams();
+    if (cursor.id) params.set("since_id", String(cursor.id));
+    const streamUrl = `/api/proxy/stream${params.size > 0 ? `?${params.toString()}` : ""}`;
+    const es = new EventSource(streamUrl);
     evtRef.current = es;
     es.onmessage = (e) => {
       try {
         const rec: ProxyRequest = JSON.parse(e.data);
-        setRequests((prev) => [rec, ...prev].slice(0, 500));
-      } catch {}
+        const current = streamCursorRef.current;
+        if (rec.id > current.id) {
+          streamCursorRef.current = { startedAt: requestStartedAt(rec), id: rec.id };
+        }
+        setRequests((prev) => mergeRequests(prev, [rec]));
+      } catch { void 0; }
     };
     return () => { es.close(); evtRef.current = null; };
-  }, [live]);
+  }, [live, trafficReady]);
 
   const handleSync = async () => {
     setSyncing(true);
     try {
       await fetch("/api/proxy/sync", { method: "POST" });
       const d = await fetch("/api/proxy/requests?limit=100").then((r) => r.json());
-      setRequests(d.requests ?? []);
-    } catch {}
+      const next = (d.requests ?? []) as ProxyRequest[];
+      setRequests(next);
+      const newest = next[0];
+      const maxId = next.reduce((max, req) => Math.max(max, req.id), 0);
+      if (newest) streamCursorRef.current = { startedAt: requestStartedAt(newest), id: maxId };
+    } catch { void 0; }
     setSyncing(false);
   };
 

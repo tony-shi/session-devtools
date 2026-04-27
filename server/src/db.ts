@@ -165,6 +165,7 @@ export function initProxySchema(): void {
     CREATE TABLE IF NOT EXISTS proxy_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       ts TEXT NOT NULL,
+      started_at TEXT,
       sni TEXT NOT NULL,
       method TEXT NOT NULL DEFAULT 'GET',
       url TEXT NOT NULL,
@@ -190,6 +191,15 @@ export function initProxySchema(): void {
       synced_at TEXT
     );
   `);
+
+  const columns = db.query<{ name: string }, []>("PRAGMA table_info(proxy_requests)").all();
+  if (!columns.some((c) => c.name === "started_at")) {
+    // started_at 是请求发起时间，用于 UI 排序和实时流增量游标。
+    // ts 保留为日志记录时间兼容旧数据；历史行迁移时用 ts 回填 started_at。
+    db.exec("ALTER TABLE proxy_requests ADD COLUMN started_at TEXT");
+    db.exec("UPDATE proxy_requests SET started_at = ts WHERE started_at IS NULL");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_started ON proxy_requests(started_at)");
 }
 
 export function initDigestSchema(): void {

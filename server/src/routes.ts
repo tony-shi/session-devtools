@@ -425,7 +425,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
       `SELECT COUNT(*) as cnt FROM proxy_requests ${where}`,
     ).get(...params) as any)?.cnt ?? 0;
     const rows = db.query(
-      `SELECT * FROM proxy_requests ${where} ORDER BY ts DESC LIMIT ? OFFSET ?`,
+      `SELECT * FROM proxy_requests ${where} ORDER BY COALESCE(started_at, ts) DESC, id DESC LIMIT ? OFFSET ?`,
     ).all(...params, limit, offset) as any[];
 
     return json({ requests: rows, total, limit, offset });
@@ -459,8 +459,10 @@ export async function handleRequest(req: Request): Promise<Response | null> {
           } catch { clearInterval(heartbeat); }
         }, 15000);
 
-        // 监听新 proxy 流量（轮询：先同步 JSONL → 再查 DB，每 2s 一次）
-        let lastId = 0;
+        // 监听新 proxy 流量（轮询：先同步 JSONL → 再查 DB，每 2s 一次）。
+        // 增量游标用插入 id，避免漏掉"早发起、晚完成"的长请求；
+        // 返回顺序仍按 started_at + id 稳定排列，前端展示也按请求发起时间处理。
+        let lastId = Number(q.get("since_id") ?? "0");
         const poll = setInterval(async () => {
           if (closed) { clearInterval(poll); return; }
           try {
@@ -469,7 +471,10 @@ export async function handleRequest(req: Request): Promise<Response | null> {
             await syncProxyTraffic();
             const db = getDb();
             const rows = db.query(
-              "SELECT * FROM proxy_requests WHERE id > ? ORDER BY id ASC LIMIT 20",
+              `SELECT * FROM proxy_requests
+               WHERE id > ?
+               ORDER BY COALESCE(started_at, ts) ASC, id ASC
+               LIMIT 20`,
             ).all(lastId) as any[];
             for (const row of rows) {
               lastId = row.id;

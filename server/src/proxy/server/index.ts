@@ -275,6 +275,7 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
           recordUpstreamSuccess();
           writeTraffic({
             ts: new Date(startedAt).toISOString(),
+            startedAt: new Date(startedAt).toISOString(),
             kind: "response",
             sni,
             method: req.method,
@@ -403,6 +404,7 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
           if (inWhitelist) {
             writeTraffic({
               ts: new Date(startedAt).toISOString(),
+              startedAt: new Date(startedAt).toISOString(),
               kind: "response",
               sni: host,
               method: req.method,
