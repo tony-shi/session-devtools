@@ -2,6 +2,7 @@
 node_modules/
 dist/
 server/public/
+server/src/proxy/dist/
 
 # Local config with secrets
 digest.cfg
