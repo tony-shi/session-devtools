@@ -268,10 +268,22 @@ const P9_upstreamReach: CheckFn = async ({ layers }) => {
 
 // ── P11 端口可用性 ────────────────────────────────────────────────────────────
 
-const P11_portFree: CheckFn = ({ ourPort }) => {
+const P11_portFree: CheckFn = ({ layers, ourPort }) => {
+  // 如果 settings 层的 HTTPS_PROXY 已经指向我们，说明是重装路径，端口被自己占着是预期的。
+  const settingsProxy = layers.settings.HTTPS_PROXY ?? layers.settings.https_proxy;
+  const url = parseProxyUrl(settingsProxy);
+  const isOurPort = url?.hostname === "127.0.0.1" && Number(url.port) === ourPort;
+
   return new Promise<CheckResult>((resolve) => {
     const s: any = net.createServer();
-    s.once("error", () => resolve(block("P11", "端口可用性", `127.0.0.1:${ourPort} 已占用`, "改用 API_DASHBOARD_PROXY_PORT=<其它端口>", "system")));
+    s.once("error", () => {
+      if (isOurPort) {
+        // 端口被我们自己占着（重装路径），不算冲突
+        resolve(ok("P11", "端口可用性", `127.0.0.1:${ourPort} 已被我们占用（重装路径，正常）`, "settings"));
+      } else {
+        resolve(block("P11", "端口可用性", `127.0.0.1:${ourPort} 已被其它进程占用`, "改用 API_DASHBOARD_PROXY_PORT=<其它端口>", "system"));
+      }
+    });
     s.listen(ourPort, "127.0.0.1", () => {
       s.close(() => resolve(ok("P11", "端口可用性", `127.0.0.1:${ourPort} 可绑定`, "system")));
     });

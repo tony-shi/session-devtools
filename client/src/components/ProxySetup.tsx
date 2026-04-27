@@ -14,7 +14,8 @@ const T = {
   install:      { zh: "安装并启动", en: "Install & Start" },
   uninstall:    { zh: "卸载", en: "Uninstall" },
   start:        { zh: "启动", en: "Start" },
-  stop:         { zh: "停止", en: "Stop" },
+  stop:         { zh: "停止（临时）", en: "Stop (temp)" },
+  stopHint:     { zh: "⚠ 停止后 settings.json 仍指向代理端口。重启 Claude Code 前请先「启动」或「卸载」，否则 API 请求会失败。", en: "⚠ settings.json still points to proxy after stop. Start or Uninstall before restarting Claude Code." },
   preflight:    { zh: "运行检查", en: "Run Checks" },
   dryRun:       { zh: "预览变更（不写盘）", en: "Preview changes (dry-run)" },
   loading:      { zh: "处理中…", en: "Processing…" },
@@ -213,6 +214,9 @@ export function ProxySetup() {
                 <ActionButton label={t("start", lang)} loading={actionLoading} color="#34c759" onClick={() => doAction("start")} />
               ) : (
                 <ActionButton label={t("stop", lang)} loading={actionLoading} color="#ff9f0a" onClick={() => doAction("stop")} />
+              )}
+              {isDaemonRunning === false && isInstalled && (
+                <span style={{ fontSize: 12, color: "#ff9f0a" }}>{t("stopHint", lang)}</span>
               )}
               <ActionButton
                 label={t("uninstall", lang)}
