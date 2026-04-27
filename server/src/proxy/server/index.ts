@@ -5,7 +5,7 @@ import net from "node:net";
 import http from "node:http";
 import https from "node:https";
 import tls from "node:tls";
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { getMitmWhitelist, PATHS, LISTEN_HOST, loadTargetCaPems } from "../config";
 import { connectEgress, UpstreamProxyError } from "../egress";
 import { ensureCa, issueLeaf } from "../ca";
@@ -21,6 +21,7 @@ const debug = process.env.API_DASHBOARD_PROXY_DEBUG ? (...args: unknown[]) => co
 // 模块级统计（供 /_health 和 B3.2 连续失败检测使用）
 let _requestCount = 0;
 let _startTime = 0;
+let _listenPort = 0;
 let _consecutiveFailures = 0;
 const UPSTREAM_WARN_THRESHOLD = 5;
 
@@ -60,6 +61,9 @@ export async function startProxy(opts: StartOptions): Promise<{ close: () => Pro
         ok: true,
         listening: true,
         upstream: upstream ? "configured" : "none",
+        pid: process.pid,
+        port: _listenPort,
+        mode: process.env.API_DASHBOARD_PROXY_MODE ?? "standalone",
         uptime: Math.floor((Date.now() - _startTime) / 1000),
         requestCount: _requestCount,
       }));
@@ -111,6 +115,7 @@ export async function startProxy(opts: StartOptions): Promise<{ close: () => Pro
     proxy.listen(opts.port, LISTEN_HOST, () => {
       const addr = proxy.address();
       const actualPort = typeof addr === "object" && addr ? addr.port : opts.port;
+      _listenPort = actualPort;
       try {
         writeFileSync(PATHS.portFile, String(actualPort));
         writeFileSync(PATHS.pidFile, String(process.pid));
@@ -120,11 +125,23 @@ export async function startProxy(opts: StartOptions): Promise<{ close: () => Pro
       resolve({
         close: () =>
           new Promise<void>((r) => {
-            proxy.close(() => httpServer.close(() => r()));
+            proxy.close(() => httpServer.close(() => {
+              cleanupPidFiles();
+              r();
+            }));
           }),
       });
     });
   });
+}
+
+function cleanupPidFiles(): void {
+  try {
+    if (existsSync(PATHS.pidFile) && readFileSync(PATHS.pidFile, "utf8").trim() === String(process.pid)) {
+      unlinkSync(PATHS.pidFile);
+    }
+    if (existsSync(PATHS.portFile)) unlinkSync(PATHS.portFile);
+  } catch {}
 }
 
 async function mitmIntercept(clientSock: any, head: Buffer, host: string, httpServer: http.Server): Promise<void> {
