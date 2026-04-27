@@ -67,6 +67,8 @@ await startManagedProxyIfConfigured();
 
 const server = Bun.serve({
   port: PORT,
+  // SSE 长连接不能有空闲超时，否则 10s 后 Bun 会主动断开
+  idleTimeout: 0,
   async fetch(req) {
     const url = new URL(req.url);
 
