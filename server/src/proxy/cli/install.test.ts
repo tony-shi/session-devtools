@@ -63,4 +63,14 @@ describe("buildEnvPatch —— §5.3 决策表", () => {
     const count127 = noProxy.filter((v) => v === "127.0.0.1").length;
     expect(count127).toBe(1);
   });
+
+  test("ANTHROPIC_BASE_URL 目标不应保留在 NO_PROXY", () => {
+    const patch = buildEnvPatch({
+      ANTHROPIC_BASE_URL: "http://internal-proxy.example:8742",
+      NO_PROXY: "internal-proxy.example,internal.corp",
+    }, PORT, CA);
+    const noProxy = patch.NO_PROXY!.split(",");
+    expect(noProxy).not.toContain("internal-proxy.example");
+    expect(noProxy).toContain("internal.corp");
+  });
 });
