@@ -532,11 +532,21 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     const { existsSync, readFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const { homedir } = await import("node:os");
-    const http = await import("node:http");
+    const httpMod = await import("node:http");
+    const httpGet = httpMod.default?.get ?? httpMod.get;
 
-    const proxyHome = process.env.API_DASHBOARD_DIR
-      ? join(process.env.API_DASHBOARD_DIR, "proxy")
-      : join(homedir(), ".api-dashboard", "proxy");
+    // daemon 的 pid/port 文件可能在 worktree 专属目录或默认目录，两处都查
+    const candidateProxyHomes = [
+      process.env.API_DASHBOARD_DIR
+        ? join(process.env.API_DASHBOARD_DIR, "proxy")
+        : null,
+      join(homedir(), ".api-dashboard", "proxy"),
+    ].filter(Boolean) as string[];
+
+    // 找第一个有 pid 文件的目录
+    const proxyHome = candidateProxyHomes.find((d) => existsSync(join(d, "proxy.pid")))
+      ?? candidateProxyHomes[0]!;
+
     const pidFile = join(proxyHome, "proxy.pid");
     const portFile = join(proxyHome, "proxy.port");
     const settingsPath = join(homedir(), ".claude", "settings.json");
@@ -555,7 +565,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     const { health, portResponding } = await new Promise<{ health: Record<string, unknown> | null; portResponding: boolean }>((resolve) => {
       if (!port) return resolve({ health: null, portResponding: false });
       const t = setTimeout(() => { req2.destroy(); resolve({ health: null, portResponding: false }); }, 2000);
-      const req2 = (http as any).default.get(`http://127.0.0.1:${port}/_health`, (res: any) => {
+      const req2 = httpGet(`http://127.0.0.1:${port}/_health`, (res: any) => {
         let buf = ""; res.on("data", (c: any) => (buf += c));
         res.on("end", () => {
           clearTimeout(t);
