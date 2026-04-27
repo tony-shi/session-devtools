@@ -195,13 +195,34 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
     // A5.3: 追加用户上传的上游自签 CA（不替换系统信任链）
     const extraCaPems = loadTargetCaPems();
 
+    // 用 rawHeaders 保留原始 header name 大小写。req.headers 是 Node 标准化后的小写形式，
+    // 某些上游网关（如企业 openresty）对 header 大小写敏感，传过去会被拒绝。
+    const fwdHeaders: Record<string, string | string[]> = {};
+    {
+      const seenLower = new Set<string>();
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        const k = req.rawHeaders[i]!;
+        const v = req.rawHeaders[i + 1]!;
+        const lk = k.toLowerCase();
+        if (seenLower.has(lk)) {
+          const cur = fwdHeaders[k];
+          if (Array.isArray(cur)) cur.push(v);
+          else if (typeof cur === "string") fwdHeaders[k] = [cur, v];
+          else fwdHeaders[k] = v;
+        } else {
+          fwdHeaders[k] = v;
+          seenLower.add(lk);
+        }
+      }
+    }
+
     const proxyReq = https.request(
       {
         host,
         port,
         path: req.url,
         method: req.method,
-        headers: req.headers,
+        headers: fwdHeaders,
         createConnection: (_opts, cb) => {
           connectEgress({ host, port })
             .then((rawSock) => {
@@ -345,19 +366,36 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
 
     // 清理代理专用 headers + transfer-encoding（我们用 content-length 替代，避免 chunked 导致目标 400）
     const STRIP_HEADERS = new Set(["proxy-connection", "proxy-authorization", "proxy-authenticate", "transfer-encoding"]);
+    // 用 rawHeaders 保留客户端发的原始 header name 大小写（Host vs host）。
+    // 某些上游网关（如企业 openresty）对 header 大小写敏感，全小写 host 会被拒绝 400。
+    // req.headers 是 Node 标准化后的小写形式，不能直接转发。
+    const seenLower = new Set<string>();
     const forwardHeaders: Record<string, string | string[]> = {};
-    for (const [k, v] of Object.entries(req.headers)) {
-      if (!STRIP_HEADERS.has(k.toLowerCase()) && v !== undefined) {
-        forwardHeaders[k] = v as string | string[];
+    const rawHeaderOverrides = new Set(["host", "content-length", "connection"]);
+    for (let i = 0; i < req.rawHeaders.length; i += 2) {
+      const k = req.rawHeaders[i]!;
+      const v = req.rawHeaders[i + 1]!;
+      const lk = k.toLowerCase();
+      if (STRIP_HEADERS.has(lk)) continue;
+      if (rawHeaderOverrides.has(lk)) continue; // 我们要重写这些，下面用规范大小写
+      if (seenLower.has(lk)) {
+        // 同名 header 多次出现：合并为数组
+        const cur = forwardHeaders[k];
+        if (Array.isArray(cur)) cur.push(v);
+        else if (typeof cur === "string") forwardHeaders[k] = [cur, v];
+        else forwardHeaders[k] = v;
+      } else {
+        forwardHeaders[k] = v;
+        seenLower.add(lk);
       }
     }
-    forwardHeaders["host"] = targetUrl.host;
-    // 显式设置 content-length，防止 Node.js 自动改用 chunked transfer-encoding
+    // 用规范大小写写回需要覆盖的 header（Host/Content-Length/Connection）。
+    forwardHeaders["Host"] = targetUrl.host;
     if (reqBody.length > 0) {
-      forwardHeaders["content-length"] = String(reqBody.length);
+      forwardHeaders["Content-Length"] = String(reqBody.length);
     }
-    // 强制 connection:close，兼容不支持 HTTP/1.1 keep-alive 的目标服务（如本地 Python 网关）
-    forwardHeaders["connection"] = "close";
+    // 强制 Connection: close，兼容不支持 HTTP/1.1 keep-alive 的目标服务（如本地 Python 网关）
+    forwardHeaders["Connection"] = "close";
 
     // 转发到目标（直连，不再走 egress 避免循环）
     const fwdReq = http.request(
