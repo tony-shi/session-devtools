@@ -4,6 +4,7 @@
 // 命名规范：所有 env 变量与项目本体共享 API_DASHBOARD_ 前缀（见 .env.example、AGENTS.md §1）。
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 
 // 与项目本体共享一份 home 目录；默认 ~/.api-dashboard/，可被 env 覆盖。
 const projectHome = process.env.API_DASHBOARD_DIR
@@ -28,10 +29,56 @@ export const PATHS = {
   pidFile: join(PROXY_HOME, "proxy.pid"),
   portFile: join(PROXY_HOME, "proxy.port"),
   backups: BACKUPS_HOME,
+  // A5.1: 用户声明的自定义拦截主机列表（L1 层）
+  mitmHostsFile: join(PROXY_HOME, "mitm-hosts.json"),
+  // A5.3: 用户上传的上游自签 CA 目录（L2 层）
+  targetCaDir: join(PROXY_HOME, "target-ca"),
 };
 
-// SNI MITM 白名单。设计文档 §2.1 — 仅 LLM 推理流量。
-export const MITM_WHITELIST = new Set<string>(["api.anthropic.com"]);
+// A5.1: MITM 白名单 lazy-init。
+// 合并三源：内置 api.anthropic.com + settings.json 的 ANTHROPIC_BASE_URL（L0）+ mitm-hosts.json（L1）。
+// 调用 getMitmWhitelist() 获取当前生效集合；daemon 热重载时调用 reloadMitmWhitelist() 刷新。
+let _mitmWhitelist: Set<string> | null = null;
+
+export function getMitmWhitelist(): Set<string> {
+  if (!_mitmWhitelist) _mitmWhitelist = buildMitmWhitelist();
+  return _mitmWhitelist;
+}
+
+export function reloadMitmWhitelist(): void {
+  _mitmWhitelist = buildMitmWhitelist();
+}
+
+function buildMitmWhitelist(): Set<string> {
+  const hosts = new Set<string>(["api.anthropic.com"]);
+
+  // L0：settings.json env 块里的 ANTHROPIC_BASE_URL（进程启动时已注入到 process.env）
+  const baseUrl = process.env.ANTHROPIC_BASE_URL;
+  if (baseUrl) {
+    try {
+      const hostname = new URL(baseUrl).hostname;
+      if (hostname) hosts.add(hostname);
+    } catch {
+      // 格式非法，忽略
+    }
+  }
+
+  // L1：mitm-hosts.json 的 hosts 数组
+  if (existsSync(PATHS.mitmHostsFile)) {
+    try {
+      const raw = JSON.parse(readFileSync(PATHS.mitmHostsFile, "utf8"));
+      if (Array.isArray(raw.hosts)) {
+        for (const h of raw.hosts) {
+          if (typeof h === "string" && h.trim()) hosts.add(h.trim());
+        }
+      }
+    } catch {
+      // 文件损坏，忽略；不影响已有白名单
+    }
+  }
+
+  return hosts;
+}
 
 // 默认监听端口；安装器会写入实际值到 portFile。
 export const DEFAULT_LISTEN_PORT = Number(process.env.API_DASHBOARD_PROXY_PORT ?? 38421);
@@ -68,4 +115,26 @@ export function loadUpstream(): UpstreamProxy | null {
     auth = `Basic ${Buffer.from(cred, "utf8").toString("base64")}`;
   }
   return { protocol: "http", host, port, auth };
+}
+
+// A5.3: 加载用户上传的上游自签 CA PEM 列表。
+// 返回 PEM 字符串数组，追加到 tls.connect() 的 ca 选项（不替换系统信任链）。
+export function loadTargetCaPems(): string[] {
+  const dir = PATHS.targetCaDir;
+  if (!existsSync(dir)) return [];
+  const pems: string[] = [];
+  try {
+    const { readdirSync } = require("node:fs") as typeof import("node:fs");
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".pem")) continue;
+      try {
+        pems.push(readFileSync(join(dir, name), "utf8"));
+      } catch {
+        // 单个文件读失败，跳过
+      }
+    }
+  } catch {
+    // 目录读失败
+  }
+  return pems;
 }

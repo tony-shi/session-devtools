@@ -390,5 +390,137 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     return json({ raw, subagents });
   }
 
+  // ── B2: Proxy 流量 API ───────────────────────────────────────────────────────
+
+  // 手动触发 proxy traffic 同步
+  if (path === "/api/proxy/sync" && req.method === "POST") {
+    const { syncProxyTraffic } = await import("./sync");
+    const result = await syncProxyTraffic();
+    return json(result);
+  }
+
+  // 流量列表（分页）
+  if (path === "/api/proxy/requests" && req.method === "GET") {
+    const db = getDb();
+    const limit = Math.min(parseInt(q.get("limit") ?? "50"), 200);
+    const offset = parseInt(q.get("offset") ?? "0");
+    const sni = q.get("sni");
+    const status = q.get("status");
+
+    const conds: string[] = [];
+    const params: (string | number)[] = [];
+    if (sni) { conds.push("sni = ?"); params.push(sni); }
+    if (status) { conds.push("status = ?"); params.push(Number(status)); }
+    const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
+
+    const total = (db.query<{ cnt: number }, (string | number)[]>(
+      `SELECT COUNT(*) as cnt FROM proxy_requests ${where}`,
+    ).get(...params) as any)?.cnt ?? 0;
+    const rows = db.query(
+      `SELECT * FROM proxy_requests ${where} ORDER BY ts DESC LIMIT ? OFFSET ?`,
+    ).all(...params, limit, offset) as any[];
+
+    return json({ requests: rows, total, limit, offset });
+  }
+
+  // 单请求详情
+  const proxyDetailMatch = path.match(/^\/api\/proxy\/requests\/(\d+)$/);
+  if (proxyDetailMatch && req.method === "GET") {
+    const id = Number(proxyDetailMatch[1]);
+    const db = getDb();
+    const row = db.query("SELECT * FROM proxy_requests WHERE id = ?").get(id) as any;
+    if (!row) return json({ error: "not found" }, 404);
+    return json({
+      ...row,
+      req_headers: parseJsonField(row.req_headers, {}),
+      res_headers: parseJsonField(row.res_headers, {}),
+    });
+  }
+
+  // B2.4: SSE 实时流量订阅
+  if (path === "/api/proxy/stream" && req.method === "GET") {
+    const encoder = new TextEncoder();
+    let closed = false;
+    const stream = new ReadableStream({
+      start(controller) {
+        // 心跳，防止连接超时
+        const heartbeat = setInterval(() => {
+          if (closed) { clearInterval(heartbeat); return; }
+          try {
+            controller.enqueue(encoder.encode(": heartbeat\n\n"));
+          } catch { clearInterval(heartbeat); }
+        }, 15000);
+
+        // 监听新 proxy 流量（轮询 DB，每 2s 一次）
+        let lastId = 0;
+        const poll = setInterval(async () => {
+          if (closed) { clearInterval(poll); return; }
+          try {
+            const db = getDb();
+            const rows = db.query(
+              "SELECT * FROM proxy_requests WHERE id > ? ORDER BY id ASC LIMIT 20",
+            ).all(lastId) as any[];
+            for (const row of rows) {
+              lastId = row.id;
+              const data = JSON.stringify({
+                ...row,
+                req_headers: parseJsonField(row.req_headers, {}),
+                res_headers: parseJsonField(row.res_headers, {}),
+              });
+              controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+            }
+          } catch { clearInterval(poll); }
+        }, 2000);
+      },
+      cancel() {
+        closed = true;
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Access-Control-Allow-Origin": "*",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  // B5.1: 白名单管理 API（供 UI Capture Targets 页使用）
+  if (path === "/api/proxy/whitelist" && req.method === "GET") {
+    const { existsSync, readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const proxyHome = process.env.API_DASHBOARD_DIR
+      ? join(process.env.API_DASHBOARD_DIR, "proxy")
+      : join(homedir(), ".api-dashboard", "proxy");
+    const hostsFile = join(proxyHome, "mitm-hosts.json");
+    let hosts: string[] = [];
+    if (existsSync(hostsFile)) {
+      try {
+        const raw = JSON.parse(readFileSync(hostsFile, "utf8"));
+        if (Array.isArray(raw.hosts)) hosts = raw.hosts;
+      } catch {}
+    }
+    return json({ hosts: ["api.anthropic.com", ...hosts], base: ["api.anthropic.com"], user: hosts });
+  }
+
+  if (path === "/api/proxy/whitelist" && (req.method === "POST" || req.method === "PUT")) {
+    const body = await req.json().catch(() => null);
+    if (!body || !Array.isArray(body.hosts)) return json({ error: "invalid body" }, 400);
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { homedir } = await import("node:os");
+    const proxyHome = process.env.API_DASHBOARD_DIR
+      ? join(process.env.API_DASHBOARD_DIR, "proxy")
+      : join(homedir(), ".api-dashboard", "proxy");
+    mkdirSync(proxyHome, { recursive: true, mode: 0o700 });
+    const hostsFile = join(proxyHome, "mitm-hosts.json");
+    const userHosts = (body.hosts as string[]).filter((h) => h !== "api.anthropic.com");
+    writeFileSync(hostsFile, JSON.stringify({ hosts: userHosts }, null, 2) + "\n");
+    return json({ ok: true, hosts: userHosts });
+  }
+
   return null; // not handled
 }
