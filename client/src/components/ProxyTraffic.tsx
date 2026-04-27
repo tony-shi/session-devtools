@@ -1,5 +1,5 @@
 // 代理流量列表 + 单请求详情（lazy load）。
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const T = {
   title:          { zh: "代理流量", en: "Proxy Traffic" },
@@ -26,6 +26,10 @@ const T = {
   removeHost:     { zh: "移除", en: "Remove" },
   saveTargets:    { zh: "保存", en: "Save" },
   targetsSaved:   { zh: "已生效，无需重启", en: "Applied, no restart needed" },
+  parseCol:       { zh: "解析", en: "Parse" },
+  loadMore:       { zh: "加载更多", en: "Load more" },
+  loadingMore:    { zh: "加载中…", en: "Loading…" },
+  noMore:         { zh: "已加载全部", en: "All loaded" },
 };
 
 type Lang = "zh" | "en";
@@ -119,24 +123,51 @@ function mergeRequests(prev: ProxyRequest[], incoming: ProxyRequest[]): ProxyReq
     .sort((a, b) => {
       const byStartedAt = requestStartedAt(b).localeCompare(requestStartedAt(a));
       return byStartedAt !== 0 ? byStartedAt : b.id - a.id;
-    })
-    .slice(0, 500);
+    });
 }
 
 // ── 懒加载消息体 ──────────────────────────────────────────────────────────────
+
+// 解析占位符，返回可读描述
+function parsePlaceholder(value: string, lang: Lang): string | null {
+  // [truncated N bytes] — safeBody() 在 req_body > 256KB 时截断
+  const truncMatch = value.match(/^\[truncated (\d+) bytes\]$/);
+  if (truncMatch) {
+    const bytes = Number(truncMatch[1]);
+    return lang === "zh"
+      ? `[请求体过大（${formatBytes(bytes)}），落盘时已截断；原始流量已完整转发]`
+      : `[Body too large (${formatBytes(bytes)}), truncated on disk; original traffic forwarded intact]`;
+  }
+  // [sse N events, M bytes] — SSE 流式响应汇总
+  const sseMatch = value.match(/^\[sse (\d+) events, (\d+) bytes\]$/);
+  if (sseMatch) {
+    const events = Number(sseMatch[1]);
+    const bytes = Number(sseMatch[2]);
+    if (events === 0) {
+      return lang === "zh"
+        ? `[SSE 流式响应，${formatBytes(bytes)}，未解析到完整事件（可能被提前关闭或格式非标准）]`
+        : `[SSE stream, ${formatBytes(bytes)}, no complete events parsed (possibly closed early or non-standard format)]`;
+    }
+    return lang === "zh"
+      ? `[SSE 流式响应，${events} 个事件，${formatBytes(bytes)}]`
+      : `[SSE stream, ${events} events, ${formatBytes(bytes)}]`;
+  }
+  // [stream N bytes] / [binary N bytes]
+  if (value.startsWith("[stream ") || value.startsWith("[binary ")) return value;
+  return null;
+}
 
 function LazyBody({ value, lang }: { value: string; lang: Lang }) {
   const [open, setOpen] = useState(false);
 
   if (!value || value === "") return <span style={{ color: "#ccc", fontSize: 12 }}>—</span>;
 
-  // 流式占位符直接展示，不折叠
-  if (value.startsWith("[sse ") || value.startsWith("[stream ") || value.startsWith("[truncated ") || value.startsWith("[binary ")) {
-    return <span style={{ color: "#999", fontSize: 12 }}>{value}</span>;
+  const placeholder = parsePlaceholder(value, lang);
+  if (placeholder !== null) {
+    return <span style={{ color: "#999", fontSize: 12, fontStyle: "italic" }}>{placeholder}</span>;
   }
 
   if (!open) {
-    // 预览前 80 字符
     const preview = value.length > 80 ? value.slice(0, 80) + "…" : value;
     return (
       <button
@@ -381,23 +412,36 @@ function CategoryTabs({ active, counts, lang, onChange }: {
 
 // ── 主组件 ────────────────────────────────────────────────────────────────────
 
+const PAGE_SIZE = 50;
+
 export function ProxyTraffic() {
   const lang = getLang();
   const [requests, setRequests] = useState<ProxyRequest[]>([]);
   const [selected, setSelected] = useState<ProxyRequest | null>(null);
   const [live, setLive] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [catFilter, setCatFilter] = useState<Category | "all">("all");
+  // 默认选中 LLM 推理
+  const [catFilter, setCatFilter] = useState<Category | "all">("llm");
   const [trafficReady, setTrafficReady] = useState(false);
+
+  // 分页状态：已加载的行数 offset，服务端总数
+  const [offset, setOffset] = useState(PAGE_SIZE);
+  const [serverTotal, setServerTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+
   const evtRef = useRef<EventSource | null>(null);
   const streamCursorRef = useRef<{ startedAt: string; id: number }>({ startedAt: "", id: 0 });
+  // 用于无限滚动的哨兵元素
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    fetch("/api/proxy/requests?limit=100")
+    fetch(`/api/proxy/requests?limit=${PAGE_SIZE}&offset=0`)
       .then((r) => r.json())
       .then((d) => {
         const initial = (d.requests ?? []) as ProxyRequest[];
         setRequests(initial);
+        setServerTotal(d.total ?? 0);
+        setOffset(initial.length);
         const newest = initial[0];
         const maxId = initial.reduce((max, req) => Math.max(max, req.id), 0);
         streamCursorRef.current = newest
@@ -425,18 +469,54 @@ export function ProxyTraffic() {
           streamCursorRef.current = { startedAt: requestStartedAt(rec), id: rec.id };
         }
         setRequests((prev) => mergeRequests(prev, [rec]));
+        // 新增实时记录时同步更新 total（乐观）
+        setServerTotal((t) => t + 1);
       } catch { void 0; }
     };
     return () => { es.close(); evtRef.current = null; };
   }, [live, trafficReady]);
 
+  // 加载更多（分页）
+  const loadMore = useCallback(async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const d = await fetch(`/api/proxy/requests?limit=${PAGE_SIZE}&offset=${offset}`).then((r) => r.json());
+      const more = (d.requests ?? []) as ProxyRequest[];
+      if (more.length > 0) {
+        setRequests((prev) => mergeRequests(prev, more));
+        setOffset((o) => o + more.length);
+        setServerTotal(d.total ?? serverTotal);
+      }
+    } catch { void 0; }
+    setLoadingMore(false);
+  }, [loadingMore, offset, serverTotal]);
+
+  // IntersectionObserver 实现无限滚动：哨兵元素进入视口时触发加载
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && requests.length < serverTotal && !loadingMore) {
+          loadMore();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [loadMore, requests.length, serverTotal, loadingMore]);
+
   const handleSync = async () => {
     setSyncing(true);
     try {
       await fetch("/api/proxy/sync", { method: "POST" });
-      const d = await fetch("/api/proxy/requests?limit=100").then((r) => r.json());
+      const d = await fetch(`/api/proxy/requests?limit=${PAGE_SIZE}&offset=0`).then((r) => r.json());
       const next = (d.requests ?? []) as ProxyRequest[];
       setRequests(next);
+      setServerTotal(d.total ?? 0);
+      setOffset(next.length);
       const newest = next[0];
       const maxId = next.reduce((max, req) => Math.max(max, req.id), 0);
       if (newest) streamCursorRef.current = { startedAt: requestStartedAt(newest), id: maxId };
@@ -444,7 +524,7 @@ export function ProxyTraffic() {
     setSyncing(false);
   };
 
-  // 分类计数
+  // 分类计数基于已加载的数据（实时计数）
   const counts = requests.reduce<Record<string, number>>((acc, r) => {
     const c = classifyRequest(r.url, r.sni);
     acc[c] = (acc[c] ?? 0) + 1;
@@ -453,6 +533,7 @@ export function ProxyTraffic() {
   }, {});
 
   const filtered = catFilter === "all" ? requests : requests.filter((r) => classifyRequest(r.url, r.sni) === catFilter);
+  const hasMore = requests.length < serverTotal;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -462,7 +543,14 @@ export function ProxyTraffic() {
         {/* 工具栏 */}
         <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontWeight: 600, fontSize: 15, flex: 1 }}>{t("title", lang)}</span>
+            <span style={{ fontWeight: 600, fontSize: 15, flex: 1 }}>
+              {t("title", lang)}
+              {serverTotal > 0 && (
+                <span style={{ marginLeft: 6, fontSize: 12, color: "#999", fontWeight: 400 }}>
+                  {requests.length < serverTotal ? `${requests.length} / ${serverTotal}` : serverTotal}
+                </span>
+              )}
+            </span>
             <button onClick={() => setLive((v) => !v)} style={{
               padding: "4px 10px", borderRadius: 6, border: "1px solid",
               borderColor: live ? "#34c759" : "#ddd",
@@ -483,57 +571,80 @@ export function ProxyTraffic() {
         {filtered.length === 0 ? (
           <div style={{ padding: 32, textAlign: "center", color: "#999", fontSize: 13 }}>{t("noData", lang)}</div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ background: "#fafafa" }}>
-                <th style={thStyle}>{t("category", lang)}</th>
-                <th style={thStyle}>{t("method", lang)}</th>
-                <th style={thStyle}>{t("status", lang)}</th>
-                <th style={{ ...thStyle, width: "99%" }}>{t("path", lang)}</th>
-                <th style={thStyle}>{t("duration", lang)}</th>
-                <th style={thStyle}>{t("size", lang)}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r) => {
-                const cat = classifyRequest(r.url, r.sni);
-                const meta = CATEGORY_META[cat];
-                return (
-                  <tr
-                    key={r.id}
-                    onClick={() => setSelected(r)}
-                    style={{ cursor: "pointer", borderBottom: "1px solid #f5f5f5" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "#fafafa")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "")}
-                  >
-                    <td style={tdStyle}>
-                      <span style={{
-                        fontSize: 10, padding: "2px 7px", borderRadius: 10,
-                        background: meta.bg, color: meta.color, fontWeight: 600, whiteSpace: "nowrap",
-                      }}>
-                        {meta.label[lang]}
-                      </span>
-                    </td>
-                    <td style={tdStyle}>
-                      <span style={{ fontWeight: 600, color: "#007aff" }}>{r.method}</span>
-                    </td>
-                    <td style={tdStyle}>
-                      <span style={{ color: statusColor(r.status), fontWeight: 600 }}>{r.status ?? "—"}</span>
-                      {(r.is_stream === 1 || r.is_stream === true) && (
-                        <span style={{ marginLeft: 4, fontSize: 10, color: "#7c3aed", background: "#f5f0ff", borderRadius: 3, padding: "1px 4px" }}>SSE</span>
-                      )}
-                    </td>
-                    <td style={{ ...tdStyle, maxWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      <span style={{ color: "#555" }}>{r.sni}</span>
-                      <span style={{ color: "#999", marginLeft: 4 }}>{pathFromUrl(r.url)}</span>
-                    </td>
-                    <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{r.duration_ms != null ? `${r.duration_ms}ms` : "—"}</td>
-                    <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{formatBytes(r.bytes_out || r.bytes_in)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: "#fafafa" }}>
+                  <th style={thStyle}>{t("category", lang)}</th>
+                  <th style={thStyle}>{t("method", lang)}</th>
+                  <th style={thStyle}>{t("status", lang)}</th>
+                  <th style={{ ...thStyle, width: "99%" }}>{t("path", lang)}</th>
+                  <th style={thStyle}>{t("duration", lang)}</th>
+                  <th style={thStyle}>{t("size", lang)}</th>
+                  <th style={thStyle}>{t("parseCol", lang)}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r) => {
+                  const cat = classifyRequest(r.url, r.sni);
+                  const meta = CATEGORY_META[cat];
+                  return (
+                    <tr
+                      key={r.id}
+                      onClick={() => setSelected(r)}
+                      style={{ cursor: "pointer", borderBottom: "1px solid #f5f5f5" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#fafafa")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "")}
+                    >
+                      <td style={tdStyle}>
+                        <span style={{
+                          fontSize: 10, padding: "2px 7px", borderRadius: 10,
+                          background: meta.bg, color: meta.color, fontWeight: 600, whiteSpace: "nowrap",
+                        }}>
+                          {meta.label[lang]}
+                        </span>
+                      </td>
+                      <td style={tdStyle}>
+                        <span style={{ fontWeight: 600, color: "#007aff" }}>{r.method}</span>
+                      </td>
+                      <td style={tdStyle}>
+                        <span style={{ color: statusColor(r.status), fontWeight: 600 }}>{r.status ?? "—"}</span>
+                        {(r.is_stream === 1 || r.is_stream === true) && (
+                          <span style={{ marginLeft: 4, fontSize: 10, color: "#7c3aed", background: "#f5f0ff", borderRadius: 3, padding: "1px 4px" }}>SSE</span>
+                        )}
+                      </td>
+                      <td style={{ ...tdStyle, maxWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <span style={{ color: "#555" }}>{r.sni}</span>
+                        <span style={{ color: "#999", marginLeft: 4 }}>{pathFromUrl(r.url)}</span>
+                      </td>
+                      <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{r.duration_ms != null ? `${r.duration_ms}ms` : "—"}</td>
+                      <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{formatBytes(r.bytes_out || r.bytes_in)}</td>
+                      <td style={tdStyle}>
+                        {/* SSE 响应但事件数为 0：解析不完备，可能连接提前断开或格式非标准 */}
+                        {(r.is_stream === 1 || r.is_stream === true) && r.sse_event_count === 0 ? (
+                          <span title={lang === "zh" ? "SSE 响应未解析到完整事件，可能连接提前断开或格式非标准" : "SSE response has no parsed events; possibly closed early or non-standard format"}
+                            style={{ fontSize: 13, cursor: "default" }}>
+                            ⚠️
+                          </span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* 无限滚动哨兵 + 加载状态 */}
+            <div ref={sentinelRef} style={{ padding: "12px 16px", textAlign: "center", fontSize: 12, color: "#999" }}>
+              {loadingMore
+                ? t("loadingMore", lang)
+                : hasMore
+                  ? <button onClick={loadMore} style={{ background: "none", border: "none", cursor: "pointer", color: "#007aff", fontSize: 12 }}>{t("loadMore", lang)}</button>
+                  : requests.length > PAGE_SIZE
+                    ? t("noMore", lang)
+                    : null}
+            </div>
+          </>
         )}
       </div>
 
