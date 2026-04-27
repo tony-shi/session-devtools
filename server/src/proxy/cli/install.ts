@@ -19,8 +19,10 @@ const OUR_ENV_KEYS = [
   "API_DASHBOARD_PROXY_UPSTREAM",
 ] as const;
 
-// NO_PROXY 最小集：本机回环 + Claude Code 用到的本地端点，不拦截。
-const OUR_NO_PROXY_MIN = ["127.0.0.1", "localhost", "::1"];
+// NO_PROXY 最小集：只排除 localhost 域名形式，不排除 127.0.0.1 IP。
+// 原因：用户可能把自定义网关放在 127.0.0.1:xxxx，需要经过我们 MITM。
+// 我们自己的代理地址（127.0.0.1:PORT）由 HTTPS_PROXY 指定，undici 不会对它自身走代理，不需要加 NO_PROXY。
+const OUR_NO_PROXY_MIN = ["localhost", "::1"];
 
 function log(msg: string) {
   console.log(`[install] ${msg}`);

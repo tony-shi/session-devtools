@@ -65,9 +65,9 @@ export async function startProxy(opts: StartOptions): Promise<{ close: () => Pro
       }));
       return;
     }
-    // 极少数明文 HTTP 代理请求；MVP 阶段直接 501。
-    res.writeHead(501);
-    res.end("HTTP forward proxy (non-CONNECT) is not implemented");
+    // 明文 HTTP 代理请求（如 ANTHROPIC_BASE_URL=http://127.0.0.1:8742 的流量）。
+    // 白名单内的 host 记录旁路；白名单外透传。
+    handleHttpForward(req, res);
   });
 
   proxy.on("connect", async (req, clientSock, head) => {
@@ -84,8 +84,10 @@ export async function startProxy(opts: StartOptions): Promise<{ close: () => Pro
     // 必须先 ack CONNECT，客户端才会发 TLS Client Hello。
     clientSock.write("HTTP/1.1 200 Connection established\r\n\r\n");
 
-    // A5.1: 每次 CONNECT 时读最新白名单（已支持热重载）
-    if (getMitmWhitelist().has(host)) {
+    // A5.1: 每次 CONNECT 时读最新白名单（已支持热重载）。
+    // 白名单条目可以是 "hostname" 或 "hostname:port" 两种格式。
+    const wl = getMitmWhitelist();
+    if (wl.has(host) || wl.has(`${host}:${port}`)) {
       try {
         await mitmIntercept(clientSock, head, host, httpServer);
       } catch (err) {
@@ -285,6 +287,115 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
     });
     if (reqBody.length > 0) proxyReq.write(reqBody);
     proxyReq.end();
+  });
+  req.on("error", () => res.destroy());
+}
+
+// 明文 HTTP 代理转发。
+// 处理 ANTHROPIC_BASE_URL=http://host:port 这类场景——流量不走 HTTPS CONNECT，而是直接 HTTP 请求。
+// 白名单内的 host 记录旁路；白名单外直接透传（不记录）。
+function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) {
+  // 代理请求的 URL 是绝对路径，如 http://127.0.0.1:8742/v1/messages
+  let targetUrl: URL;
+  try {
+    targetUrl = new URL(req.url ?? "");
+  } catch {
+    res.writeHead(400);
+    res.end("Bad Request: invalid URL");
+    return;
+  }
+
+  const host = targetUrl.hostname;
+  const port = Number(targetUrl.port || 80);
+  const inWhitelist = getMitmWhitelist().has(host) || getMitmWhitelist().has(`${host}:${targetUrl.port}`);
+  const startedAt = Date.now();
+
+  const reqHeaders: Record<string, string> = {};
+  for (let i = 0; i < req.rawHeaders.length; i += 2) {
+    reqHeaders[req.rawHeaders[i]!] = req.rawHeaders[i + 1]!;
+  }
+
+  const reqChunks: Buffer[] = [];
+  req.on("data", (c) => reqChunks.push(c));
+  req.on("end", () => {
+    const reqBody = Buffer.concat(reqChunks);
+
+    // 转发到目标（直连，不再走 egress 避免循环）
+    const fwdReq = http.request(
+      {
+        hostname: host,
+        port,
+        path: targetUrl.pathname + targetUrl.search,
+        method: req.method,
+        headers: { ...req.headers, host: targetUrl.host },
+      },
+      (fwdRes) => {
+        res.writeHead(fwdRes.statusCode ?? 502, fwdRes.headers as any);
+        const resHeaders: Record<string, string> = {};
+        for (let i = 0; i < fwdRes.rawHeaders.length; i += 2) {
+          resHeaders[fwdRes.rawHeaders[i]!] = fwdRes.rawHeaders[i + 1]!;
+        }
+        const resChunks: Buffer[] = [];
+        let resBytes = 0;
+        const isStream = (fwdRes.headers["content-type"] ?? "").includes("event-stream");
+        const sseState = { buf: "", index: 0 };
+
+        fwdRes.on("data", (c: Buffer) => {
+          res.write(c);
+          resBytes += c.length;
+          if (isStream && inWhitelist) {
+            parseSseChunk(c.toString("utf8"), (eventType, data, idx) => {
+              writeTraffic({
+                ts: new Date().toISOString(),
+                kind: "sse_event",
+                sni: host,
+                url: req.url ?? "",
+                sseEventType: eventType,
+                sseData: data,
+                sseIndex: idx,
+              });
+            }, sseState);
+          } else if (!isStream && resBytes < 2 * 1024 * 1024) {
+            resChunks.push(c);
+          }
+        });
+
+        fwdRes.on("end", () => {
+          res.end();
+          if (inWhitelist) {
+            writeTraffic({
+              ts: new Date(startedAt).toISOString(),
+              kind: "response",
+              sni: host,
+              method: req.method,
+              url: req.url ?? "",
+              status: fwdRes.statusCode,
+              reqHeaders,
+              resHeaders,
+              reqBody: safeBody(reqBody),
+              resBody: isStream ? `[sse ${sseState.index} events, ${resBytes} bytes]` : safeBody(Buffer.concat(resChunks)),
+              meta: { durationMs: Date.now() - startedAt, httpForward: true },
+            });
+          }
+        });
+        fwdRes.on("error", () => res.destroy());
+      },
+    );
+    fwdReq.on("error", (err) => {
+      try { res.writeHead(502); res.end(`forward error: ${err.message}`); } catch {}
+      if (inWhitelist) {
+        writeTraffic({
+          ts: new Date(startedAt).toISOString(),
+          kind: "event",
+          msg: "http_forward_error",
+          sni: host,
+          url: req.url ?? "",
+          meta: { error: err.message },
+        });
+      }
+    });
+    if (reqBody.length > 0) fwdReq.write(reqBody);
+    fwdReq.end();
   });
   req.on("error", () => res.destroy());
 }

@@ -14,9 +14,9 @@ describe("buildEnvPatch —— §5.3 决策表", () => {
     expect(patch.HTTP_PROXY).toBe(OUR_PROXY);
     expect(patch.API_DASHBOARD_PROXY_UPSTREAM).toBeUndefined();
     expect(patch.NODE_EXTRA_CA_CERTS).toBe(CA);
-    // NO_PROXY 包含最小集
-    expect(patch.NO_PROXY).toContain("127.0.0.1");
+    // NO_PROXY 包含最小集（127.0.0.1 已从最小集移除，避免豁免用户自定义网关）
     expect(patch.NO_PROXY).toContain("localhost");
+    expect(patch.NO_PROXY).toContain("::1");
   });
 
   // 行 2：有 http:// 上游
@@ -49,8 +49,10 @@ describe("buildEnvPatch —— §5.3 决策表", () => {
     const noProxy = patch.NO_PROXY!.split(",");
     expect(noProxy).toContain("internal.corp");
     expect(noProxy).toContain("10.0.0.0/8");
-    expect(noProxy).toContain("127.0.0.1");
     expect(noProxy).toContain("localhost");
+    expect(noProxy).toContain("::1");
+    // 127.0.0.1 不在最小集里，允许用户把自定义网关放在 127.0.0.1:xxxx 并被拦截
+    expect(noProxy).not.toContain("127.0.0.1");
   });
 
   // 行 6：NO_PROXY 去重（用户已有 127.0.0.1）

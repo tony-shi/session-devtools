@@ -16,8 +16,8 @@ const OUR_ENV_KEYS = new Set([
   "NODE_EXTRA_CA_CERTS",
   "API_DASHBOARD_PROXY_UPSTREAM",
 ]);
-// 我们写的 NO_PROXY 最小集（卸载时从合并值里摘除）
-const OUR_NO_PROXY_MIN = new Set(["127.0.0.1", "localhost", "::1"]);
+// 我们写的 NO_PROXY 最小集（卸载时从合并值里摘除，与 install.ts 保持一致）
+const OUR_NO_PROXY_MIN = new Set(["localhost", "::1"]);
 
 
 function log(msg: string) {
