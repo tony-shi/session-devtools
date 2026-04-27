@@ -268,18 +268,38 @@ const P9_upstreamReach: CheckFn = async ({ layers }) => {
 
 // ── P11 端口可用性 ────────────────────────────────────────────────────────────
 
-const P11_portFree: CheckFn = ({ layers, ourPort }) => {
-  // 如果 settings 层的 HTTPS_PROXY 已经指向我们，说明是重装路径，端口被自己占着是预期的。
+// 判断端口是否被我们自己的 daemon 占着（两种路径之一成立即可）：
+// 1. settings 层的 HTTPS_PROXY 已指向我们（已安装状态）
+// 2. pid 文件里的进程存活且 pid 文件存在（daemon 已启动但 settings 尚未写入）
+function isPortOccupiedByUs(layers: EnvLayers, ourPort: number): boolean {
+  // 路径 1：settings 层已写入
   const settingsProxy = layers.settings.HTTPS_PROXY ?? layers.settings.https_proxy;
   const url = parseProxyUrl(settingsProxy);
-  const isOurPort = url?.hostname === "127.0.0.1" && Number(url.port) === ourPort;
+  if (url?.hostname === "127.0.0.1" && Number(url.port) === ourPort) return true;
+
+  // 路径 2：pid 文件里的进程存活（daemon 手动启动但 settings 未写入的情况）
+  if (existsSync(PATHS.pidFile)) {
+    try {
+      const pid = Number(readFileSync(PATHS.pidFile, "utf8").trim());
+      if (pid > 0) {
+        process.kill(pid, 0); // 不抛错 = 进程存活
+        return true;
+      }
+    } catch {
+      // 进程不存在，pid 文件是残留
+    }
+  }
+  return false;
+}
+
+const P11_portFree: CheckFn = ({ layers, ourPort }) => {
+  const isOurs = isPortOccupiedByUs(layers, ourPort);
 
   return new Promise<CheckResult>((resolve) => {
     const s: any = net.createServer();
     s.once("error", () => {
-      if (isOurPort) {
-        // 端口被我们自己占着（重装路径），不算冲突
-        resolve(ok("P11", "端口可用性", `127.0.0.1:${ourPort} 已被我们占用（重装路径，正常）`, "settings"));
+      if (isOurs) {
+        resolve(ok("P11", "端口可用性", `127.0.0.1:${ourPort} 已被我们的 daemon 占用（重装路径，正常）`, "system"));
       } else {
         resolve(block("P11", "端口可用性", `127.0.0.1:${ourPort} 已被其它进程占用`, "改用 API_DASHBOARD_PROXY_PORT=<其它端口>", "system"));
       }
