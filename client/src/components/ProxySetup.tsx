@@ -43,6 +43,7 @@ type DaemonStatus = "OK" | "DEGRADED" | "DOWN";
 interface SetupStatus {
   injected: boolean;
   daemonStatus: DaemonStatus;
+  statusHint?: string;
   pid: number | null;
   port: number | null;
   health: Record<string, unknown> | null;
@@ -231,8 +232,14 @@ export function ProxySetup() {
           />
         </div>
 
+        {/* 降级原因提示 */}
+        {status?.statusHint && (
+          <div style={{ marginTop: 12, fontSize: 12, color: "#ff9f0a", background: "#fff8ee", borderRadius: 6, padding: "6px 10px" }}>
+            ⚠ {status.statusHint}
+          </div>
+        )}
         {/* 安装后提示 */}
-        {isInstalled && (
+        {isInstalled && !status?.statusHint && (
           <div style={{ marginTop: 12, fontSize: 12, color: "#999" }}>{t("restartHint", lang)}</div>
         )}
       </div>

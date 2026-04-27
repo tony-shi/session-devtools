@@ -551,15 +551,20 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     let pidAlive = false;
     if (pid) { try { process.kill(pid, 0); pidAlive = true; } catch {} }
 
-    // ping /_health
-    const health = await new Promise<Record<string, unknown> | null>((resolve) => {
-      if (!port) return resolve(null);
-      const t = setTimeout(() => { req2.destroy(); resolve(null); }, 2000);
+    // ping /_health，同时记录端口是否有任何响应（用于区分"旧版 daemon"和"真的没有进程"）
+    const { health, portResponding } = await new Promise<{ health: Record<string, unknown> | null; portResponding: boolean }>((resolve) => {
+      if (!port) return resolve({ health: null, portResponding: false });
+      const t = setTimeout(() => { req2.destroy(); resolve({ health: null, portResponding: false }); }, 2000);
       const req2 = (http as any).default.get(`http://127.0.0.1:${port}/_health`, (res: any) => {
         let buf = ""; res.on("data", (c: any) => (buf += c));
-        res.on("end", () => { clearTimeout(t); try { resolve(JSON.parse(buf)); } catch { resolve(null); } });
+        res.on("end", () => {
+          clearTimeout(t);
+          // 端口有响应（无论状态码）
+          try { resolve({ health: JSON.parse(buf), portResponding: true }); }
+          catch  { resolve({ health: null, portResponding: true }); } // 响应了但不是 JSON（旧版本）
+        });
       });
-      req2.on("error", () => { clearTimeout(t); resolve(null); });
+      req2.on("error", () => { clearTimeout(t); resolve({ health: null, portResponding: false }); });
     });
 
     // 读 settings.json 判断是否已注入
@@ -571,8 +576,26 @@ export async function handleRequest(req: Request): Promise<Response | null> {
       } catch {}
     }
 
-    const daemonStatus = health?.ok ? "OK" : pidAlive ? "DEGRADED" : "DOWN";
-    return json({ injected, daemonStatus, pid, port, health });
+    // 状态判断优先级：
+    // 1. /_health 返回 ok:true → OK
+    // 2. 端口有响应但非 JSON（旧版 daemon）→ DEGRADED + 提示需重建
+    // 3. pid 文件进程存活但端口无响应 → DEGRADED
+    // 4. 端口和进程都无响应 → DOWN
+    let daemonStatus: "OK" | "DEGRADED" | "DOWN";
+    let statusHint: string | undefined;
+    if (health?.ok) {
+      daemonStatus = "OK";
+    } else if (portResponding) {
+      daemonStatus = "DEGRADED";
+      statusHint = "daemon 在运行但不支持 /_health（旧版本），请点击「停止」后重新「启动」以更新。";
+    } else if (pidAlive) {
+      daemonStatus = "DEGRADED";
+      statusHint = "进程存活但端口无响应。";
+    } else {
+      daemonStatus = "DOWN";
+    }
+
+    return json({ injected, daemonStatus, statusHint, pid, port, health });
   }
 
   // 读取 settings.json env 块的辅助函数（供 install/start/uninstall 子进程继承）
