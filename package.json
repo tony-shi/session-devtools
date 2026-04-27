@@ -14,9 +14,22 @@
     "client:dev": "cd client && bun install --frozen-lockfile && bun run dev",
     "build": "cd client && bun run build",
     "start": "bash scripts/setup-env.sh && bun server/index.ts",
-    "env:init": "[ -f .env ] || cp .env.example .env && echo 'Created .env from .env.example'"
+    "env:init": "[ -f .env ] || cp .env.example .env && echo 'Created .env from .env.example'",
+    "proxy:preflight": "bun run server/src/proxy/cli/preflight.ts",
+    "proxy:build": "bun build server/src/proxy/cli/start.ts --target=node --format=esm --outfile=server/src/proxy/dist/start.mjs",
+    "proxy:start": "bun run proxy:build && node server/src/proxy/dist/start.mjs",
+    "proxy:install": "bun run proxy:build && bun run server/src/proxy/cli/install.ts",
+    "proxy:uninstall": "bun run server/src/proxy/cli/uninstall.ts",
+    "proxy:status": "bun run server/src/proxy/cli/status.ts",
+    "proxy:whitelist": "bun run server/src/proxy/cli/whitelist.ts",
+    "proxy:doctor": "bun run server/src/proxy/cli/doctor.ts",
+    "proxy:export-share": "bun run server/src/proxy/cli/export-share.ts"
+  },
+  "dependencies": {
+    "node-forge": "^1.3.1"
   },
   "devDependencies": {
+    "@types/node-forge": "^1.3.11",
     "bun-types": "^1.3.12",
     "concurrently": "^9.1.2"
   }

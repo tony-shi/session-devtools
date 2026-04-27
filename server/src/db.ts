@@ -155,6 +155,51 @@ export function initDb(): void {
   `);
 
   initDigestSchema();
+  initProxySchema();
+}
+
+// B2.2: proxy_requests 表
+export function initProxySchema(): void {
+  const db = getDb();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS proxy_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      started_at TEXT,
+      sni TEXT NOT NULL,
+      method TEXT NOT NULL DEFAULT 'GET',
+      url TEXT NOT NULL,
+      status INTEGER,
+      bytes_in INTEGER DEFAULT 0,
+      bytes_out INTEGER DEFAULT 0,
+      duration_ms INTEGER,
+      req_headers TEXT DEFAULT '{}',
+      res_headers TEXT DEFAULT '{}',
+      req_body TEXT DEFAULT '',
+      res_body TEXT DEFAULT '',
+      sse_event_count INTEGER DEFAULT 0,
+      is_stream INTEGER DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_proxy_ts ON proxy_requests(ts);
+    CREATE INDEX IF NOT EXISTS idx_proxy_sni ON proxy_requests(sni);
+    CREATE INDEX IF NOT EXISTS idx_proxy_status ON proxy_requests(status);
+
+    CREATE TABLE IF NOT EXISTS proxy_sync_state (
+      source_file TEXT PRIMARY KEY,
+      last_line INTEGER DEFAULT 0,
+      synced_at TEXT
+    );
+  `);
+
+  const columns = db.query<{ name: string }, []>("PRAGMA table_info(proxy_requests)").all();
+  if (!columns.some((c) => c.name === "started_at")) {
+    // started_at 是请求发起时间，用于 UI 排序和实时流增量游标。
+    // ts 保留为日志记录时间兼容旧数据；历史行迁移时用 ts 回填 started_at。
+    db.exec("ALTER TABLE proxy_requests ADD COLUMN started_at TEXT");
+    db.exec("UPDATE proxy_requests SET started_at = ts WHERE started_at IS NULL");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_started ON proxy_requests(started_at)");
 }
 
 export function initDigestSchema(): void {

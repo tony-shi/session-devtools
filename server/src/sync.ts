@@ -199,3 +199,68 @@ export function stopAutoSync(): void {
     _syncTimer = null;
   }
 }
+
+// ── B2.1: Proxy traffic.jsonl 增量同步 ───────────────────────────────────────
+
+export async function syncProxyTraffic(): Promise<{ inserted: number; errors: number }> {
+  const { parseTrafficFile } = await import("./parsers/proxy-traffic");
+  const { initProxySchema, serializeWrite, getDb } = await import("./db");
+  const { PATHS: PROXY_PATHS } = await import("./proxy/config");
+
+  // proxy 是机器级全局设施，traffic.jsonl 固定在 ~/.api-dashboard/proxy。
+  // 这里不能跟随 worktree 的 API_DASHBOARD_DIR，否则 UI 会读取旧 worktree 日志，
+  // 与当前 dashboard 托管的运行中 proxy 脱节。
+  const trafficLog = PROXY_PATHS.trafficLog;
+
+  const db = getDb();
+  initProxySchema();
+
+  // 读取上次同步到的行号
+  const stateRow = db
+    .query<{ last_line: number }, [string]>(
+      "SELECT last_line FROM proxy_sync_state WHERE source_file = ?",
+    )
+    .get(trafficLog);
+  const storedLine = stateRow?.last_line ?? 0;
+
+  const records = await parseTrafficFile(trafficLog);
+
+  // P2 修复：maybeRotate() 可能把旧文件改名并新建空文件。
+  // 若当前文件总行数 < storedLine，说明发生了轮转，从头同步。
+  const lastLine = records.length < storedLine ? 0 : storedLine;
+
+  const newRecords = records.slice(lastLine);
+  if (newRecords.length === 0) return { inserted: 0, errors: 0 };
+
+  let inserted = 0, errors = 0;
+  await serializeWrite(() => {
+    const insert = db.prepare(`
+      INSERT INTO proxy_requests
+        (ts, started_at, sni, method, url, status, bytes_in, bytes_out, duration_ms,
+         req_headers, res_headers, req_body, res_body, sse_event_count, is_stream)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    db.transaction(() => {
+      for (const r of newRecords) {
+        try {
+          insert.run(
+            r.ts, r.started_at, r.sni, r.method, r.url, r.status,
+            r.bytes_in, r.bytes_out, r.duration_ms,
+            r.req_headers, r.res_headers, r.req_body, r.res_body,
+            r.sse_event_count, r.is_stream ? 1 : 0,
+          );
+          inserted++;
+        } catch {
+          errors++;
+        }
+      }
+      // 更新同步状态
+      db.prepare(`
+        INSERT OR REPLACE INTO proxy_sync_state (source_file, last_line, synced_at)
+        VALUES (?, ?, ?)
+      `).run(trafficLog, lastLine + inserted, new Date().toISOString());
+    })();
+  });
+
+  return { inserted, errors };
+}
