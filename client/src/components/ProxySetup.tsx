@@ -141,10 +141,15 @@ export function ProxySetup() {
     setActionLoading(false);
   };
 
-  // 当前安装状态
-  const isInstalled = status?.injected ?? false;
-  const daemonStatus: DaemonStatus | "notInstalled" = !isInstalled ? "notInstalled" : (status?.daemonStatus ?? "DOWN");
+  // 三个独立维度：
+  // - settingsInjected: settings.json 已写入（安装器跑过）
+  // - daemonRunning: daemon 进程实际在运行（无论 settings 是否注入）
+  // - daemonStatus: OK / DEGRADED / DOWN
+  const settingsInjected = status?.injected ?? false;
+  const daemonStatus: DaemonStatus = status?.daemonStatus ?? "DOWN";
   const isDaemonRunning = daemonStatus === "OK" || daemonStatus === "DEGRADED";
+  // "已安装"定义：settings 已注入 OR daemon 正在运行（两者之一成立即展示管理按钮）
+  const isInstalled = settingsInjected || isDaemonRunning;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -174,24 +179,29 @@ export function ProxySetup() {
         </div>
 
         {/* 状态指示器 */}
-        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 20 }}>
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: isDaemonRunning && !settingsInjected ? 12 : 20 }}>
           <StatusBadge
             label={t("statusLabel", lang)}
             value={
-              daemonStatus === "notInstalled" ? t("notInstalled", lang) :
               daemonStatus === "OK" ? t("ok", lang) :
               daemonStatus === "DEGRADED" ? t("degraded", lang) : t("down", lang)
             }
-            color={daemonStatus === "notInstalled" ? "#999" : statusColor(daemonStatus)}
+            color={statusColor(daemonStatus)}
           />
           <StatusBadge
             label="settings.json"
-            value={isInstalled ? t("settingsInjected", lang) : t("settingsNotInjected", lang)}
-            color={isInstalled ? "#34c759" : "#ff3b30"}
+            value={settingsInjected ? t("settingsInjected", lang) : t("settingsNotInjected", lang)}
+            color={settingsInjected ? "#34c759" : "#ff3b30"}
           />
           {status?.pid && <StatusBadge label={t("pid", lang)} value={String(status.pid)} color="#007aff" />}
           {status?.port && <StatusBadge label={t("port", lang)} value={String(status.port)} color="#007aff" />}
         </div>
+        {/* daemon 运行但 settings 未注入时提示 */}
+        {isDaemonRunning && !settingsInjected && (
+          <div style={{ marginBottom: 16, padding: "8px 12px", borderRadius: 6, background: "#fff3cd", border: "1px solid #ffc107", fontSize: 12, color: "#856404" }}>
+            ⚠ Daemon 正在运行，但 settings.json 尚未注入。Claude Code 重启后不会自动走代理。建议点击「安装并启动」完成完整安装。
+          </div>
+        )}
 
         {/* 操作按钮区 */}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
