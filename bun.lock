@@ -4,7 +4,11 @@
   "workspaces": {
     "": {
       "name": "session-dashboard",
+      "dependencies": {
+        "node-forge": "^1.3.1",
+      },
       "devDependencies": {
+        "@types/node-forge": "^1.3.11",
         "bun-types": "^1.3.12",
         "concurrently": "^9.1.2",
       },
@@ -251,6 +255,8 @@
 
     "@types/node": ["@types/node@24.12.2", "http://r.npm.internal.com/@types/node/download/@types/node-24.12.2.tgz", { "dependencies": { "undici-types": "~7.16.0" } }, "sha1-NTyxYdvxeF6iXogpun7FdMXGKaw="],
 
+    "@types/node-forge": ["@types/node-forge@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-mhVF2BnD4BO+jtOp7z1CdzaK4mbuK0LLQYAvdOLqHTavxFNq4zA1EmYkpnFjP8HOUzedfQkRnp0E2ulSAYSzAw=="],
+
     "@types/react": ["@types/react@19.2.14", "http://r.npm.internal.com/@types/react/download/@types/react-19.2.14.tgz", { "dependencies": { "csstype": "^3.2.2" } }, "sha1-OWBJKbXjlX46b6AAHa+xfHr3C60="],
 
     "@types/react-dom": ["@types/react-dom@19.2.3", "http://r.npm.internal.com/@types/react-dom/download/@types/react-dom-19.2.3.tgz", { "peerDependencies": { "@types/react": "^19.2.0" } }, "sha1-weMF0VpSo+UI1U3Kdw0gLLY6vyw="],
@@ -477,6 +483,8 @@
 
     "natural-compare": ["natural-compare@1.4.0", "http://r.npm.internal.com/natural-compare/download/natural-compare-1.4.0.tgz", {}, "sha1-Sr6/7tdUHywnrPspvbvRXI1bpPc="],
 
+    "node-forge": ["node-forge@1.4.0", "", {}, "sha512-LarFH0+6VfriEhqMMcLX2F7SwSXeWwnEAJEsYm5QKWchiVYVvJyV9v7UDvUv+w5HO23ZpQTXDv/GxdDdMyOuoQ=="],
+
     "node-releases": ["node-releases@2.0.37", "http://r.npm.internal.com/node-releases/download/node-releases-2.0.37.tgz", {}, "sha1-m9TxC3e6OcK5QC1Og5nEgqeX9nE="],
 
     "object-assign": ["object-assign@4.1.1", "http://r.npm.internal.com/object-assign/download/object-assign-4.1.1.tgz", {}, "sha1-IQmtx5ZYh8/AXLvUQsrIv7s2CGM="],
@@ -611,6 +619,8 @@
 
     "@tailwindcss/oxide-wasm32-wasi/tslib": ["tslib@2.8.1", "http://r.npm.internal.com/tslib/download/tslib-2.8.1.tgz", { "bundled": true }, "sha1-YS7+TtI11Wfoq6Xypfq3AoCt6D8="],
 
+    "@types/node-forge/@types/node": ["@types/node@25.6.0", "http://r.npm.internal.com/@types/node/download/@types/node-25.6.0.tgz", { "dependencies": { "undici-types": "~7.19.0" } }, "sha1-Tgm62bRphx8tD2gUAZjL1xT07co="],
+
     "@typescript-eslint/eslint-plugin/ignore": ["ignore@7.0.5", "http://r.npm.internal.com/ignore/download/ignore-7.0.5.tgz", {}, "sha1-TLX2zX1MerA2VzjHrqiIuqbX79k="],
 
     "@typescript-eslint/typescript-estree/minimatch": ["minimatch@10.2.3", "http://r.npm.internal.com/minimatch/download/minimatch-10.2.3.tgz", { "dependencies": { "brace-expansion": "^5.0.2" } }, "sha1-wO9YLyEHGwEjpbvydSUuvakh+/Y="],
@@ -624,6 +634,8 @@
     "chalk/supports-color": ["supports-color@7.2.0", "http://r.npm.internal.com/supports-color/download/supports-color-7.2.0.tgz", { "dependencies": { "has-flag": "^4.0.0" } }, "sha1-G33NyzK4E4gBs+R4umpRyqiWSNo="],
 
     "rolldown/@rolldown/pluginutils": ["@rolldown/pluginutils@1.0.0-rc.15", "http://r.npm.internal.com/@rolldown/pluginutils/download/@rolldown/pluginutils-1.0.0-rc.15.tgz", {}, "sha1-5113MVk+GV0jcQ+f9Jv1x0XJZoI="],
+
+    "@types/node-forge/@types/node/undici-types": ["undici-types@7.19.2", "http://r.npm.internal.com/undici-types/download/undici-types-7.19.2.tgz", {}, "sha1-G2f8JtDxV6DLo6WKW1weIna4uio="],
 
     "@typescript-eslint/typescript-estree/minimatch/brace-expansion": ["brace-expansion@5.0.5", "http://r.npm.internal.com/brace-expansion/download/brace-expansion-5.0.5.tgz", { "dependencies": { "balanced-match": "^4.0.2" } }, "sha1-3MOjcRa3nz4bRtuZTO1dVw6TD9s="],
 
