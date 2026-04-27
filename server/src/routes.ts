@@ -457,7 +457,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
           try {
             controller.enqueue(encoder.encode(": heartbeat\n\n"));
           } catch { clearInterval(heartbeat); }
-        }, 15000);
+        }, 8000);
 
         // 监听新 proxy 流量（轮询：先同步 JSONL → 再查 DB，每 2s 一次）。
         // 增量游标用插入 id，避免漏掉"早发起、晚完成"的长请求；
