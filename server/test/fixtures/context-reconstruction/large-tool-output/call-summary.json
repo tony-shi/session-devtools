@@ -1,0 +1,30 @@
+{
+  "case": "large-tool-output",
+  "proxy_request": {
+    "traffic_jsonl_line": 13011,
+    "ts": "2026-04-27T11:16:17.532Z",
+    "model": "claude-opus-4-7",
+    "status": 200,
+    "messages_count": 7,
+    "tools_defined_count": 40,
+    "system_chars": 28749,
+    "req_chars": 186045,
+    "is_stream": true,
+    "sse_event_count": 58,
+    "res_bytes": 7888
+  },
+  "messages_breakdown": {
+    "tool_use_count": 4,
+    "tool_result_count": 4,
+    "tool_names_used": [
+      "Bash",
+      "Read"
+    ],
+    "max_tool_result_chars": 26133
+  },
+  "session_alignment": {
+    "session_jsonl": "/Users/shihuashen/.claude/projects/-Users-shihuashen-Documents-session-dashboard--claude-worktrees-feature-context-sample-pack/206e9383-7703-434a-8796-c89f19c0449f.jsonl",
+    "aligned": true,
+    "alignment_method": "timestamp_window_±2min"
+  }
+}

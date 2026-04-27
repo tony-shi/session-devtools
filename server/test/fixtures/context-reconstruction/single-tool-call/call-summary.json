@@ -1,0 +1,29 @@
+{
+  "case": "single-tool-call",
+  "proxy_request": {
+    "traffic_jsonl_line": 8831,
+    "ts": "2026-04-27T10:34:26.141Z",
+    "model": "claude-opus-4-7",
+    "status": 200,
+    "messages_count": 3,
+    "tools_defined_count": 34,
+    "system_chars": 28536,
+    "req_chars": 131203,
+    "is_stream": true,
+    "sse_event_count": 47,
+    "res_bytes": 6384
+  },
+  "messages_breakdown": {
+    "tool_use_count": 2,
+    "tool_result_count": 2,
+    "tool_names_used": [
+      "Bash"
+    ],
+    "max_tool_result_chars": 1491
+  },
+  "session_alignment": {
+    "session_jsonl": "/Users/shihuashen/.claude/projects/-Users-shihuashen-Documents-session-dashboard/ba3db910-c0df-4863-910c-7b8e9525fa84.jsonl",
+    "aligned": true,
+    "alignment_method": "timestamp_window_±2min"
+  }
+}
