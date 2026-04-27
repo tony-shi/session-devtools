@@ -186,9 +186,10 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
                 servername: host,
                 ALPNProtocols: ["http/1.1"],
               };
-              // A5.3: 有自定义 CA 时追加，不替换系统信任链
+              // A5.3: 追加用户自签 CA，保留系统根（tls.rootCertificates）。
+              // 直接赋值 ca 会替换系统根，导致 api.anthropic.com 等公开域名 TLS 失败。
               if (extraCaPems.length > 0) {
-                tlsOpts.ca = extraCaPems;
+                tlsOpts.ca = [...tls.rootCertificates, ...extraCaPems];
               }
               const t = tls.connect(tlsOpts);
               t.once("secureConnect", () => cb!(null, t as any));
