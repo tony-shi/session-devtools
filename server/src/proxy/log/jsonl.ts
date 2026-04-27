@@ -15,6 +15,7 @@ import { PATHS } from "../config";
 
 export type TrafficRecord = {
   ts: string; // ISO
+  startedAt?: string; // 请求发起时间，response 记录用于 UI 排序和增量游标
   kind: "request" | "response" | "event" | "sse_event";
   sni?: string;
   method?: string;

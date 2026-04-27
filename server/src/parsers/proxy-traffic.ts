@@ -6,6 +6,7 @@ import readline from "node:readline";
 
 export interface ProxyRequest {
   ts: string;
+  started_at: string;
   sni: string;
   method: string;
   url: string;
@@ -40,6 +41,8 @@ export function parseTrafficLine(line: string): ProxyRequest | null {
 
   const meta = (rec.meta as Record<string, unknown>) ?? {};
   const durationMs = typeof meta.durationMs === "number" ? meta.durationMs : null;
+  const ts = (rec.ts as string) ?? new Date().toISOString();
+  const startedAt = (rec.startedAt as string) ?? ts;
 
   // 估算字节数（从 headers 中读 content-length，否则用 body 长度估算）
   const resHeaders = (rec.resHeaders as Record<string, string>) ?? {};
@@ -48,7 +51,8 @@ export function parseTrafficLine(line: string): ProxyRequest | null {
   const bytesIn = Number(reqHeaders["content-length"] ?? reqHeaders["Content-Length"] ?? 0);
 
   return {
-    ts: (rec.ts as string) ?? new Date().toISOString(),
+    ts,
+    started_at: startedAt,
     sni: (rec.sni as string) ?? "",
     method: (rec.method as string) ?? "GET",
     url: (rec.url as string) ?? "",
