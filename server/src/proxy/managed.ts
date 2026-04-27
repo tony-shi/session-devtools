@@ -186,22 +186,21 @@ export async function startManagedProxy(port = getConfiguredProxyPort()): Promis
 
 export async function stopManagedProxy(port = getConfiguredProxyPort()): Promise<{ ok: boolean; pid?: number; reason?: string }> {
   if (isChildAlive(proxyChild)) {
+    // 本进程 spawn 的子进程，直接 SIGTERM
     const pid = proxyChild!.pid;
     proxyChild!.kill("SIGTERM");
     await new Promise((resolve) => setTimeout(resolve, 500));
     return { ok: true, pid };
   }
 
-  // 兼容旧版本遗留进程：没有被当前 dashboard 持有，但仍占着配置端口。
-  const pid = adoptedProxyPid ?? await findListeningPid(port);
-  if (!pid) return { ok: false, reason: "未找到正在监听的 proxy 进程" };
-  try {
-    process.kill(pid, "SIGTERM");
+  // adopt 的外部进程（可能是另一个 dashboard worktree 实例持有的 proxy）。
+  // 不发 SIGTERM——只有 owner 才能杀自己的子进程；这里只做 detach。
+  if (adoptedProxyPid) {
     adoptedProxyPid = null;
-    return { ok: true, pid };
-  } catch (err) {
-    return { ok: false, pid, reason: (err as Error).message };
+    return { ok: false, reason: "当前实例未持有该 proxy 进程，无法停止（由其它 dashboard 实例管理）" };
   }
+
+  return { ok: false, reason: "未找到正在监听的 proxy 进程" };
 }
 
 export async function getManagedProxyStatus(): Promise<ManagedProxyStatus> {
@@ -244,6 +243,7 @@ export async function startManagedProxyIfConfigured(): Promise<void> {
 }
 
 export async function stopManagedProxyIfRunning(): Promise<void> {
-  if (!isChildAlive(proxyChild) && !adoptedProxyPid && !isProxyConfigured()) return;
+  // 只有 owner（自己 spawn 的）才在 shutdown 时停止；adopt 的外部进程不干预
+  if (!isChildAlive(proxyChild)) return;
   await stopManagedProxy();
 }
