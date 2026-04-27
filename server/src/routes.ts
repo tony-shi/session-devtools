@@ -535,18 +535,8 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     const httpMod = await import("node:http");
     const httpGet = httpMod.default?.get ?? httpMod.get;
 
-    // daemon 的 pid/port 文件可能在 worktree 专属目录或默认目录，两处都查
-    const candidateProxyHomes = [
-      process.env.API_DASHBOARD_DIR
-        ? join(process.env.API_DASHBOARD_DIR, "proxy")
-        : null,
-      join(homedir(), ".api-dashboard", "proxy"),
-    ].filter(Boolean) as string[];
-
-    // 找第一个有 pid 文件的目录
-    const proxyHome = candidateProxyHomes.find((d) => existsSync(join(d, "proxy.pid")))
-      ?? candidateProxyHomes[0]!;
-
+    // proxy 路径固定为全局路径（不随 worktree API_DASHBOARD_DIR 变化）
+    const proxyHome = join(homedir(), ".api-dashboard", "proxy");
     const pidFile = join(proxyHome, "proxy.pid");
     const portFile = join(proxyHome, "proxy.port");
     const settingsPath = join(homedir(), ".claude", "settings.json");
