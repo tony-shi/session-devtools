@@ -673,27 +673,11 @@ export async function handleRequest(req: Request): Promise<Response | null> {
   }
 
   // 运行 preflight 检查（不写盘）
+  // preflight 内部自动读取 managed / settings / shell 三层，无需在此合并。
   if (path === "/api/proxy/setup/preflight" && req.method === "GET") {
     const { runPreflight } = await import("./proxy/preflight");
-    const { existsSync, readFileSync } = await import("node:fs");
-    const { join } = await import("node:path");
-    const { homedir } = await import("node:os");
     const portArg = Number(q.get("port") ?? process.env.API_DASHBOARD_PROXY_PORT ?? 38421);
-
-    // settings.json 的 env 块由 Claude Code 在启动时注入，不在 server 的 process.env 里。
-    // preflight 需要看到用户真实配置的代理，所以手动读取并合并。
-    let settingsEnv: Record<string, string> = {};
-    const settingsPath = join(homedir(), ".claude", "settings.json");
-    if (existsSync(settingsPath)) {
-      try {
-        const s = JSON.parse(readFileSync(settingsPath, "utf8"));
-        if (s?.env && typeof s.env === "object") settingsEnv = s.env;
-      } catch {}
-    }
-    // process.env 优先（shell 直接设置的变量权重更高），settings.json 作为补充
-    const mergedEnv = { ...settingsEnv, ...process.env };
-
-    const report = await runPreflight({ env: mergedEnv, ourPort: portArg });
+    const report = await runPreflight({ ourPort: portArg });
     return json(report);
   }
 

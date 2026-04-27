@@ -54,6 +54,7 @@ interface CheckResult {
   severity: "OK" | "WARN" | "BLOCK";
   message: string;
   hint?: string;
+  source?: "managed" | "settings" | "shell" | "system";
 }
 
 interface PreflightReport {
@@ -255,12 +256,22 @@ export function ProxySetup() {
                 <span style={{ color: severityColor(r.severity), fontWeight: 700, minWidth: 16 }}>
                   {severityIcon(r.severity)}
                 </span>
-                <div>
+                <div style={{ flex: 1 }}>
                   <span style={{ color: "#999", fontSize: 11, marginRight: 6 }}>[{r.id}]</span>
                   <span style={{ fontWeight: 500 }}>{r.name}</span>
+                  {r.source && r.source !== "system" && (
+                    <span style={{
+                      marginLeft: 6, fontSize: 10, padding: "1px 5px", borderRadius: 4,
+                      background: r.source === "managed" ? "#fff0f0" : r.source === "settings" ? "#f0f4ff" : "#f5f5f7",
+                      color:      r.source === "managed" ? "#c0392b" : r.source === "settings" ? "#2563eb"  : "#555",
+                      fontWeight: 600,
+                    }}>
+                      {r.source}
+                    </span>
+                  )}
                   <span style={{ color: "#666", marginLeft: 6 }}>{r.message}</span>
                   {r.hint && (
-                    <div style={{ fontSize: 11, color: "#999", marginTop: 2, marginLeft: 0 }}>→ {r.hint}</div>
+                    <div style={{ fontSize: 11, color: "#999", marginTop: 2 }}>→ {r.hint}</div>
                   )}
                 </div>
               </div>
