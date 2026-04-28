@@ -1,0 +1,378 @@
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "fs";
+import { parseClaudeJsonlMutations, pairToolUseAndResult } from "./jsonl-mutation-parser";
+import type { ContextMutation, SegmentCategory } from "./types";
+
+const FIXTURE_DIR = new URL(
+  "../../test/fixtures/context-reconstruction",
+  import.meta.url,
+).pathname;
+
+function loadJsonl(caseName: string): string {
+  return readFileSync(`${FIXTURE_DIR}/${caseName}/session.jsonl`, "utf8");
+}
+
+function parse(caseName: string) {
+  return parseClaudeJsonlMutations(loadJsonl(caseName), {
+    jsonlFile: `server/test/fixtures/context-reconstruction/${caseName}/session.jsonl`,
+  });
+}
+
+function countByCategory(mutations: ContextMutation[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const m of mutations) out[m.category] = (out[m.category] ?? 0) + 1;
+  return out;
+}
+
+function countUnknownReasons(unknowns: ReturnType<typeof parse>["unknownLines"]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const u of unknowns) out[u.reason] = (out[u.reason] ?? 0) + 1;
+  return out;
+}
+
+// fixture 期望值是从当前 fixture 内容固化下来的快照值；
+// 如果 fixture session.jsonl 改了，需要刷新这些数字。
+const EXPECTED: Record<
+  string,
+  {
+    sessionId: string;
+    totalMutations: number;
+    byCategory: Partial<Record<SegmentCategory, number>>;
+    pairs: number;
+    unknownReasons: Record<string, number>;
+  }
+> = {
+  "system-tools-overhead": {
+    sessionId: "ba3db910-c0df-4863-910c-7b8e9525fa84",
+    totalMutations: 62,
+    byCategory: {
+      permission: 10,
+      user_message: 3,
+      skill_listing: 1,
+      assistant_text: 6,
+      tool_use: 13,
+      tool_result: 13,
+      hook_event: 13,
+      attachment: 1,
+      unknown: 2,
+    },
+    pairs: 13,
+    unknownReasons: {
+      "harness_state_file-history-snapshot": 12,
+      "harness_state_last-prompt": 9,
+    },
+  },
+  "single-tool-call": {
+    sessionId: "ba3db910-c0df-4863-910c-7b8e9525fa84",
+    totalMutations: 70,
+    byCategory: {
+      permission: 10,
+      user_message: 4,
+      skill_listing: 1,
+      assistant_text: 7,
+      tool_use: 15,
+      tool_result: 15,
+      hook_event: 14,
+      attachment: 2,
+      unknown: 2,
+    },
+    pairs: 15,
+    unknownReasons: {
+      "harness_state_file-history-snapshot": 12,
+      "harness_state_last-prompt": 9,
+    },
+  },
+  "multi-turn-human": {
+    sessionId: "c8bc69a1-1625-4e70-8736-525b3c335b17",
+    totalMutations: 68,
+    byCategory: {
+      permission: 12,
+      user_message: 1,
+      local_command_history: 3,
+      assistant_text: 6,
+      tool_use: 18,
+      tool_result: 18,
+      hook_event: 6,
+      attachment: 2,
+      unknown: 2,
+    },
+    pairs: 18,
+    unknownReasons: {
+      "harness_state_file-history-snapshot": 16,
+      "harness_state_last-prompt": 10,
+    },
+  },
+  "large-tool-output": {
+    sessionId: "206e9383-7703-434a-8796-c89f19c0449f",
+    totalMutations: 44,
+    byCategory: {
+      permission: 9,
+      user_message: 2,
+      skill_listing: 1,
+      assistant_text: 3,
+      tool_use: 10,
+      tool_result: 10,
+      hook_event: 6,
+      attachment: 1,
+      unknown: 2,
+    },
+    pairs: 10,
+    unknownReasons: {
+      "harness_state_worktree-state": 9,
+      "harness_state_file-history-snapshot": 6,
+      "harness_state_last-prompt": 8,
+    },
+  },
+};
+
+for (const caseName of Object.keys(EXPECTED)) {
+  const expected = EXPECTED[caseName];
+
+  describe(caseName, () => {
+    const result = parse(caseName);
+
+    test("sessionId 从 JSONL 内提取", () => {
+      expect(result.sessionId).toBe(expected.sessionId);
+    });
+
+    test("总 mutation 数稳定", () => {
+      expect(result.mutations.length).toBe(expected.totalMutations);
+    });
+
+    test("4 个 fixture 都不含 sidechain 行 → sidechainMutations 为空", () => {
+      expect(result.sidechainMutations).toEqual([]);
+    });
+
+    test("category 分布稳定", () => {
+      const counts = countByCategory(result.mutations);
+      for (const k of Object.keys(expected.byCategory) as SegmentCategory[]) {
+        expect(counts[k] ?? 0).toBe(expected.byCategory[k]!);
+      }
+      // 没有意外的 category 出现
+      const allowed = new Set(Object.keys(expected.byCategory));
+      const surprises = Object.keys(counts).filter((k) => !allowed.has(k));
+      expect(surprises).toEqual([]);
+    });
+
+    test("每条 mutation 都带 jsonl SourceRef，附 line 与 file", () => {
+      expect(result.mutations.length).toBeGreaterThan(0);
+      for (const m of result.mutations) {
+        expect(m.sourceRef.kind).toBe("jsonl");
+        if (m.sourceRef.kind === "jsonl") {
+          expect(m.sourceRef.jsonl.file).toBe(
+            `server/test/fixtures/context-reconstruction/${caseName}/session.jsonl`,
+          );
+          expect(typeof m.sourceRef.jsonl.line).toBe("number");
+          expect(m.sourceRef.jsonl.line).toBeGreaterThan(0);
+        }
+      }
+    });
+
+    test("tool_use 与 tool_result 一一配对（按 toolUseId）", () => {
+      const pair = pairToolUseAndResult(result.mutations);
+      expect(pair.unmatchedUses).toEqual([]);
+      expect(pair.unmatchedResults).toEqual([]);
+      expect(pair.paired.length).toBe(expected.pairs);
+      // toolUseId 都填了
+      const useMs = result.mutations.filter((m) => m.category === "tool_use");
+      const resMs = result.mutations.filter((m) => m.category === "tool_result");
+      for (const m of useMs) expect(typeof m.toolUseId).toBe("string");
+      for (const m of resMs) expect(typeof m.toolUseId).toBe("string");
+    });
+
+    test("unknownLines 只包含已知的 harness_state_* 类型", () => {
+      const counts = countUnknownReasons(result.unknownLines);
+      expect(counts).toEqual(expected.unknownReasons);
+    });
+
+    test("permission-mode 行都映射成 permission inject mutation", () => {
+      const ps = result.mutations.filter((m) => m.category === "permission");
+      expect(ps.length).toBeGreaterThan(0);
+      for (const m of ps) {
+        expect(m.type).toBe("inject");
+        expect(m.contentRef?.kind).toBe("inline");
+        expect(m.metadata?.permissionMode).toBeDefined();
+      }
+    });
+
+    test("api_error 与 turn_duration/away_summary 标记为 noise", () => {
+      const noises = result.mutations.filter((m) => m.type === "noise");
+      // api_error 至少一条；turn_duration / away_summary 视 fixture 而定
+      expect(noises.length).toBeGreaterThan(0);
+      for (const m of noises) {
+        expect(m.confidence).toBe("estimated");
+        expect(m.metadata?.systemSubtype).toBeDefined();
+      }
+    });
+
+    test("assistant 文本/工具调用 mutation 带 messageId 与 model", () => {
+      const aMs = result.mutations.filter(
+        (m) => m.category === "assistant_text" || m.category === "tool_use",
+      );
+      for (const m of aMs) {
+        expect(typeof m.metadata?.messageId).toBe("string");
+        expect(typeof m.metadata?.model).toBe("string");
+      }
+    });
+
+    test("user 字符串内容含 <local-command-*> 时分类为 local_command_history", () => {
+      const lc = result.mutations.filter((m) => m.category === "local_command_history");
+      for (const m of lc) {
+        const text = m.contentRef?.text ?? "";
+        expect(/^(?:<local-command-|<bash-|<command-)/.test(text.trimStart())).toBe(true);
+      }
+    });
+  });
+}
+
+// ── 跨 fixture 共性断言 ──────────────────────────────────────────────────────
+
+describe("cross-fixture invariants", () => {
+  // 真实 Claude Code 把 compact 摘要做成 createUserMessage({content:<string>,
+  // isCompactSummary:true})；不是顶层 compactSummaryText。
+  test("isCompactSummary=true 时从 message.content 读取摘要正文（string 形态）", () => {
+    const synthetic = JSON.stringify({
+      type: "user",
+      uuid: "u-compact",
+      timestamp: "2026-04-27T12:00:00.000Z",
+      isCompactSummary: true,
+      sessionId: "synthetic",
+      message: {
+        role: "user",
+        content:
+          "This session is being continued from a previous conversation that ran out of context. ...",
+      },
+    });
+    const r = parseClaudeJsonlMutations(synthetic);
+    expect(r.mutations.length).toBe(1);
+    const m = r.mutations[0];
+    expect(m.category).toBe("compaction");
+    expect(m.type).toBe("compact");
+    expect(m.contentRef?.text).toMatch(/continued from a previous conversation/);
+    expect(m.charDeltaEstimate).toBeGreaterThan(0);
+    if (m.sourceRef.kind === "jsonl") {
+      expect(m.sourceRef.jsonl.fieldPath).toBe("message.content");
+    }
+  });
+
+  test("compact 摘要也支持 message.content 是 text block 数组的形态", () => {
+    const synthetic = JSON.stringify({
+      type: "user",
+      uuid: "u-compact-arr",
+      isCompactSummary: true,
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "Summary part A" },
+          { type: "text", text: "Summary part B" },
+        ],
+      },
+    });
+    const r = parseClaudeJsonlMutations(synthetic);
+    expect(r.mutations.length).toBe(1);
+    expect(r.mutations[0].contentRef?.text).toBe("Summary part A\nSummary part B");
+  });
+
+  // 真实 Claude Code 把 subagent transcript 行写到主 session.jsonl 时打
+  // isSidechain:true。父会话 expected context 不能包含这些行。
+  test("isSidechain=true 行进入 sidechainMutations 而不是 mutations", () => {
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        uuid: "u1",
+        sessionId: "main-session",
+        message: { role: "user", content: "main session prompt" },
+      }),
+      JSON.stringify({
+        type: "user",
+        uuid: "u2",
+        isSidechain: true,
+        agentId: "subagent-1",
+        sessionId: "main-session",
+        message: { role: "user", content: "subagent prompt" },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        uuid: "a1",
+        isSidechain: true,
+        agentId: "subagent-1",
+        message: {
+          id: "msg_x",
+          role: "assistant",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "subagent reply" }],
+        },
+      }),
+    ];
+    const r = parseClaudeJsonlMutations(lines);
+    expect(r.mutations.length).toBe(1);
+    expect(r.mutations[0].contentRef?.text).toBe("main session prompt");
+    expect(r.mutations[0].metadata?.isSidechain).toBeUndefined();
+
+    expect(r.sidechainMutations.length).toBe(2);
+    for (const m of r.sidechainMutations) {
+      expect(m.subagentId).toBe("subagent-1");
+      expect(m.metadata?.isSidechain).toBe(true);
+      expect(m.sourceRef.kind).toBe("jsonl");
+    }
+  });
+
+  // thinking / redacted_thinking block 字段名是 `thinking` / `data`，不是 `text`。
+  test("assistant thinking block 从 .thinking 字段读取正文", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      uuid: "a-think",
+      message: {
+        id: "msg_t",
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [{ type: "thinking", thinking: "internal reasoning here" }],
+      },
+    });
+    const r = parseClaudeJsonlMutations(line);
+    expect(r.mutations.length).toBe(1);
+    const m = r.mutations[0];
+    expect(m.category).toBe("thinking");
+    expect(m.contentRef?.text).toBe("internal reasoning here");
+    expect(m.charDeltaEstimate).toBe("internal reasoning here".length);
+    expect(m.metadata?.redacted).toBe(false);
+  });
+
+  test("redacted_thinking block 从 .data 字段读取正文", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      uuid: "a-redact",
+      message: {
+        id: "msg_r",
+        role: "assistant",
+        content: [{ type: "redacted_thinking", data: "OPAQUE_BLOB_xyz" }],
+      },
+    });
+    const r = parseClaudeJsonlMutations(line);
+    expect(r.mutations.length).toBe(1);
+    const m = r.mutations[0];
+    expect(m.category).toBe("thinking");
+    expect(m.contentRef?.text).toBe("OPAQUE_BLOB_xyz");
+    expect(m.metadata?.redacted).toBe(true);
+  });
+
+  test("空行与解析失败的 JSON 不抛异常", () => {
+    const lines = ["", "not-json", "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"hi\"}}"];
+    const r = parseClaudeJsonlMutations(lines);
+    expect(r.mutations.length).toBe(1);
+    expect(r.unknownLines.some((u) => u.reason === "json_parse_error")).toBe(true);
+  });
+
+  test("未知 attachment 子型仍发 mutation 并报 unknownLines", () => {
+    const line = JSON.stringify({
+      type: "attachment",
+      uuid: "u",
+      attachment: { type: "future_thing", content: "x" },
+    });
+    const r = parseClaudeJsonlMutations(line);
+    expect(r.mutations.length).toBe(1);
+    expect(r.mutations[0].category).toBe("attachment");
+    expect(r.mutations[0].confidence).toBe("estimated");
+    expect(r.unknownLines.some((u) => u.reason === "attachment_unknown_subtype")).toBe(true);
+  });
+});
