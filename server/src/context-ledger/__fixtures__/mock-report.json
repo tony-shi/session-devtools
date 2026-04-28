@@ -1,0 +1,1025 @@
+{
+  "schemaVersion": "context-ledger.report.v1",
+  "id": "mock-reconciliation-report",
+  "agentKind": "claude-code",
+  "sessionId": "mock-session-context-ledger",
+  "agentId": "mock-main-agent",
+  "queryId": "query-0002",
+  "fixtureName": "mock-context-ledger-contract",
+  "snapshot": {
+    "id": "snapshot-query-0002",
+    "agentKind": "claude-code",
+    "sessionId": "mock-session-context-ledger",
+    "agentId": "mock-main-agent",
+    "queryId": "query-0002",
+    "queryIndex": 2,
+    "timestamp": "2026-01-01T00:00:00.000Z",
+    "sourceRef": {
+      "kind": "proxy",
+      "proxy": {
+        "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+        "jsonPath": "reqBody"
+      }
+    },
+    "request": {
+      "model": "claude-sonnet-4-5",
+      "stream": true,
+      "maxTokens": 4096,
+      "betaHeaders": [
+        "prompt-caching"
+      ]
+    },
+    "segments": [
+      {
+        "id": "pseg-system-prompt",
+        "section": "system",
+        "category": "system_prompt",
+        "label": "Claude Code system prompt",
+        "sourceRefs": [
+          {
+            "kind": "proxy",
+            "proxy": {
+              "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+              "jsonPath": "reqBody.system[0]"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-system",
+        "normalizedHash": "sha256:mock-system-normalized",
+        "charCount": 1800,
+        "tokenEstimate": 450,
+        "cacheHint": "read",
+        "lifecycle": "session",
+        "order": 0
+      },
+      {
+        "id": "pseg-tools-schema",
+        "section": "tools",
+        "category": "tools_schema",
+        "label": "Tool schemas",
+        "sourceRefs": [
+          {
+            "kind": "proxy",
+            "proxy": {
+              "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+              "jsonPath": "reqBody.tools"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-tools",
+        "normalizedHash": "sha256:mock-tools-normalized",
+        "charCount": 5200,
+        "tokenEstimate": 1300,
+        "cacheHint": "read",
+        "lifecycle": "session",
+        "flags": [
+          "large_segment"
+        ],
+        "order": 1
+      },
+      {
+        "id": "pseg-prior-session-history",
+        "section": "messages",
+        "role": "user",
+        "category": "prior_session_history",
+        "label": "Prior human turns carried into the request",
+        "sourceRefs": [
+          {
+            "kind": "proxy",
+            "proxy": {
+              "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+              "jsonPath": "reqBody.messages[0]"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-prior-session",
+        "normalizedHash": "sha256:mock-prior-session-normalized",
+        "charCount": 900,
+        "tokenEstimate": 225,
+        "cacheHint": "none",
+        "lifecycle": "session",
+        "order": 2
+      },
+      {
+        "id": "pseg-user-message",
+        "section": "messages",
+        "role": "user",
+        "category": "user_message",
+        "label": "Current user message",
+        "sourceRefs": [
+          {
+            "kind": "proxy",
+            "proxy": {
+              "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+              "jsonPath": "reqBody.messages[1].content[0]"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-user-message",
+        "normalizedHash": "sha256:mock-user-message-normalized",
+        "charCount": 120,
+        "tokenEstimate": 30,
+        "cacheHint": "none",
+        "lifecycle": "query",
+        "order": 3
+      },
+      {
+        "id": "pseg-tool-use",
+        "section": "messages",
+        "role": "assistant",
+        "category": "tool_use",
+        "label": "Assistant tool_use block",
+        "sourceRefs": [
+          {
+            "kind": "proxy",
+            "proxy": {
+              "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+              "jsonPath": "reqBody.messages[2].content[1]"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-tool-use",
+        "normalizedHash": "sha256:mock-tool-use-normalized",
+        "charCount": 180,
+        "tokenEstimate": 45,
+        "cacheHint": "none",
+        "toolUseId": "toolu_mock_01",
+        "lifecycle": "query",
+        "order": 4
+      },
+      {
+        "id": "pseg-tool-result",
+        "section": "messages",
+        "role": "user",
+        "category": "tool_result",
+        "label": "Large tool_result block",
+        "sourceRefs": [
+          {
+            "kind": "proxy",
+            "proxy": {
+              "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+              "jsonPath": "reqBody.messages[3].content[0]"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-tool-result",
+        "normalizedHash": "sha256:mock-tool-result-normalized",
+        "charCount": 7600,
+        "tokenEstimate": 1900,
+        "cacheHint": "write",
+        "toolUseId": "toolu_mock_01",
+        "lifecycle": "query",
+        "flags": [
+          "large_segment"
+        ],
+        "order": 5
+      },
+      {
+        "id": "pseg-harness-injection",
+        "section": "messages",
+        "role": "user",
+        "category": "harness_injection",
+        "label": "System reminder plus local command injection",
+        "sourceRefs": [
+          {
+            "kind": "proxy",
+            "proxy": {
+              "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+              "jsonPath": "reqBody.messages[4].content[0]"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-harness-injection",
+        "normalizedHash": "sha256:mock-harness-injection-normalized",
+        "charCount": 780,
+        "tokenEstimate": 195,
+        "cacheHint": "none",
+        "lifecycle": "one_shot",
+        "flags": [
+          "injected",
+          "merged"
+        ],
+        "order": 6
+      },
+      {
+        "id": "pseg-billing-noise",
+        "section": "messages",
+        "role": "user",
+        "category": "billing_noise",
+        "label": "Known billing header noise",
+        "sourceRefs": [
+          {
+            "kind": "proxy",
+            "proxy": {
+              "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+              "jsonPath": "reqBody.messages[5].content[0]"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-billing-noise",
+        "normalizedHash": "sha256:mock-billing-noise-normalized",
+        "charCount": 90,
+        "tokenEstimate": 23,
+        "cacheHint": "none",
+        "lifecycle": "noise",
+        "flags": [
+          "known_noise"
+        ],
+        "order": 7
+      },
+      {
+        "id": "pseg-unknown",
+        "section": "messages",
+        "role": "user",
+        "category": "unknown",
+        "label": "Unexplained proxy-only block",
+        "sourceRefs": [
+          {
+            "kind": "proxy",
+            "proxy": {
+              "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+              "jsonPath": "reqBody.messages[6].content[0]"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-unknown",
+        "normalizedHash": "sha256:mock-unknown-normalized",
+        "charCount": 300,
+        "tokenEstimate": 75,
+        "cacheHint": "unknown",
+        "lifecycle": "unknown",
+        "flags": [
+          "unexplained"
+        ],
+        "order": 8
+      }
+    ],
+    "usage": {
+      "inputTokens": 4243,
+      "cacheReadInputTokens": 1750,
+      "cacheCreationInputTokens": 1900,
+      "freshInputTokens": 593,
+      "measuredInputTokens": 4243
+    },
+    "rawRequestHash": "sha256:mock-raw-request"
+  },
+  "expected": {
+    "id": "expected-query-0002",
+    "agentKind": "claude-code",
+    "sessionId": "mock-session-context-ledger",
+    "agentId": "mock-main-agent",
+    "queryId": "query-0002",
+    "beforeQueryId": "query-0002",
+    "mutationIds": [
+      "mut-system-prompt",
+      "mut-tools-schema",
+      "mut-prior-session",
+      "mut-user-message",
+      "mut-tool-use",
+      "mut-tool-result",
+      "mut-harness-injection",
+      "mut-local-command-history",
+      "mut-billing-noise"
+    ],
+    "segments": [
+      {
+        "id": "eseg-system-prompt",
+        "section": "system",
+        "category": "system_prompt",
+        "label": "Expected system prompt from harness rule",
+        "sourceRefs": [
+          {
+            "kind": "harness_rule",
+            "harness": {
+              "ruleId": "claude-code.system-prompt.v1",
+              "version": "mock"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-system",
+        "normalizedHash": "sha256:mock-system-normalized",
+        "charCount": 1800,
+        "tokenEstimate": 450,
+        "cacheHint": "read",
+        "lifecycle": "session",
+        "order": 0
+      },
+      {
+        "id": "eseg-tools-schema",
+        "section": "tools",
+        "category": "tools_schema",
+        "label": "Expected tool schemas from harness rule",
+        "sourceRefs": [
+          {
+            "kind": "harness_rule",
+            "harness": {
+              "ruleId": "claude-code.tools-schema.v1",
+              "version": "mock"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-tools",
+        "normalizedHash": "sha256:mock-tools-normalized",
+        "charCount": 5200,
+        "tokenEstimate": 1300,
+        "cacheHint": "read",
+        "lifecycle": "session",
+        "flags": [
+          "large_segment"
+        ],
+        "order": 1
+      },
+      {
+        "id": "eseg-prior-session-history",
+        "section": "messages",
+        "role": "user",
+        "category": "prior_session_history",
+        "label": "Expected prior session history",
+        "sourceRefs": [
+          {
+            "kind": "prior_session",
+            "priorSession": {
+              "sessionId": "mock-prior-session",
+              "queryId": "query-0001",
+              "segmentId": "prior-human-turns"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-prior-session",
+        "normalizedHash": "sha256:mock-prior-session-normalized",
+        "charCount": 900,
+        "tokenEstimate": 225,
+        "lifecycle": "session",
+        "order": 2
+      },
+      {
+        "id": "eseg-user-message",
+        "section": "messages",
+        "role": "user",
+        "category": "user_message",
+        "label": "Expected current user message",
+        "sourceRefs": [
+          {
+            "kind": "jsonl",
+            "jsonl": {
+              "file": "server/test/fixtures/context-reconstruction/mock/session.jsonl",
+              "line": 12,
+              "uuid": "mock-user-uuid",
+              "fieldPath": "message.content[0].text"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-user-message",
+        "normalizedHash": "sha256:mock-user-message-normalized",
+        "charCount": 120,
+        "tokenEstimate": 30,
+        "lifecycle": "query",
+        "order": 3
+      },
+      {
+        "id": "eseg-tool-use",
+        "section": "messages",
+        "role": "assistant",
+        "category": "tool_use",
+        "label": "Expected assistant tool_use",
+        "sourceRefs": [
+          {
+            "kind": "jsonl",
+            "jsonl": {
+              "file": "server/test/fixtures/context-reconstruction/mock/session.jsonl",
+              "line": 13,
+              "uuid": "mock-assistant-tool-uuid",
+              "fieldPath": "message.content[1]"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-tool-use",
+        "normalizedHash": "sha256:mock-tool-use-normalized",
+        "charCount": 180,
+        "tokenEstimate": 45,
+        "toolUseId": "toolu_mock_01",
+        "lifecycle": "query",
+        "order": 4
+      },
+      {
+        "id": "eseg-tool-result",
+        "section": "messages",
+        "role": "user",
+        "category": "tool_result",
+        "label": "Expected large tool_result",
+        "sourceRefs": [
+          {
+            "kind": "jsonl",
+            "jsonl": {
+              "file": "server/test/fixtures/context-reconstruction/mock/session.jsonl",
+              "line": 14,
+              "uuid": "mock-tool-result-uuid",
+              "fieldPath": "message.content[0]"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-tool-result",
+        "normalizedHash": "sha256:mock-tool-result-normalized",
+        "charCount": 7600,
+        "tokenEstimate": 1900,
+        "toolUseId": "toolu_mock_01",
+        "lifecycle": "query",
+        "flags": [
+          "large_segment"
+        ],
+        "order": 5
+      },
+      {
+        "id": "eseg-harness-injection",
+        "section": "messages",
+        "role": "user",
+        "category": "harness_injection",
+        "label": "Expected system reminder injection",
+        "sourceRefs": [
+          {
+            "kind": "harness_rule",
+            "harness": {
+              "ruleId": "claude-code.system-reminder-and-local-command.v1",
+              "version": "mock"
+            }
+          }
+        ],
+        "normalizedHash": "sha256:mock-harness-injection-normalized",
+        "charCount": 420,
+        "tokenEstimate": 105,
+        "lifecycle": "one_shot",
+        "flags": [
+          "injected"
+        ],
+        "order": 6
+      },
+      {
+        "id": "eseg-local-command-history",
+        "section": "messages",
+        "role": "user",
+        "category": "local_command_history",
+        "label": "Expected local command history injection",
+        "sourceRefs": [
+          {
+            "kind": "harness_rule",
+            "harness": {
+              "ruleId": "claude-code.system-reminder-and-local-command.v1",
+              "version": "mock"
+            }
+          }
+        ],
+        "normalizedHash": "sha256:mock-local-command-normalized",
+        "charCount": 360,
+        "tokenEstimate": 90,
+        "lifecycle": "one_shot",
+        "flags": [
+          "injected"
+        ],
+        "order": 7
+      },
+      {
+        "id": "eseg-billing-noise",
+        "section": "messages",
+        "role": "user",
+        "category": "billing_noise",
+        "label": "Expected known billing noise",
+        "sourceRefs": [
+          {
+            "kind": "harness_rule",
+            "harness": {
+              "ruleId": "claude-code.billing-noise.v1",
+              "version": "mock"
+            }
+          }
+        ],
+        "rawHash": "sha256:mock-billing-noise",
+        "normalizedHash": "sha256:mock-billing-noise-normalized",
+        "charCount": 90,
+        "tokenEstimate": 23,
+        "lifecycle": "noise",
+        "flags": [
+          "known_noise"
+        ],
+        "order": 8
+      }
+    ],
+    "rulesApplied": [
+      {
+        "ruleId": "claude-code.system-prompt.v1",
+        "source": "harness_rule",
+        "version": "mock",
+        "confidence": "exact"
+      },
+      {
+        "ruleId": "claude-code.tools-schema.v1",
+        "source": "harness_rule",
+        "version": "mock",
+        "confidence": "exact"
+      },
+      {
+        "ruleId": "claude-code.system-reminder-and-local-command.v1",
+        "source": "harness_rule",
+        "version": "mock",
+        "confidence": "inferred"
+      }
+    ],
+    "generatedAt": "2026-01-01T00:00:00.000Z"
+  },
+  "proxyAttributions": [
+    {
+      "id": "attr-system-prompt",
+      "snapshotId": "snapshot-query-0002",
+      "proxySegmentIds": [
+        "pseg-system-prompt"
+      ],
+      "category": "system_prompt",
+      "attributedSource": "harness_rule",
+      "sourceRefs": [
+        {
+          "kind": "proxy",
+          "proxy": {
+            "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+            "jsonPath": "reqBody.system[0]"
+          }
+        },
+        {
+          "kind": "harness_rule",
+          "harness": {
+            "ruleId": "claude-code.system-prompt.v1",
+            "version": "mock"
+          }
+        }
+      ],
+      "mechanism": "system_prompt_pattern",
+      "confidence": "exact",
+      "ruleId": "claude-code.system-prompt.v1",
+      "charCount": 1800,
+      "tokenEstimate": 450
+    },
+    {
+      "id": "attr-tools-schema",
+      "snapshotId": "snapshot-query-0002",
+      "proxySegmentIds": [
+        "pseg-tools-schema"
+      ],
+      "category": "tools_schema",
+      "attributedSource": "harness_rule",
+      "sourceRefs": [
+        {
+          "kind": "proxy",
+          "proxy": {
+            "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+            "jsonPath": "reqBody.tools"
+          }
+        },
+        {
+          "kind": "harness_rule",
+          "harness": {
+            "ruleId": "claude-code.tools-schema.v1",
+            "version": "mock"
+          }
+        }
+      ],
+      "mechanism": "tools_schema_pattern",
+      "confidence": "exact",
+      "ruleId": "claude-code.tools-schema.v1",
+      "charCount": 5200,
+      "tokenEstimate": 1300
+    },
+    {
+      "id": "attr-tool-chain",
+      "snapshotId": "snapshot-query-0002",
+      "proxySegmentIds": [
+        "pseg-tool-use",
+        "pseg-tool-result"
+      ],
+      "category": "tool_result",
+      "attributedSource": "jsonl",
+      "sourceRefs": [
+        {
+          "kind": "jsonl",
+          "jsonl": {
+            "file": "server/test/fixtures/context-reconstruction/mock/session.jsonl",
+            "line": 13,
+            "uuid": "mock-assistant-tool-uuid",
+            "fieldPath": "message.content[1]"
+          }
+        },
+        {
+          "kind": "jsonl",
+          "jsonl": {
+            "file": "server/test/fixtures/context-reconstruction/mock/session.jsonl",
+            "line": 14,
+            "uuid": "mock-tool-result-uuid",
+            "fieldPath": "message.content[0]"
+          }
+        }
+      ],
+      "mechanism": "tool_use_id_match",
+      "confidence": "exact",
+      "charCount": 7780,
+      "tokenEstimate": 1945
+    },
+    {
+      "id": "attr-harness-injection",
+      "snapshotId": "snapshot-query-0002",
+      "proxySegmentIds": [
+        "pseg-harness-injection"
+      ],
+      "category": "harness_injection",
+      "attributedSource": "harness_rule",
+      "sourceRefs": [
+        {
+          "kind": "proxy",
+          "proxy": {
+            "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+            "jsonPath": "reqBody.messages[4].content[0]"
+          }
+        },
+        {
+          "kind": "harness_rule",
+          "harness": {
+            "ruleId": "claude-code.system-reminder-and-local-command.v1",
+            "version": "mock"
+          }
+        }
+      ],
+      "mechanism": "local_command_pattern",
+      "confidence": "inferred",
+      "ruleId": "claude-code.system-reminder-and-local-command.v1",
+      "charCount": 780,
+      "tokenEstimate": 195,
+      "notes": [
+        "One proxy block represents two expected sources."
+      ]
+    },
+    {
+      "id": "attr-unknown",
+      "snapshotId": "snapshot-query-0002",
+      "proxySegmentIds": [
+        "pseg-unknown"
+      ],
+      "category": "unknown",
+      "attributedSource": "unknown",
+      "sourceRefs": [
+        {
+          "kind": "proxy",
+          "proxy": {
+            "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+            "jsonPath": "reqBody.messages[6].content[0]"
+          }
+        },
+        {
+          "kind": "unknown",
+          "note": "Deliberately unexplained proxy segment used to exercise the audit layer."
+        }
+      ],
+      "mechanism": "unknown",
+      "confidence": "unknown",
+      "charCount": 300,
+      "tokenEstimate": 75
+    }
+  ],
+  "alignments": [
+    {
+      "id": "align-system-prompt",
+      "matchKind": "exact",
+      "confidence": "exact",
+      "expectedSegmentIds": [
+        "eseg-system-prompt"
+      ],
+      "proxySegmentIds": [
+        "pseg-system-prompt"
+      ],
+      "attributionIds": [
+        "attr-system-prompt"
+      ],
+      "basis": "raw_hash"
+    },
+    {
+      "id": "align-tools-schema",
+      "matchKind": "exact",
+      "confidence": "exact",
+      "expectedSegmentIds": [
+        "eseg-tools-schema"
+      ],
+      "proxySegmentIds": [
+        "pseg-tools-schema"
+      ],
+      "attributionIds": [
+        "attr-tools-schema"
+      ],
+      "basis": "raw_hash"
+    },
+    {
+      "id": "align-prior-session",
+      "matchKind": "heuristic",
+      "confidence": "inferred",
+      "expectedSegmentIds": [
+        "eseg-prior-session-history"
+      ],
+      "proxySegmentIds": [
+        "pseg-prior-session-history"
+      ],
+      "basis": "category"
+    },
+    {
+      "id": "align-user-message",
+      "matchKind": "exact",
+      "confidence": "exact",
+      "expectedSegmentIds": [
+        "eseg-user-message"
+      ],
+      "proxySegmentIds": [
+        "pseg-user-message"
+      ],
+      "mutationIds": [
+        "mut-user-message"
+      ],
+      "basis": "raw_hash"
+    },
+    {
+      "id": "align-tool-chain",
+      "matchKind": "exact",
+      "confidence": "exact",
+      "expectedSegmentIds": [
+        "eseg-tool-use",
+        "eseg-tool-result"
+      ],
+      "proxySegmentIds": [
+        "pseg-tool-use",
+        "pseg-tool-result"
+      ],
+      "mutationIds": [
+        "mut-tool-use",
+        "mut-tool-result"
+      ],
+      "attributionIds": [
+        "attr-tool-chain"
+      ],
+      "basis": "tool_use_id"
+    },
+    {
+      "id": "align-harness-merge",
+      "matchKind": "heuristic",
+      "confidence": "inferred",
+      "expectedSegmentIds": [
+        "eseg-harness-injection",
+        "eseg-local-command-history"
+      ],
+      "proxySegmentIds": [
+        "pseg-harness-injection"
+      ],
+      "mutationIds": [
+        "mut-harness-injection",
+        "mut-local-command-history"
+      ],
+      "attributionIds": [
+        "attr-harness-injection"
+      ],
+      "basis": "harness_rule",
+      "note": "Represents N:1 alignment from multiple expected injections into one proxy block."
+    },
+    {
+      "id": "align-billing-noise",
+      "matchKind": "inferred",
+      "confidence": "inferred",
+      "expectedSegmentIds": [
+        "eseg-billing-noise"
+      ],
+      "proxySegmentIds": [
+        "pseg-billing-noise"
+      ],
+      "basis": "harness_rule"
+    }
+  ],
+  "findings": [
+    {
+      "id": "finding-system-tools-overhead",
+      "type": "matched",
+      "severity": "info",
+      "category": "tools_schema",
+      "expectedSegmentIds": [
+        "eseg-system-prompt",
+        "eseg-tools-schema"
+      ],
+      "proxySegmentIds": [
+        "pseg-system-prompt",
+        "pseg-tools-schema"
+      ],
+      "alignmentIds": [
+        "align-system-prompt",
+        "align-tools-schema"
+      ],
+      "message": "System prompt and tools schema are represented as proxy fact segments and explained by harness rules."
+    },
+    {
+      "id": "finding-tool-use-result-chain",
+      "type": "matched",
+      "severity": "info",
+      "category": "tool_result",
+      "expectedSegmentIds": [
+        "eseg-tool-use",
+        "eseg-tool-result"
+      ],
+      "proxySegmentIds": [
+        "pseg-tool-use",
+        "pseg-tool-result"
+      ],
+      "mutationIds": [
+        "mut-tool-use",
+        "mut-tool-result"
+      ],
+      "alignmentIds": [
+        "align-tool-chain"
+      ],
+      "message": "tool_use and tool_result are aligned by toolUseId."
+    },
+    {
+      "id": "finding-large-tool-output",
+      "type": "merge_alignment",
+      "severity": "warning",
+      "category": "tool_result",
+      "expectedSegmentIds": [
+        "eseg-tool-result"
+      ],
+      "proxySegmentIds": [
+        "pseg-tool-result"
+      ],
+      "mutationIds": [
+        "mut-tool-result"
+      ],
+      "alignmentIds": [
+        "align-tool-chain"
+      ],
+      "message": "Large tool_result is explainable but should remain visible for context bloat ranking."
+    },
+    {
+      "id": "finding-harness-merge",
+      "type": "merge_alignment",
+      "severity": "info",
+      "category": "harness_injection",
+      "expectedSegmentIds": [
+        "eseg-harness-injection",
+        "eseg-local-command-history"
+      ],
+      "proxySegmentIds": [
+        "pseg-harness-injection"
+      ],
+      "mutationIds": [
+        "mut-harness-injection",
+        "mut-local-command-history"
+      ],
+      "alignmentIds": [
+        "align-harness-merge"
+      ],
+      "attributionIds": [
+        "attr-harness-injection"
+      ],
+      "message": "System reminder and local command history may be materialized as one proxy block."
+    },
+    {
+      "id": "finding-known-noise",
+      "type": "known_noise",
+      "severity": "info",
+      "category": "billing_noise",
+      "expectedSegmentIds": [
+        "eseg-billing-noise"
+      ],
+      "proxySegmentIds": [
+        "pseg-billing-noise"
+      ],
+      "alignmentIds": [
+        "align-billing-noise"
+      ],
+      "message": "Known billing noise is tracked explicitly instead of being counted as unexplained context."
+    },
+    {
+      "id": "finding-api-error-retry",
+      "type": "api_error_retry",
+      "severity": "warning",
+      "category": "tool_result",
+      "proxySegmentIds": [
+        "pseg-tool-result"
+      ],
+      "message": "Fixture pressure: the report can carry retry findings without making retry a mutation sourced from proxy."
+    },
+    {
+      "id": "finding-unmatched-proxy",
+      "type": "unmatched_proxy_segment",
+      "severity": "warning",
+      "category": "unknown",
+      "proxySegmentIds": [
+        "pseg-unknown"
+      ],
+      "attributionIds": [
+        "attr-unknown"
+      ],
+      "charDiff": 300,
+      "tokenDiffEstimate": 75,
+      "message": "Proxy contains a segment that is not explained by JSONL, memory, hooks, prior session, or harness rules.",
+      "evidence": [
+        {
+          "kind": "proxy",
+          "proxy": {
+            "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+            "jsonPath": "reqBody.messages[6].content[0]"
+          }
+        }
+      ]
+    }
+  ],
+  "coverage": {
+    "proxySegmentCount": 9,
+    "matchedProxySegmentCount": 8,
+    "unmatchedProxySegmentCount": 1,
+    "expectedSegmentCount": 9,
+    "unmatchedExpectedSegmentCount": 0,
+    "proxyChars": 16970,
+    "matchedProxyChars": 16670,
+    "unexplainedProxyChars": 300,
+    "proxyTokenEstimate": 4243,
+    "matchedProxyTokenEstimate": 4168,
+    "unexplainedProxyTokenEstimate": 75,
+    "segmentCoverage": 0.8889,
+    "charCoverage": 0.9823,
+    "tokenCoverage": 0.9823,
+    "byCategory": [
+      {
+        "category": "system_prompt",
+        "proxySegmentCount": 1,
+        "matchedProxySegmentCount": 1,
+        "proxyChars": 1800,
+        "matchedProxyChars": 1800,
+        "proxyTokenEstimate": 450,
+        "matchedProxyTokenEstimate": 450
+      },
+      {
+        "category": "tools_schema",
+        "proxySegmentCount": 1,
+        "matchedProxySegmentCount": 1,
+        "proxyChars": 5200,
+        "matchedProxyChars": 5200,
+        "proxyTokenEstimate": 1300,
+        "matchedProxyTokenEstimate": 1300
+      },
+      {
+        "category": "tool_result",
+        "proxySegmentCount": 1,
+        "matchedProxySegmentCount": 1,
+        "proxyChars": 7600,
+        "matchedProxyChars": 7600,
+        "proxyTokenEstimate": 1900,
+        "matchedProxyTokenEstimate": 1900
+      },
+      {
+        "category": "harness_injection",
+        "proxySegmentCount": 1,
+        "matchedProxySegmentCount": 1,
+        "proxyChars": 780,
+        "matchedProxyChars": 780,
+        "proxyTokenEstimate": 195,
+        "matchedProxyTokenEstimate": 195
+      },
+      {
+        "category": "unknown",
+        "proxySegmentCount": 1,
+        "matchedProxySegmentCount": 0,
+        "proxyChars": 300,
+        "matchedProxyChars": 0,
+        "proxyTokenEstimate": 75,
+        "matchedProxyTokenEstimate": 0
+      }
+    ]
+  },
+  "generatedAt": "2026-01-01T00:00:00.000Z",
+  "capability": {
+    "agentKind": "claude-code",
+    "hasProxyGroundTruth": true,
+    "hasStructuredLocalLog": true,
+    "hasToolUseIds": true,
+    "hasUsageTokens": true,
+    "hasCacheBreakdown": true,
+    "hasMemoryFiles": true,
+    "hasCompactionEvents": true,
+    "hasHooks": true,
+    "hasSubagents": true,
+    "supportedSections": [
+      "system",
+      "tools",
+      "messages",
+      "metadata"
+    ],
+    "notes": [
+      "Mock capability matrix is optimistic so downstream consumers handle the full contract surface."
+    ]
+  },
+  "metadata": {
+    "fixturePressures": [
+      "system-tools-overhead",
+      "single-tool-call",
+      "large-tool-output",
+      "multi-turn-human"
+    ]
+  }
+}
