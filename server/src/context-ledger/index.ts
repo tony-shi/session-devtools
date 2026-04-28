@@ -9,3 +9,13 @@ export type {
   UnknownJsonlLine,
   ToolUsePairingResult,
 } from "./jsonl-mutation-parser";
+export {
+  reconstructExpectedClaudeContext,
+  UNIMPLEMENTED_RULES,
+} from "./expected-context-reconstructor";
+export type {
+  HarnessRuleConfig,
+  QueryBoundary,
+  ReconstructInput,
+  UnimplementedRuleId,
+} from "./expected-context-reconstructor";
