@@ -19,3 +19,5 @@ export type {
   ReconstructInput,
   UnimplementedRuleId,
 } from "./expected-context-reconstructor";
+export { reconcileClaudeContext } from "./reconciliation-engine";
+export type { ReconcileInput } from "./reconciliation-engine";
