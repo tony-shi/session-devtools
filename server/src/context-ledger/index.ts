@@ -22,9 +22,22 @@ export type {
 export { reconcileClaudeContext } from "./reconciliation-engine";
 export type { ReconcileInput } from "./reconciliation-engine";
 export {
+  CONTEXT_LEDGER_RULES,
+  CONTEXT_LEDGER_RULE_BY_ID,
+  CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE,
+  getContextLedgerRule,
+  // 过渡期兼容别名
   ATTRIBUTION_RULES,
   ATTRIBUTION_RULE_BY_ID,
-  CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE,
   getAttributionRule,
 } from "./rule-registry";
-export type { AttributionRule, RuleMatchMode, RuleStability } from "./rule-registry";
+export type {
+  ContextLedgerRule,
+  RuleMatchMode,
+  RuleStability,
+  RuleMaterialization,
+  RuleComparePolicy,
+  RuleLocationConstraint,
+  // 过渡期兼容别名
+  AttributionRule,
+} from "./rule-registry";

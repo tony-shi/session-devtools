@@ -294,11 +294,13 @@ describe("rule registry 集成：identity rule 驱动 attribution", () => {
   });
 
   // 只有 identity pattern 出现在第二个非 billing block（nonBillingOrder=1）才不命中
-  test("identity pattern 在第二个非 billing block（nonBillingOrder=1）时不命中", async () => {
+  // 新设计：location 约束只用 section=system + segmentPosition=segment_start，
+  // 不依赖绝对/相对索引。identity pattern 在 system[] 任意位置出现均命中。
+  // （sourcemap 保证 harness 把它放在 billing 之后；但 attribution 不靠位置区分，靠 pattern。）
+  test("identity pattern 在 system[] 任意索引均命中（不依赖绝对位置）", async () => {
     const snapshot = await loadSnapshot("system-tools-overhead");
     const rawBody = snapshot.metadata!.rawBody as Record<string, unknown>;
     const systemBlocks = rawBody.system as Array<{ text: string }>;
-    // system[0]=billing, system[1]=some_other_content, system[2]=identity pattern
     systemBlocks[0] = { text: "x-anthropic-billing-header: billing data" };
     systemBlocks[1] = { text: "Some other system content, not identity." };
     if (systemBlocks.length > 2) {
@@ -306,6 +308,8 @@ describe("rule registry 集成：identity rule 驱动 attribution", () => {
     }
     const attributions = inferClaudeProxyAttributions(snapshot);
     const identityAttr = attributions.find((a) => a.ruleId === "claude-code.system-prompt-identity.v1");
-    expect(identityAttr).toBeUndefined();
+    // 应当命中：pattern 正确，section=system 满足
+    expect(identityAttr).toBeDefined();
+    expect(identityAttr!.confidence).toBe("exact");
   });
 });

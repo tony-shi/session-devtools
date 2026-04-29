@@ -44,7 +44,7 @@
 
 import { createHash } from "node:crypto";
 import { CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE } from "./rule-registry";
-import type { AttributionRule } from "./rule-registry";
+import type { ContextLedgerRule } from "./rule-registry";
 import type {
   CacheHint,
   ContextSegment,
@@ -134,26 +134,32 @@ function isBillingNoise(text: string): boolean {
   return text.trimStart().toLowerCase().startsWith(BILLING_HEADER_PREFIX);
 }
 
-// matchesAttributionRule：text match + location 双重校验。
-// matchMode=exact 要求 text.trim() 严格等于 promptPattern（完整段即是该 pattern）
-// 或 text.trimStart().startsWith(promptPattern)（segment 以该 pattern 开头，后面可有更多内容）。
-// location.section / location.order 不满足时直接返回 false（no match，不降级）。
+// matchesAttributionRule：从 ContextLedgerRule.attribution 取 pattern + location，
+// 执行 text match + section 约束双重校验。
+//
+// section 约束：attribution.location.section 不满足时直接 no match。
+// text match（matchMode=exact）：trimStart 后以 pattern 开头即命中。
+//   "以 pattern 开头"涵盖两种情况：
+//     (a) 整段就是 pattern（57-char identity block）
+//     (b) 段以 pattern 打头后跟更多内容（未来 full system prompt rule 的场景）
+//
+// orderHint / jsonPathHint 仅作审核参考，不参与运行时约束——
+// 因为 billing header 的存在性影响绝对索引，不适合作为硬约束。
+// segmentPosition = segment_start 已由 startsWith 语义保证。
 function matchesAttributionRule(
-  rule: AttributionRule,
+  rule: ContextLedgerRule,
   text: string,
   section: SegmentSection,
-  order: number,
 ): boolean {
-  if (!rule.promptPattern) return false;
+  const attr = rule.attribution;
+  if (!attr?.pattern) return false;
 
-  // location 硬约束
-  if (rule.location?.section !== undefined && rule.location.section !== section) return false;
-  if (rule.location?.order !== undefined && rule.location.order !== order) return false;
+  // section 硬约束
+  if (attr.location?.section !== undefined && attr.location.section !== section) return false;
 
-  // text match：exact 模式要求 segment 以 promptPattern 开头
-  // （整段可以更长，但必须是这个 pattern 打头，无前置空白之外的内容）
+  // text match：segment_start / exact 均用 startsWith（pattern 须出现在 segment 起始）
   const trimmed = text.trimStart();
-  return trimmed.startsWith(rule.promptPattern);
+  return trimmed.startsWith(attr.pattern);
 }
 
 function isSystemReminder(text: string): boolean {
@@ -196,10 +202,6 @@ export function inferClaudeProxyAttributions(
 
   // ---- 1. system[] 处理 ------------------------------------------------
 
-  // nonBillingOrder：billing noise block 不计入，用于 location.order 约束。
-  // identity rule 的 order=0 指"首个非 billing system block"。
-  let nonBillingOrder = 0;
-
   for (let si = 0; si < systemBlocks.length; si++) {
     const block = systemBlocks[si];
     const text = block.text ?? "";
@@ -217,15 +219,17 @@ export function inferClaudeProxyAttributions(
     const flags: SegmentFlag[] = [];
 
     if (si === 0 && isBillingNoise(text)) {
-      // 规则 1：billing_noise_pattern（billing noise 不计入 nonBillingOrder）
+      // 规则 1：billing_noise_pattern（system[0] 专用，sourcemap 保证位置）
       category = "billing_noise";
       mechanism = "billing_noise_pattern";
       confidence = "exact";
       attributedSource = "harness_rule";
       lifecycle = "noise";
       flags.push("known_noise");
-    } else if (matchesAttributionRule(CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE, text, "system", nonBillingOrder)) {
-      // 规则 2：system_prompt_pattern（identity rule，经 registry 校验：exact text + section=system + 首个非 billing block）
+    } else if (matchesAttributionRule(CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE, text, "system")) {
+      // 规则 2：identity rule（从 registry 读 pattern，section=system + segment_start）
+      // 不依赖绝对索引：billing header 存在时落在 system[1]，不存在时落在 system[0]，
+      // matchesAttributionRule 只校验 section + startsWith(pattern)。
       category = "system_prompt";
       mechanism = "system_prompt_pattern";
       confidence = "exact";
@@ -283,9 +287,6 @@ export function inferClaudeProxyAttributions(
       notes,
       ...(identityRuleId ? { ruleId: identityRuleId } : {}),
     });
-
-    // billing noise 不计入 nonBillingOrder（location.order 约束基于非噪声索引）
-    if (category !== "billing_noise") nonBillingOrder++;
   }
 
   // ---- 2. tools[] 处理 -------------------------------------------------
