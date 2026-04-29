@@ -391,6 +391,38 @@ describe("computeCharDiff: mock report", () => {
     const expected = (mock.expected?.segments ?? []).reduce((s, seg) => s + (seg.charCount ?? 0), 0);
     expect(diff.expectedFlatChars).toBe(expected);
   });
+
+  test("evidenceBackedCoverage <= attributionCoverage (evidence is subset of attribution)", () => {
+    const s = diff.summary;
+    expect(s.evidenceBackedCoverage).toBeLessThanOrEqual(s.attributionCoverage);
+  });
+
+  test("attributionOnlyGap = attributionCoverage - evidenceBackedCoverage", () => {
+    const s = diff.summary;
+    expect(s.attributionOnlyGap).toBeCloseTo(s.attributionCoverage - s.evidenceBackedCoverage, 4);
+  });
+
+  test("unexplainedProxyChars 仅含 proxy_only + suspect_match（不含 attribution_only/known_noise）", () => {
+    const s = diff.summary;
+    const manualUnattributed = diff.entries
+      .filter((e) => e.kind === "proxy_only" || e.kind === "suspect_match")
+      .reduce((acc, e) => acc + (e.proxyRange?.chars ?? 0), 0);
+    expect(s.unexplainedProxyChars).toBe(manualUnattributed);
+  });
+
+  test("suspectMatchChars matches entries with kind=suspect_match", () => {
+    const s = diff.summary;
+    const manualSuspect = diff.entries
+      .filter((e) => e.kind === "suspect_match")
+      .reduce((acc, e) => acc + (e.proxyRange?.chars ?? 0), 0);
+    expect(s.suspectMatchChars).toBe(manualSuspect);
+  });
+
+  // 验证验收条件：proxy 129k / expected 6k 场景下不会显示"全都解释完"
+  // mock 数字较小，但逻辑一致：proxy 16970 >> expected ~17170，evidence-backed 应 < 1.0
+  test("evidenceBackedCoverage < 1.0（proxy >> expected 时不宣称全解释完）", () => {
+    expect(diff.summary.evidenceBackedCoverage).toBeLessThan(1.0);
+  });
 });
 
 describe("computeCharDiff: live reconciliation on mock", () => {

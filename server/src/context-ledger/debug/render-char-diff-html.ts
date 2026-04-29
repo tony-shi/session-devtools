@@ -18,9 +18,9 @@ const KIND_LABELS: Record<string, string> = {
   matched_exact:     "matched exact",
   matched_char_diff: "matched (char diff)",
   expected_only:     "expected only",
-  proxy_only:        "proxy only",
-  attribution_only:  "attribution only",
-  known_noise:       "known noise",
+  proxy_only:        "proxy only (unattributed)",
+  attribution_only:  "server-side attribution",
+  known_noise:       "known non-user-semantic",
 };
 
 export function renderCharDiffHtml(report: CharDiffReport): string {
@@ -109,16 +109,22 @@ document.addEventListener('click', function(e) {
 
 function renderSummaryCards(s: CharDiffSummary): string {
   const cards = [
+    { label: "Proxy Chars", value: s.totalProxyChars.toLocaleString(), sub: "denominator (proxy ground truth)" },
+    { label: "Expected Chars", value: s.totalExpectedChars.toLocaleString(), sub: "reconstructed from JSONL/rules" },
+    // evidenceBackedCoverage：内容锚点覆盖比例（不含纯归因）
+    { label: "Evidence-Backed", value: `${(s.evidenceBackedCoverage * 100).toFixed(1)}%`, sub: `of proxy chars (matched_exact + char_diff)` },
+    // attributionCoverage：server-side attribution 覆盖比例（含 evidence-backed）
+    { label: "Attribution Cov.", value: `${(s.attributionCoverage * 100).toFixed(1)}%`, sub: `incl. server-side attribution` },
+    // attributionOnlyGap：归因知晓但无内容锚点的 gap
+    { label: "Attribution Gap", value: `${(s.attributionOnlyGap * 100).toFixed(1)}%`, sub: `attribution - evidence-backed` },
+    // unexplainedProxyChars：unattributed proxy（proxy_only + suspect_match），不含 attribution_only/known_noise
+    { label: "Unattributed", value: s.unexplainedProxyChars.toLocaleString(), sub: `${pct(s.unexplainedProxyChars, s.totalProxyChars)}% of proxy (proxy_only + suspect)` },
+    { label: "Suspect Match", value: s.suspectMatch, sub: `${s.suspectMatchChars.toLocaleString()} chars (no content anchor)` },
+    // alignedTextDrift：已对齐段的字符漂移，=0 仅表示 aligned 无漂移，不代表 proxy==expected
+    { label: "Aligned Drift", value: `${(s.alignedTextDrift * 100).toFixed(2)}%`, sub: `of proxy chars (aligned segments only)` },
     { label: "Total Entries", value: s.totalEntries, sub: "" },
     { label: "Matched Exact", value: s.matchedExact, sub: `${pct(s.matchedExact, s.totalEntries)}%` },
-    { label: "Char Diff", value: s.matchedWithCharDiff, sub: `drift ${(s.charDriftPct * 100).toFixed(2)}%` },
-    { label: "Expected Only", value: s.expectedOnly, sub: "" },
-    { label: "Proxy Only", value: s.proxyOnly, sub: `${s.unexplainedProxyChars.toLocaleString()} chars` },
-    { label: "Attribution Only", value: s.attributionOnly, sub: "" },
-    { label: "Known Noise", value: s.knownNoise, sub: "" },
-    { label: "Proxy Chars", value: s.totalProxyChars.toLocaleString(), sub: "" },
-    { label: "Expected Chars", value: s.totalExpectedChars.toLocaleString(), sub: "" },
-    { label: "Unexplained", value: s.unexplainedProxyChars.toLocaleString(), sub: `${pct(s.unexplainedProxyChars, s.totalProxyChars)}% of proxy` },
+    { label: "Known Non-User-Semantic", value: s.knownNoise, sub: "server-side billing/infra (not unexplained)" },
   ];
   return `<div class="summary-grid">${cards.map((c) => `
     <div class="stat-card">
@@ -130,14 +136,30 @@ function renderSummaryCards(s: CharDiffSummary): string {
 }
 
 function renderCoverageBar(s: CharDiffSummary): string {
-  const explainedChars = s.totalProxyChars - s.unexplainedProxyChars;
-  const fillPct = s.totalProxyChars > 0 ? (explainedChars / s.totalProxyChars) * 100 : 0;
-  const color = fillPct >= 90 ? "#22c55e" : fillPct >= 70 ? "#f59e0b" : "#ef4444";
+  // 三段堆叠：evidence-backed（绿）/ attribution-only gap（紫）/ unattributed（红）
+  const evidencePct = s.evidenceBackedCoverage * 100;
+  const attrGapPct = s.attributionOnlyGap * 100;
+  const unattributedPct = s.totalProxyChars > 0
+    ? (s.unexplainedProxyChars / s.totalProxyChars) * 100
+    : 0;
+
   return `
   <div>
     <div class="section-header">Proxy Char Coverage</div>
-    <div class="bar-wrap"><div class="bar-fill" style="width:${fillPct.toFixed(2)}%;background:${color}"></div></div>
-    <div class="bar-label">${fillPct.toFixed(1)}% explained (${explainedChars.toLocaleString()} / ${s.totalProxyChars.toLocaleString()} chars)</div>
+    <div style="font-size:11px;color:#64748b;margin-bottom:4px;">
+      分母 = proxy chars (${s.totalProxyChars.toLocaleString()})；
+      char diff = 0 仅表示 aligned 段无漂移，不代表 proxy == expected
+    </div>
+    <div class="bar-wrap" style="height:12px;position:relative;">
+      <div class="bar-fill" style="width:${evidencePct.toFixed(2)}%;background:#22c55e;position:absolute;left:0;top:0;height:100%;"></div>
+      <div class="bar-fill" style="width:${attrGapPct.toFixed(2)}%;background:#a855f7;position:absolute;left:${evidencePct.toFixed(2)}%;top:0;height:100%;"></div>
+      <div class="bar-fill" style="width:${unattributedPct.toFixed(2)}%;background:#ef4444;position:absolute;left:${(evidencePct + attrGapPct).toFixed(2)}%;top:0;height:100%;"></div>
+    </div>
+    <div class="bar-label" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;">
+      <span style="color:#22c55e">■ evidence-backed ${evidencePct.toFixed(1)}%</span>
+      <span style="color:#a855f7">■ attribution-only gap ${attrGapPct.toFixed(1)}%</span>
+      <span style="color:#ef4444">■ unattributed ${unattributedPct.toFixed(1)}% (${s.unexplainedProxyChars.toLocaleString()} chars)</span>
+    </div>
   </div>`;
 }
 

@@ -691,14 +691,29 @@ export const MOCK_RECONCILIATION_REPORT = {
     expectedSegmentCount: 9,
     unmatchedExpectedSegmentCount: 0,
     proxyChars: 16970,
-    matchedProxyChars: 16670,
-    unexplainedProxyChars: 300,
+    // matchedProxyChars：proxyChars - unexplainedProxyChars（包含 attribution_only 和 known_noise）
+    matchedProxyChars: 15770,
+    // unexplainedProxyChars：仅 unattributed proxy（proxy_only + suspect_match）
+    //   prior_session(900, basis=category, suspect) + unknown(300, proxy_only) = 1200
+    unexplainedProxyChars: 1200,
     proxyTokenEstimate: 4243,
-    matchedProxyTokenEstimate: 4168,
-    unexplainedProxyTokenEstimate: 75,
+    matchedProxyTokenEstimate: 3943,
+    unexplainedProxyTokenEstimate: 300,
     segmentCoverage: 0.8889,
-    charCoverage: 0.9823,
-    tokenCoverage: 0.9823,
+    // charCoverage = matchedProxyChars / proxyChars（含 server-side attribution）
+    charCoverage: 0.9293,
+    tokenCoverage: 0.9293,
+    // attributionCoverage：有 server-side attribution 的 proxy chars / proxyChars
+    //   evidence-backed(15680) + known_noise(90) = 15770 / 16970 ≈ 0.9293
+    attributionCoverage: 0.9293,
+    // evidenceBackedCoverage：有内容锚点的 proxy chars / proxyChars
+    //   system_prompt(1800)+tools_schema(5200)+user_message(120)+tool_chain(7780)+harness(780) = 15680 / 16970 ≈ 0.9239
+    evidenceBackedCoverage: 0.9239,
+    // attributionOnlyGap：billing_noise(90)/16970 ≈ 0.0053
+    attributionOnlyGap: 0.0053,
+    // alignedTextDrift：evidence-backed matched 全部 delta=0，故=0
+    //   （=0 仅表示 aligned 段无漂移，不代表 proxy == expected）
+    alignedTextDrift: 0,
     byCategory: [
       {
         category: "system_prompt",

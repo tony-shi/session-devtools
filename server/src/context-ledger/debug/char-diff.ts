@@ -24,13 +24,13 @@ import type {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type DiffKind =
-  | "matched_exact"        // rawHash / tool_use_id exact match, chars identical
-  | "matched_char_diff"    // matched but char counts differ
-  | "suspect_match"        // category+role heuristic only, no content anchor — not evidence-backed
-  | "expected_only"        // expected segment has no proxy counterpart
-  | "proxy_only"           // proxy segment has no expected counterpart
-  | "attribution_only"     // proxy segment explained by attribution, no expected
-  | "known_noise";         // billing_noise or other known noise
+  | "matched_exact"        // rawHash / tool_use_id 精确匹配，chars 完全相同
+  | "matched_char_diff"    // 有内容锚点匹配，但 char count 有差异（evidence-backed）
+  | "suspect_match"        // 仅 category+role heuristic，无内容锚点，不计入 evidence-backed
+  | "expected_only"        // expected segment 无对应 proxy
+  | "proxy_only"           // proxy segment 未被任何 alignment 覆盖（unattributed）
+  | "attribution_only"     // proxy segment 有 server-side attribution，无对应 expected（非 user-semantic）
+  | "known_noise";         // 已知非用户语义的 server-side attribution（billing_noise 等）
 
 export interface CharRange {
   start: number;  // inclusive char offset in the concatenated flat text
@@ -87,19 +87,36 @@ export interface CharDiffSummary {
   totalEntries: number;
   matchedExact: number;
   matchedWithCharDiff: number;
-  // suspect_match：category+role heuristic，无内容锚点，不计入 explained
+  // suspect_match：category+role heuristic，无内容锚点，不计入 evidence-backed
   suspectMatch: number;
   expectedOnly: number;
+  // proxy_only：unattributed proxy segment，既无 alignment 也无 attribution
   proxyOnly: number;
+  // attribution_only：server-side attribution 已识别（非 user-semantic），但无对应 expected
   attributionOnly: number;
+  // known_noise：已知非用户语义的 server-side overhead（billing_noise 等），不宣称 token 节约
   knownNoise: number;
   totalExpectedChars: number;
   totalProxyChars: number;
+  // unexplainedProxyChars：仅表示 unattributed proxy（proxy_only + suspect_match），
+  // attribution_only 和 known_noise 不在此列
   unexplainedProxyChars: number;
   /** sum of |charDelta| across matched_char_diff entries */
   totalCharDriftAbsolute: number;
-  /** totalCharDriftAbsolute / totalProxyChars (0..1) */
+  /** totalCharDriftAbsolute / totalProxyChars (0..1)；仅表示 aligned 部分的 drift，=0 不代表 proxy==expected */
   charDriftPct: number;
+
+  // ── 细化覆盖率拆分 ──────────────────────────────────────────────────────────
+  /** proxy chars 中有 server-side attribution（含 evidence-backed），占 totalProxyChars 的比例 (0..1) */
+  attributionCoverage: number;
+  /** proxy chars 中有内容锚点证明（matched_exact + matched_char_diff），占 totalProxyChars 的比例 (0..1) */
+  evidenceBackedCoverage: number;
+  /** attributionCoverage - evidenceBackedCoverage：归因知晓但无 JSONL/ruleId 锚点的 gap (0..1) */
+  attributionOnlyGap: number;
+  /** suspect_match proxy chars（有 alignment 但无内容锚点），绝对值 */
+  suspectMatchChars: number;
+  /** evidence-backed matched 中 |expectedChars - proxyChars| 之和 / totalProxyChars；=0 仅代表 aligned 段无漂移 */
+  alignedTextDrift: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -373,30 +390,65 @@ function computeSummary(
   let knownNoise = 0;
   let totalCharDriftAbsolute = 0;
 
+  // 用于细化覆盖率的字符累计
+  let evidenceBackedChars = 0;   // matched_exact + matched_char_diff 的 proxy chars
+  let attributionChars = 0;      // attribution_only + known_noise + evidence-backed 的 proxy chars
+  let suspectMatchChars = 0;     // suspect_match 的 proxy chars
+
   for (const e of entries) {
+    // proxyRange 是 bounding box（mergeRanges），多 segment 不连续时会包含中间无关字符；
+    // 用 proxyTexts 逐段求和才是真实的 proxy chars
+    const pChars = (e.proxyTexts ?? []).reduce((s, t) => s + t.chars, 0);
     switch (e.kind) {
-      case "matched_exact": matchedExact++; break;
+      case "matched_exact":
+        matchedExact++;
+        evidenceBackedChars += pChars;
+        attributionChars += pChars;
+        break;
       case "matched_char_diff":
         matchedWithCharDiff++;
         totalCharDriftAbsolute += Math.abs(e.charDelta ?? 0);
+        evidenceBackedChars += pChars;
+        attributionChars += pChars;
         break;
-      case "suspect_match": suspectMatch++; break;
+      case "suspect_match":
+        suspectMatch++;
+        suspectMatchChars += pChars;
+        // suspect 不计入 evidenceBackedChars，也不计入 attributionChars
+        break;
       case "expected_only": expectedOnly++; break;
       case "proxy_only": proxyOnly++; break;
-      case "attribution_only": attributionOnly++; break;
-      case "known_noise": knownNoise++; break;
+      case "attribution_only":
+        // server-side attribution（非 user-semantic）：归因知晓但无 expected 对应
+        attributionOnly++;
+        attributionChars += pChars;
+        break;
+      case "known_noise":
+        // 已知非用户语义的 server-side overhead，不宣称 token 节约
+        knownNoise++;
+        attributionChars += pChars;
+        break;
     }
   }
 
   const totalExpectedChars = (expected?.segments ?? []).reduce((s, seg) => s + (seg.charCount ?? 0), 0);
   const totalProxyChars = snapshot.segments.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
 
-  // Unexplained = proxy_only + suspect_match（无内容锚点，不算 evidence-backed explained）
+  // unexplainedProxyChars：仅 unattributed proxy（proxy_only + suspect_match）
+  // attribution_only / known_noise 已有 server-side attribution，不算 unexplained
   const unexplainedProxyChars = entries
     .filter((e) => e.kind === "proxy_only" || e.kind === "suspect_match")
-    .reduce((s, e) => s + (e.proxyRange?.chars ?? 0), 0);
+    .reduce((s, e) => s + (e.proxyTexts ?? []).reduce((t, seg) => t + seg.chars, 0), 0);
 
   const charDriftPct = totalProxyChars > 0 ? totalCharDriftAbsolute / totalProxyChars : 0;
+
+  // 细化覆盖率（0..1）
+  const evidenceBackedCoverage = totalProxyChars > 0 ? evidenceBackedChars / totalProxyChars : 0;
+  const attributionCoverage = totalProxyChars > 0 ? attributionChars / totalProxyChars : 0;
+  const attributionOnlyGap = Math.max(0, attributionCoverage - evidenceBackedCoverage);
+  // alignedTextDrift：evidence-backed matched 中的文本漂移 / totalProxyChars
+  // =0 仅表示已匹配段无漂移，不意味着 proxy == expected
+  const alignedTextDrift = totalProxyChars > 0 ? totalCharDriftAbsolute / totalProxyChars : 0;
 
   return {
     totalEntries: entries.length,
@@ -412,5 +464,10 @@ function computeSummary(
     unexplainedProxyChars,
     totalCharDriftAbsolute,
     charDriftPct: Math.round(charDriftPct * 10000) / 10000,
+    attributionCoverage: Math.round(attributionCoverage * 10000) / 10000,
+    evidenceBackedCoverage: Math.round(evidenceBackedCoverage * 10000) / 10000,
+    attributionOnlyGap: Math.round(attributionOnlyGap * 10000) / 10000,
+    suspectMatchChars,
+    alignedTextDrift: Math.round(alignedTextDrift * 10000) / 10000,
   };
 }
