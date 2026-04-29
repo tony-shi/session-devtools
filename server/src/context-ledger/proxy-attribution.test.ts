@@ -249,3 +249,63 @@ describe("P2b fix: tool_result 的 tool_use_id 不在本次请求时降级为 in
     expect(degraded?.notes?.some((n) => n.includes("not found"))).toBe(true);
   });
 });
+
+describe("rule registry 集成：identity rule 驱动 attribution", () => {
+  test("带句号的完整 identity pattern 命中 system[0]，ruleId 写入 attribution", async () => {
+    const snapshot = await loadSnapshot("system-tools-overhead");
+    const attributions = inferClaudeProxyAttributions(snapshot);
+    const identityAttr = attributions.find(
+      (a) => a.category === "system_prompt" && a.confidence === "exact",
+    );
+    expect(identityAttr).toBeDefined();
+    expect(identityAttr!.ruleId).toBe("claude-code.system-prompt-identity.v1");
+    expect(identityAttr!.mechanism).toBe("system_prompt_pattern");
+  });
+
+  test("少句号版本不命中 identity rule（no match → heuristic fallback）", async () => {
+    const snapshot = await loadSnapshot("system-tools-overhead");
+    // system[1] 才是 identity block（system[0] 是 billing noise）
+    const rawBody = snapshot.metadata!.rawBody as Record<string, unknown>;
+    const systemBlocks = rawBody.system as Array<{ text: string }>;
+    const identityIdx = systemBlocks.findIndex((b) =>
+      b.text?.startsWith("You are Claude Code, Anthropic's official CLI for Claude."),
+    );
+    expect(identityIdx).toBeGreaterThanOrEqual(0);
+    systemBlocks[identityIdx].text = "You are Claude Code, Anthropic's official CLI for Claude";
+    const attributions = inferClaudeProxyAttributions(snapshot);
+    const identityAttr = attributions.find((a) => a.ruleId === "claude-code.system-prompt-identity.v1");
+    // 少句号版本不应命中 identity rule
+    expect(identityAttr).toBeUndefined();
+  });
+
+  // location.order=0 指"首个非 billing system block"，不是原始索引 0。
+  // billing noise 之后的 system[1] 仍然是 nonBillingOrder=0，应命中 identity rule。
+  test("billing noise 之后的 system[1] 是首个非 billing block，仍然命中 identity rule", async () => {
+    const snapshot = await loadSnapshot("system-tools-overhead");
+    const rawBody = snapshot.metadata!.rawBody as Record<string, unknown>;
+    const systemBlocks = rawBody.system as Array<{ text: string }>;
+    systemBlocks[0] = { text: "x-anthropic-billing-header: billing data" };
+    if (systemBlocks.length > 1) {
+      systemBlocks[1] = { text: "You are Claude Code, Anthropic's official CLI for Claude." };
+    }
+    const attributions = inferClaudeProxyAttributions(snapshot);
+    const identityAttr = attributions.find((a) => a.ruleId === "claude-code.system-prompt-identity.v1");
+    expect(identityAttr).toBeDefined();
+  });
+
+  // 只有 identity pattern 出现在第二个非 billing block（nonBillingOrder=1）才不命中
+  test("identity pattern 在第二个非 billing block（nonBillingOrder=1）时不命中", async () => {
+    const snapshot = await loadSnapshot("system-tools-overhead");
+    const rawBody = snapshot.metadata!.rawBody as Record<string, unknown>;
+    const systemBlocks = rawBody.system as Array<{ text: string }>;
+    // system[0]=billing, system[1]=some_other_content, system[2]=identity pattern
+    systemBlocks[0] = { text: "x-anthropic-billing-header: billing data" };
+    systemBlocks[1] = { text: "Some other system content, not identity." };
+    if (systemBlocks.length > 2) {
+      systemBlocks[2] = { text: "You are Claude Code, Anthropic's official CLI for Claude." };
+    }
+    const attributions = inferClaudeProxyAttributions(snapshot);
+    const identityAttr = attributions.find((a) => a.ruleId === "claude-code.system-prompt-identity.v1");
+    expect(identityAttr).toBeUndefined();
+  });
+});

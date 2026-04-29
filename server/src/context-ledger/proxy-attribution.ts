@@ -43,6 +43,8 @@
 //   已知局限：messages[0] 里如果混有当前 query 的真实用户输入（极少见），会被误归为历史。
 
 import { createHash } from "node:crypto";
+import { CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE } from "./rule-registry";
+import type { AttributionRule } from "./rule-registry";
 import type {
   CacheHint,
   ContextSegment,
@@ -52,6 +54,7 @@ import type {
   SegmentCategory,
   SegmentFlag,
   SegmentLifecycle,
+  SegmentSection,
   SourceRef,
 } from "./types";
 
@@ -59,9 +62,6 @@ import type {
 
 // billing header 的完整前缀（system[0] 专用）
 const BILLING_HEADER_PREFIX = "x-anthropic-billing-header:";
-
-// Claude Code identity 行（system prompt 第一行）
-const CC_IDENTITY_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude";
 
 // system-reminder 标签
 const SYSTEM_REMINDER_OPEN = "<system-reminder>";
@@ -134,8 +134,26 @@ function isBillingNoise(text: string): boolean {
   return text.trimStart().toLowerCase().startsWith(BILLING_HEADER_PREFIX);
 }
 
-function isSystemPrompt(text: string): boolean {
-  return text.trimStart().startsWith(CC_IDENTITY_PREFIX);
+// matchesAttributionRule：text match + location 双重校验。
+// matchMode=exact 要求 text.trim() 严格等于 promptPattern（完整段即是该 pattern）
+// 或 text.trimStart().startsWith(promptPattern)（segment 以该 pattern 开头，后面可有更多内容）。
+// location.section / location.order 不满足时直接返回 false（no match，不降级）。
+function matchesAttributionRule(
+  rule: AttributionRule,
+  text: string,
+  section: SegmentSection,
+  order: number,
+): boolean {
+  if (!rule.promptPattern) return false;
+
+  // location 硬约束
+  if (rule.location?.section !== undefined && rule.location.section !== section) return false;
+  if (rule.location?.order !== undefined && rule.location.order !== order) return false;
+
+  // text match：exact 模式要求 segment 以 promptPattern 开头
+  // （整段可以更长，但必须是这个 pattern 打头，无前置空白之外的内容）
+  const trimmed = text.trimStart();
+  return trimmed.startsWith(rule.promptPattern);
 }
 
 function isSystemReminder(text: string): boolean {
@@ -178,6 +196,10 @@ export function inferClaudeProxyAttributions(
 
   // ---- 1. system[] 处理 ------------------------------------------------
 
+  // nonBillingOrder：billing noise block 不计入，用于 location.order 约束。
+  // identity rule 的 order=0 指"首个非 billing system block"。
+  let nonBillingOrder = 0;
+
   for (let si = 0; si < systemBlocks.length; si++) {
     const block = systemBlocks[si];
     const text = block.text ?? "";
@@ -191,23 +213,25 @@ export function inferClaudeProxyAttributions(
     let attributedSource: MutationSourceKind;
     let notes: string[] | undefined;
     let lifecycle: SegmentLifecycle;
+    let identityRuleId: string | undefined;
     const flags: SegmentFlag[] = [];
 
     if (si === 0 && isBillingNoise(text)) {
-      // 规则 1：billing_noise_pattern
+      // 规则 1：billing_noise_pattern（billing noise 不计入 nonBillingOrder）
       category = "billing_noise";
       mechanism = "billing_noise_pattern";
       confidence = "exact";
       attributedSource = "harness_rule";
       lifecycle = "noise";
       flags.push("known_noise");
-    } else if (isSystemPrompt(text)) {
-      // 规则 2：system_prompt_pattern
+    } else if (matchesAttributionRule(CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE, text, "system", nonBillingOrder)) {
+      // 规则 2：system_prompt_pattern（identity rule，经 registry 校验：exact text + section=system + 首个非 billing block）
       category = "system_prompt";
       mechanism = "system_prompt_pattern";
       confidence = "exact";
       attributedSource = "harness_rule";
       lifecycle = "session";
+      identityRuleId = CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE.ruleId;
       if (chars > LARGE_SEGMENT_THRESHOLD) flags.push("large_segment");
     } else if (text.trim().length > 0) {
       // 其他 system block：启发式推断为 system_prompt（可能是 CLAUDE.md 注入等）
@@ -257,7 +281,11 @@ export function inferClaudeProxyAttributions(
       charCount: chars,
       tokenEstimate: Math.round(chars / 4),
       notes,
+      ...(identityRuleId ? { ruleId: identityRuleId } : {}),
     });
+
+    // billing noise 不计入 nonBillingOrder（location.order 约束基于非噪声索引）
+    if (category !== "billing_noise") nonBillingOrder++;
   }
 
   // ---- 2. tools[] 处理 -------------------------------------------------
