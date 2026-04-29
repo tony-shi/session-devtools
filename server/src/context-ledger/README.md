@@ -78,6 +78,37 @@ That creates circular attribution and removes the audit value of the report.
 - `CoverageSummary` for explained and unexplained segment, char, and token estimates.
 - `Confidence = "exact" | "estimated" | "inferred" | "unknown"` so reports can distinguish exact evidence from estimated or inferred evidence.
 
+## Rule Registry
+
+`rule-registry.ts` 是 attribution rule 的元数据与查找层，独立于 parser、reconciler 和 ContextMutation。
+
+### 当前 registry 状态
+
+首批只包含**一条人工确认**的 rule：
+
+| ruleId | matchMode | stability | ruleVersion |
+|--------|-----------|-----------|-------------|
+| `claude-code.system-prompt-identity.v1` | `exact` | `static` | `2.1.123` |
+
+该 rule 基于多次 proxy dump 的人工审核，确认 Claude Code system prompt 以固定字符串 `"You are Claude Code, Anthropic's official CLI for Claude."` 开头。
+
+### ruleVersion 版本口径
+
+`ruleVersion = "2.1.123"` 是**占位版本**，含义是"本 rule 基于对 Claude Code 2.1.x 系列的人工审核"，**不是**最小兼容版本声明，不代表在精确版本之前或之后该字符串不存在。后续如需锁定版本兼容性，应重新人工审核并更新。
+
+### 新增 rule 的人工审核流程
+
+1. 在 `claude-code-sourcemap/restored-src/` 中 grep 目标字段，确认合法值域和定义点。
+2. 收集 ≥2 次真实 proxy dump 样本，确认 pattern 稳定。
+3. 在 PR 中附上 sourcemap 路径和 proxy 样本截图，让 reviewer 人工确认。
+4. 确认后再在 `rule-registry.ts` 中新增 `AttributionRule` 条目，**不接受自动推断写入**。
+5. 同步更新 `mock-report.json` fixture（通过 `bun -e` 重新生成）。
+
+### 禁止的数据流
+
+- proxy diff 只能产生 **candidate rule** 供人工审核，不能自动写入 registry 或 ContextMutation。
+- attribution 识别出某段疑似新 rule 时，走 `mechanism: "unknown"` + finding，等人工审核后才入 registry。
+
 ## Reserved For Later
 
 - `metadata` fields are reserved for adapter-specific raw details and must not become required consumer semantics.

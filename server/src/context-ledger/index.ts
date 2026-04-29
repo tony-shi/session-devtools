@@ -21,3 +21,10 @@ export type {
 } from "./expected-context-reconstructor";
 export { reconcileClaudeContext } from "./reconciliation-engine";
 export type { ReconcileInput } from "./reconciliation-engine";
+export {
+  ATTRIBUTION_RULES,
+  ATTRIBUTION_RULE_BY_ID,
+  CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE,
+  getAttributionRule,
+} from "./rule-registry";
+export type { AttributionRule, RuleMatchMode, RuleStability } from "./rule-registry";

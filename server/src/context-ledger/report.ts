@@ -56,6 +56,9 @@ const jsonlToolResultRef: Extract<SourceRef, { kind: "jsonl" }> = {
   },
 };
 
+// system-prompt-identity rule 只证明"这段内容是 Claude Code system prompt"（识别锚点），
+// 不归因整段 1800 字符的内容来源。整段归因需独立的 system-prompt-full rule（未入 registry）。
+// 此处沿用泛化占位 ruleId，等 full rule 人工审核后再替换。
 const harnessSystemRef: Extract<SourceRef, { kind: "harness_rule" }> = {
   kind: "harness_rule",
   harness: {

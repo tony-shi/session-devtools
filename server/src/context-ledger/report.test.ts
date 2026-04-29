@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { buildMockReconciliationReport } from "./report";
+import {
+  ATTRIBUTION_RULES,
+  ATTRIBUTION_RULE_BY_ID,
+  CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE,
+  getAttributionRule,
+} from "./rule-registry";
 import type { MutationSourceKind, ReconciliationReport } from "./types";
 
 // @ts-expect-error proxy is a fact-layer source, not a mutation source.
@@ -89,5 +95,90 @@ describe("context-ledger mock report contract", () => {
     expect(report.agentId).toBe("mock-main-agent");
     expect(report.snapshot.agentId).toBe(report.agentId);
     expect(report.expected?.agentId).toBe(report.agentId);
+  });
+});
+
+describe("rule registry contract", () => {
+  // registry 中 ruleId 唯一
+  test("ruleId 在 registry 中唯一", () => {
+    const ids = ATTRIBUTION_RULES.map((r) => r.ruleId);
+    const unique = new Set(ids);
+    expect(unique.size).toBe(ids.length);
+  });
+
+  // 当前 registry 只有一条 rule（首批只落地 identity rule）
+  test("当前 registry 只包含一条人工确认的 rule", () => {
+    expect(ATTRIBUTION_RULES).toHaveLength(1);
+  });
+
+  // identity rule 核心属性断言
+  test("identity rule 的 promptPattern 严格等于固定标识字符串", () => {
+    expect(CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE.promptPattern).toBe(
+      "You are Claude Code, Anthropic's official CLI for Claude.",
+    );
+  });
+
+  test("identity rule 的 matchMode 是 exact", () => {
+    expect(CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE.matchMode).toBe("exact");
+  });
+
+  test("identity rule 的 stability 是 static", () => {
+    expect(CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE.stability).toBe("static");
+  });
+
+  test("identity rule 的 ruleVersion 是 2.1.123", () => {
+    expect(CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE.ruleVersion).toBe("2.1.123");
+  });
+
+  // promptPattern 不含尾部换行
+  test("identity rule 的 promptPattern 没有尾部换行", () => {
+    const pattern = CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE.promptPattern;
+    expect(pattern).not.toBeNull();
+    expect(pattern!.endsWith("\n")).toBe(false);
+    expect(pattern!.endsWith("\r")).toBe(false);
+  });
+
+  // ATTRIBUTION_RULE_BY_ID lookup helper
+  test("getAttributionRule 能通过 ruleId 查找 identity rule", () => {
+    const rule = getAttributionRule("claude-code.system-prompt-identity.v1");
+    expect(rule).toBe(CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE);
+  });
+
+  test("getAttributionRule 对未知 ruleId 返回 undefined", () => {
+    expect(getAttributionRule("does-not-exist.v99")).toBeUndefined();
+  });
+
+  // mock report 中出现的 ruleId 与 registry 边界一致性检查：
+  // identity rule 不归因整段 system prompt（尚无 full rule），
+  // mock report 里所有出现的 ruleId 均为未入 registry 的泛化占位。
+  test("mock report 中的泛化占位 ruleId 均不在 registry 中（预期行为）", () => {
+    const report = buildMockReconciliationReport();
+
+    // 收集 report 里所有出现过的 ruleId
+    const reportRuleIds = new Set<string>();
+    for (const attr of report.proxyAttributions) {
+      if (attr.ruleId) reportRuleIds.add(attr.ruleId);
+    }
+    for (const rule of report.expected?.rulesApplied ?? []) {
+      reportRuleIds.add(rule.ruleId);
+    }
+
+    // mock report 里用的都是泛化占位，不应在 registry 中找到
+    for (const ruleId of reportRuleIds) {
+      expect(getAttributionRule(ruleId)).toBeUndefined();
+    }
+  });
+
+  // identity rule 自身不应出现在 mock report 的 attribution / rulesApplied 中：
+  // 它只是识别锚点，1800 字符的整段归因需独立的 full rule（未入 registry）。
+  test("identity rule 的 ruleId 不出现在 mock report 的 attribution 或 rulesApplied 中", () => {
+    const report = buildMockReconciliationReport();
+    const identityRuleId = CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE.ruleId;
+
+    const inAttr = report.proxyAttributions.some((a) => a.ruleId === identityRuleId);
+    const inApplied = (report.expected?.rulesApplied ?? []).some((r) => r.ruleId === identityRuleId);
+
+    expect(inAttr).toBe(false);
+    expect(inApplied).toBe(false);
   });
 });
