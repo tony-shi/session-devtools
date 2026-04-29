@@ -97,6 +97,9 @@ export type AlignmentBasis =
 export type FindingType =
   | "matched"
   | "approximate_match"
+  // 无强证据（无 rawHash/normalizedHash/toolUseId/ruleId）时的 category+role heuristic 匹配，
+  // 置信度低，不计入 evidenceBackedCoverage
+  | "suspect_match"
   | "unmatched_proxy_segment"
   | "unmatched_expected_segment"
   | "token_mismatch"
@@ -377,6 +380,22 @@ export interface CoverageSummary {
   unexplainedProxyTokenEstimate?: number;
   tokenCoverage?: number;
   byCategory?: CoverageByCategory[];
+
+  // ── 细化覆盖率拆分 ────────────────────────────────────────────────────────
+  // attribution-only + evidence-backed + suspect 三者合计 = charCoverage 的分子
+  //
+  // attributionCoverage：proxy segment 已被 attribution 识别类别（含 evidence-backed），
+  //   归因有效但不一定有 expected 对应。计算方式：has attribution && category != "unknown"
+  attributionCoverage?: number;
+  // evidenceBackedCoverage：matched 或 approximate_match（有 rawHash/normalizedHash/
+  //   toolUseId/ruleId 锚点）的 proxy chars / proxyChars。suspect_match 不计入。
+  evidenceBackedCoverage?: number;
+  // attributionOnlyGap：attributionCoverage - evidenceBackedCoverage，即"归因知道但
+  //   expected 未覆盖"的字符比例（系统规则未实现导致的 gap）
+  attributionOnlyGap?: number;
+  // alignedTextDrift：evidence-backed matched 中 |expectedChars - proxyChars| 之和 / proxyChars，
+  //   衡量已匹配内容的文本漂移程度
+  alignedTextDrift?: number;
 }
 
 export interface AgentCapabilityMatrix {

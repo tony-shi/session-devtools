@@ -26,6 +26,7 @@ import type {
 export type DiffKind =
   | "matched_exact"        // rawHash / tool_use_id exact match, chars identical
   | "matched_char_diff"    // matched but char counts differ
+  | "suspect_match"        // category+role heuristic only, no content anchor — not evidence-backed
   | "expected_only"        // expected segment has no proxy counterpart
   | "proxy_only"           // proxy segment has no expected counterpart
   | "attribution_only"     // proxy segment explained by attribution, no expected
@@ -86,6 +87,8 @@ export interface CharDiffSummary {
   totalEntries: number;
   matchedExact: number;
   matchedWithCharDiff: number;
+  // suspect_match：category+role heuristic，无内容锚点，不计入 explained
+  suspectMatch: number;
   expectedOnly: number;
   proxyOnly: number;
   attributionOnly: number;
@@ -269,7 +272,6 @@ function classifyAlignmentKind(
   if (pSegs.length > 0 && pSegs.every((s) => s.category === "billing_noise")) {
     return "known_noise";
   }
-  // Check if any finding for this alignment is known_noise type
   const alignFindings = findings.filter((f) => f.alignmentIds?.includes(align.id));
   if (alignFindings.some((f) => f.type === "known_noise")) {
     return "known_noise";
@@ -285,7 +287,12 @@ function classifyAlignmentKind(
     return "expected_only";
   }
 
-  // Both sides present — check char diff
+  // suspect_match：category+role heuristic（basis=category），无内容锚点，不算 evidence-backed
+  if (align.basis === "category" || alignFindings.some((f) => f.type === "suspect_match")) {
+    return "suspect_match";
+  }
+
+  // Both sides present with content anchor — check char diff
   const expectedChars = eSegs.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
   const proxyChars = pSegs.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
   const delta = Math.abs(expectedChars - proxyChars);
@@ -359,6 +366,7 @@ function computeSummary(
 ): CharDiffSummary {
   let matchedExact = 0;
   let matchedWithCharDiff = 0;
+  let suspectMatch = 0;
   let expectedOnly = 0;
   let proxyOnly = 0;
   let attributionOnly = 0;
@@ -372,6 +380,7 @@ function computeSummary(
         matchedWithCharDiff++;
         totalCharDriftAbsolute += Math.abs(e.charDelta ?? 0);
         break;
+      case "suspect_match": suspectMatch++; break;
       case "expected_only": expectedOnly++; break;
       case "proxy_only": proxyOnly++; break;
       case "attribution_only": attributionOnly++; break;
@@ -382,9 +391,9 @@ function computeSummary(
   const totalExpectedChars = (expected?.segments ?? []).reduce((s, seg) => s + (seg.charCount ?? 0), 0);
   const totalProxyChars = snapshot.segments.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
 
-  // Unexplained = proxy_only entries (not covered by any alignment)
+  // Unexplained = proxy_only + suspect_match（无内容锚点，不算 evidence-backed explained）
   const unexplainedProxyChars = entries
-    .filter((e) => e.kind === "proxy_only")
+    .filter((e) => e.kind === "proxy_only" || e.kind === "suspect_match")
     .reduce((s, e) => s + (e.proxyRange?.chars ?? 0), 0);
 
   const charDriftPct = totalProxyChars > 0 ? totalCharDriftAbsolute / totalProxyChars : 0;
@@ -393,6 +402,7 @@ function computeSummary(
     totalEntries: entries.length,
     matchedExact,
     matchedWithCharDiff,
+    suspectMatch,
     expectedOnly,
     proxyOnly,
     attributionOnly,

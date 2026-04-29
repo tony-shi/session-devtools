@@ -236,16 +236,21 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
             });
           }
 
+          // heuristic（M4 category+role）无强证据时降级为 suspect_match，
+          // 避免不同 turn 的同类 segment（如不同历史的 user_message）产生虚假 matched。
+          // M1/M2/M3 有内容锚点，归为 matched 或 approximate_match。
           const findingType: FindingType =
-            matchResult.alignment.matchKind === "exact" ||
-            matchResult.alignment.matchKind === "normalized"
-              ? "matched"
-              : "approximate_match";
+            matchResult.alignment.basis === "category"
+              ? "suspect_match"
+              : matchResult.alignment.matchKind === "exact" ||
+                  matchResult.alignment.matchKind === "normalized"
+                ? "matched"
+                : "approximate_match";
 
           findings.push({
             id: nextFindingId(),
             type: findingType,
-            severity: "info",
+            severity: findingType === "suspect_match" ? "warning" : "info",
             category: eseg.category,
             expectedSegmentIds: [eseg.id],
             proxySegmentIds: matchResult.matchedProxyIds,
@@ -253,7 +258,7 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
               ? [eseg.metadata.sourceMutationId as string]
               : undefined,
             alignmentIds: [align.id],
-            message: `${findingType}: ${eseg.category} via ${matchResult.alignment.basis}`,
+            message: `${findingType}: ${eseg.category} via ${matchResult.alignment.basis}${findingType === "suspect_match" ? " — no content anchor, not evidence-backed" : ""}`,
           });
         }
       }
@@ -327,7 +332,7 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
   }
 
   // ── 第四步：coverage 计算 ────────────────────────────────────────────────
-  const coverage = computeCoverage(snapshot, attributions, matchedProxyIds, matchedExpectedIds, expected);
+  const coverage = computeCoverage(snapshot, attributions, matchedProxyIds, matchedExpectedIds, expected, findings, alignments);
 
   // ── 第五步：api_error_retry finding（从 expected metadata 读取）──────────
   if (expected?.metadata?.retryDroppedMutationCount && (expected.metadata.retryDroppedMutationCount as number) > 0) {
@@ -652,15 +657,53 @@ function computeCoverage(
   matchedProxyIds: Set<string>,
   matchedExpectedIds: Set<string>,
   expected: ExpectedQueryContext | undefined,
+  findings: ReconciliationFinding[],
+  alignments: AlignmentRef[],
 ): CoverageSummary {
   const proxySegs = snapshot.segments;
   const attrBySegId = buildAttrBySegId(attributions, proxySegs);
 
+  // 从 findings 中提取 evidence-backed 的 proxy segment ids（matched / approximate_match）
+  // suspect_match 和 attribution-only 不计入 evidence-backed
+  const evidenceBackedProxyIds = new Set<string>();
+  for (const f of findings) {
+    if (f.type === "matched" || f.type === "approximate_match") {
+      for (const id of f.proxySegmentIds ?? []) evidenceBackedProxyIds.add(id);
+    }
+  }
+
+  // 从 findings 收集 suspect_match proxy ids（category+role heuristic，无内容锚点）
+  const suspectProxyIds = new Set<string>();
+  for (const f of findings) {
+    if (f.type === "suspect_match") {
+      for (const id of f.proxySegmentIds ?? []) suspectProxyIds.add(id);
+    }
+  }
+
+  // 从 alignments 计算 evidence-backed matched 的 char drift（|expectedChars - proxyChars|）
+  const expectedById = new Map((expected?.segments ?? []).map((s) => [s.id, s]));
+  let evidenceBackedCharDrift = 0;
+  let evidenceBackedProxyCharsForDrift = 0;
+  for (const align of alignments) {
+    // 只统计 evidence-backed（raw_hash / normalized_hash / tool_use_id / harness_rule）
+    if (align.basis === "category") continue;
+    const eChars = align.expectedSegmentIds
+      .map((id) => expectedById.get(id)?.charCount ?? 0)
+      .reduce((a, b) => a + b, 0);
+    const pChars = align.proxySegmentIds
+      .map((id) => proxySegs.find((s) => s.id === id)?.charCount ?? 0)
+      .reduce((a, b) => a + b, 0);
+    if (eChars > 0 && pChars > 0) {
+      evidenceBackedCharDrift += Math.abs(eChars - pChars);
+      evidenceBackedProxyCharsForDrift += pChars;
+    }
+  }
+
   let proxyChars = 0;
   let matchedProxyChars = 0;
-  let knownNoiseChars = 0;
   let unexplainedProxyChars = 0;
-  let unknownSegmentCount = 0;
+  let attributionOnlyChars = 0;
+  let evidenceBackedChars = 0;   // matched / approximate_match 的 proxy chars
 
   const catMap = new Map<
     SegmentCategory,
@@ -680,8 +723,8 @@ function computeCoverage(
     entry.proxyTokens += tokens;
 
     if (cat === "billing_noise") {
-      knownNoiseChars += chars;
       matchedProxyChars += chars;
+      evidenceBackedChars += chars;  // billing_noise 由确定性规则覆盖，算 evidence-backed
       entry.matchedCount++;
       entry.matchedChars += chars;
       entry.matchedTokens += tokens;
@@ -689,17 +732,28 @@ function computeCoverage(
     }
 
     const attr = attrBySegId.get(pseg.id);
-    const isAttributionOnly = attr && attr.category !== "unknown";
-    const isMatched = matchedProxyIds.has(pseg.id);
+    const isAttributionKnown = attr && attr.category !== "unknown";
+    const isEvidenceBacked = evidenceBackedProxyIds.has(pseg.id);
+    const isSuspect = suspectProxyIds.has(pseg.id);
+    // attribution-only：归因识别但无 expected segment 对应（U1-U5 未实现规则）
+    const isAttrOnly = isAttributionKnown && !isEvidenceBacked && !isSuspect;
 
-    if (isMatched || isAttributionOnly) {
+    if (isEvidenceBacked) {
       matchedProxyChars += chars;
+      evidenceBackedChars += chars;
+      entry.matchedCount++;
+      entry.matchedChars += chars;
+      entry.matchedTokens += tokens;
+    } else if (isAttrOnly) {
+      // attribution-only：计入 matchedProxyChars（归因有效）但不计入 evidenceBackedChars
+      matchedProxyChars += chars;
+      attributionOnlyChars += chars;
       entry.matchedCount++;
       entry.matchedChars += chars;
       entry.matchedTokens += tokens;
     } else {
+      // suspect_match 或完全未知：无内容锚点，不计入 charCoverage
       unexplainedProxyChars += chars;
-      if (!attr || attr.category === "unknown") unknownSegmentCount++;
     }
   }
 
@@ -725,6 +779,20 @@ function computeCoverage(
 
   const unmatchedProxySegmentCount = proxySegs.length - matchedProxyIds.size;
 
+  // attributionCoverage：直接从 attrBySegId 统计"有归因且 category != unknown"的 proxy chars，
+  // 不借用 evidenceBackedChars——避免"有内容锚点但无 attribution"的 segment 虚抬该指标
+  const attributionChars = proxySegs.reduce((sum, seg) => {
+    if (seg.category === "billing_noise") return sum + (seg.charCount ?? 0);
+    const attr = attrBySegId.get(seg.id);
+    return attr && attr.category !== "unknown" ? sum + (seg.charCount ?? 0) : sum;
+  }, 0);
+  const attributionCoverage = proxyChars > 0 ? attributionChars / proxyChars : 0;
+  const evidenceBackedCoverage = proxyChars > 0 ? evidenceBackedChars / proxyChars : 0;
+  const attributionOnlyGap = round2(attributionCoverage - evidenceBackedCoverage);
+  const alignedTextDrift = evidenceBackedProxyCharsForDrift > 0
+    ? round2(evidenceBackedCharDrift / evidenceBackedProxyCharsForDrift)
+    : 0;
+
   const summary: CoverageSummary = {
     proxySegmentCount: proxySegs.length,
     matchedProxySegmentCount: matchedProxyIds.size,
@@ -739,6 +807,10 @@ function computeCoverage(
     unexplainedProxyTokenEstimate: Math.round(unexplainedProxyChars / 4),
     tokenCoverage: round2(tokenCoverage),
     byCategory,
+    attributionCoverage: round2(attributionCoverage),
+    evidenceBackedCoverage: round2(evidenceBackedCoverage),
+    attributionOnlyGap,
+    alignedTextDrift,
   };
 
   if (expected) {
@@ -748,12 +820,7 @@ function computeCoverage(
     ).length;
   }
 
-  // knownNoiseChars / unknownSegmentCount 通过 byCategory 可以间接算出：
-  //   knownNoiseChars  = byCategory.find(c => c.category === "billing_noise")?.proxyChars ?? 0
-  //   unknownSegmentCount = byCategory.find(c => c.category === "unknown")?.proxySegmentCount ?? 0
-  // 这里不扩展 CoverageSummary 类型，保持 contract 稳定；调用方可从 byCategory 取。
-  void knownNoiseChars;
-  void unknownSegmentCount;
+  void attributionOnlyChars;  // 仍被 isAttrOnly 分支引用以累加，但 attributionCoverage 已改用 attrBySegId 直接计算
 
   return summary;
 }

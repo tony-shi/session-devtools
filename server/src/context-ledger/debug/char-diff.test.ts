@@ -169,16 +169,17 @@ describe("computeCharDiff: exact match", () => {
   });
 });
 
-describe("computeCharDiff: char diff match", () => {
+describe("computeCharDiff: char diff match (evidence-backed, char count differs)", () => {
   const pseg = makePseg("p1", "user_message", 200, 0);
   const eseg = makeEseg("e1", "user_message", 100, 0);
+  // 用 raw_hash basis：有内容锚点，才应分类为 matched_char_diff
   const alignment: ReconciliationReport["alignments"][0] = {
     id: "align-1",
-    matchKind: "heuristic",
-    confidence: "inferred",
+    matchKind: "normalized",
+    confidence: "estimated",
     expectedSegmentIds: ["e1"],
     proxySegmentIds: ["p1"],
-    basis: "category",
+    basis: "normalized_hash",
   };
   const report = makeMinimalReport([pseg], [eseg], [alignment], []);
   const diff = computeCharDiff(report);
@@ -199,6 +200,40 @@ describe("computeCharDiff: char diff match", () => {
     expect(diff.summary.matchedWithCharDiff).toBe(1);
     expect(diff.summary.totalCharDriftAbsolute).toBe(100);
     expect(diff.summary.charDriftPct).toBeCloseTo(0.5);
+  });
+});
+
+describe("computeCharDiff: suspect_match (category+role heuristic only)", () => {
+  const pseg = makePseg("p1", "user_message", 200, 0);
+  const eseg = makeEseg("e1", "user_message", 100, 0);
+  // basis: "category" → suspect_match，不计入 evidence-backed
+  const alignment: ReconciliationReport["alignments"][0] = {
+    id: "align-1",
+    matchKind: "heuristic",
+    confidence: "inferred",
+    expectedSegmentIds: ["e1"],
+    proxySegmentIds: ["p1"],
+    basis: "category",
+  };
+  const report = makeMinimalReport([pseg], [eseg], [alignment], []);
+  const diff = computeCharDiff(report);
+
+  test("entry kind is suspect_match", () => {
+    expect(diff.entries[0].kind).toBe("suspect_match");
+  });
+
+  test("charDelta still computed for display", () => {
+    expect(diff.entries[0].charDelta).toBe(-100);
+  });
+
+  test("summary: 1 suspectMatch, 0 matchedWithCharDiff", () => {
+    expect(diff.summary.suspectMatch).toBe(1);
+    expect(diff.summary.matchedWithCharDiff).toBe(0);
+  });
+
+  test("suspect chars counted in unexplainedProxyChars", () => {
+    // suspect_match 的 proxy chars 应算入 unexplained（未有内容锚点证明）
+    expect(diff.summary.unexplainedProxyChars).toBe(200);
   });
 });
 
@@ -339,6 +374,7 @@ describe("computeCharDiff: mock report", () => {
     const kindSum =
       s.matchedExact +
       s.matchedWithCharDiff +
+      s.suspectMatch +
       s.expectedOnly +
       s.proxyOnly +
       s.attributionOnly +
