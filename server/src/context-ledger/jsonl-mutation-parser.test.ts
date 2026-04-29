@@ -375,4 +375,66 @@ describe("cross-fixture invariants", () => {
     expect(r.mutations[0].confidence).toBe("estimated");
     expect(r.unknownLines.some((u) => u.reason === "attachment_unknown_subtype")).toBe(true);
   });
+
+  // system:api_error 行生成 noise mutation，并标记 syntheticApiError=true 供
+  // reconstructor rule 过滤（不作为普通 assistant_text 进入 expected context）。
+  test("system:api_error 生成 noise mutation 且 metadata.syntheticApiError=true", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "api_error",
+      uuid: "sys-err",
+      timestamp: "2026-04-29T10:00:00.000Z",
+      cause: "connection_timeout",
+      retryAttempt: 1,
+      parentUuid: "parent-1",
+    });
+    const r = parseClaudeJsonlMutations(line);
+    expect(r.mutations.length).toBe(1);
+    const m = r.mutations[0];
+    expect(m.type).toBe("noise");
+    expect(m.category).toBe("hook_event");
+    expect(m.confidence).toBe("estimated");
+    expect(m.metadata?.systemSubtype).toBe("api_error");
+    expect(m.metadata?.syntheticApiError).toBe(true);
+    expect(m.metadata?.retryAttempt).toBe(1);
+  });
+
+  // isMeta=true 的 user record 需把标记透传到 metadata，供 reconstructor 识别
+  // 这类 harness 注入行（system-reminder / caveat）不计入真实 token 统计。
+  test("isMeta=true 的 user record 在 metadata 里保留 isMeta 标记", () => {
+    const line = JSON.stringify({
+      type: "user",
+      uuid: "u-meta",
+      isMeta: true,
+      promptId: "prompt-42",
+      message: { id: "msg-meta", role: "user", content: "system caveat text" },
+    });
+    const r = parseClaudeJsonlMutations(line);
+    expect(r.mutations.length).toBe(1);
+    const m = r.mutations[0];
+    expect(m.metadata?.isMeta).toBe(true);
+    expect(m.metadata?.promptId).toBe("prompt-42");
+    expect(m.metadata?.messageId).toBe("msg-meta");
+  });
+
+  // isApiErrorMessage=true 的 assistant record 标记需透传到每个 block mutation 的 metadata。
+  test("isApiErrorMessage=true 的 assistant record 在 metadata 里保留标记", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      uuid: "a-err",
+      isApiErrorMessage: true,
+      message: {
+        id: "msg-apierr",
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [{ type: "text", text: "API error occurred" }],
+      },
+    });
+    const r = parseClaudeJsonlMutations(line);
+    expect(r.mutations.length).toBe(1);
+    const m = r.mutations[0];
+    expect(m.category).toBe("assistant_text");
+    expect(m.metadata?.isApiErrorMessage).toBe(true);
+    expect(m.metadata?.messageId).toBe("msg-apierr");
+  });
 });

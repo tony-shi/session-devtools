@@ -87,6 +87,14 @@ interface JsonlRecord {
   // 父会话 expected context 不应包含这些消息。参考 restored-src/src/types/logs.ts
   // 与 utils/stats.ts 中所有 !m.isSidechain 过滤位点。
   isSidechain?: boolean;
+  // isMeta：harness 在每次 user turn 头部注入的 system-reminder / caveat message。
+  // 参考 restored-src/src/utils/messages.ts createUserMessage { isMeta }。
+  // QueryEngine.ts:469 里明确 skip isMeta message（不计入 token 统计）。
+  isMeta?: boolean;
+  // isApiErrorMessage：assistant message 是 harness 合成的错误展示行（非真实 API response）。
+  // 参考 restored-src/src/utils/messages.ts createApiErrorMessage（isApiErrorMessage=true）。
+  // 在 proxy 里不会出现，用于标记 reconstructor 应跳过。
+  isApiErrorMessage?: boolean;
   agentId?: string;
   // permission-mode
   permissionMode?: string;
@@ -361,6 +369,8 @@ function handleUserRecord(
       metadata: {
         parentUuid: rec.parentUuid ?? undefined,
         promptId: rec.promptId,
+        messageId: msg.id,
+        ...(rec.isMeta ? { isMeta: true } : {}),
       },
     });
     return;
@@ -380,6 +390,9 @@ function handleUserRecord(
           metadata: {
             isError: blk.is_error ?? false,
             parentUuid: rec.parentUuid ?? undefined,
+            promptId: rec.promptId,
+            messageId: msg.id,
+            ...(rec.isMeta ? { isMeta: true } : {}),
           },
         });
       } else if (blk.type === "text") {
@@ -389,7 +402,12 @@ function handleUserRecord(
           timestamp: ts,
           contentRef: inlineRef(text),
           charDeltaEstimate: text.length,
-          metadata: { parentUuid: rec.parentUuid ?? undefined },
+          metadata: {
+            parentUuid: rec.parentUuid ?? undefined,
+            promptId: rec.promptId,
+            messageId: msg.id,
+            ...(rec.isMeta ? { isMeta: true } : {}),
+          },
         });
       } else {
         unknownLines.push({
@@ -438,6 +456,7 @@ function handleAssistantRecord(
           messageId: msg.id,
           model: msg.model,
           parentUuid: rec.parentUuid ?? undefined,
+          ...(rec.isApiErrorMessage ? { isApiErrorMessage: true } : {}),
         },
       });
     } else if (blk.type === "tool_use") {
@@ -452,6 +471,7 @@ function handleAssistantRecord(
           messageId: msg.id,
           model: msg.model,
           parentUuid: rec.parentUuid ?? undefined,
+          ...(rec.isApiErrorMessage ? { isApiErrorMessage: true } : {}),
         },
       });
     } else if (blk.type === "thinking" || blk.type === "redacted_thinking") {
@@ -468,6 +488,7 @@ function handleAssistantRecord(
           redacted: blk.type === "redacted_thinking",
           messageId: msg.id,
           parentUuid: rec.parentUuid ?? undefined,
+          ...(rec.isApiErrorMessage ? { isApiErrorMessage: true } : {}),
         },
       });
     } else {
@@ -572,6 +593,7 @@ function handleSystem(
   if (st === "api_error") {
     // api_error 不增加 context window，只是传输层事件。
     // 用 type=noise + category=hook_event 让上层规则层可以识别且过滤。
+    // syntheticApiError=true 标记供 reconstructor rule 区分，不作为普通 assistant_text 进入 expected。
     const summary = JSON.stringify({ cause: rec.cause, retryAttempt: rec.retryAttempt });
     push("noise", "hook_event", ref, {
       timestamp: ts,
@@ -579,6 +601,7 @@ function handleSystem(
       confidence: "estimated",
       metadata: {
         systemSubtype: st,
+        syntheticApiError: true,
         retryAttempt: rec.retryAttempt,
         parentUuid: rec.parentUuid ?? undefined,
       },
