@@ -17,6 +17,7 @@
 //   R5 inject_local_command     <local-command-* / <bash-* 注入为 user 段
 //   R6 filter_known_noise       hook_event / billing_noise / type=noise 不进 expected segments
 //   R7 api_error_retry_alignment 失败 attempt 的 user 输入组合在 retry 成功后被丢弃
+//   R8 filter_synthetic_api_error harness 合成的 isApiErrorMessage assistant 行（proxy 里没有）
 //
 // 暂未实现（会在 metadata.unimplementedRules 显式标记）：
 //   U1 system_prompt_injection      system[] 来自 harness identity / CLAUDE.md / memory_fs
@@ -53,6 +54,8 @@
 //   能力做回归调试"暂未实现；reconciliation engine 上线后会需要这个 gate 来做
 //   "关掉 R4 看 coverage 变化" 的对比实验。
 
+import { createHash } from "crypto";
+
 import type {
   AppliedRule,
   ContentRef,
@@ -64,6 +67,11 @@ import type {
   SegmentSection,
   SourceRef,
 } from "./types";
+
+// 与 proxy-snapshot-parser 口径一致：16位短截 SHA-256
+function sha256Short(text: string): string {
+  return "sha256:" + createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 输入 / 输出 / 配置
@@ -78,6 +86,7 @@ export interface HarnessRuleConfig {
   injectLocalCommand?: boolean; // R5
   filterKnownNoise?: boolean; // R6
   apiErrorRetryAlignment?: boolean; // R7
+  filterSyntheticApiError?: boolean; // R8
 }
 
 const DEFAULT_RULES: Required<HarnessRuleConfig> = {
@@ -88,6 +97,7 @@ const DEFAULT_RULES: Required<HarnessRuleConfig> = {
   injectLocalCommand: true,
   filterKnownNoise: true,
   apiErrorRetryAlignment: true,
+  filterSyntheticApiError: true,
 };
 
 export interface QueryBoundary {
@@ -109,6 +119,8 @@ export interface ReconstructInput {
   boundary: QueryBoundary;
   rules?: HarnessRuleConfig;
   fixtureName?: string;
+  /** 来自 JsonlMutationParseResult.hasPreSessionActivity：--resume 时 JSONL 里存在活动前置信号。 */
+  hasPreSessionActivity?: boolean;
 }
 
 /** 暂未实现规则的标识。结果中 metadata.unimplementedRules 会列出这些。 */
@@ -138,7 +150,11 @@ export function reconstructExpectedClaudeContext(
   const afterRetry = rules.apiErrorRetryAlignment ? applyApiErrorRetryAlignment(sliced) : sliced;
 
   // 3. R6：过滤 hook_event / billing_noise / type=noise（不进 expected）。
-  const surviving = rules.filterKnownNoise ? afterRetry.filter(isExpectedRelevant) : afterRetry;
+  // R8：过滤 isApiErrorMessage=true 的合成 assistant 行（harness 展示用，proxy 里没有）。
+  const afterNoise = rules.filterKnownNoise ? afterRetry.filter(isExpectedRelevant) : afterRetry;
+  const surviving = rules.filterSyntheticApiError
+    ? afterNoise.filter((m) => !m.metadata?.isApiErrorMessage)
+    : afterNoise;
 
   // 4. R1–R5：把每条 mutation 映射为 ContextSegment；在 metadata.logicalMessage
   //    标记同一逻辑 message 的归并组（不物理合并，给后续 reconciliation 做 N:1 对齐）。
@@ -148,11 +164,19 @@ export function reconstructExpectedClaudeContext(
   const rulesApplied = collectAppliedRules(rules, surviving);
   const unimplementedRules: UnimplementedRuleId[] = [...UNIMPLEMENTED_RULES];
 
-  // 6. 组装 ExpectedQueryContext。
+  // 6. 检测 prefix incomplete：JSONL prefix 是否缺少 prior history turn。
+  // 判断依据：parser 在第一条有时间戳的 user/assistant 行之前检测到 last-prompt，
+  // 说明这个 session 在当前查询之前就有活动（--resume 场景）。
+  // JSONL prefix 在这种情况下不包含历史 turn，对账时 prior_session_history 会无 expected 对应。
+  const prefixIncomplete = input.hasPreSessionActivity === true;
+
+  // 7. 组装 ExpectedQueryContext。
   const sessionId =
     input.boundary.sessionId ??
     sliced.find((m) => m.sessionId)?.sessionId ??
     "unknown";
+
+  const syntheticDroppedCount = afterNoise.length - surviving.length;
 
   const expected: ExpectedQueryContext = {
     id: `expected-${input.boundary.queryId}`,
@@ -168,7 +192,9 @@ export function reconstructExpectedClaudeContext(
       unimplementedRules,
       droppedMutationCount: input.mutations.length - sliced.length,
       retryDroppedMutationCount: sliced.length - afterRetry.length,
-      noiseDroppedMutationCount: afterRetry.length - surviving.length,
+      noiseDroppedMutationCount: afterRetry.length - afterNoise.length,
+      syntheticApiErrorDroppedCount: syntheticDroppedCount > 0 ? syntheticDroppedCount : undefined,
+      prefixIncomplete: prefixIncomplete || undefined,
     }),
   };
 
@@ -450,6 +476,14 @@ function mutationToSegment(
   if (tokenEstimate > 0) seg.tokenEstimate = tokenEstimate;
   if (m.toolUseId) seg.toolUseId = m.toolUseId;
 
+  // rawHash：用 contentRef.text 与 proxy-snapshot-parser 同口径的 sha256 短截，
+  // 供 reconciliation engine M1 精确匹配（避免 M4 heuristic 跨 turn 错配）。
+  // tool_use 的文本是 JSON.stringify(input)，tool_result 是原始结果字符串，
+  // 与 proxy-snapshot-parser parseMessageSegments 里的 rawText 构造方式一致。
+  if (m.contentRef?.text) {
+    seg.rawHash = sha256Short(m.contentRef.text);
+  }
+
   // lifecycle：与 proxy-attribution 同口径
   switch (m.category) {
     case "skill_listing":
@@ -513,6 +547,7 @@ function collectAppliedRules(
     push("R5_inject_local_command", "harness_rule");
   if (rules.filterKnownNoise) push("R6_filter_known_noise", "harness_rule");
   if (rules.apiErrorRetryAlignment) push("R7_api_error_retry_alignment", "harness_rule");
+  if (rules.filterSyntheticApiError) push("R8_filter_synthetic_api_error", "harness_rule");
   return out;
 }
 

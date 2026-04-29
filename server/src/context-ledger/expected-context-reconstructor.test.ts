@@ -37,6 +37,7 @@ function reconstruct(caseName: string) {
     mutations: parsed.mutations,
     boundary: { queryId: `q-${caseName}`, proxyTimestamp: ts, sessionId: parsed.sessionId },
     fixtureName: caseName,
+    hasPreSessionActivity: parsed.hasPreSessionActivity,
   });
   return { expected, parsed, proxyTimestamp: ts };
 }
@@ -48,6 +49,7 @@ interface CaseExpect {
   totalSegments: number;
   byCategory: Partial<Record<SegmentCategory, number>>;
   retryDropped?: boolean; // 是否触发了 R7 api_error retry 对齐
+  prefixIncomplete?: boolean; // JSONL 是否缺少 prior session history
   logicalMessageGroupCount: number;
 }
 
@@ -78,6 +80,7 @@ const CASES: Record<string, CaseExpect> = {
   // 多轮人类输入：3 条 local_command_history + 1 user_message + 1 assistant_text +
   // 2 次 tool_use/tool_result 往返。assistant 共享同一个 messageId，所以两个 tool_use
   // 归到同一组（lm-2），即便中间有 user tool_result。
+  // prefixIncomplete=true：JSONL prefix 之外存在 assistant turn（历史 "are you there?" 会话）。
   "multi-turn-human": {
     totalSegments: 9,
     byCategory: {
@@ -87,6 +90,7 @@ const CASES: Record<string, CaseExpect> = {
       tool_use: 2,
       tool_result: 2,
     },
+    prefixIncomplete: true,
     logicalMessageGroupCount: 4,
   },
   // 大 tool_result：boundary 内 2 个独立 user 轮 + 2 个 assistant 响应（msg_60b7359b、
@@ -186,6 +190,30 @@ for (const caseName of Object.keys(CASES)) {
         }
       }
     });
+
+    test("有 contentRef.text 的 segment 都带 rawHash（sha256: 前缀）", () => {
+      for (const s of expected.segments) {
+        if (s.contentRef?.text && s.contentRef.text.length > 0) {
+          expect(typeof s.rawHash).toBe("string");
+          expect(s.rawHash!.startsWith("sha256:")).toBe(true);
+        }
+      }
+    });
+
+    test("rulesApplied 包含 R8_filter_synthetic_api_error", () => {
+      const ids = new Set(expected.rulesApplied.map((r) => r.ruleId));
+      expect(ids.has("R8_filter_synthetic_api_error")).toBe(true);
+    });
+
+    if (want.prefixIncomplete) {
+      test("prefixIncomplete=true（JSONL prefix 缺少 prior history turn）", () => {
+        expect(expected.metadata?.prefixIncomplete).toBe(true);
+      });
+    } else {
+      test("prefixIncomplete 未触发（JSONL prefix 完整）", () => {
+        expect(expected.metadata?.prefixIncomplete).toBeUndefined();
+      });
+    }
   });
 }
 

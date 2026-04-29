@@ -28,6 +28,10 @@ export interface JsonlMutationParseResult {
   sidechainMutations: ContextMutation[];
   unknownLines: UnknownJsonlLine[];
   sessionId: string;
+  // --resume / continue 时，session.jsonl 里第一条有时间戳的 user/assistant mutation
+  // 之前会出现 last-prompt 条目（当前查询之前的会话活动遗留）。这类情况下
+  // JSONL prefix 可能不包含完整的历史 turn，对账时应当注意 prior_session_history 缺失。
+  hasPreSessionActivity: boolean;
 }
 
 // ── Claude Code session.jsonl 形状 ────────────────────────────────────────────
@@ -192,6 +196,14 @@ export function parseClaudeJsonlMutations(
   let currentIsSidechain = false;
   let currentAgentId: string | undefined;
 
+  // hasPreSessionActivity 检测：
+  // 第一条有时间戳的 user/assistant 行之前若出现 last-prompt，
+  // 说明这个 session 在当前查询之前就有活动（--resume 场景），
+  // JSONL prefix 可能缺少历史 turn（prior_session_history）。
+  let hasPreSessionActivity = false;
+  let seenFirstTimestampedUserOrAssistant = false;
+  let lastPromptBeforeFirst = false;
+
   const newMutation = (
     partial: Omit<ContextMutation, "id" | "agentKind" | "sessionId">,
   ): ContextMutation => {
@@ -290,6 +302,17 @@ export function parseClaudeJsonlMutations(
       continue;
     }
 
+    // hasPreSessionActivity 追踪：
+    // 遇到第一条有时间戳的 user/assistant 行之前，若出现 last-prompt，则标记。
+    if (!seenFirstTimestampedUserOrAssistant) {
+      if (ts && (t === "user" || t === "assistant")) {
+        seenFirstTimestampedUserOrAssistant = true;
+        if (lastPromptBeforeFirst) hasPreSessionActivity = true;
+      } else if (t === "last-prompt") {
+        lastPromptBeforeFirst = true;
+      }
+    }
+
     switch (t) {
       case "user": {
         handleUserRecord(rec, lineNum, file, uuid, ts, pushMutation, unknownLines);
@@ -339,7 +362,7 @@ export function parseClaudeJsonlMutations(
     }
   }
 
-  return { mutations, sidechainMutations, unknownLines, sessionId };
+  return { mutations, sidechainMutations, unknownLines, sessionId, hasPreSessionActivity };
 }
 
 // ── user 行 ─────────────────────────────────────────────────────────────────

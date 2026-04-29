@@ -214,25 +214,38 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
             });
           }
 
-          // order_mismatch finding
+          // order_mismatch finding（仅当匹配是 M3 tool_use_id 或 M1/M2 hash 时才对比——
+          // M4 heuristic 本身就按相对位置取第一个候选，绝对 order 差值必然很大（量纲不同），
+          // 不应产生误报；只在有内容锚点的匹配下做 order 核对）。
+          // prefixIncomplete=true 时：prior history 导致 order 偏移是预期内的，
+          // 降级为 info 而不是 warning，避免误报。
           const proxyOrder = matchResult.matchedProxyIds
             .map((id) => snapshot.segments.find((s) => s.id === id)?.order ?? -1)
             .reduce((a, b) => Math.min(a, b), Infinity);
           const expectedOrder = eseg.order ?? -1;
+          // 只在有内容锚点（M1/M2/M3）的情况下做 order 核对；M4 heuristic 跳过。
+          const isMeaningfulMatch =
+            matchResult.alignment.basis === "raw_hash" ||
+            matchResult.alignment.basis === "normalized_hash" ||
+            matchResult.alignment.basis === "tool_use_id";
           if (
+            isMeaningfulMatch &&
             expectedOrder >= 0 &&
             proxyOrder !== Infinity &&
             Math.abs(expectedOrder - proxyOrder) > 3
           ) {
+            // prefix 不完整时 order 偏移是 prior history 导致的，降为 info
+            const orderMismatchSeverity =
+              expected?.metadata?.prefixIncomplete ? "info" : "warning";
             findings.push({
               id: nextFindingId(),
               type: "order_mismatch",
-              severity: "warning",
+              severity: orderMismatchSeverity,
               category: eseg.category,
               expectedSegmentIds: [eseg.id],
               proxySegmentIds: matchResult.matchedProxyIds,
               alignmentIds: [align.id],
-              message: `order mismatch: expected order ${expectedOrder}, proxy order ${proxyOrder}`,
+              message: `order mismatch: expected order ${expectedOrder}, proxy order ${proxyOrder}${expected?.metadata?.prefixIncomplete ? " (prior history expected, prefix incomplete)" : ""}`,
             });
           }
 
@@ -497,6 +510,25 @@ interface MergeResult {
   matchedExpectedIds: string[];
 }
 
+// N:1 对齐规则说明：
+//
+//   R-MERGE-N1  多个 expected segment → 单一 proxy segment
+//   ─────────────────────────────────────────────────────────────────────────
+//   场景：JSONL 把一条 user message 拆成多个 mutation（如先写 user_message，
+//         再追加 local_command_history），但 harness 在发送 API 请求时把它们
+//         合并成一条 string content 的 user message（而非 array of blocks）。
+//         proxy snapshot parser 只能把这条 string 拆成一个 local_command_history
+//         segment（因为整体 rawHash 与拆开的任意一条都不同）。
+//
+//   检测方法：同一 logicalMessage group 内的 expected segments 的内容拼接起来
+//         的 rawHash，与某个 proxy segment 的 rawHash 匹配。
+//
+//   当前状态：4 个 fixture 均无此场景（proxy 使用 array content 而非 string content，
+//         parser 逐 block 切分）。保留此注释为未来 fixture 覆盖时的实现指南。
+//
+//   1:N 对齐（同一 proxy message 含多个 expected block）：tool_use / tool_result
+//         已由 logicalMessage grouping + 逐个 matchOneExpected 处理，不需要 merge。
+
 function tryMergeAlignment(
   group: ContextSegment[],
   proxySegs: ContextSegment[],
@@ -509,10 +541,9 @@ function tryMergeAlignment(
 ): MergeResult | null {
   if (group.length < 2) return null;
 
-  // 只对 tool_result 组尝试 merge（同一 user message 里多个 tool_result → 多个 proxy blocks）
-  // 和 tool_use 组（同一 assistant message 里多个 tool_use → 多个 proxy blocks）
-  // 这是 1:N，不是 N:1，所以 merge_alignment 在这里是每个 expected 对应一个 proxy。
-  // N:1 场景（多个 expected → 一个 proxy）暂无 fixture 覆盖，返回 null 让逐个匹配处理。
+  // R-MERGE-N1 检测占位：
+  // 未来实现时在此处计算 group 内所有 segment contentRef.text 拼接后的 sha256，
+  // 与 proxyByRawHash 查询结果匹配。当前 4 个 fixture 无此场景，返回 null。
   return null;
 }
 
