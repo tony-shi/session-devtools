@@ -23,7 +23,11 @@
     "proxy:status": "bun run server/src/proxy/cli/status.ts",
     "proxy:whitelist": "bun run server/src/proxy/cli/whitelist.ts",
     "proxy:doctor": "bun run server/src/proxy/cli/doctor.ts",
-    "proxy:export-share": "bun run server/src/proxy/cli/export-share.ts"
+    "proxy:export-share": "bun run server/src/proxy/cli/export-share.ts",
+    "context:audit": "bun run scripts/context-audit.ts",
+    "context:audit:since-last": "bun run scripts/context-audit.ts --since-last",
+    "context:audit:fixtures": "bun run scripts/context-audit.ts --fixtures",
+    "context:audit:mark-baseline": "bun run scripts/context-audit.ts mark-baseline"
   },
   "dependencies": {
     "node-forge": "^1.3.1"
