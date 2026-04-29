@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Context Char Diff — query-0002</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace; font-size: 13px; background: #f8fafc; color: #1e293b; }
+.page { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+.meta { color: #64748b; font-size: 11px; margin-bottom: 20px; }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-bottom: 24px; }
+.stat-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; }
+.stat-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+.stat-value { font-size: 20px; font-weight: 700; color: #0f172a; }
+.stat-sub { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.section-header { font-size: 12px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.08em; margin: 20px 0 8px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }
+.entry { border-radius: 6px; border: 1px solid; padding: 10px 12px; margin-bottom: 8px; }
+.entry-header { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+.badge { font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; color: #fff; white-space: nowrap; flex-shrink: 0; }
+.entry-label { font-weight: 600; font-size: 13px; flex: 1; word-break: break-all; }
+.entry-category { font-size: 10px; color: #64748b; margin-left: auto; white-space: nowrap; padding-left: 8px; }
+.ranges { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+.range-block { font-size: 11px; }
+.range-label { color: #64748b; margin-right: 4px; }
+.range-value { font-family: ui-monospace, monospace; background: #f1f5f9; padding: 1px 5px; border-radius: 3px; }
+.char-delta { font-size: 11px; margin-bottom: 6px; }
+.char-delta.positive { color: #0369a1; }
+.char-delta.negative { color: #b91c1c; }
+.char-delta.zero { color: #64748b; }
+.notes { list-style: none; }
+.notes li { font-size: 11px; color: #475569; padding: 1px 0; }
+.notes li::before { content: "› "; color: #94a3b8; }
+.ids { font-size: 10px; color: #94a3b8; margin-top: 4px; word-break: break-all; }
+.bar-wrap { background: #e2e8f0; border-radius: 4px; height: 8px; overflow: hidden; margin: 12px 0 4px; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+.bar-label { font-size: 10px; color: #64748b; text-align: right; }
+details > summary { cursor: pointer; list-style: none; }
+details > summary::-webkit-details-marker { display: none; }
+.toggle { font-size: 11px; color: #3b82f6; text-decoration: underline; cursor: pointer; margin-bottom: 8px; display: inline-block; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Context Char Diff — query-0002</h1>
+  <div class="meta">session: mock-session-context-ledger · generated: 2026-04-28T12:34:22.077Z · expected flat: 16,670 chars · proxy flat: 16,970 chars</div>
+
+  <div class="summary-grid">
+    <div class="stat-card">
+      <div class="stat-label">Total Entries</div>
+      <div class="stat-value">11</div>
+      
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Matched Exact</div>
+      <div class="stat-value">6</div>
+      <div class="stat-sub">55%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Char Diff</div>
+      <div class="stat-value">1</div>
+      <div class="stat-sub">drift 2.12%</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Expected Only</div>
+      <div class="stat-value">2</div>
+      
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Proxy Only</div>
+      <div class="stat-value">1</div>
+      <div class="stat-sub">300 chars</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Attribution Only</div>
+      <div class="stat-value">0</div>
+      
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Known Noise</div>
+      <div class="stat-value">1</div>
+      
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Proxy Chars</div>
+      <div class="stat-value">16,970</div>
+      
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Expected Chars</div>
+      <div class="stat-value">16,670</div>
+      
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Unexplained</div>
+      <div class="stat-value">300</div>
+      <div class="stat-sub">2% of proxy</div>
+    </div>
+  </div>
+  
+  <div>
+    <div class="section-header">Proxy Char Coverage</div>
+    <div class="bar-wrap"><div class="bar-fill" style="width:98.23%;background:#22c55e"></div></div>
+    <div class="bar-label">98.2% explained (16,670 / 16,970 chars)</div>
+  </div>
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#22c55e"></div>
+      <span>matched exact</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#f59e0b"></div>
+      <span>matched (char diff)</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#3b82f6"></div>
+      <span>expected only</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#ef4444"></div>
+      <span>proxy only</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#a855f7"></div>
+      <span>attribution only</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#9ca3af"></div>
+      <span>known noise</span>
+    </div>
+  </div>
+  
+    <div class="section-header">matched (char diff) (1)</div>
+    <div class="entry" style="background:#fffbeb;border-color:#fcd34d">
+  <div class="entry-header">
+    <span class="badge" style="background:#f59e0b">matched (char diff)</span>
+    <span class="entry-label" style="color:#92400e">Expected system reminder injection</span>
+    <span class="entry-category">harness_injection</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[15800…16220) 420 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[15800…16580) 780 chars</span></span></div>
+  <div class="char-delta negative">charDelta: -360 (46.2%)</div>
+  <ul class="notes"><li>basis:normalized_hash confidence:estimated matchKind:normalized</li><li>[token_mismatch] char mismatch: expected 420, proxy 780 (46.2% diff)</li></ul>
+  <div class="ids">align:align-8 · eseg:[eseg-harness-injection] · pseg:[pseg-harness-injection] · findings:[finding-8,finding-9]</div>
+</div>
+
+    <div class="section-header">proxy only (1)</div>
+    <div class="entry" style="background:#fef2f2;border-color:#fca5a5">
+  <div class="entry-header">
+    <span class="badge" style="background:#ef4444">proxy only</span>
+    <span class="entry-label" style="color:#991b1b">Unexplained proxy-only block</span>
+    <span class="entry-category">unknown</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[16670…16970) 300 chars</span></span></div>
+  <div class="char-delta positive">charDelta: +300</div>
+  <ul class="notes"><li>proxy segment not covered by any alignment (300 chars)</li></ul>
+  <div class="ids">pseg:[pseg-unknown] · findings:[finding-12]</div>
+</div>
+
+    <div class="section-header">expected only (2)</div>
+    <div class="entry" style="background:#eff6ff;border-color:#93c5fd">
+  <div class="entry-header">
+    <span class="badge" style="background:#3b82f6">expected only</span>
+    <span class="entry-label" style="color:#1e40af">Expected local command history injection</span>
+    <span class="entry-category">local_command_history</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[16220…16580) 360 chars</span></span></div>
+  <div class="char-delta negative">charDelta: -360</div>
+  <ul class="notes"><li>expected segment not matched in proxy (360 chars)</li></ul>
+  <div class="ids">eseg:[eseg-local-command-history] · findings:[finding-10]</div>
+</div>
+<div class="entry" style="background:#eff6ff;border-color:#93c5fd">
+  <div class="entry-header">
+    <span class="badge" style="background:#3b82f6">expected only</span>
+    <span class="entry-label" style="color:#1e40af">Expected known billing noise</span>
+    <span class="entry-category">billing_noise</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[16580…16670) 90 chars</span></span></div>
+  <div class="char-delta negative">charDelta: -90</div>
+  <ul class="notes"><li>expected segment not matched in proxy (90 chars)</li></ul>
+  <div class="ids">eseg:[eseg-billing-noise] · findings:[finding-11]</div>
+</div>
+
+    <div class="section-header">matched exact (6)</div>
+    <div class="entry" style="background:#f0fdf4;border-color:#86efac">
+  <div class="entry-header">
+    <span class="badge" style="background:#22c55e">matched exact</span>
+    <span class="entry-label" style="color:#166534">Expected system prompt from harness rule</span>
+    <span class="entry-category">system_prompt</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[0…1800) 1,800 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[0…1800) 1,800 chars</span></span></div>
+  <div class="char-delta zero">charDelta: 0 (0.0%)</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact matchKind:exact</li></ul>
+  <div class="ids">align:align-2 · eseg:[eseg-system-prompt] · pseg:[pseg-system-prompt] · findings:[finding-2]</div>
+</div>
+<div class="entry" style="background:#f0fdf4;border-color:#86efac">
+  <div class="entry-header">
+    <span class="badge" style="background:#22c55e">matched exact</span>
+    <span class="entry-label" style="color:#166534">Expected tool schemas from harness rule</span>
+    <span class="entry-category">tools_schema</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[1800…7000) 5,200 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[1800…7000) 5,200 chars</span></span></div>
+  <div class="char-delta zero">charDelta: 0 (0.0%)</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact matchKind:exact</li></ul>
+  <div class="ids">align:align-3 · eseg:[eseg-tools-schema] · pseg:[pseg-tools-schema] · findings:[finding-3]</div>
+</div>
+<div class="entry" style="background:#f0fdf4;border-color:#86efac">
+  <div class="entry-header">
+    <span class="badge" style="background:#22c55e">matched exact</span>
+    <span class="entry-label" style="color:#166534">Expected prior session history</span>
+    <span class="entry-category">prior_session_history</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[7000…7900) 900 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[7000…7900) 900 chars</span></span></div>
+  <div class="char-delta zero">charDelta: 0 (0.0%)</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact matchKind:exact</li></ul>
+  <div class="ids">align:align-4 · eseg:[eseg-prior-session-history] · pseg:[pseg-prior-session-history] · findings:[finding-4]</div>
+</div>
+<div class="entry" style="background:#f0fdf4;border-color:#86efac">
+  <div class="entry-header">
+    <span class="badge" style="background:#22c55e">matched exact</span>
+    <span class="entry-label" style="color:#166534">Expected current user message</span>
+    <span class="entry-category">user_message</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[7900…8020) 120 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[7900…8020) 120 chars</span></span></div>
+  <div class="char-delta zero">charDelta: 0 (0.0%)</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact matchKind:exact</li></ul>
+  <div class="ids">align:align-5 · eseg:[eseg-user-message] · pseg:[pseg-user-message] · findings:[finding-5]</div>
+</div>
+<div class="entry" style="background:#f0fdf4;border-color:#86efac">
+  <div class="entry-header">
+    <span class="badge" style="background:#22c55e">matched exact</span>
+    <span class="entry-label" style="color:#166534">Expected assistant tool_use</span>
+    <span class="entry-category">tool_use</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[8020…8200) 180 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[8020…8200) 180 chars</span></span></div>
+  <div class="char-delta zero">charDelta: 0 (0.0%)</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact matchKind:exact</li></ul>
+  <div class="ids">align:align-6 · eseg:[eseg-tool-use] · pseg:[pseg-tool-use] · findings:[finding-6]</div>
+</div>
+<div class="entry" style="background:#f0fdf4;border-color:#86efac">
+  <div class="entry-header">
+    <span class="badge" style="background:#22c55e">matched exact</span>
+    <span class="entry-label" style="color:#166534">Expected large tool_result</span>
+    <span class="entry-category">tool_result</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[8200…15800) 7,600 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[8200…15800) 7,600 chars</span></span></div>
+  <div class="char-delta zero">charDelta: 0 (0.0%)</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact matchKind:exact</li></ul>
+  <div class="ids">align:align-7 · eseg:[eseg-tool-result] · pseg:[pseg-tool-result] · findings:[finding-7]</div>
+</div>
+
+    <div class="section-header">known noise (1)</div>
+    <div class="entry" style="background:#f9fafb;border-color:#d1d5db">
+  <div class="entry-header">
+    <span class="badge" style="background:#9ca3af">known noise</span>
+    <span class="entry-label" style="color:#6b7280">Known billing header noise</span>
+    <span class="entry-category">billing_noise</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[16580…16670) 90 chars</span></span></div>
+  
+  <ul class="notes"><li>billing_noise: known harness overhead, not reconciled against expected</li><li>basis:harness_rule confidence:exact matchKind:inferred</li></ul>
+  <div class="ids">align:align-1 · pseg:[pseg-billing-noise] · findings:[finding-1]</div>
+</div>
+</div>
+</body>
+</html>
