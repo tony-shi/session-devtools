@@ -1,10 +1,10 @@
 import { createHash } from "crypto";
+import { splitProxyBlockSections } from "./proxy-block-splitter";
 import type {
   CacheHint,
   ContextSegment,
   ProxyQuerySnapshot,
   QueryUsage,
-  SegmentCategory,
   SegmentFlag,
   SegmentRole,
   SegmentSection,
@@ -205,6 +205,15 @@ function extractBetaHeaders(input: ProxyRequestInput): string[] {
 const LARGE_SEGMENT_THRESHOLD = 10_000;
 
 // ── system[] 切分 ─────────────────────────────────────────────────────────────
+//
+// parser 只做 wire schema 读取和中性结构发现：
+//   - 每个 system block → 按 h1 标题切 section，每个 section 产出一个 segment
+//   - category 统一为 system_prompt（parser 不做语义归因）
+//   - rawText 存入 segment，供 attribution 做 pattern match
+//   - metadata 只存中性结构事实：sectionHeader（section 标题字符串）、
+//     sectionIndex、blockIndex
+//   - 不存 stabilityHint（是 rule 层知识）、不存 textPreview（rawText 已够）
+//   - 不识别 billing_noise（迁到 attribution）
 
 function parseSystemSegments(
   system: NonNullable<NonNullable<ProxyRequestInput["reqBody"]>["system"]>,
@@ -212,40 +221,62 @@ function parseSystemSegments(
   orderStart: number,
 ): ContextSegment[] {
   const segments: ContextSegment[] = [];
+  let order = orderStart;
 
   for (let i = 0; i < system.length; i++) {
     const blk = system[i];
     const text = blk.text ?? "";
-    const charCount = text.length;
     const jsonPath = `reqBody.system[${i}]`;
-    const rawHash = sha256(text);
     const cacheHint = cacheHintFrom(blk.cache_control);
 
-    // billing_noise：Claude Code 在 system[0] 注入账单 header
-    // 参考 restored-src/src/services/systemPrompt.ts: billing header pattern
-    const isBillingNoise = /^x-anthropic-billing-header:/.test(text.trim());
+    const sections = splitProxyBlockSections(text);
+    const multiSection = sections.length > 1;
 
-    const flags: SegmentFlag[] = [];
-    if (charCount >= LARGE_SEGMENT_THRESHOLD) flags.push("large_segment");
+    for (let si = 0; si < sections.length; si++) {
+      const section = sections[si]!;
+      const sectionText = section.text;
+      const charCount = sectionText.length;
+      const rawHash = sha256(sectionText);
+      const flags: SegmentFlag[] = [];
+      if (charCount >= LARGE_SEGMENT_THRESHOLD) flags.push("large_segment");
 
-    const seg: ContextSegment = {
-      id: `pseg-system-${i}`,
-      section: "system" as SegmentSection,
-      category: isBillingNoise ? ("billing_noise" as SegmentCategory) : ("system_prompt" as SegmentCategory),
-      label: isBillingNoise ? "Billing noise header" : `System prompt block [${i}]`,
-      sourceRefs: [
-        {
-          kind: "proxy",
-          proxy: { file: proxyFile, jsonPath },
-        } as Extract<SourceRef, { kind: "proxy" }>,
-      ],
-      rawHash,
-      charCount,
-      cacheHint,
-      order: orderStart + i,
-    };
-    if (flags.length) seg.flags = flags;
-    segments.push(seg);
+      const segId = multiSection ? `pseg-system-${i}-s${si}` : `pseg-system-${i}`;
+
+      const headerLabel = section.header ?? "(prelude)";
+      const label = multiSection
+        ? `System prompt block [${i}] §${headerLabel}`
+        : `System prompt block [${i}]`;
+
+      const proxyLoc = multiSection
+        ? { file: proxyFile, jsonPath, charRange: { start: section.startChar, end: section.endChar } }
+        : { file: proxyFile, jsonPath };
+
+      const seg: ContextSegment = {
+        id: segId,
+        section: "system" as SegmentSection,
+        category: "system_prompt",
+        label,
+        rawText: sectionText,
+        sourceRefs: [
+          { kind: "proxy", proxy: proxyLoc } as Extract<SourceRef, { kind: "proxy" }>,
+        ],
+        rawHash,
+        charCount,
+        cacheHint,
+        order: order++,
+        ...(multiSection
+          ? {
+              metadata: {
+                sectionHeader: section.header,
+                sectionIndex: si,
+                blockIndex: i,
+              },
+            }
+          : {}),
+      };
+      if (flags.length) seg.flags = flags;
+      segments.push(seg);
+    }
   }
 
   return segments;
@@ -273,7 +304,7 @@ function parseToolsSegments(
     const seg: ContextSegment = {
       id: `pseg-tool-${i}`,
       section: "tools" as SegmentSection,
-      category: "tools_schema" as SegmentCategory,
+      category: "tools_schema",
       label: `Tool schema: ${tool.name}`,
       sourceRefs: [
         {
@@ -295,6 +326,14 @@ function parseToolsSegments(
 }
 
 // ── messages[] 切分 ───────────────────────────────────────────────────────────
+//
+// parser 只做 wire schema 读取：
+//   - text block → user_message（role=user）或 assistant_text（role=assistant）
+//     不检查内容，rawText 存入供 attribution 做 pattern match
+//   - tool_use / tool_result → 由 blk.type 字段直接确定（wire schema）
+//   - toolUseId 直接读 blk.id / blk.tool_use_id（wire schema）
+//   - 所有语义分类（billing_noise、harness_injection、local_command_history、
+//     prior_session_history）都留给 attribution
 
 function parseMessagesSegments(
   messages: NonNullable<NonNullable<ProxyRequestInput["reqBody"]>["messages"]>,
@@ -309,25 +348,22 @@ function parseMessagesSegments(
     const role = msg.role as SegmentRole;
     const content = msg.content;
 
-    // string content → 单 segment
+    // string content → 单 segment（保守分类）
     if (typeof content === "string") {
-      const charCount = content.length;
+      const rawText = content;
+      const charCount = rawText.length;
       const jsonPath = `reqBody.messages[${mi}]`;
-      const rawHash = sha256(content);
+      const rawHash = sha256(rawText);
       const flags: SegmentFlag[] = [];
       if (charCount >= LARGE_SEGMENT_THRESHOLD) flags.push("large_segment");
 
       const seg: ContextSegment = {
         id: `pseg-msg-${mi}`,
-        section: "messages" as SegmentSection,
-        category: role === "user" ? ("user_message" as SegmentCategory) : ("assistant_text" as SegmentCategory),
+        section: "messages",
+        category: role === "user" ? "user_message" : "assistant_text",
         label: `Message [${mi}] ${role} (string)`,
-        sourceRefs: [
-          {
-            kind: "proxy",
-            proxy: { file: proxyFile, jsonPath },
-          } as Extract<SourceRef, { kind: "proxy" }>,
-        ],
+        rawText,
+        sourceRefs: [{ kind: "proxy", proxy: { file: proxyFile, jsonPath } } as Extract<SourceRef, { kind: "proxy" }>],
         role,
         rawHash,
         charCount,
@@ -345,27 +381,29 @@ function parseMessagesSegments(
       const jsonPath = `reqBody.messages[${mi}].content[${bi}]`;
       const blkType = blk.type;
 
-      let category: SegmentCategory = "unknown";
-      let label = "";
       let rawText = "";
       let toolUseId: string | undefined;
       let charCount = 0;
       let cacheHint: CacheHint = "none";
+      let category: ContextSegment["category"] = "unknown";
+      let label = "";
 
       if (blkType === "text") {
         rawText = blk.text ?? "";
         charCount = rawText.length;
         cacheHint = cacheHintFrom(blk.cache_control);
-        category = classifyTextBlock(rawText, role);
+        // 保守分类：不检查内容，attribution 根据 rawText 决定真实 category
+        category = role === "user" ? "user_message" : "assistant_text";
         label = `Message [${mi}] ${role} text [${bi}]`;
       } else if (blkType === "tool_use") {
+        // wire schema：blk.type 直接确定 category
         rawText = JSON.stringify({ id: blk.id, name: blk.name, input: blk.input });
         charCount = JSON.stringify(blk.input ?? "").length;
         toolUseId = blk.id;
         category = "tool_use";
         label = `tool_use: ${blk.name} [${mi}][${bi}]`;
-        cacheHint = "none";
       } else if (blkType === "tool_result") {
+        // wire schema：blk.type 直接确定 category
         const c = blk.content;
         if (typeof c === "string") {
           rawText = c;
@@ -379,10 +417,7 @@ function parseMessagesSegments(
         label = `tool_result [${mi}][${bi}]`;
         cacheHint = cacheHintFrom(blk.cache_control);
       }
-      // TODO(unsupported): thinking / redacted_thinking block — category 保持 "unknown"，
-      //   charCount 为 0，等有对应 fixture 后在此处补充分支。
-      // TODO(unsupported): image / document block（附件）— charCount 为 0，
-      //   category 保持 "unknown"。
+      // TODO(unsupported): thinking / redacted_thinking / image / document — category=unknown
 
       const rawHash = sha256(rawText);
       const flags: SegmentFlag[] = [];
@@ -390,15 +425,11 @@ function parseMessagesSegments(
 
       const seg: ContextSegment = {
         id: `pseg-msg-${mi}-${bi}`,
-        section: "messages" as SegmentSection,
+        section: "messages",
         category,
         label,
-        sourceRefs: [
-          {
-            kind: "proxy",
-            proxy: { file: proxyFile, jsonPath },
-          } as Extract<SourceRef, { kind: "proxy" }>,
-        ],
+        rawText: rawText || undefined,
+        sourceRefs: [{ kind: "proxy", proxy: { file: proxyFile, jsonPath } } as Extract<SourceRef, { kind: "proxy" }>],
         role,
         rawHash,
         charCount,
@@ -412,42 +443,6 @@ function parseMessagesSegments(
   }
 
   return segments;
-}
-
-// ── text block 分类 ───────────────────────────────────────────────────────────
-// Claude Code harness 在 user message 的 content 数组里注入结构化 XML 标签。
-// 分类依据是这些标签的固定前缀，不是启发式文本匹配：
-//   <system-reminder>   → harness_injection（每个 user turn 头部注入的 meta 信息）
-//   <local-command-caveat> / <bash-input> / <bash-stdout> / <bash-stderr>
-//                       → local_command_history（终端输出注入）
-// 参考 restored-src/src/utils/systemPrompt.ts 中的注入逻辑。
-//
-// TODO(unsupported): thinking / redacted_thinking block — blk.type 为这两种时
-//   category 会落入 "unknown"，等有对应 fixture 后补充分类。
-// TODO(unsupported): image / document block（附件）— charCount 会为 0，
-//   category 同样落入 "unknown"。
-
-function classifyTextBlock(text: string, role: SegmentRole): SegmentCategory {
-  const trimmed = text.trimStart();
-
-  // billing noise（system[0] 已处理，messages 里也可能出现）
-  if (/^x-anthropic-billing-header:/.test(trimmed)) return "billing_noise";
-
-  // system-reminder 注入
-  if (trimmed.startsWith("<system-reminder>")) return "harness_injection";
-
-  // local command 注入
-  if (
-    trimmed.startsWith("<local-command-caveat>") ||
-    trimmed.startsWith("<bash-input>") ||
-    trimmed.startsWith("<bash-stdout>") ||
-    trimmed.startsWith("<bash-stderr>")
-  ) {
-    return "local_command_history";
-  }
-
-  if (role === "assistant") return "assistant_text";
-  return "user_message";
 }
 
 // ── 主入口 ────────────────────────────────────────────────────────────────────

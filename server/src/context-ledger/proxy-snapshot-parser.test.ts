@@ -31,9 +31,9 @@ describe("system-tools-overhead", () => {
     expect(snapshot.request?.stream).toBe(true);
   });
 
-  test("system 切出 3 个 segment", () => {
+  test("system 切出 12 个 segment（billing + identity + system[2] 的 10 个 section）", () => {
     const sys = snapshot.segments.filter((s) => s.section === "system");
-    expect(sys.length).toBe(3);
+    expect(sys.length).toBe(12);
   });
 
   test("tools 切出 34 个 segment", () => {
@@ -46,14 +46,22 @@ describe("system-tools-overhead", () => {
     expect(msgs.length).toBe(2);
   });
 
-  test("system[0] 是 billing_noise", () => {
+  // OBSOLETE（旧 contract）：parser 曾识别 billing_noise，现在 category 由 attribution 决定。
+  // parser 只产出 system_prompt。billing_noise 判断验证请在 proxy-attribution.test.ts 中查看。
+  test("system[0] 的 category 是 system_prompt（parser 保守分类）", () => {
     const s = snapshot.segments.find((s) => s.id === "pseg-system-0");
-    expect(s?.category).toBe("billing_noise");
+    expect(s?.category).toBe("system_prompt");
   });
 
-  test("system[2] charCount ≈ 27912", () => {
-    const s = snapshot.segments.find((s) => s.id === "pseg-system-2");
-    expect(s?.charCount).toBeGreaterThan(20000);
+  test("system[2] 被切为 10 个 section（pseg-system-2-s0 ~ s9）", () => {
+    const s2segs = snapshot.segments.filter((s) => s.id.startsWith("pseg-system-2-s"));
+    expect(s2segs.length).toBe(10);
+  });
+
+  test("system[2] 各 section charCount 之和 ≈ 27912", () => {
+    const s2segs = snapshot.segments.filter((s) => s.id.startsWith("pseg-system-2-s"));
+    const total = s2segs.reduce((sum, s) => sum + (s.charCount ?? 0), 0);
+    expect(total).toBe(27912);
   });
 
   test("system[1] 有 cache_control → cacheHint=write", () => {
@@ -61,9 +69,10 @@ describe("system-tools-overhead", () => {
     expect(s?.cacheHint).toBe("write");
   });
 
-  test("top char segment 是 system[2]（system prompt 主体）", () => {
+  test("top char segment 是 system[2] 的 auto memory section（最大 section）", () => {
     const sorted = [...snapshot.segments].sort((a, b) => (b.charCount ?? 0) - (a.charCount ?? 0));
-    expect(sorted[0].id).toBe("pseg-system-2");
+    // auto memory section（# auto memory，12552 chars）是最大 section
+    expect(sorted[0].id).toBe("pseg-system-2-s8");
   });
 
   test("usage 从 SSE message_delta 提取，三桶语义正确", () => {
@@ -85,8 +94,8 @@ describe("system-tools-overhead", () => {
     expect(snapshot.rawRequestHash).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
-  test("总 segment 数 = 3 + 34 + 2 = 39", () => {
-    expect(snapshot.segments.length).toBe(39);
+  test("总 segment 数 = 12（system）+ 34（tools）+ 2（messages）= 48", () => {
+    expect(snapshot.segments.length).toBe(48);
   });
 });
 
@@ -102,8 +111,8 @@ describe("single-tool-call", () => {
     expect(snapshot.sessionId).toBe("ba3db910-c0df-4863-910c-7b8e9525fa84");
   });
 
-  test("system 切出 3 个 segment", () => {
-    expect(snapshot.segments.filter((s) => s.section === "system").length).toBe(3);
+  test("system 切出 12 个 segment（billing + identity + system[2] 的 10 个 section）", () => {
+    expect(snapshot.segments.filter((s) => s.section === "system").length).toBe(12);
   });
 
   test("tools 切出 34 个 segment", () => {
@@ -205,21 +214,26 @@ describe("multi-turn-human", () => {
     expect(snapshot.segments.filter((s) => s.section === "tools").length).toBe(40);
   });
 
-  test("messages[0] 有 harness_injection segment（system-reminder）", () => {
-    const injected = snapshot.segments.filter((s) => s.category === "harness_injection");
-    expect(injected.length).toBeGreaterThan(0);
-  });
-
-  test("messages[0] 有 local_command_history segment", () => {
-    const lcmd = snapshot.segments.filter((s) => s.category === "local_command_history");
-    expect(lcmd.length).toBeGreaterThan(0);
-  });
-
-  test("messages[0] 有 user_message segment（真实用户输入）", () => {
-    const userMsg = snapshot.segments.filter(
-      (s) => s.section === "messages" && s.category === "user_message",
+  // OBSOLETE（旧 contract）：parser 曾用 classifyTextBlock 识别 harness_injection/local_command_history。
+  // 现在 parser 只产出 user_message/assistant_text，语义分类由 attribution 完成。
+  // harness_injection/local_command_history 验证请在 proxy-attribution.test.ts 中查看。
+  test("messages text block 全部保守分类为 user_message 或 assistant_text（parser 不做语义分类）", () => {
+    const textSegs = snapshot.segments.filter(
+      (s) => s.section === "messages" && s.category !== "tool_use" && s.category !== "tool_result",
     );
-    expect(userMsg.length).toBeGreaterThan(0);
+    for (const seg of textSegs) {
+      expect(["user_message", "assistant_text"]).toContain(seg.category);
+    }
+  });
+
+  test("messages[0] 的 text block 存有 rawText 供 attribution 消费", () => {
+    const msg0TextSegs = snapshot.segments.filter(
+      (s) => s.section === "messages" &&
+        (s.sourceRefs[0] as { kind: string; proxy?: { jsonPath?: string } })?.proxy?.jsonPath?.startsWith("reqBody.messages[0]"),
+    );
+    // messages[0] 里应有 text block 且携带 rawText
+    const withRawText = msg0TextSegs.filter((s) => s.rawText !== undefined && s.rawText.length > 0);
+    expect(withRawText.length).toBeGreaterThan(0);
   });
 
   test("tool_use segment 存在", () => {

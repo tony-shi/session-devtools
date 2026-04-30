@@ -47,3 +47,6 @@ export function charDiffHtmlPath(hash: string): string {
 export function errorPath(hash: string): string {
   return join("logs", `${hash}.error.json`);
 }
+export function proxyAttributionViewPath(hash: string): string {
+  return join("diffs", `${hash}.proxy-attribution.html`);
+}

@@ -135,6 +135,7 @@ export interface PipelineResult {
   scorecardPath?: string;
   charDiffJsonPath?: string;
   charDiffHtmlPath?: string;
+  proxyAttributionViewPath?: string;
   errorPath?: string;
   // scorecard（成功时有）
   scorecard?: QueryScorecard;
@@ -189,6 +190,7 @@ export interface AuditIndexEntry {
   scorecardPath?: string;
   charDiffHtmlPath?: string;
   charDiffJsonPath?: string;
+  proxyAttributionViewPath?: string;
   errorPath?: string;
 }
 

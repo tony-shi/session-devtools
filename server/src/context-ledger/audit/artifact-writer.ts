@@ -21,8 +21,11 @@ import {
   scorecardPath,
   charDiffJsonPath,
   charDiffHtmlPath,
+  proxyAttributionViewPath,
   errorPath,
 } from "./paths";
+import { renderProxyAttributionView } from "./proxy-attribution-view";
+import type { ProxySegmentAttribution } from "../types";
 import type {
   AuditIndexEntry,
   AuditRunRecord,
@@ -100,7 +103,12 @@ export function loadBaselineIndex(baselineRunId: string | undefined): BaselineIn
 export function writeQueryArtifacts(
   runId: string,
   result: PipelineResult,
-  data?: { report: ReconciliationReport; diff: CharDiffReport; diffHtml: string },
+  data?: {
+    report: ReconciliationReport;
+    diff: CharDiffReport;
+    diffHtml: string;
+    attributions?: ProxySegmentAttribution[];
+  },
 ): PipelineResult {
   const dir = runDir(runId);
   const hash = result.queryKeyHash;
@@ -129,6 +137,23 @@ export function writeQueryArtifacts(
     updated.scorecardPath = sPath;
     updated.charDiffJsonPath = djPath;
     updated.charDiffHtmlPath = dhPath;
+
+    // proxy-attribution view（独立三列 HTML，不依赖 expected/mutation）
+    if (data.attributions) {
+      const snap = data.report.snapshot;
+      const pavHtml = renderProxyAttributionView({
+        snapshotId: snap.id,
+        queryId: snap.queryId,
+        sessionId: snap.sessionId,
+        timestamp: snap.timestamp,
+        segments: snap.segments,
+        attributions: data.attributions,
+        proxySourceRef: result.proxySourceRef,
+      });
+      const pavPath = proxyAttributionViewPath(hash);
+      writeFileSync(join(dir, pavPath), pavHtml, "utf-8");
+      updated.proxyAttributionViewPath = pavPath;
+    }
   }
 
   return updated;
@@ -179,6 +204,7 @@ export function writeIndex(
       scorecardPath: r.scorecardPath,
       charDiffHtmlPath: r.charDiffHtmlPath,
       charDiffJsonPath: r.charDiffJsonPath,
+      proxyAttributionViewPath: r.proxyAttributionViewPath,
       errorPath: r.errorPath,
     };
     return entry;

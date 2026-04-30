@@ -86,8 +86,12 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
   const matchedExpectedIds = new Set<string>();
 
   // ── 第一步：known_noise 直接处理 ─────────────────────────────────────────
+  // category 权威来源：attribution（parser 已保守分类，attribution 做最终语义判断）
+  // 若 attribution 存在且 category=billing_noise，优先用 attribution；
+  // 否则 fallback 到 pseg.category（兼容未跑 attribution 的路径）
   for (const pseg of snapshot.segments) {
-    if (pseg.category !== "billing_noise") continue;
+    const effectiveCategory = attrBySegId.get(pseg.id)?.category ?? pseg.category;
+    if (effectiveCategory !== "billing_noise") continue;
     matchedProxyIds.add(pseg.id);
     const align: AlignmentRef = {
       id: nextAlignId(),
@@ -746,7 +750,9 @@ function computeCoverage(
     const tokens = pseg.tokenEstimate ?? Math.round(chars / 4);
     proxyChars += chars;
 
-    const cat = pseg.category;
+    // attribution 是 category 的权威来源；parser 只做保守分类
+    const attr = attrBySegId.get(pseg.id);
+    const cat = attr?.category ?? pseg.category;
     if (!catMap.has(cat)) catMap.set(cat, { proxyCount: 0, matchedCount: 0, proxyChars: 0, matchedChars: 0, proxyTokens: 0, matchedTokens: 0 });
     const entry = catMap.get(cat)!;
     entry.proxyCount++;
@@ -762,7 +768,6 @@ function computeCoverage(
       continue;
     }
 
-    const attr = attrBySegId.get(pseg.id);
     const isAttributionKnown = attr && attr.category !== "unknown";
     const isEvidenceBacked = evidenceBackedProxyIds.has(pseg.id);
     const isSuspect = suspectProxyIds.has(pseg.id);

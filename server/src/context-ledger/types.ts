@@ -125,6 +125,9 @@ export interface ProxySourceLocation {
   file: string;
   jsonPath?: string;
   trafficLine?: number;
+  // block 内的 char 范围（左闭右开），用于 sub-block section 引用
+  // 缺省时表示引用整个 block
+  charRange?: { start: number; end: number };
 }
 
 export interface MemorySourceLocation {
@@ -206,6 +209,9 @@ export interface ContextSegment {
   contentRef?: ContentRef;
   rawHash?: string;
   normalizedHash?: string;
+  // wire 层面的原始文本内容，供 attribution rule 做 pattern match。
+  // parser 填充；attribution 单向消费；reconciliation/UI 不应依赖它。
+  rawText?: string;
   charCount?: number;
   tokenEstimate?: number;
   cacheHint?: CacheHint;

@@ -174,13 +174,16 @@ export function writeIndexHtml(runId: string, run: AuditRunRecord, entries: Audi
     const reportLink = e.reportPath ? `<a href="${esc(e.reportPath)}">report</a>` : "";
     const diffLink = e.charDiffHtmlPath ? `<a href="${esc(e.charDiffHtmlPath)}">diff</a>` : "";
     const scLink = e.scorecardPath ? `<a href="${esc(e.scorecardPath)}">sc</a>` : "";
+    const attrLink = e.proxyAttributionViewPath
+      ? `<a href="${esc(e.proxyAttributionViewPath)}" title="proxy → parser → attribution 三列视图" style="color:#8b5cf6">attr</a>`
+      : "";
     const reasons = esc(e.reasons.join(", "));
     return `<tr>
       <td>${verdict}</td>
       <td style="color:${verdictColor(e.changeClass)}">${esc(e.changeClass)}</td>
       <td><code>${esc(e.sessionId.slice(0, 8))}…/${esc(e.queryId.slice(0, 20))}</code></td>
       <td>${reasons}</td>
-      <td>${reportLink} ${scLink} ${diffLink}</td>
+      <td>${reportLink} ${scLink} ${diffLink} ${attrLink}</td>
     </tr>`;
   };
 
@@ -243,7 +246,7 @@ td a:hover { text-decoration: underline; }
 ${regressions.length > 0 ? `
 <h2>Top Regressions (${regressions.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>session/query</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>session/query</th><th>reasons</th><th>links <span style="color:#8b5cf6;font-weight:400">(attr=三列视图)</span></th></tr>
 ${regressions.map(renderRow).join("\n")}
 </table>` : ""}
 

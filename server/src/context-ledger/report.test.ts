@@ -108,11 +108,10 @@ describe("rule registry contract", () => {
     expect(unique.size).toBe(ids.length);
   });
 
-  // 当前 registry 只有一条 rule（首批只落地 identity rule）
   // ── registry 基础契约 ────────────────────────────────────────────────────
 
-  test("registry 当前只包含一条人工确认的 rule", () => {
-    expect(CONTEXT_LEDGER_RULES).toHaveLength(1);
+  test("registry 当前包含 10 条人工确认的 rule", () => {
+    expect(CONTEXT_LEDGER_RULES).toHaveLength(10);
   });
 
   test("ruleId 在 registry 中唯一", () => {
