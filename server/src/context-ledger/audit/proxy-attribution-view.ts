@@ -9,6 +9,8 @@
 //
 // 三列通过 segment id 对齐，点击行互相高亮。
 
+import { CONTEXT_LEDGER_RULE_BY_ID } from "../rule-registry";
+import type { ContextLedgerRule } from "../rule-registry";
 import type { ContextSegment, ProxySegmentAttribution } from "../types";
 
 // ── 颜色 / badge 映射 ─────────────────────────────────────────────────────────
@@ -175,6 +177,13 @@ function renderParserCell(row: SegmentRow): string {
 
 // ── 第三列：Attribution ───────────────────────────────────────────────────────
 
+// stability → badge 颜色
+const STABILITY_COLOR: Record<string, string> = {
+  static:      "#10b981",  // green
+  "semi-static": "#f59e0b",
+  dynamic:     "#8b5cf6",  // purple
+};
+
 function renderAttrCell(row: SegmentRow): string {
   const { attr, seg } = row;
   if (!attr) {
@@ -184,6 +193,35 @@ function renderAttrCell(row: SegmentRow): string {
   const color = categoryColor(attr.category);
   const PARSER_AUTHORITATIVE = new Set(["tool_use", "tool_result", "tools_schema"]);
   const categoryMismatch = attr.category !== seg.category && PARSER_AUTHORITATIVE.has(seg.category);
+
+  // 从 rule-registry 取 rule 详情
+  const rule: ContextLedgerRule | undefined = attr.ruleId
+    ? CONTEXT_LEDGER_RULE_BY_ID.get(attr.ruleId)
+    : undefined;
+
+  const ruleDetail = rule
+    ? `
+      <details class="rule-detail">
+        <summary class="rule-summary">
+          <code class="rule-id-text">${esc(rule.ruleId)}</code>
+        </summary>
+        <div class="rule-body">
+          <div class="rule-desc">${esc(rule.description)}</div>
+          <div class="rule-props">
+            ${badge(rule.stability, STABILITY_COLOR[rule.stability] ?? "#94a3b8", "stability")}
+            ${rule.attribution?.matchMode ? badge(rule.attribution.matchMode, "#475569", "matchMode") : ""}
+            ${rule.reconciliation?.comparePolicy ? badge(rule.reconciliation.comparePolicy, "#334155", "comparePolicy") : ""}
+            ${rule.reconstruction?.materialization ? badge(rule.reconstruction.materialization, "#1e3a5f", "materialization") : ""}
+          </div>
+          ${rule.sourcemapRef ? `<div class="rule-src">src: <code>${esc(rule.sourcemapRef.slice(0, 60))}${rule.sourcemapRef.length > 60 ? "…" : ""}</code></div>` : ""}
+          ${rule.reconstruction?.preCondition
+            ? `<div class="rule-precond">if: <code>${esc(rule.reconstruction.preCondition)}</code></div>`
+            : ""}
+        </div>
+      </details>`
+    : attr.ruleId
+      ? `<div class="rule-id"><code>${esc(attr.ruleId)}</code> <span style="color:#ef4444;font-size:9px">not in registry</span></div>`
+      : "";
 
   return `
     <div class="attr-cell ${categoryMismatch ? "category-override" : ""}">
@@ -195,7 +233,7 @@ function renderAttrCell(row: SegmentRow): string {
         <code class="mechanism">${esc(attr.mechanism)}</code>
         ${confidenceBadge(attr.confidence)}
       </div>
-      ${attr.ruleId ? `<div class="rule-id"><code>${esc(attr.ruleId)}</code></div>` : ""}
+      ${ruleDetail}
       ${attr.notes?.length ? `
         <details class="attr-notes">
           <summary>${attr.notes.length} note${attr.notes.length > 1 ? "s" : ""}</summary>
@@ -343,6 +381,22 @@ col.col-attr     { width: 40%; }
 .attr-notes li { color: #94a3b8; font-size: 10px; margin-bottom: 2px; }
 .attr-missing { color: #475569; }
 .no-attr { font-size: 11px; }
+
+/* ── rule detail（折叠展开） ── */
+.rule-detail { margin-top: 4px; }
+.rule-summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 4px; }
+.rule-summary::-webkit-details-marker { display: none; }
+.rule-id-text { color: #34d399; font-size: 10px; }
+details.rule-detail[open] .rule-id-text::before { content: "▾ "; }
+details.rule-detail:not([open]) .rule-id-text::before { content: "▸ "; }
+.rule-body { margin-top: 4px; padding: 6px 8px; background: #0a1628;
+             border-radius: 4px; border: 1px solid #1e3a5f; }
+.rule-desc { color: #cbd5e1; font-size: 10px; margin-bottom: 4px; line-height: 1.4; }
+.rule-props { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+.rule-src { color: #475569; font-size: 9px; margin-top: 2px; }
+.rule-src code { color: #64748b; }
+.rule-precond { color: #94a3b8; font-size: 9px; margin-top: 2px; }
+.rule-precond code { color: #7dd3fc; }
 
 /* ── badge ── */
 .badge { display: inline-block; padding: 1px 6px; border-radius: 3px;

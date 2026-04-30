@@ -168,6 +168,22 @@ export function writeIndexHtml(runId: string, run: AuditRunRecord, entries: Audi
   const esc = (s: string): string =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
+  // queryKind → badge 样式
+  const queryKindBadge = (qk: string | undefined): string => {
+    if (!qk) return `<span style="color:#475569">?</span>`;
+    if (qk === "main_session") {
+      return `<span style="background:#1e3a5f;color:#7dd3fc;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600">main</span>`;
+    }
+    if (qk === "session_title_side_query") {
+      // session-title 是 Claude Code 标准内置逻辑（initReplBridge.ts count=1/3 触发）
+      return `<span style="background:#1c1917;color:#a78bfa;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600" title="generateSessionTitle() — Claude Code 内置，会话首消息后自动触发（count=1/3）">title</span>`;
+    }
+    if (qk === "side_query") {
+      return `<span style="background:#1c1917;color:#94a3b8;padding:1px 6px;border-radius:3px;font-size:10px">side</span>`;
+    }
+    return `<span style="color:#475569;font-size:10px">${esc(qk)}</span>`;
+  };
+
   const renderRow = (e: AuditIndexEntry): string => {
     const color = verdictColor(e.changeClass);
     const verdict = `<span style="color:${color};font-weight:600">${esc(e.verdict)}</span>`;
@@ -181,6 +197,7 @@ export function writeIndexHtml(runId: string, run: AuditRunRecord, entries: Audi
     return `<tr>
       <td>${verdict}</td>
       <td style="color:${verdictColor(e.changeClass)}">${esc(e.changeClass)}</td>
+      <td>${queryKindBadge(e.queryKind)}</td>
       <td><code>${esc(e.sessionId.slice(0, 8))}…/${esc(e.queryId.slice(0, 20))}</code></td>
       <td>${reasons}</td>
       <td>${reportLink} ${scLink} ${diffLink} ${attrLink}</td>
@@ -246,21 +263,21 @@ td a:hover { text-decoration: underline; }
 ${regressions.length > 0 ? `
 <h2>Top Regressions (${regressions.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>session/query</th><th>reasons</th><th>links <span style="color:#8b5cf6;font-weight:400">(attr=三列视图)</span></th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>reasons</th><th>links <span style="color:#8b5cf6;font-weight:400">(attr=三列视图)</span></th></tr>
 ${regressions.map(renderRow).join("\n")}
 </table>` : ""}
 
 ${needsReview.length > 0 ? `
 <h2>Needs Review (${needsReview.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>session/query</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>reasons</th><th>links</th></tr>
 ${needsReview.map(renderRow).join("\n")}
 </table>` : ""}
 
 ${newEntries.length > 0 ? `
 <h2>New Proxy Queries (${newEntries.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>session/query</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>reasons</th><th>links</th></tr>
 ${newEntries.map(renderRow).join("\n")}
 </table>` : ""}
 
@@ -275,13 +292,13 @@ ${proxyWithoutJsonl.map((e) => `<tr><td><code>${esc(e.sessionId)}</code></td><td
 ${failed.length > 0 ? `
 <h2>Failed Queries (${failed.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>session/query</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>reasons</th><th>links</th></tr>
 ${failed.map(renderRow).join("\n")}
 </table>` : ""}
 
 <h2>All Queries (${entries.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>session/query</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>reasons</th><th>links</th></tr>
 ${entries.map(renderRow).join("\n")}
 </table>
 

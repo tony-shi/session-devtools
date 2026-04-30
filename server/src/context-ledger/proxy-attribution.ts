@@ -26,12 +26,22 @@
 //   R10 unknown                 — 无法归类
 
 import {
+  CLAUDE_CODE_ACTIONS_SECTION_RULE,
+  CLAUDE_CODE_DOING_TASKS_RULE,
   CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,
   CLAUDE_CODE_BILLING_NOISE_RULE,
   CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
+  CLAUDE_CODE_INTRO_OUTPUT_STYLE_RULE,
+  CLAUDE_CODE_INTRO_STANDARD_RULE,
+  CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE,
+  CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE,
   CLAUDE_CODE_SESSION_GUIDANCE_RULE,
   CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE,
   CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE,
+  CLAUDE_CODE_SYSTEM_SECTION_RULE,
+  CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE,
+  CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE,
+  CLAUDE_CODE_USING_YOUR_TOOLS_RULE,
 } from "./rule-registry";
 import type { ContextLedgerRule } from "./rule-registry";
 import { DYNAMIC_SECTION_HEADERS } from "./proxy-block-splitter";
@@ -81,6 +91,10 @@ function matchesRulePattern(
   }
   if (attr.matchMode === "regex") return new RegExp(attr.pattern).test(text);
   if (attr.matchMode === "contains") return text.includes(attr.pattern);
+  // exact：wire 文本与 pattern 完全相等，不做任何 trim。
+  // pattern 必须包含 splitter 切出的完整文本（含尾部 \n\n），与 wire 内容一一对应。
+  if (attr.matchMode === "exact") return text === attr.pattern;
+  // prefix：trimStart 后以 pattern 开头（identity rule、billing rule 的默认行为）
   return text.trimStart().startsWith(attr.pattern);
 }
 
@@ -235,28 +249,82 @@ export function inferClaudeProxyAttributions(
         attributedSource = "harness_rule";
         lifecycle = "query";
         if (sectionHeader === "Session-specific guidance") {
-          ruleId = CLAUDE_CODE_SESSION_GUIDANCE_RULE.ruleId;
+          // 先尝试 embedded 精确变体，命中则 confidence 升为 exact
+          if (matchesRulePattern(CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE, rawText, "system", queryKind)) {
+            ruleId = CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE.ruleId;
+            confidence = "exact";
+          } else {
+            ruleId = CLAUDE_CODE_SESSION_GUIDANCE_RULE.ruleId;
+          }
         } else if (sectionHeader === "Environment") {
           ruleId = CLAUDE_CODE_ENVIRONMENT_SECTION_RULE.ruleId;
+          // regex captureGroups 로 동적 필드 추출 → notes 에 기록
+          const envGroups = matchesRulePatternWithGroups(CLAUDE_CODE_ENVIRONMENT_SECTION_RULE, rawText, "system");
+          if (envGroups && Object.keys(envGroups).length > 0) {
+            confidence = "exact";  // regex 구조 매칭 성공 → confidence 승급
+            notes = [
+              `cwd=${envGroups["cwd"] ?? "?"}`,
+              `platform=${envGroups["platform"] ?? "?"}`,
+              `shell=${envGroups["shell"] ?? "?"}`,
+              `osVersion=${envGroups["osVersion"] ?? "?"}`,
+              `model=${envGroups["modelDesc"] ?? "?"}`,
+              ...(envGroups["cutoff"] ? [`cutoff=${envGroups["cutoff"]}`] : []),
+            ];
+          }
         } else if (sectionHeader === "auto memory") {
           ruleId = CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE.ruleId;
+          // 用 regex captureGroups 提取 memoryDir（用户本地路径）
+          const memGroups = matchesRulePatternWithGroups(CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE, rawText, "system");
+          if (memGroups?.["memoryDir"]) {
+            notes = [`memoryDir=${memGroups["memoryDir"]}`];
+          }
         }
         // "Language" section 暂无独立 rule，ruleId 留空
         flags.push("injected");
       } else {
-        // R2c：其余 system segment → 保守 system_prompt, session
-        category = "system_prompt";
-        mechanism = "system_prompt_pattern";
-        confidence = "inferred";
-        attributedSource = "harness_rule";
-        lifecycle = "session";
-        if (!sectionHeader && rawText.trim().length === 0) {
-          notes = ["empty system block; cannot attribute"];
-        } else if (sectionHeader) {
-          notes = [`heuristic: section header "${sectionHeader}" attributed as static system_prompt`];
+        // R2c：静态 body rules 顺序匹配（均按 sectionHeader 或 rawText 前缀精确识别）
+        // 顺序对应 getSystemPrompt() 的产出顺序（prompts.ts:560-576）
+        const STATIC_BODY_RULES = [
+          CLAUDE_CODE_INTRO_STANDARD_RULE,
+          CLAUDE_CODE_INTRO_OUTPUT_STYLE_RULE,
+          CLAUDE_CODE_SYSTEM_SECTION_RULE,
+          CLAUDE_CODE_DOING_TASKS_RULE,
+          CLAUDE_CODE_ACTIONS_SECTION_RULE,
+          CLAUDE_CODE_USING_YOUR_TOOLS_RULE,
+          CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE,
+          CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE,
+          CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE,
+        ] as const;
+
+        const matchedStaticRule = STATIC_BODY_RULES.find(
+          (r) => matchesRulePattern(r, rawText, "system", queryKind),
+        );
+
+        if (matchedStaticRule) {
+          // 命中静态 body rule：confidence=exact（正则精确匹配），lifecycle=session
+          category = "system_prompt";
+          mechanism = "system_prompt_pattern";
+          confidence = "exact";
+          attributedSource = "harness_rule";
+          lifecycle = "session";
+          ruleId = matchedStaticRule.ruleId;
         } else {
-          notes = ["heuristic: non-identity system block attributed as system_prompt"];
-          flags.push("approximate");
+          // rule gap：system segment 未命中任何 rule，说明 rule 覆盖不完整。
+          // 不再用 heuristic 伪装归类——明确标注为 unknown，触发后续 rule 补充。
+          // 常见缺口：# Doing tasks（USER_TYPE 条件分支复杂）、# Using your tools（enabledTools 动态）
+          category = "unknown";
+          mechanism = "unknown";
+          confidence = "unknown";
+          attributedSource = "unknown";
+          lifecycle = "unknown";
+          flags.push("unexplained");
+          if (!rawText.trim()) {
+            notes = ["rule_gap: empty system block"];
+          } else if (sectionHeader) {
+            notes = [`rule_gap: section header "${sectionHeader}" has no matching rule — needs rule coverage`];
+          } else {
+            notes = ["rule_gap: system block matched no rule — needs rule coverage"];
+          }
         }
       }
 
@@ -319,21 +387,21 @@ export function inferClaudeProxyAttributions(
         lifecycle = "one_shot";
         flags.push("injected");
       } else if (seg.category === "user_message" || seg.category === "assistant_text") {
-        // R9：prior_session_guess（messages[0] 的 user text）
+        // prior_session_history：messages[0] 的 user text，推断为历史上下文
+        // 这是无 rule 的结构性推断（无法被精确 rule 覆盖），保持 inferred 但不标 approximate
         if (seg.category === "user_message" && msgIndex === 0 && totalMessages > 1) {
           category = "prior_session_history";
           mechanism = "unknown";
           confidence = "inferred";
           attributedSource = "prior_session";
           lifecycle = "session";
-          notes = [`prior_session_guess: messages[0] user_message in a ${totalMessages}-message context — likely historical input`];
-          flags.push("approximate");
+          notes = [`prior_session_guess: messages[0] user_message in a ${totalMessages}-message context`];
         } else {
+          // wire schema 确定类型（user_message / assistant_text），attribution 只补充 mechanism
           mechanism = "unknown";
           confidence = "inferred";
-          attributedSource = seg.category === "user_message" ? "jsonl" : "jsonl";
+          attributedSource = "jsonl";
           lifecycle = "query";
-          notes = [`inferred: ${seg.category} text block`];
         }
       } else {
         // R10：unknown

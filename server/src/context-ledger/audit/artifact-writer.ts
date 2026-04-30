@@ -202,6 +202,7 @@ export function writeIndex(
       verdict: delta?.verdict ?? (r.status === "skipped" ? "skipped" : r.status === "failed" ? "failed" : "ok"),
       changeClass: delta?.changeClass ?? (isNew ? "new" : r.status === "skipped" ? "skipped" : "failed"),
       reasons: delta?.reasons ?? (r.skipReason ? [r.skipReason] : r.error ? ["pipeline_error"] : []),
+      queryKind: r.queryKind,
       reportPath: r.reportPath,
       scorecardPath: r.scorecardPath,
       charDiffHtmlPath: r.charDiffHtmlPath,

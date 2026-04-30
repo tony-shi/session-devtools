@@ -130,6 +130,7 @@ export interface PipelineResult {
   proxySourceRef: string;
   jsonlSourceRef?: string;
   timestamp: string;
+  queryKind?: string;
   // 产出路径（相对于 runDir）
   reportPath?: string;
   scorecardPath?: string;
@@ -186,6 +187,8 @@ export interface AuditIndexEntry {
   verdict: AuditVerdict;
   changeClass: ChangeClass;
   reasons: string[];
+  // query 类型标注：main_session / session_title_side_query / side_query / unknown
+  queryKind?: string;
   reportPath?: string;
   scorecardPath?: string;
   charDiffHtmlPath?: string;

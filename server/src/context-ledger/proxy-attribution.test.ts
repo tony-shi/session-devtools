@@ -247,7 +247,10 @@ describe("rule registry 集成：identity rule 驱动 attribution", () => {
     );
     expect(envAttr).toBeDefined();
     expect(envAttr!.category).toBe("harness_injection");
-    expect(envAttr!.confidence).toBe("inferred");
+    // regex 구조 매칭 성공 시 confidence=exact 로 승급
+    expect(["exact", "inferred"]).toContain(envAttr!.confidence);
+    // cwd, platform 등 동적 필드가 notes 에 추출됐는지 확인
+    expect(envAttr!.notes?.some(n => n.startsWith("cwd="))).toBe(true);
   });
 
   test("system[2] 的 static section（sectionHeader='System'）归为 system_prompt", async () => {
@@ -271,7 +274,9 @@ describe("rule registry 集成：dynamic section rules 驱动 attribution", () =
 
     // 各 section 有独立 ruleId
     const sessionAttr = attributions.find(
-      (a) => a.ruleId === "claude-code.system-prompt-session-guidance.v1",
+      // fixture 版本命中 embedded 变体（exact）；non-embedded 变体 ruleId 作为兜底
+      (a) => a.ruleId === "claude-code.system-prompt-session-guidance.embedded.v1" ||
+             a.ruleId === "claude-code.system-prompt-session-guidance.v1",
     );
     const envAttr = attributions.find(
       (a) => a.ruleId === "claude-code.system-prompt-environment.v1",

@@ -254,6 +254,16 @@ export function runPipelineWithData(input: PipelineInput): {
     const diffHtml = renderCharDiffHtml(diff);
     const scorecard = computeScorecard(queryKey, report, diff);
 
+    // queryKind 细化：side_query 中命中 session-title rule 的标注为 session_title_side_query
+    const baseQueryKind = snapshot.request?.queryKind ?? "unknown";
+    const queryKind = (() => {
+      if (baseQueryKind !== "side_query") return baseQueryKind;
+      const hasSessionTitleRule = attributions.some(
+        (a) => a.ruleId === "claude-code.side-query.session-title.v1",
+      );
+      return hasSessionTitleRule ? "session_title_side_query" : "side_query";
+    })();
+
     return {
       result: {
         queryKey,
@@ -263,6 +273,7 @@ export function runPipelineWithData(input: PipelineInput): {
         jsonlSourceRef: jsonlFile,
         timestamp,
         scorecard,
+        queryKind,
       },
       data: { report, diff, diffHtml, attributions, reqBody },
     };
