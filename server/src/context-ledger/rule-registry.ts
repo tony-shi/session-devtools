@@ -574,16 +574,11 @@ export const CLAUDE_CODE_ACTIONS_SECTION_RULE: ContextLedgerRule = {
   },
 };
 
-// ── # Text output / # Output efficiency section（两条互斥 rule）──────────────
+// ── # Output efficiency section ───────────────────────────────────────────────
 //
 // getOutputEfficiencySection() — prompts.ts:403-428
-// 两个变体由 USER_TYPE === 'ant' 决定：
-//   external（3P 用户）：以 "# Output efficiency" 开头
-//   ant（内部用户）    ：以 "# Communicating with the user" 开头
-//
-// proxy 里只能看到实际命中的变体，attribution 各自识别。
-// USER_TYPE 是编译期常量（build-time --define），external build 永远走 external 分支，
-// ant build 永远走 ant 分支——对 external 用户只有一条 rule 会命中。
+// USER_TYPE !== 'ant' 分支，header 为 "# Output efficiency"（当前 sourcemap 2.1.123）。
+// USER_TYPE === 'ant' 分支暂不落地（仅内部用户可见，外部 proxy 不会出现）。
 
 export const CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-output-efficiency.external.v1",
@@ -670,22 +665,29 @@ export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
   },
 };
 
-// ── # Text output section（外部用户的 output efficiency 别名）─────────────────
+// ── # Text output section（旧版 output efficiency header）────────────────────
 //
-// 注意：fixture 里观测到的 header 是 "# Text output (does not apply to tool calls)"
-// 这是 getOutputEfficiencySection() external 分支的另一个变体，
-// 或者是旧版本的 header 名称。用前缀正则兜住两种可能的 header。
-// TODO: 用真实 fixture 验证后确认正确的 header 名称。
+// fixture 里观测到的实际 header 是 "# Text output (does not apply to tool calls)"，
+// 而当前 sourcemap（2.1.123）里 external 分支的 header 是 "# Output efficiency"。
+//
+// 这是版本演进导致的 header 名称变化，不是同一版本内的两个变体：
+//   旧版 Claude Code：# Text output (does not apply to tool calls)
+//   当前 2.1.123    ：# Output efficiency
+//
+// 两条 rule 都保留，各自覆盖一个版本，proxy 里不同版本的请求可以各自命中。
+// output-efficiency.external.v1 对应当前版本（现有 fixture 暂无命中案例）。
+// text-output-section.v1 对应旧版本（当前 fixture 里实际观测到的 header）。
 
 export const CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-text-output-section.v1",
-  ruleVersion: "2.1.123",
+  ruleVersion: "<2.1.123",
   description:
-    "Claude Code system prompt 的 # Text output section。" +
-    "观测到 header 为 '# Text output (does not apply to tool calls)'，" +
-    "可能是旧版 getOutputEfficiencySection() 的 header，待 fixture 确认。",
+    "Claude Code system prompt 的旧版 output efficiency section。" +
+    "header 为 '# Text output (does not apply to tool calls)'，" +
+    "当前版本（2.1.123）已更名为 '# Output efficiency'。" +
+    "保留用于兼容旧版本 proxy 请求。",
   stability: "static",
-  sourcemapRef: "restored-src/src/constants/prompts.ts:403",
+  sourcemapRef: "restored-src/src/constants/prompts.ts:403（旧版 header，当前版本已变更）",
 
   attribution: {
     pattern: "^# Text output",
