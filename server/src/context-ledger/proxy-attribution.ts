@@ -26,8 +26,11 @@
 //   R10 unknown                 — 无法归类
 
 import {
+  CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,
   CLAUDE_CODE_BILLING_NOISE_RULE,
-  CLAUDE_CODE_SYSTEM_PROMPT_DYNAMIC_SECTION_RULE,
+  CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
+  CLAUDE_CODE_SESSION_GUIDANCE_RULE,
+  CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE,
   CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE,
 } from "./rule-registry";
 import type { ContextLedgerRule } from "./rule-registry";
@@ -67,10 +70,15 @@ function matchesRulePattern(
   rule: ContextLedgerRule,
   text: string,
   section: SegmentSection,
+  queryKind?: string,
 ): boolean {
   const attr = rule.attribution;
   if (!attr?.pattern) return false;
   if (attr.location?.section !== undefined && attr.location.section !== section) return false;
+  // queryScope 约束：rule.queryScope 与 snapshot.request.queryKind 不一致时不命中
+  if (rule.queryScope && rule.queryScope !== "any") {
+    if (queryKind && queryKind !== rule.queryScope) return false;
+  }
   if (attr.matchMode === "regex") return new RegExp(attr.pattern).test(text);
   if (attr.matchMode === "contains") return text.includes(attr.pattern);
   return text.trimStart().startsWith(attr.pattern);
@@ -125,6 +133,7 @@ export function inferClaudeProxyAttributions(
 ): ProxySegmentAttribution[] {
   const snapshotId = snapshot.id;
   const results: ProxySegmentAttribution[] = [];
+  const queryKind = snapshot.request?.queryKind ?? "unknown";
 
   // 预收集 tool_use id，用于 tool_result cross-reference
   const knownToolUseIds = new Set<string>();
@@ -170,6 +179,17 @@ export function inferClaudeProxyAttributions(
         ? meta["sectionHeader"]
         : null;
 
+      // R0：side query rules（queryScope="side_query" 제약으로 주 대화와 혼동 방지）
+      if (matchesRulePattern(CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE, rawText, "system", queryKind)) {
+        category = "system_prompt";
+        mechanism = "system_prompt_pattern";
+        confidence = "exact";
+        attributedSource = "harness_rule";
+        lifecycle = "query";
+        ruleId = CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE.ruleId;
+        notes = ["side_query: generateSessionTitle() — Haiku session title generation"];
+      } else {
+      // R0 未命中时进入 R1 以下分支
       const billingGroups = matchesRulePatternWithGroups(CLAUDE_CODE_BILLING_NOISE_RULE, rawText, "system");
       if (billingGroups !== null) {
         // R1：billing header（regex 匹配，提取 cc_version/cc_entrypoint/cch/cc_workload）
@@ -208,13 +228,20 @@ export function inferClaudeProxyAttributions(
         lifecycle = "session";
         ruleId = CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE.ruleId;
       } else if (sectionHeader !== null && DYNAMIC_SECTION_HEADERS.has(sectionHeader)) {
-        // R2b：dynamic section（由 splitter 提取的 sectionHeader 命中 DYNAMIC_SECTION_HEADERS）
+        // R2b：dynamic section——sectionHeader 精确匹配，各 header 对应各自的 rule
         category = "harness_injection";
         mechanism = "system_prompt_pattern";
         confidence = "inferred";
         attributedSource = "harness_rule";
         lifecycle = "query";
-        ruleId = CLAUDE_CODE_SYSTEM_PROMPT_DYNAMIC_SECTION_RULE.ruleId;
+        if (sectionHeader === "Session-specific guidance") {
+          ruleId = CLAUDE_CODE_SESSION_GUIDANCE_RULE.ruleId;
+        } else if (sectionHeader === "Environment") {
+          ruleId = CLAUDE_CODE_ENVIRONMENT_SECTION_RULE.ruleId;
+        } else if (sectionHeader === "auto memory") {
+          ruleId = CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE.ruleId;
+        }
+        // "Language" section 暂无独立 rule，ruleId 留空
         flags.push("injected");
       } else {
         // R2c：其余 system segment → 保守 system_prompt, session
@@ -234,6 +261,7 @@ export function inferClaudeProxyAttributions(
       }
 
       if (chars > LARGE_SEGMENT_THRESHOLD) flags.push("large_segment");
+      } // R0 未命中时的 R1-R2c 分支结束
     }
 
     // ── tools section ───────────────────────────────────────────────────────

@@ -108,6 +108,7 @@ export function writeQueryArtifacts(
     diff: CharDiffReport;
     diffHtml: string;
     attributions?: ProxySegmentAttribution[];
+    reqBody?: Record<string, unknown>;
   },
 ): PipelineResult {
   const dir = runDir(runId);
@@ -148,6 +149,7 @@ export function writeQueryArtifacts(
         timestamp: snap.timestamp,
         segments: snap.segments,
         attributions: data.attributions,
+        reqBody: data.reqBody ?? {},
         proxySourceRef: result.proxySourceRef,
       });
       const pavPath = proxyAttributionViewPath(hash);

@@ -250,6 +250,13 @@ export interface ProxyQuerySnapshot {
     maxTokens?: number;
     contextManagement?: unknown;
     betaHeaders?: string[];
+    // parser 从 reqBody 结构推断的 query 类型
+    // "main_session"  : 主对话（tools>0，多条 message）
+    // "side_query"    : queryHaiku/queryWithModel 等内部 side call（tools=0，1条 message）
+    // "unknown"       : 无法判断
+    queryKind?: "main_session" | "side_query" | "unknown";
+    // output_config.format.type（使用 structured output 时）
+    outputFormat?: string;
   };
   usage?: QueryUsage;
   metadata?: Record<string, unknown>;

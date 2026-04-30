@@ -238,16 +238,16 @@ describe("rule registry 集成：identity rule 驱动 attribution", () => {
     expect(identityAttr!.mechanism).toBe("system_prompt_pattern");
   });
 
-  test("system[2] 的 dynamic section（sectionHeader='Environment'）命中 dynamic rule", async () => {
+  test("system[2] 的 Environment section 命中 environment rule", async () => {
     const snapshot = await loadSnapshot("system-tools-overhead");
     const attributions = inferClaudeProxyAttributions(snapshot);
 
-    const dynAttr = attributions.find(
-      (a) => a.ruleId === "claude-code.system-prompt-dynamic-section.v1",
+    const envAttr = attributions.find(
+      (a) => a.ruleId === "claude-code.system-prompt-environment.v1",
     );
-    expect(dynAttr).toBeDefined();
-    expect(dynAttr!.category).toBe("harness_injection");
-    expect(dynAttr!.confidence).toBe("inferred");
+    expect(envAttr).toBeDefined();
+    expect(envAttr!.category).toBe("harness_injection");
+    expect(envAttr!.confidence).toBe("inferred");
   });
 
   test("system[2] 的 static section（sectionHeader='System'）归为 system_prompt", async () => {
@@ -264,17 +264,27 @@ describe("rule registry 集成：identity rule 驱动 attribution", () => {
   });
 });
 
-describe("rule registry 集成：dynamic section rule 驱动 attribution", () => {
-  test("session-specific guidance / auto memory / environment 都命中 dynamic rule", async () => {
+describe("rule registry 集成：dynamic section rules 驱动 attribution", () => {
+  test("session-specific guidance / auto memory / environment 各命中独立 rule", async () => {
     const snapshot = await loadSnapshot("system-tools-overhead");
     const attributions = inferClaudeProxyAttributions(snapshot);
 
-    const dynAttrs = attributions.filter(
-      (a) => a.ruleId === "claude-code.system-prompt-dynamic-section.v1",
+    // 各 section 有独立 ruleId
+    const sessionAttr = attributions.find(
+      (a) => a.ruleId === "claude-code.system-prompt-session-guidance.v1",
     );
-    // fixture 有 3 个 dynamic sections
-    expect(dynAttrs.length).toBeGreaterThanOrEqual(3);
-    for (const a of dynAttrs) {
+    const envAttr = attributions.find(
+      (a) => a.ruleId === "claude-code.system-prompt-environment.v1",
+    );
+    const memAttr = attributions.find(
+      (a) => a.ruleId === "claude-code.system-prompt-auto-memory.v1",
+    );
+
+    expect(sessionAttr).toBeDefined();
+    expect(envAttr).toBeDefined();
+    expect(memAttr).toBeDefined();
+
+    for (const a of [sessionAttr!, envAttr!, memAttr!]) {
       expect(a.category).toBe("harness_injection");
     }
   });

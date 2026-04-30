@@ -36,6 +36,7 @@ export interface PipelineOutputData {
   diff: CharDiffReport;
   diffHtml: string;
   attributions: import("../types").ProxySegmentAttribution[];
+  reqBody: Record<string, unknown>;
 }
 
 // proxy text 反查（复用 context-char-diff.ts 的同逻辑）
@@ -263,7 +264,7 @@ export function runPipelineWithData(input: PipelineInput): {
         timestamp,
         scorecard,
       },
-      data: { report, diff, diffHtml, attributions },
+      data: { report, diff, diffHtml, attributions, reqBody },
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

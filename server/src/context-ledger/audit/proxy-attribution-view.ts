@@ -1,30 +1,30 @@
 // Proxy Attribution View
-// 三列独立 HTML，专注于 proxy → parser → attribution 的完整链路。
+// 四列 HTML，专注于 proxy → parser → attribution 的完整链路。
 // 不展示 expected / mutation / reconciliation。
 //
 // 列定义：
-//   左  Raw Context     — 原始 proxy 请求体，按 section 分组，折叠展示 rawText
-//   中  Parser Segments — parseClaudeProxyRequest 产出的每个 segment
-//   右  Attribution     — inferClaudeProxyAttributions 产出，含 category override / ruleId / notes
+//   col-1 Raw Original  — reqBody 原始明文，直接从 JSON 取，不经过 parser
+//   col-2 Parser        — parseClaudeProxyRequest 产出的 segment（id/category/metadata）
+//   col-3 Attribution   — inferClaudeProxyAttributions 产出（category/mechanism/ruleId/notes）
 //
-// 三列通过 segment id 对齐（pseg-* 作为锚点），点击行互相高亮。
+// 三列通过 segment id 对齐，点击行互相高亮。
 
 import type { ContextSegment, ProxySegmentAttribution } from "../types";
 
 // ── 颜色 / badge 映射 ─────────────────────────────────────────────────────────
 
 const CATEGORY_COLOR: Record<string, string> = {
-  billing_noise:        "#6b7280",  // gray
-  system_prompt:        "#3b82f6",  // blue
-  harness_injection:    "#8b5cf6",  // purple
-  tools_schema:         "#f59e0b",  // amber
-  tool_use:             "#10b981",  // green
-  tool_result:          "#059669",  // emerald
-  user_message:         "#0ea5e9",  // sky
-  assistant_text:       "#64748b",  // slate
-  local_command_history:"#d97706",  // orange
-  prior_session_history:"#a78bfa",  // violet
-  unknown:              "#ef4444",  // red
+  billing_noise:        "#6b7280",
+  system_prompt:        "#3b82f6",
+  harness_injection:    "#8b5cf6",
+  tools_schema:         "#f59e0b",
+  tool_use:             "#10b981",
+  tool_result:          "#059669",
+  user_message:         "#0ea5e9",
+  assistant_text:       "#64748b",
+  local_command_history:"#d97706",
+  prior_session_history:"#a78bfa",
+  unknown:              "#ef4444",
 };
 
 function categoryColor(cat: string): string {
@@ -50,6 +50,57 @@ function truncate(s: string, n: number): string {
   return s.slice(0, n) + "…";
 }
 
+// ── reqBody 原文提取 ──────────────────────────────────────────────────────────
+
+function walkPath(path: string, root: unknown): unknown {
+  const tokens = path.split(/\.|\[(\d+)\]/).filter((t) => t !== undefined && t !== "");
+  let cur: unknown = root;
+  for (const tok of tokens) {
+    if (cur === null || cur === undefined) return undefined;
+    const idx = parseInt(tok, 10);
+    if (!isNaN(idx)) cur = (cur as unknown[])[idx];
+    else cur = (cur as Record<string, unknown>)[tok];
+  }
+  return cur;
+}
+
+// 从 reqBody 取 segment 对应的原始文本。
+// 对 system/messages text block → 取 .text 字段，再用 charRange 切片（sub-section 时）
+// 对 tools → JSON.stringify
+// 对 tool_use / tool_result → 取相关字段文本
+function extractRawOriginal(
+  seg: ContextSegment,
+  reqBody: Record<string, unknown>,
+): string | null {
+  const ref = seg.sourceRefs[0];
+  if (!ref || ref.kind !== "proxy" || !ref.proxy.jsonPath) return null;
+
+  const path = ref.proxy.jsonPath.startsWith("reqBody.")
+    ? ref.proxy.jsonPath.slice("reqBody.".length)
+    : ref.proxy.jsonPath;
+
+  const value = walkPath(path, reqBody);
+  if (value === undefined || value === null) return null;
+
+  // object with .text field（system block / message content block）
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj["text"] === "string") {
+      const text = obj["text"] as string;
+      const range = ref.proxy.charRange;
+      // sub-section: 用 charRange 切片还原该 section 的原始文本
+      if (range) return text.slice(range.start, range.end);
+      return text;
+    }
+    return JSON.stringify(obj, null, 2);
+  }
+
+  if (typeof value === "string") return value;
+
+  // tools[i]：JSON
+  return JSON.stringify(value, null, 2);
+}
+
 // ── 数据准备 ─────────────────────────────────────────────────────────────────
 
 interface SegmentRow {
@@ -68,44 +119,42 @@ function buildRows(
   return segments.map((seg) => ({ seg, attr: attrById.get(seg.id) }));
 }
 
-// ── 左列：Raw Context ─────────────────────────────────────────────────────────
+// ── 第一列：Raw Original（reqBody 原始明文）───────────────────────────────────
 
-function renderRawCell(row: SegmentRow): string {
-  const { seg } = row;
-  const ref = seg.sourceRefs[0];
+function renderRawOriginalCell(row: SegmentRow, reqBody: Record<string, unknown>): string {
+  const rawText = extractRawOriginal(row.seg, reqBody) ?? "";
+  const ref = row.seg.sourceRefs[0];
   const jsonPath = ref?.kind === "proxy" ? (ref.proxy.jsonPath ?? "?") : "?";
   const charRange = ref?.kind === "proxy" ? ref.proxy.charRange : undefined;
   const rangeStr = charRange ? `[${charRange.start}…${charRange.end})` : "";
-  const rawText = seg.rawText ?? "";
-  const preview = truncate(rawText.replace(/\n/g, "↵"), 120);
 
-  const hasText = rawText.length > 0;
-  const detailId = `raw-detail-${seg.id.replace(/[^a-zA-Z0-9-_]/g, "_")}`;
+  if (!rawText) {
+    return `<div class="raw-orig-cell"><div class="path-line"><code class="path">${esc(jsonPath)}</code></div><span class="no-text">—</span></div>`;
+  }
 
+  const chars = rawText.length;
+  // 直接展示，不折叠——这是"原文列"的核心诉求
   return `
-    <div class="raw-cell">
+    <div class="raw-orig-cell">
       <div class="path-line">
         <code class="path">${esc(jsonPath)}</code>
         ${rangeStr ? `<span class="range">${esc(rangeStr)}</span>` : ""}
-        <span class="chars">${seg.charCount ?? 0}c</span>
-        ${seg.cacheHint && seg.cacheHint !== "none" ? badge(seg.cacheHint, "#f59e0b") : ""}
+        <span class="chars">${chars.toLocaleString()}c</span>
       </div>
-      ${hasText ? `
-        <details id="${detailId}">
-          <summary class="raw-preview">${esc(preview)}</summary>
-          <pre class="raw-full">${esc(rawText.slice(0, 2000))}${rawText.length > 2000 ? "\n…(truncated)" : ""}</pre>
-        </details>
-      ` : `<span class="no-text">—</span>`}
+      <pre class="raw-orig-text">${esc(rawText.slice(0, 3000))}${rawText.length > 3000 ? "\n…(truncated)" : ""}</pre>
     </div>`;
 }
 
-// ── 中列：Parser Segments ─────────────────────────────────────────────────────
+// ── 第二列：Parser Segments ───────────────────────────────────────────────────
 
 function renderParserCell(row: SegmentRow): string {
   const { seg } = row;
   const color = categoryColor(seg.category);
   const meta = seg.metadata as Record<string, unknown> | undefined;
   const sectionHeader = typeof meta?.["sectionHeader"] === "string" ? meta["sectionHeader"] : null;
+  const ref = seg.sourceRefs[0];
+  const charRange = ref?.kind === "proxy" ? ref.proxy.charRange : undefined;
+  const rangeStr = charRange ? `[${charRange.start}…${charRange.end})` : "";
 
   return `
     <div class="parser-cell">
@@ -118,11 +167,13 @@ function renderParserCell(row: SegmentRow): string {
         ${seg.flags?.includes("known_noise") ? badge("noise", "#6b7280") : ""}
       </div>
       ${sectionHeader ? `<div class="section-header">§ ${esc(sectionHeader)}</div>` : ""}
+      ${rangeStr ? `<div class="range-hint">${esc(rangeStr)} · ${(seg.charCount ?? 0).toLocaleString()}c</div>` : ""}
       ${seg.toolUseId ? `<div class="tool-id"><code>${esc(seg.toolUseId)}</code></div>` : ""}
+      ${seg.cacheHint && seg.cacheHint !== "none" ? badge(seg.cacheHint, "#f59e0b") : ""}
     </div>`;
 }
 
-// ── 右列：Attribution ─────────────────────────────────────────────────────────
+// ── 第三列：Attribution ───────────────────────────────────────────────────────
 
 function renderAttrCell(row: SegmentRow): string {
   const { attr, seg } = row;
@@ -131,13 +182,8 @@ function renderAttrCell(row: SegmentRow): string {
   }
 
   const color = categoryColor(attr.category);
-  // parser の保守 category（system_prompt / user_message / assistant_text）は
-  // attribution が変えることが設計上想定された占位値なので "override" とは呼ばない。
-  // wire schema で確定した category（tool_use / tool_result / tools_schema）を
-  // attribution が変えた場合のみ本当の override として表示する。
   const PARSER_AUTHORITATIVE = new Set(["tool_use", "tool_result", "tools_schema"]);
-  const categoryMismatch =
-    attr.category !== seg.category && PARSER_AUTHORITATIVE.has(seg.category);
+  const categoryMismatch = attr.category !== seg.category && PARSER_AUTHORITATIVE.has(seg.category);
 
   return `
     <div class="attr-cell ${categoryMismatch ? "category-override" : ""}">
@@ -167,14 +213,14 @@ export interface ProxyAttributionViewInput {
   timestamp: string;
   segments: ContextSegment[];
   attributions: ProxySegmentAttribution[];
+  reqBody: Record<string, unknown>;
   proxySourceRef?: string;
 }
 
 export function renderProxyAttributionView(input: ProxyAttributionViewInput): string {
-  const { snapshotId, queryId, sessionId, timestamp, segments, attributions, proxySourceRef } = input;
+  const { queryId, sessionId, timestamp, segments, attributions, reqBody, proxySourceRef } = input;
   const rows = buildRows(segments, attributions);
 
-  // section ごとにグループ化して視認性を上げる
   const sectionOrder: ContextSegment["section"][] = ["system", "tools", "messages", "metadata", "unknown"];
   const grouped = new Map<string, SegmentRow[]>();
   for (const s of sectionOrder) grouped.set(s, []);
@@ -193,7 +239,7 @@ export function renderProxyAttributionView(input: ProxyAttributionViewInput): st
         return `
           <tr class="seg-row" id="row-${segId}" data-segid="${esc(row.seg.id)}"
               onclick="highlightRow('${esc(row.seg.id)}')">
-            <td class="col-raw">${renderRawCell(row)}</td>
+            <td class="col-raw-orig">${renderRawOriginalCell(row, reqBody)}</td>
             <td class="col-parser">${renderParserCell(row)}</td>
             <td class="col-attr">${renderAttrCell(row)}</td>
           </tr>`;
@@ -212,21 +258,13 @@ export function renderProxyAttributionView(input: ProxyAttributionViewInput): st
     }).join("");
 
   // summary stats
-  const totalSegs = segments.length;
   const attrMap = new Map<string, ProxySegmentAttribution>();
   for (const a of attributions) for (const id of a.proxySegmentIds) attrMap.set(id, a);
-
   const categoryCounts = new Map<string, number>();
   for (const a of attributions) {
     categoryCounts.set(a.category, (categoryCounts.get(a.category) ?? 0) + 1);
   }
   const ruledCount = attributions.filter((a) => a.ruleId).length;
-  // override = attribution が wire schema 確定 category を変えた件数（保守占位の変更は除く）
-  const PARSER_AUTHORITATIVE_SET = new Set(["tool_use", "tool_result", "tools_schema"]);
-  const overrideCount = segments.filter((seg) => {
-    const a = attrMap.get(seg.id);
-    return a && a.category !== seg.category && PARSER_AUTHORITATIVE_SET.has(seg.category);
-  }).length;
 
   const summaryBadges = [...categoryCounts.entries()]
     .sort((a, b) => b[1] - a[1])
@@ -244,8 +282,7 @@ body { font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 12px;
        background: #0f172a; color: #e2e8f0; }
 
 /* ── header ── */
-.view-header { padding: 16px 20px; border-bottom: 1px solid #1e293b;
-               background: #1e293b; }
+.view-header { padding: 16px 20px; border-bottom: 1px solid #1e293b; background: #1e293b; }
 .view-title { font-size: 14px; font-weight: 600; color: #f1f5f9; }
 .view-meta { margin-top: 6px; color: #94a3b8; font-size: 11px; }
 .view-meta span { margin-right: 16px; }
@@ -253,11 +290,11 @@ body { font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 12px;
 .stat { color: #94a3b8; }
 .stat b { color: #e2e8f0; }
 
-/* ── table layout ── */
+/* ── table layout：3列 ── */
 table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-col.col-raw    { width: 33%; }
-col.col-parser { width: 27%; }
-col.col-attr   { width: 40%; }
+col.col-raw-orig { width: 38%; }
+col.col-parser   { width: 22%; }
+col.col-attr     { width: 40%; }
 
 /* ── section banner ── */
 .section-header-row td { padding: 0; }
@@ -272,27 +309,29 @@ col.col-attr   { width: 40%; }
 .seg-row:hover td { background: #1e293b80; }
 .seg-row.highlighted td { background: #1e3a5f; outline: 1px solid #3b82f6; }
 
-/* ── raw cell ── */
+/* ── col-1: raw original ── */
+.raw-orig-cell { }
 .path-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
 .path { color: #7dd3fc; font-size: 10px; }
 .range { color: #475569; font-size: 10px; }
 .chars { color: #475569; font-size: 10px; }
-.raw-preview { cursor: pointer; color: #94a3b8; font-size: 11px; list-style: none;
-               white-space: pre-wrap; word-break: break-all; }
-.raw-preview::-webkit-details-marker { display: none; }
-details[open] .raw-preview { color: #e2e8f0; }
-.raw-full { margin-top: 6px; padding: 8px; background: #0f172a; border-radius: 4px;
-            font-size: 10px; white-space: pre-wrap; word-break: break-all;
-            color: #cbd5e1; max-height: 300px; overflow-y: auto; border: 1px solid #1e293b; }
+.raw-orig-text {
+  font-size: 10px; white-space: pre-wrap; word-break: break-all;
+  color: #cbd5e1; max-height: 240px; overflow-y: auto;
+  border: 1px solid #1e293b; border-radius: 3px; padding: 6px;
+  background: #080f1a;
+  line-height: 1.5;
+}
 .no-text { color: #475569; }
 
-/* ── parser cell ── */
+/* ── col-2: parser ── */
 .seg-id code { color: #a78bfa; font-size: 10px; display: block; margin-bottom: 4px; }
 .seg-meta { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
 .section-header { color: #fbbf24; font-size: 11px; margin-top: 2px; }
+.range-hint { color: #475569; font-size: 10px; margin-top: 2px; }
 .tool-id code { color: #34d399; font-size: 10px; }
 
-/* ── attribution cell ── */
+/* ── col-3: attribution ── */
 .attr-category { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .override-hint { color: #f59e0b; font-size: 10px; font-style: italic; }
 .category-override { border-left: 3px solid #f59e0b; padding-left: 6px !important; }
@@ -326,22 +365,21 @@ details[open] .raw-preview { color: #e2e8f0; }
     ${proxySourceRef ? `<span>${esc(proxySourceRef)}</span>` : ""}
   </div>
   <div class="summary-row">
-    <span class="stat"><b>${totalSegs}</b> segments</span>
+    <span class="stat"><b>${segments.length}</b> segments</span>
     <span class="stat"><b>${ruledCount}</b> with ruleId</span>
-    <span class="stat"><b>${overrideCount}</b> category overrides</span>
     <span style="flex:1">${summaryBadges}</span>
   </div>
 </div>
 
 <table>
   <colgroup>
-    <col class="col-raw">
+    <col class="col-raw-orig">
     <col class="col-parser">
     <col class="col-attr">
   </colgroup>
   <thead>
     <tr class="col-headers">
-      <th>Raw Context</th>
+      <th>Raw（reqBody 原文）</th>
       <th>Parser Segments</th>
       <th>Attribution</th>
     </tr>
@@ -354,14 +392,12 @@ details[open] .raw-preview { color: #e2e8f0; }
 <script>
 function highlightRow(segId) {
   document.querySelectorAll('.seg-row.highlighted').forEach(el => el.classList.remove('highlighted'));
-  const escaped = segId.replace(/[^a-zA-Z0-9-_]/g, '_');
-  const row = document.getElementById('row-' + escaped);
+  const row = document.getElementById('row-' + segId.replace(/[^a-zA-Z0-9-_]/g, '_'));
   if (row) {
     row.classList.add('highlighted');
     row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 }
-// URL hash → highlight on load
 window.addEventListener('load', () => {
   const hash = location.hash.slice(1);
   if (hash) highlightRow(hash);

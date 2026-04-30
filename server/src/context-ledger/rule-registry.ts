@@ -84,6 +84,13 @@ export interface ContextLedgerRule {
   stability: RuleStability;
   sourcemapRef?: string;
 
+  // queryScope：此 rule 适用的 query 类型。
+  // "main_session" — 只匹配主对话（tools > 0, messages > 1）
+  // "side_query"   — 只匹配 side query（tools = 0, messages = 1）
+  // "any"          — 匹配所有 query（未指定时默认）
+  // attribution 时 snapshot.request.queryKind 不一致则此 rule 不命中。
+  queryScope?: "main_session" | "side_query" | "any";
+
   // attribution：proxy → 识别视角
   attribution?: {
     pattern: string | null;
@@ -197,78 +204,61 @@ export const CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE: ContextLedgerRule = {
   },
 };
 
-// ── 动态 system block rule ─────────────────────────────────────────────────────
+// ── 动态 system section rules ─────────────────────────────────────────────────
 //
-// sourcemap 确认（restored-src/src/constants/prompts.ts + restored-src/src/utils/api.ts）：
+// sourcemap 确认（restored-src/src/constants/prompts.ts:491-555）：
+// resolvedDynamicSections 包含以下 section（均在 SYSTEM_PROMPT_DYNAMIC_BOUNDARY 之后）：
+//   - getSessionSpecificGuidanceSection()  → "# Session-specific guidance"（条件：有工具/skills 时）
+//   - computeSimpleEnvInfo()               → "# Environment"（无条件，每次都有）
+//   - getLanguageSection()                 → "# Language"（条件：settings.language 有值时）
+//   - loadMemoryPrompt()                   → "# auto memory"（条件：有 memory 文件时）
 //
-// getSystemPrompt() 在 global cache 模式下产出最多 4 个 system block：
-//   [0] billing-header               cacheScope: null
-//   [1] identity prefix              cacheScope: null（CLI_SYSPROMPT_PREFIXES.has()）
-//   [2] static content（joined）      cacheScope: 'global'（SYSTEM_PROMPT_DYNAMIC_BOUNDARY 之前）
-//   [3] dynamic content（joined）     cacheScope: null（SYSTEM_PROMPT_DYNAMIC_BOUNDARY 之后）
+// attribution 机制说明：
+//   attribution 不通过文本 pattern 匹配这些 section——而是通过 parser 产出的
+//   segment.metadata.sectionHeader 精确判断（sectionHeader ∈ DYNAMIC_SECTION_HEADERS）。
+//   每条 rule 的 attribution.pattern 用于记录该 section 的文本特征，但实际运行时
+//   attribution 代码直接比对 sectionHeader 字符串，不调用 matchesRulePattern。
+//   这比 contains 匹配更精确：sectionHeader 由 splitter 从行首 h1 提取，不会误命中。
 //
-// non-global-cache 模式（3P provider / MCP tools present）只有 3 块，system[3] 不存在，
-// static 与 dynamic 合并进 system[2]（cacheScope: 'org'）。
+// reconstruction 视角：各 section 内容均为运行时动态生成，不可精确复现：
+//   - Session-specific guidance：依赖 enabledTools、skillToolCommands 等运行时状态
+//   - Environment：依赖 cwd、model、git status、platform 等每次变化
+//   - Language：依赖 settings.language
+//   - auto memory：依赖 memory 文件内容（用户数据）
 //
-// dynamic block 内容（resolvedDynamicSections，prompts.ts:491-555）：
-//   - "# Session-specific guidance"  ← getSessionSpecificGuidanceSection()，tools/skills 有无决定内容
-//   - "# Environment"                ← computeSimpleEnvInfo()，含 cwd/model/git/worktree
-//   - "# Language"（条件）            ← settings.language 有值时注入
-//   - "# auto memory"（条件）         ← loadMemoryPrompt()，memory 文件内容
-//
-// attribution 视角：
-//   - 检测标志：block 以 "# Session-specific guidance" 或 "# Environment" 开头
-//     （两者都是 dynamic block 的首段，具体哪个在前取决于 tools 配置，
-//      "# Environment" 是更稳定的锚点，因 computeSimpleEnvInfo 一定存在）
-//   - 若 proxy rawBody 里能拿到 cache_control，scope=null 比文本 pattern 更可靠；
-//     pattern 匹配作为降级策略
-//   - category = harness_injection：内容由 harness 运行时状态决定，不来自 JSONL
-//
-// reconstruction 视角：
-//   - trigger = always_per_query：每次请求都注入，不依赖 JSONL mutation
-//   - materialization = shape：结构可预测（知道有哪几个 section），文本内容每次不同
-//     （env/model/cwd/worktree/skills/memory 全是运行时变量）
-//
-// reconciliation 视角：
-//   - comparePolicy = structural：只比较 section 结构是否存在，不做文本 hash
-//   - exactTextExpected = false：内容每次变化（model 版本、cwd、git status 等）
-//   - confidence = inferred：pattern 识别，非 id 精确匹配
-//
-// 已知局限：
-//   - non-global-cache 模式下 static+dynamic 合并，attribution 无法区分两部分；
-//     此 rule 专为 global cache 模式（system[3] 独立存在）设计。
-//     non-global-cache 的 system[2] 仍归 system_prompt，等后续 reconciliation 拆分。
-//   - "# Language" 和 "# auto memory" 是 dynamic block 内的子段，
-//     本 rule 归因整个 dynamic block，不拆分子段（留 TODO 给后续 per-section rule）。
-export const CLAUDE_CODE_SYSTEM_PROMPT_DYNAMIC_SECTION_RULE: ContextLedgerRule = {
-  ruleId: "claude-code.system-prompt-dynamic-section.v1",
+// 拆分为独立 rule 的原因：
+//   每个 section 有不同的触发条件（preCondition）、不同的内容结构、
+//   不同的 reconciliation 策略——合并为一条会丢失这些语义区分。
+
+// ── # Session-specific guidance ───────────────────────────────────────────────
+// getSessionSpecificGuidanceSection() — prompts.ts:352-400
+// 条件：enabledTools 非空时产出。内容依赖具体工具集，结构已知但文本不可精确复现。
+export const CLAUDE_CODE_SESSION_GUIDANCE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.system-prompt-session-guidance.v1",
   ruleVersion: "2.1.123",
   description:
-    "Claude Code system prompt 的动态 section block（global cache 模式下的 system[3]）。" +
-    "包含 # Session-specific guidance、# Environment、# Language、# auto memory 等运行时段。" +
-    "内容每次请求都变化，只做 structural 对账，不期望文本完全一致。",
+    "Claude Code system prompt 的 # Session-specific guidance section。" +
+    "依赖 enabledTools / skillToolCommands，内容每次可能不同。",
   stability: "dynamic",
-  sourcemapRef: "restored-src/src/constants/prompts.ts + restored-src/src/utils/api.ts",
+  sourcemapRef: "restored-src/src/constants/prompts.ts:352",
 
   attribution: {
-    // "# Session-specific guidance" 在 tools 全配置时为首段；
-    // "# Environment" 在 session_guidance 为空时为首段（更稳定的 fallback）。
-    // 这里记录最稳定的锚点：# Environment（computeSimpleEnvInfo 总是存在）。
-    pattern: "# Environment",
-    matchMode: "contains",
+    // attribution 实际通过 sectionHeader === "Session-specific guidance" 匹配（见 proxy-attribution.ts）
+    // pattern 仅作文档性记录，matchMode=regex 保持一致性
+    pattern: "^# Session-specific guidance\\n",
+    matchMode: "regex",
     mechanism: "system_prompt_pattern",
     category: "harness_injection",
     location: {
       section: "system",
-      segmentPosition: "anywhere",
-      jsonPathHint: "reqBody.system[3]",
-      orderHint: 3,
+      segmentPosition: "segment_start",
     },
   },
 
   reconstruction: {
+    preCondition: "enabledTools 非空（正常 CLI 会话均满足）",
     trigger: "always_per_query",
-    // 只能复现结构（哪些 section 会存在），不能复现完整文本
+    // 结构可知（知道有哪些 bullet），内容随工具集变化
     materialization: "shape",
     emits: {
       section: "system",
@@ -285,6 +275,101 @@ export const CLAUDE_CODE_SYSTEM_PROMPT_DYNAMIC_SECTION_RULE: ContextLedgerRule =
     exactTextExpected: false,
   },
 };
+
+// ── # Environment ──────────────────────────────────────────────────────────────
+// computeSimpleEnvInfo() — prompts.ts:651-710
+// 无条件注入，每次请求都有。内容包含 cwd/model/git/platform，每次变化。
+// 开头固定为 "# Environment\nYou have been invoked in the following environment: "
+export const CLAUDE_CODE_ENVIRONMENT_SECTION_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.system-prompt-environment.v1",
+  ruleVersion: "2.1.123",
+  description:
+    "Claude Code system prompt 的 # Environment section。" +
+    "computeSimpleEnvInfo() 无条件注入，包含 cwd/model/git/platform，每次请求内容不同。",
+  stability: "dynamic",
+  sourcemapRef: "restored-src/src/constants/prompts.ts:651",
+
+  attribution: {
+    // 开头固定前缀可精确匹配（sourcemap:706-708）
+    pattern: "^# Environment\\nYou have been invoked in the following environment: ",
+    matchMode: "regex",
+    mechanism: "system_prompt_pattern",
+    category: "harness_injection",
+    location: {
+      section: "system",
+      segmentPosition: "segment_start",
+    },
+  },
+
+  reconstruction: {
+    trigger: "always_per_query",
+    // 开头固定，但 bullet 内容（cwd/model/git）每次不同
+    materialization: "shape",
+    emits: {
+      section: "system",
+      category: "harness_injection",
+      lifecycle: "query",
+      flags: ["injected"],
+      contentPattern: null,
+    },
+  },
+
+  reconciliation: {
+    // 开头固定可做 prefix 验证，整体用 structural 因内容每次变
+    comparePolicy: "structural",
+    confidence: "inferred",
+    exactTextExpected: false,
+  },
+};
+
+// ── # auto memory ──────────────────────────────────────────────────────────────
+// loadMemoryPrompt() — memdir.ts
+// 条件：有 memory 文件时注入。内容为用户 memory 文件的 markdown 内容，完全动态。
+// 开头固定为 "# auto memory\n"
+export const CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.system-prompt-auto-memory.v1",
+  ruleVersion: "2.1.123",
+  description:
+    "Claude Code system prompt 的 # auto memory section。" +
+    "loadMemoryPrompt() 在有 memory 文件时注入。内容为用户 memory 文件，完全动态。",
+  stability: "dynamic",
+  sourcemapRef: "restored-src/src/memdir/memdir.ts",
+
+  attribution: {
+    pattern: "^# auto memory\\n",
+    matchMode: "regex",
+    mechanism: "system_prompt_pattern",
+    category: "harness_injection",
+    location: {
+      section: "system",
+      segmentPosition: "segment_start",
+    },
+  },
+
+  reconstruction: {
+    preCondition: "memory 目录存在且有 .md 文件（用户启用了 auto memory）",
+    trigger: "from_memory",
+    // 内容来自用户 memory 文件，完全不可预测
+    materialization: "unavailable",
+    emits: {
+      section: "system",
+      category: "harness_injection",
+      lifecycle: "query",
+      flags: ["injected"],
+      contentPattern: null,
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "presence_only",
+    confidence: "inferred",
+    exactTextExpected: false,
+  },
+};
+
+// 保留旧名称作为兼容别名，指向 Environment rule（attribution 代码直接用 ruleId 字符串引用）
+/** @deprecated 已拆分为三条独立 rule，此别名仅供过渡期引用 */
+export const CLAUDE_CODE_SYSTEM_PROMPT_DYNAMIC_SECTION_RULE = CLAUDE_CODE_ENVIRONMENT_SECTION_RULE;
 
 // ── Registry 导出 ────────────────────────────────────────────────────────────
 
@@ -414,8 +499,22 @@ export const CLAUDE_CODE_INTRO_STANDARD_RULE: ContextLedgerRule = {
   sourcemapRef: "restored-src/src/constants/prompts.ts + restored-src/src/constants/cyberRiskInstruction.ts",
 
   attribution: {
-    // 标准模式的固定开头，与 output-style 变体互斥
-    pattern: "^\\nYou are an interactive agent that helps users with software engineering tasks\\.",
+    // 完整文本精确匹配（正则 escape 关键符号）：
+    // 开头换行 + 第一句（with software engineering tasks）+
+    // CYBER_RISK_INSTRUCTION（Safeguards 团队维护，当前版本固定）+
+    // NEVER generate URLs 声明
+    // 与 output-style 变体互斥（output-style 变体第一句措辞不同，不会误命中）
+    pattern:
+      "^\\nYou are an interactive agent that helps users with software engineering tasks\\. " +
+      "Use the instructions below and the tools available to you to assist the user\\.\\n\\n" +
+      "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, " +
+      "and educational contexts\\. Refuse requests for destructive techniques, DoS attacks, " +
+      "mass targeting, supply chain compromise, or detection evasion for malicious purposes\\. " +
+      "Dual-use security tools \\(C2 frameworks, credential testing, exploit development\\) " +
+      "require clear authorization context: pentesting engagements, CTF competitions, " +
+      "security research, or defensive use cases\\.\\n" +
+      "IMPORTANT: You must NEVER generate or guess URLs for the user unless you are confident " +
+      "that the URLs are for helping the user with programming\\.",
     matchMode: "regex",
     mechanism: "system_prompt_pattern",
     category: "system_prompt",
@@ -433,6 +532,9 @@ export const CLAUDE_CODE_INTRO_STANDARD_RULE: ContextLedgerRule = {
       section: "system",
       category: "system_prompt",
       lifecycle: "session",
+      // sourcemap 构造：getSimpleIntroSection(null) 产出的完整文本
+      // = "\n" + intro句 + "\n\n" + CYBER_RISK_INSTRUCTION + "\n" + NEVER_URL句
+      // fixture 验证：[0..836) 去掉尾部 "\n\n" = 834 chars，与此一致
       contentPattern:
         "\nYou are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.\n\n" +
         "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.\n" +
@@ -719,11 +821,100 @@ export const CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE: ContextLedgerRule = {
   },
 };
 
+// ── side query rules ──────────────────────────────────────────────────────────
+//
+// queryHaiku()（claude.ts:3241）发出的内部 side query。
+// 特征（sourcemap 确认）：
+//   - tools: []（硬编码，claude.ts:3274）
+//   - messages: [1条]（只有 userPrompt）
+//   - model: getSmallFastModel() = claude-haiku-4-5-20251001
+//   - output_config.format.type = "json_schema"（structured output）
+//
+// queryScope: "side_query"——parser 推断的 queryKind === "side_query" 时才命中。
+// 主请求（tools>0）永远不会命中 side_query rule，强约束防止误匹配。
+
+// ── session title generation ───────────────────────────────────────────────────
+// generateSessionTitle() — sessionTitle.ts:79
+// SESSION_TITLE_PROMPT（sessionTitle.ts:56-68）：硬编码常量，当前版本精确 700 chars。
+// Safeguards 团队不拥有这段文本，但实际上非常稳定。
+//
+// 识别信号组合（三重约束，缺一不可）：
+//   1. queryScope = "side_query"（tools=0, messages=1）← 防止主请求误命中
+//   2. system[2] 完整文本精确 regex 匹配 ← 防止其他 side query 误命中
+//   3. output_config.format.type = "json_schema" ← parser 已存入 snapshot.request.outputFormat
+
+export const CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.side-query.session-title.v1",
+  ruleVersion: "2.1.123",
+  description:
+    "Claude Code 自动生成会话标题的 side query（generateSessionTitle）。" +
+    "通过 queryHaiku() 发送给 Haiku 模型，tools=0，messages=1，" +
+    "output_config=json_schema({title})。" +
+    "queryScope=side_query 严格约束，主请求不会命中。",
+  stability: "static",
+  sourcemapRef: "restored-src/src/utils/sessionTitle.ts:56 + restored-src/src/services/api/claude.ts:3241",
+  queryScope: "side_query",
+
+  attribution: {
+    // SESSION_TITLE_PROMPT 完整文本精确匹配（sessionTitle.ts:56-68），700 chars 固定常量
+    pattern:
+      "^Generate a concise, sentence-case title \\(3-7 words\\) that captures the main topic or goal of this coding session\\. " +
+      "The title should be clear enough that the user recognizes the session in a list\\. " +
+      "Use sentence case: capitalize only the first word and proper nouns\\.\\n\\n" +
+      "Return JSON with a single \"title\" field\\.\\n\\n" +
+      "Good examples:\\n" +
+      "\\{\"title\": \"Fix login button on mobile\"\\}\\n" +
+      "\\{\"title\": \"Add OAuth authentication\"\\}\\n" +
+      "\\{\"title\": \"Debug failing CI tests\"\\}\\n" +
+      "\\{\"title\": \"Refactor API client error handling\"\\}\\n\\n" +
+      "Bad \\(too vague\\): \\{\"title\": \"Code changes\"\\}\\n" +
+      "Bad \\(too long\\): \\{\"title\": \"Investigate and fix the issue where the login button does not respond on mobile devices\"\\}\\n" +
+      "Bad \\(wrong case\\): \\{\"title\": \"Fix Login Button On Mobile\"\\}",
+    matchMode: "regex",
+    mechanism: "system_prompt_pattern",
+    category: "system_prompt",
+    location: {
+      section: "system",
+      segmentPosition: "segment_start",
+    },
+  },
+
+  reconstruction: {
+    preCondition: "generateSessionTitle() 调用时（新会话首条消息之后触发）",
+    trigger: "from_harness_state",
+    materialization: "exact_text",
+    emits: {
+      section: "system",
+      category: "system_prompt",
+      lifecycle: "query",
+      contentPattern:
+        "Generate a concise, sentence-case title (3-7 words) that captures the main topic or goal of this coding session. " +
+        "The title should be clear enough that the user recognizes the session in a list. " +
+        "Use sentence case: capitalize only the first word and proper nouns.\n\n" +
+        "Return JSON with a single \"title\" field.\n\n" +
+        "Good examples:\n" +
+        "{\"title\": \"Fix login button on mobile\"}\n" +
+        "{\"title\": \"Add OAuth authentication\"}\n" +
+        "{\"title\": \"Debug failing CI tests\"}\n" +
+        "{\"title\": \"Refactor API client error handling\"}\n\n" +
+        "Bad (too vague): {\"title\": \"Code changes\"}\n" +
+        "Bad (too long): {\"title\": \"Investigate and fix the issue where the login button does not respond on mobile devices\"}\n" +
+        "Bad (wrong case): {\"title\": \"Fix Login Button On Mobile\"}",
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "raw_hash",
+    confidence: "exact",
+    exactTextExpected: true,
+  },
+};
+
 export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
+  // ── identity / noise ──────────────────────────────────────────────────────
   CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE,
-  CLAUDE_CODE_SYSTEM_PROMPT_DYNAMIC_SECTION_RULE,
   CLAUDE_CODE_BILLING_NOISE_RULE,
-  // 静态 system prompt body rules
+  // ── 静态 system prompt body（main session）────────────────────────────────
   CLAUDE_CODE_INTRO_STANDARD_RULE,
   CLAUDE_CODE_INTRO_OUTPUT_STYLE_RULE,
   CLAUDE_CODE_SYSTEM_SECTION_RULE,
@@ -731,6 +922,12 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE,
   CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE,
   CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE,
+  // ── 동적 system prompt sections（main session）────────────────────────────
+  CLAUDE_CODE_SESSION_GUIDANCE_RULE,
+  CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
+  CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,
+  // ── side query rules ──────────────────────────────────────────────────────
+  CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE,
 ];
 
 export const CONTEXT_LEDGER_RULE_BY_ID: ReadonlyMap<string, ContextLedgerRule> = new Map(

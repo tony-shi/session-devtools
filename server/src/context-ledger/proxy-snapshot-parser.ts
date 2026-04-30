@@ -473,12 +473,32 @@ export function parseClaudeProxyRequest(
 
   // request metadata
   const betaHeaders = extractBetaHeaders(input);
+
+  // queryKind 推断：
+  //   side_query   — tools=0 + messages=1（queryHaiku/queryWithModel 模式，claude.ts:3274）
+  //   main_session — tools>0（主对话）
+  //   unknown      — 其他
+  const toolCount = Array.isArray(body.tools) ? body.tools.length : 0;
+  const messageCount = Array.isArray(body.messages) ? body.messages.length : 0;
+  const queryKind: NonNullable<ProxyQuerySnapshot["request"]>["queryKind"] =
+    toolCount === 0 && messageCount === 1
+      ? "side_query"
+      : toolCount > 0
+      ? "main_session"
+      : "unknown";
+
+  // output_config.format.type (structured output 사용 여부)
+  const outputConfigRaw = body.output_config as Record<string, unknown> | undefined;
+  const outputFormat = (outputConfigRaw?.["format"] as Record<string, unknown> | undefined)?.["type"] as string | undefined;
+
   const request: ProxyQuerySnapshot["request"] = {
     model: body.model,
     stream: body.stream,
     maxTokens: body.max_tokens,
     contextManagement: body.context_management,
     betaHeaders: betaHeaders.length ? betaHeaders : undefined,
+    queryKind,
+    ...(outputFormat ? { outputFormat } : {}),
   };
 
   // segments
