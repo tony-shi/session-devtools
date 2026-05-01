@@ -110,8 +110,8 @@ describe("rule registry contract", () => {
 
   // ── registry 基础契约 ────────────────────────────────────────────────────
 
-  test("registry 当前包含 16 条人工确认的 rule", () => {
-    expect(CONTEXT_LEDGER_RULES).toHaveLength(16);
+  test("registry 当前包含 47 条人工确认的 rule", () => {
+    expect(CONTEXT_LEDGER_RULES).toHaveLength(47);
   });
 
   test("ruleId 在 registry 中唯一", () => {
@@ -119,8 +119,11 @@ describe("rule registry contract", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  test("ruleVersion 是 2.1.123", () => {
-    expect(CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE.ruleVersion).toBe("2.1.123");
+  test("verifiedFor 字段存在（值由人工校对决定）", () => {
+    // B1.4: ruleVersion 已替换为 verifiedFor，其值在人工校对前为 null。
+    // 这里只断言字段类型合法，不锁定具体版本号——版本号绑定在 SUPPORTED_CLAUDE_CODE_VERSION。
+    const v = CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE.verifiedFor;
+    expect(v === null || typeof v === "string").toBe(true);
   });
 
   test("stability 是 static", () => {

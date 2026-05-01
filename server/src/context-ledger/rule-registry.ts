@@ -5,15 +5,25 @@
 //   reconstruction — 如何在 expected context 里正向生成它（trigger / materialization）
 //   reconciliation — 如何在对账时比较 proxy 与 expected（comparePolicy / confidence）
 //
-// 已人工审核确认的 rule：
-//   claude-code.system-prompt-identity.v1        — identity 固定行（57 chars）
-//   claude-code.system-prompt-dynamic-section.v1 — 动态 system block（# Environment / # Session-specific guidance 等）
+// ── 版本策略（B1.4）─────────────────────────────────────────────────────────────
+// 我们只针对**当前实际安装**的一个 Claude Code 版本维护 rule，不做跨版本兼容。
+// 当前目标版本 = SUPPORTED_CLAUDE_CODE_VERSION（见下方常量）。
+// 校对来源优先级（与 AGENTS.md §6.3 一致）：
+//   P0 事实：~/.api-dashboard/proxy/traffic.jsonl 的 dump + 本地 cli.js（grep 验证）
+//   P1 参考：claude-code-sourcemap@2.1.88 还原源码 / survey 文档
 //
-// ruleVersion = "2.1.123" 是人工审核版本占位，表示"基于 Claude Code 2.1.x 系列审核"，
-// 不是严格最小兼容版本声明。
+// 字段说明：
+//   verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION → 已对照当前版本人工校对通过
+//   verifiedFor: null                          → 待人工校对（运行时仍参与 attribution，但 audit 报告会标"未验证"）
 //
-// 新增 rule 必须经过：sourcemap grep → proxy 样本确认 → PR 人工 review → 入 registry。
+// 新增/修订流程：
+//   1. 在本地安装的 cli.js 里 grep 目标字段，确认当前版本的真实文本
+//   2. 在 proxy dump 里找 ≥1 条样本验证 pattern
+//   3. PR 人工 review，校对通过后将 verifiedFor 设为 SUPPORTED_CLAUDE_CODE_VERSION
+//   4. 升级 SUPPORTED_CLAUDE_CODE_VERSION 时，所有 verifiedFor 必须重新清零并逐条复审
+//
 // proxy diff 只能产生 candidate，不能自动写入 registry。
+// ────────────────────────────────────────────────────────────────────────────
 
 import type {
   Confidence,
@@ -24,6 +34,9 @@ import type {
   SegmentSection,
 } from "./types";
 import type { ProxySegmentAttribution } from "./types";
+
+// 当前唯一支持的 Claude Code 版本。改这里时必须同步把所有 rule 的 verifiedFor 清零并重新人工校对。
+export const SUPPORTED_CLAUDE_CODE_VERSION = "2.1.126";
 
 // ── 类型定义 ──────────────────────────────────────────────────────────────────
 
@@ -79,7 +92,10 @@ export interface RuleLocationConstraint {
 
 export interface ContextLedgerRule {
   ruleId: string;
-  ruleVersion: string;
+  // 已对照 SUPPORTED_CLAUDE_CODE_VERSION 人工校对通过的版本号；null = 待校对。
+  // 必须严格等于 SUPPORTED_CLAUDE_CODE_VERSION 才视为 verified；
+  // 任何其它字符串（如旧版本号）等同于 null，audit 报告会列入"待校对"。
+  verifiedFor: string | null;
   description: string;
   stability: RuleStability;
   sourcemapRef?: string;
@@ -161,7 +177,7 @@ export interface ContextLedgerRule {
 //   - exactTextExpected = true：内容静态，proxy 与 expected 应完全一致
 export const CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-identity.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code system prompt 的固定身份标识行（57 chars）。" +
     "仅用于 attribution 识别锚点与 reconstruction 注入，不归因整段 system prompt 内容来源。",
@@ -258,7 +274,7 @@ export const CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-session-guidance.embedded.v1",
-  ruleVersion: "<2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="<2.1.123"，更可疑）
   description:
     "Claude Code system prompt 的 # Session-specific guidance section（ant-native build 变体）。" +
     "hasEmbeddedSearchTools()=true，searchTools='find/grep via the Bash tool'。" +
@@ -317,7 +333,7 @@ export const CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE: ContextLedgerRule = {
 // 目前现有 fixture 均为 ant-native build 录制，无法验证此变体的完整文本。
 export const CLAUDE_CODE_SESSION_GUIDANCE_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-session-guidance.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code system prompt 的 # Session-specific guidance section（external CLI 标准变体）。" +
     "hasEmbeddedSearchTools()=false，searchTools='the Glob or Grep'（Glob/Grep 工具在 tool registry 中存在）。" +
@@ -392,7 +408,7 @@ export const CLAUDE_CODE_SESSION_GUIDANCE_RULE: ContextLedgerRule = {
 // fixture 검증（text[26311:27912]）: 아래 regex 완전 매칭 확인.
 export const CLAUDE_CODE_ENVIRONMENT_SECTION_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-environment.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code system prompt 의 # Environment section。" +
     "computeSimpleEnvInfo() 무조건 주입. " +
@@ -500,7 +516,7 @@ export const CLAUDE_CODE_ENVIRONMENT_SECTION_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-auto-memory.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code system prompt 的 # auto memory section。" +
     "buildMemoryLines() 产出，唯一动态字段为 memoryDir（本地路径，用户私有）。" +
@@ -601,7 +617,7 @@ export const CLAUDE_CODE_SYSTEM_PROMPT_DYNAMIC_SECTION_RULE = CLAUDE_CODE_ENVIRO
 //   - exactTextExpected = false（动态字段）
 export const CLAUDE_CODE_BILLING_NOISE_RULE: ContextLedgerRule = {
   ruleId: "claude-code.billing-noise.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code 每次请求在 system[0] 主动注入的 attribution header。" +
     "含动态字段 cc_version（fingerprint）和 cch（attestation），内容不可复现。" +
@@ -680,7 +696,7 @@ export const CLAUDE_CODE_BILLING_NOISE_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_INTRO_STANDARD_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-intro.standard.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code system prompt intro 段（标准模式）。" +
     "outputStyleConfig === null 时注入，以 'with software engineering tasks.' 结尾。",
@@ -731,7 +747,7 @@ export const CLAUDE_CODE_INTRO_STANDARD_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_INTRO_OUTPUT_STYLE_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-intro.output-style.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code system prompt intro 段（Output Style 模式）。" +
     "outputStyleConfig !== null 时注入，以 'according to your \"Output Style\" below' 替换标准措辞。",
@@ -779,7 +795,7 @@ export const CLAUDE_CODE_INTRO_OUTPUT_STYLE_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_SYSTEM_SECTION_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-system-section.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code system prompt 的 # System section。" +
     "固定 6 条 bullet，完全静态，无条件分支。",
@@ -855,7 +871,7 @@ export const CLAUDE_CODE_SYSTEM_SECTION_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_DOING_TASKS_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-doing-tasks.v1",
-  ruleVersion: "<2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="<2.1.123"，更可疑）
   description:
     "Claude Code system prompt 的 # Doing tasks section（旧版文本，external 用户）。" +
     "USER_TYPE !== 'ant' 时注入，ant 分支额外 bullet 不适用于 external build。" +
@@ -932,7 +948,7 @@ export const CLAUDE_CODE_DOING_TASKS_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_USING_YOUR_TOOLS_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-using-your-tools.v1",
-  ruleVersion: "<2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="<2.1.123"，更可疑）
   description:
     "Claude Code system prompt 的 # Using your tools section（旧版文本，external 用户）。" +
     "taskToolName 缺失时（无 TaskCreate/TodoWrite）的变体，不含 'Break down and manage' bullet。" +
@@ -987,7 +1003,7 @@ export const CLAUDE_CODE_USING_YOUR_TOOLS_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_ACTIONS_SECTION_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-actions-section.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code system prompt 的 # Executing actions with care section。" +
     "完全静态，单一固定字符串。",
@@ -1050,7 +1066,7 @@ export const CLAUDE_CODE_ACTIONS_SECTION_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-output-efficiency.external.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code system prompt 的 # Output efficiency section（external / 3P 用户）。" +
     "USER_TYPE !== 'ant' 时注入。",
@@ -1096,17 +1112,24 @@ export const CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-tone-style.external.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION, // 已对照 2.1.126 binary + 真实 dump 校对（4 bullet）
   description:
-    "Claude Code system prompt 的 # Tone and style section（external / 3P 用户）。" +
-    "USER_TYPE !== 'ant' 时注入 5 条 bullet。",
+    "Claude Code system prompt 的 # Tone and style section（4 条 bullet，所有用户共用）。" +
+    "2.1.126 binary 里函数名 HM3，原 sourcemap (2.1.88) 里叫 getSimpleToneAndStyleSection。",
   stability: "static",
-  sourcemapRef: "restored-src/src/constants/prompts.ts:430",
+  // 当前事实源：2.1.126 cli binary 里的 HM3 函数（约 offset 84030280）
+  // 旧 sourcemap 路径仅供历史参考；P0/P1 优先级见 AGENTS.md §6.3
+  sourcemapRef: "binary:HM3 (2.1.126) | restored-src/src/constants/prompts.ts:430 (2.1.88, stale)",
 
   attribution: {
-    // 完整文本精确匹配（含尾部 \n\n）。
-    // sourcemap: getSimpleToneAndStyleSection()，non-ant 分支（5 条 bullet）。
-    // fixture 验证：text[9370:9927] = 557 chars，与此一致。
+    // 与真实 dump byte-exact 对齐（555 字节，无尾换行）。
+    // 2.1.88 → 2.1.126 的两处变化：
+    //   1. 删除 "When referencing GitHub issues or pull requests..." 这条 bullet
+    //   2. "Your responses should be short and concise." 不再被 USER_TYPE==='ant' 条件过滤
+    // proxy-block-splitter 切割逻辑：section endChar = 下一 header 的 charOffset，
+    // 因此 section text 末尾会带上 "\n\n"（本 section 末尾 \n + 下 section 前的空行 \n）。
+    // 实测 dump（2026-05-01）：section len=557，即 555B 内容 + 2 尾 \n。
+    // Tone and style 后紧跟 # Text output（does not apply to tool calls），故有两个 \n。
     pattern:
       "# Tone and style\n" +
       " - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.\n" +
@@ -1123,7 +1146,7 @@ export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition: "USER_TYPE !== 'ant'（外部用户）",
+    preCondition: "无（所有用户都注入；2.1.126 起 ant 条件已失效）",
     trigger: "always_per_query",
     materialization: "exact_text",
     emits: {
@@ -1161,7 +1184,7 @@ export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-text-output-section.v1",
-  ruleVersion: "<2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="<2.1.123"，更可疑）
   description:
     "Claude Code system prompt 的旧版 output efficiency section。" +
     "header 为 '# Text output (does not apply to tool calls)'，" +
@@ -1216,6 +1239,818 @@ export const CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE: ContextLedgerRule = {
   },
 };
 
+// ── # Context management section ─────────────────────────────────────────────
+//
+// 【复杂度说明】此 section 由两个完全独立的来源在 system block 组装期间拼接而成，
+// sourcemap (2.1.88) 里两者均未以此形态存在，是 2.1.x 新引入（binary 里 context-hint-2026-04-09 标记）。
+//
+// 组成结构（dump 实测，block index=3，最后一个 system block）：
+//
+//   # Context management
+//   When working with tool results, write down any important information...   ← 来源 A：常量 DM3
+//
+//   gitStatus: This is the git status at the start of the conversation. ...   ← 来源 B：x98() 函数
+//
+//   Current branch: <branch>
+//
+//   Main branch (you will usually use this for PRs): <main>
+//
+//   Git user: <name>                                                           ← 条件字段，无 git config 时缺失
+//
+//   Status:
+//   <git status --short 输出，可为空（clean），超 2000 chars 时截断>
+//
+//   Recent commits:
+//   <git log --oneline -n 5，5 行 sha+message>
+//
+// 【来源 A】常量 DM3（binary offset ~84042887）：
+//   静态字符串，无动态变量。
+//   与 # Focus mode（JM3）并列定义，按 context hint 机制注入。
+//   sourcemap 无对应条目（新增功能）。
+//
+// 【来源 B】函数 x98()（memoized，binary ~76535798）：
+//   等价于 sourcemap 的 getGitStatusContext()，但结构已变。
+//   前提：!CLAUDE_CODE_REMOTE && X5_()（X5_ 检查 CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS 和
+//         settings.includeGitInstructions，默认 true）。
+//   非 git 仓库时 fj() 返回 false → x98() 返回 null → gitStatus 字段整体缺失。
+//   组装：[preamble, "Current branch: %s", "Main branch: %s",
+//          ...(gitUser ? ["Git user: %s"] : []), "Status:\n%s", "Recent commits:\n%s"]
+//         .join("\n\n")
+//   key 名 "gitStatus" 在 system prompt 中显示为标签前缀（"gitStatus: ..."）。
+//
+// 【为何用 regex 而非 exact】：
+//   branch / mainBranch / gitUser / status / commits 全是运行时动态值，
+//   且 gitUser / status 是条件字段（可缺失或为空），无法 exact match。
+//
+// 【reconciliation 注意事项】：
+//   - DM3 前言文字本身静态可比（char_diff）
+//   - gitStatus 动态内容只能 structural 比对（有/无 git repo，字段存在性）
+//   - 不要对 commits / status 做 raw_hash 比对
+
+export const CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.system-prompt-context-management.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION, // 已对照 2.1.126 binary + dump 逆向验证（见注释）
+  description:
+    "Claude Code system prompt 的 # Context management section。" +
+    "由两部分拼接：(A) 静态前言常量 DM3（context hint 功能，2.1.x 新增）；" +
+    "(B) x98() 动态 git 状态块（gitStatus 字段）。" +
+    "非 git 仓库时 (B) 整体缺失，section 只有 (A) 的两行。" +
+    "gitUser 是条件字段（git config user.name 为空时缺失）。",
+  stability: "dynamic",
+  // P0 事实：binary offset ~84042887 (DM3) + ~76535798 (x98)；dump 实测 728 chars（git 项目，有 gitUser）
+  // P1 参考：sourcemap 无此 section（2.1.88 之后新增，大约 2026-04-09 引入）
+  sourcemapRef: "binary:DM3+x98 (2.1.126) | sourcemap: 无对应条目",
+
+  attribution: {
+    // regex 匹配整个 section（从 section header 到 block 末尾或下一个 # heading）。
+    //
+    // 捕获组语义（matchMode=regex，由 attribution 代码提取到 metadata）：
+    //   gitStatusPreamble — "This is the git status..." 前言（存在时表示 git 仓库）
+    //   currentBranch    — 当前分支名
+    //   mainBranch       — PR base 分支名
+    //   gitUser          — git config user.name（可选，缺失时该字段不出现）
+    //   status           — git status --short 输出（空时为 "(clean)"，>2000 chars 时截断）
+    //   recentCommits    — git log --oneline -n 5（5 行 sha+message）
+    //
+    // 非 git 项目时整个 (?:gitStatus:...)? 段不匹配，只匹配 DM3 前言两行。
+    pattern:
+      "^# Context management\\n" +
+      "When working with tool results, write down any important information you might need later in your response, as the original tool result may be cleared later\\." +
+      "(?:\\n\\n(?<gitStatusPreamble>gitStatus: This is the git status at the start of the conversation\\. Note that this status is a snapshot in time, and will not update during the conversation\\.)" +
+        "\\n\\nCurrent branch: (?<currentBranch>[^\\n]+)" +
+        "\\n\\nMain branch \\(you will usually use this for PRs\\): (?<mainBranch>[^\\n]+)" +
+        "(?:\\n\\nGit user: (?<gitUser>[^\\n]+))?" +
+        "\\n\\nStatus:\\n(?<status>[\\s\\S]*?)" +
+        "\\n\\nRecent commits:\\n(?<recentCommits>[\\s\\S]+)" +
+      ")?$",
+    matchMode: "regex",
+    captureGroups: {
+      gitStatusPreamble: "git 状态前言（存在时表示当前工作目录是 git 仓库）",
+      currentBranch:     "当前 git 分支名（git branch --show-current）",
+      mainBranch:        "PR base 分支名（origin/main 或 origin/master 等探测结果）",
+      gitUser:           "git config user.name（可选，未配置时缺失）",
+      status:            "git status --short 输出（空表示 clean，>2000 chars 时截断附提示）",
+      recentCommits:     "git log --oneline -n 5 输出（最近 5 条提交）",
+    },
+    mechanism: "system_prompt_pattern",
+    category: "harness_injection",
+    location: {
+      section: "system",
+      segmentPosition: "segment_start",
+      jsonPathHint: "reqBody.system[3]（动态 block，index 可变）",
+    },
+  },
+
+  reconstruction: {
+    // 仅 DM3 前言部分可 exact 复现；gitStatus 动态内容需运行时重新执行 git 命令
+    trigger: "from_harness_state",
+    materialization: "shape",
+    emits: {
+      section: "system",
+      category: "harness_injection",
+      lifecycle: "session",
+      flags: ["injected"],
+      contentPattern: null, // 动态内容，无法预设完整文本
+    },
+  },
+
+  reconciliation: {
+    // 动态内容不做哈希比对；只验证 section 存在性和 git 字段结构
+    comparePolicy: "presence_only",
+    confidence: "inferred",  // 动态内容，结构可推断但字节无法精确比对
+    exactTextExpected: false,
+  },
+};
+
+// ── Tools schema rules ────────────────────────────────────────────────────────
+//
+// 每条 tool rule 覆盖 reqBody.tools[i]（tools 数组某一项）的 description + input_schema。
+//
+// 分析依据（P0 优先级）：
+//   - dump 实测（2026-05-01 请求，8 个 tool）：description 字节数见下
+//   - binary 前/后缀分析：部分 description 含模板插值（如 Bash/Agent），用 regex 头尾锚定
+//   - input_schema 全部静态 JSON，dump 即事实
+//
+// 匹配策略分类：
+//   exact   — Edit / Write / Read / Skill / ToolSearch  (description 静态，dump 即 truth)
+//   regex   — Agent / Bash / ScheduleWakeup            (description 含动态插值，头尾锚定)
+//
+// attribution 位置：section="tools"，jsonPathHint="reqBody.tools[i]"（index 不固定）
+// reconstruction：trigger="always_per_query"（tools 数组每次请求都完整发送）
+// reconciliation：static → raw_hash；dynamic → presence_only
+
+// ── Edit ─────────────────────────────────────────────────────────────────────
+// binary 分析：description 前 52B 可 exact，后 144B 可 exact，中间有动态注入（Fg5() 等）。
+// 但 dump 是 P0 事实：dump 里的 1094B description 就是实际发出的，直接 exact 匹配。
+// 验证：binary 里 "Performs exact string replacements in files.\n\nUsage:" 有 exact 命中。
+export const CLAUDE_CODE_TOOL_EDIT_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.Edit.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：Edit（文件字符串替换）。description 1094B，input_schema 552B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:Edit tool prompt fn (2.1.126)",
+
+  attribution: {
+    pattern:
+      "Performs exact string replacements in files.\n\nUsage:\n" +
+      "- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file.\n" +
+      "- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + tab. Everything after that is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.\n" +
+      "- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n" +
+      "- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n" +
+      "- The edit will FAIL if `old_string` is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use `replace_all` to change every instance of `old_string`.\n" +
+      "- Use `replace_all` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Edit}.description" },
+  },
+
+  reconstruction: {
+    trigger: "always_per_query",
+    materialization: "exact_text",
+    emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
+  },
+
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+// ── Write ────────────────────────────────────────────────────────────────────
+// dump 620B，binary 有 oS1() 动态插入（Read-before-write 辅助内容），
+// 但 dump 是 P0，直接 exact。
+export const CLAUDE_CODE_TOOL_WRITE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.Write.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：Write（写文件）。description 620B，input_schema 348B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:Write tool prompt fn (2.1.126)",
+
+  attribution: {
+    pattern:
+      "Writes a file to the local filesystem.\n\nUsage:\n" +
+      "- This tool will overwrite the existing file if there is one at the provided path.\n" +
+      "- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.\n" +
+      "- Prefer the Edit tool for modifying existing files — it only sends the diff. Only use this tool to create new files or for complete rewrites.\n" +
+      "- NEVER create documentation files (*.md) or README files unless explicitly requested by the User.\n" +
+      "- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Write}.description" },
+  },
+
+  reconstruction: {
+    trigger: "always_per_query",
+    materialization: "exact_text",
+    emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
+  },
+
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+// ── Read ─────────────────────────────────────────────────────────────────────
+// dump 1635B。binary 分析：offset 400B 处插入 ${pIH}（默认行数，运行时可能是 2000）。
+// dump 里已是渲染后的值，P0 直接 exact。
+export const CLAUDE_CODE_TOOL_READ_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.Read.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：Read（读文件）。description 1635B，input_schema 740B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:Read tool prompt fn (2.1.126)",
+
+  attribution: {
+    pattern:
+      "Reads a file from the local filesystem. You can access any file directly by using this tool.\n" +
+      "Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.\n\n" +
+      "Usage:\n" +
+      "- The file_path parameter must be an absolute path, not a relative path\n" +
+      "- By default, it reads up to 2000 lines starting from the beginning of the file\n" +
+      "- When you already know which part of the file you need, only read that part. This can be important for larger files.\n" +
+      "- Results are returned using cat -n format, with line numbers starting at 1\n" +
+      "- This tool allows Claude Code to read images (eg PNG, JPG, etc). When reading an image file the contents are presented visually as Claude Code is a multimodal LLM.\n" +
+      "- This tool can read PDF files (.pdf). For large PDFs (more than 10 pages), you MUST provide the pages parameter to read specific page ranges (e.g., pages: \"1-5\"). Reading a large PDF without the pages parameter will fail. Maximum 20 pages per request.\n" +
+      "- This tool can read Jupyter notebooks (.ipynb files) and returns all cells with their outputs, combining code, text, and visualizations.\n" +
+      "- This tool can only read files, not directories. To list files in a directory, use the registered shell tool.\n" +
+      "- You will regularly be asked to read screenshots. If the user provides a path to a screenshot, ALWAYS use this tool to view the file at the path. This tool will work with all temporary file paths.\n" +
+      "- If you read a file that exists but has empty contents you will receive a system reminder warning in place of file contents.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Read}.description" },
+  },
+
+  reconstruction: {
+    trigger: "always_per_query",
+    materialization: "exact_text",
+    emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
+  },
+
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+// ── Skill ────────────────────────────────────────────────────────────────────
+// dump 1315B。binary 分析：覆盖 99.1%，中间仅 8 字节编码边界问题，dump 已正确。
+export const CLAUDE_CODE_TOOL_SKILL_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.Skill.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：Skill（执行 skill）。description 1315B，input_schema 327B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:Skill tool prompt fn (2.1.126)",
+
+  attribution: {
+    pattern:
+      "Execute a skill within the main conversation\n\n" +
+      "When users ask you to perform tasks, check if any of the available skills match. Skills provide specialized capabilities and domain knowledge.\n\n" +
+      "When users reference a \"slash command\" or \"/<something>\", they are referring to a skill. Use this tool to invoke it.\n\n" +
+      "How to invoke:\n" +
+      "- Set `skill` to the exact name of an available skill (no leading slash). For plugin-namespaced skills use the fully qualified `plugin:skill` form.\n" +
+      "- Set `args` to pass optional arguments.\n\n" +
+      "Important:\n" +
+      "- Available skills are listed in system-reminder messages in the conversation\n" +
+      "- Only invoke a skill that appears in that list, or one the user explicitly typed as `/<name>` in their message. Never guess or invent a skill name from training data; otherwise do not call this tool\n" +
+      "- When a skill matches the user's request, this is a BLOCKING REQUIREMENT: invoke the relevant Skill tool BEFORE generating any other response about the task\n" +
+      "- NEVER mention a skill without actually calling this tool\n" +
+      "- Do not invoke a skill that is already running\n" +
+      "- Do not use this tool for built-in CLI commands (like /help, /clear, etc.)\n" +
+      "- If you see a <command-name> tag in the current conversation turn, the skill has ALREADY been loaded - follow the instructions directly instead of calling this tool again\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Skill}.description" },
+  },
+
+  reconstruction: {
+    trigger: "always_per_query",
+    materialization: "exact_text",
+    emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
+  },
+
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+// ── ToolSearch ───────────────────────────────────────────────────────────────
+// dump 963B。binary 里 em-dash 是 — 转义，但 dump 已渲染为 UTF-8 "—"，P0 exact。
+export const CLAUDE_CODE_TOOL_TOOLSEARCH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.ToolSearch.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：ToolSearch（拉取 deferred tool schema）。description 963B，input_schema 406B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:ToolSearch tool prompt fn (2.1.126)",
+
+  attribution: {
+    pattern:
+      "Fetches full schema definitions for deferred tools so they can be called.\n\n" +
+      "Deferred tools appear by name in <system-reminder> messages. Until fetched, only the name is known — there is no parameter schema, so the tool cannot be invoked. This tool takes a query, matches it against the deferred tool list, and returns the matched tools' complete JSONSchema definitions inside a <functions> block. Once a tool's schema appears in that result, it is callable exactly like any tool defined at the top of the prompt.\n\n" +
+      "Result format: each matched tool appears as one <function>{\"description\": \"...\", \"name\": \"...\", \"parameters\": {...}}</function> line inside the <functions> block — the same encoding as the tool list at the top of this prompt.\n\n" +
+      "Query forms:\n" +
+      "- \"select:Read,Edit,Grep\" — fetch these exact tools by name\n" +
+      "- \"notebook jupyter\" — keyword search, up to max_results best matches\n" +
+      "- \"+slack send\" — require \"slack\" in the name, rank by remaining terms",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=ToolSearch}.description" },
+  },
+
+  reconstruction: {
+    trigger: "always_per_query",
+    materialization: "exact_text",
+    emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
+  },
+
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+// ── Agent ────────────────────────────────────────────────────────────────────
+// dump 8071B。binary 分析：仅 5.6% 静态，中间 agent 列表（Available agent types...）完全
+// 由运行时动态生成（loadAgents、用户自定义 agent 等），无法 exact。
+// 策略：regex 头尾锚定。
+//   HEAD anchor（126B，binary exact）："Launch a new agent to handle complex..." 到 \n\n 为止
+//   TAIL anchor（329B，binary exact）："second opinion..." 结尾 </example>\n
+export const CLAUDE_CODE_TOOL_AGENT_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.Agent.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "Claude Code 工具：Agent（spawn sub-agent）。description 8071B，input_schema 1441B。" +
+    "description 含动态 agent 列表（用户自定义 agent 可扩展），无法 exact；用 regex 头尾锚定。",
+  stability: "dynamic",
+  sourcemapRef: "binary:Agent tool prompt fn (2.1.126)",
+
+  attribution: {
+    // 头锚：固定前言（binary exact 命中），尾锚：</example>\n（binary exact 命中）。
+    // 中间 agent 列表完全动态（用户自定义 agent 可扩展），用 [\s\S]+ 容纳。
+    // rawText = tool.description（由 parser 设置）。
+    // 注意：^ 和 $ 在 s-flag 下匹配字符串边界；末尾 \n 用 [\s\S]*$ 兜底而非裸 $。
+    pattern:
+      "^Launch a new agent to handle complex, multi-step tasks\\. Each agent type has specific capabilities and tools available to it\\.\\n\\n" +
+      "[\\s\\S]+" +
+      "\\*\\*Do not spawn agents unless the user asks\\.\\*\\*[\\s\\S]+" +
+      "</example>\\n[\\s\\S]*$",
+    matchMode: "regex",
+    captureGroups: {},
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Agent}.description" },
+  },
+
+  reconstruction: {
+    trigger: "always_per_query",
+    materialization: "shape",
+    emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
+  },
+
+  reconciliation: { comparePolicy: "presence_only", confidence: "inferred", exactTextExpected: false },
+};
+
+// ── Bash ─────────────────────────────────────────────────────────────────────
+// dump 10686B。binary 分析：仅 2% 静态。
+// description 大量动态内容：git commit 指南、gh CLI 指南、working directory 变量、
+// CLAUDE_CODE_REMOTE 条件段等，全部运行时组装。
+// 策略：regex 头尾锚定（head = 53B 静态前言；tail = 最后的 GitHub PR 操作说明）。
+export const CLAUDE_CODE_TOOL_BASH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.Bash.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "Claude Code 工具：Bash（执行命令）。description 10686B，input_schema 1440B。" +
+    "description 含大量动态内容（git/gh 操作指南、working dir、条件段），无法 exact；用 regex 头尾锚定。",
+  stability: "dynamic",
+  sourcemapRef: "binary:Bash tool prompt fn (2.1.126)",
+
+  attribution: {
+    // head：53B，binary exact（第一句话）
+    // tail：最后一行，binary exact
+    pattern:
+      "^Executes a given bash command and returns its output\\." +
+      "[\\s\\S]+" +
+      "- View comments on a Github PR: gh api repos/foo/bar/pulls/123/comments$",
+    matchMode: "regex",
+    captureGroups: {},
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Bash}.description" },
+  },
+
+  reconstruction: {
+    trigger: "always_per_query",
+    materialization: "shape",
+    emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
+  },
+
+  reconciliation: { comparePolicy: "presence_only", confidence: "inferred", exactTextExpected: false },
+};
+
+// ── ScheduleWakeup ────────────────────────────────────────────────────────────
+// dump 2312B。binary 分析：仅 3% 静态，且 binary 里 em-dash 是 —。
+// 这是外部插件（/loop 功能），description 含 em-dash + 动态内容。
+// 策略：regex 头尾锚定（head = 51B；tail = 最后一句 "make it specific.\n"）。
+export const CLAUDE_CODE_TOOL_SCHEDULEWAKEUP_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.ScheduleWakeup.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "Claude Code 工具：ScheduleWakeup（/loop 自定步调）。description 2312B，input_schema 795B。" +
+    "外部插件，description 有 em-dash + 动态内容，用 regex 头尾锚定。",
+  stability: "semi-static",
+  sourcemapRef: "binary:ScheduleWakeup tool not in core binary (external plugin)",
+
+  attribution: {
+    pattern:
+      "^Schedule when to resume work in /loop dynamic mode" +
+      "[\\s\\S]+" +
+      "make it specific\\.[\\s\\S]*$",
+    matchMode: "regex",
+    captureGroups: {},
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=ScheduleWakeup}.description" },
+  },
+
+  reconstruction: {
+    trigger: "always_per_query",
+    materialization: "shape",
+    emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
+  },
+
+  reconciliation: { comparePolicy: "presence_only", confidence: "inferred", exactTextExpected: false },
+};
+
+// ── Harness 系统工具 rules（全部 exact，P0 dump 直接提取）────────────────────────
+// 这批 tool 是 Claude Code harness 每次请求都注入的系统工具，description 静态。
+// 来源：dump 2026-05-01 实测，40 tools 中排除 mcp__ 和已有 rule 的 8 个。
+
+export const CLAUDE_CODE_TOOL_ASKUSERQUESTION_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.AskUserQuestion.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：AskUserQuestion。description 1763B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:AskUserQuestion tool (2.1.126)",
+  attribution: {
+    pattern: "Use this tool when you need to ask the user questions during execution. This allows you to:\n1. Gather user preferences or requirements\n2. Clarify ambiguous instructions\n3. Get decisions on implementation choices as you work\n4. Offer choices to the user about what direction to take.\n\nUsage notes:\n- Users will always be able to select \"Other\" to provide custom text input\n- Use multiSelect: true to allow multiple answers to be selected for a question\n- If you recommend a specific option, make that the first option in the list and add \"(Recommended)\" at the end of the label\n\nPlan mode note: In plan mode, use this tool to clarify requirements or choose between approaches BEFORE finalizing your plan. Do NOT use this tool to ask \"Is my plan ready?\" or \"Should I proceed?\" - use ExitPlanMode for plan approval. IMPORTANT: Do not reference \"the plan\" in your questions (e.g., \"Do you have feedback about the plan?\", \"Does the plan look good?\") because the user cannot see the plan in the UI until you call ExitPlanMode. If you need plan approval, use ExitPlanMode instead.\n\nPreview feature:\nUse the optional `preview` field on options when presenting concrete artifacts that users need to visually compare:\n- ASCII mockups of UI layouts or components\n- Code snippets showing different implementations\n- Diagram variations\n- Configuration examples\n\nPreview content is rendered as markdown in a monospace box. Multi-line text with newlines is supported. When any option has a preview, the UI switches to a side-by-side layout with a vertical option list on the left and preview on the right. Do not use previews for simple preference questions where labels and descriptions suffice. Note: previews are only supported for single-select questions (not multiSelect).\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=AskUserQuestion}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_CRONCREATE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.CronCreate.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：CronCreate（调度定时任务）。description 2341B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:CronCreate tool (2.1.126)",
+  attribution: {
+    pattern: "Schedule a prompt to be enqueued at a future time. Use for both recurring schedules and one-shot reminders.\n\nUses standard 5-field cron in the user's local timezone: minute hour day-of-month month day-of-week. \"0 9 * * *\" means 9am local — no timezone conversion needed.\n\n## One-shot tasks (recurring: false)\n\nFor \"remind me at X\" or \"at <time>, do Y\" requests — fire once then auto-delete.\nPin minute/hour/day-of-month/month to specific values:\n  \"remind me at 2:30pm today to check the deploy\" → cron: \"30 14 <today_dom> <today_month> *\", recurring: false\n  \"tomorrow morning, run the smoke test\" → cron: \"57 8 <tomorrow_dom> <tomorrow_month> *\", recurring: false\n\n## Recurring jobs (recurring: true, the default)\n\nFor \"every N minutes\" / \"every hour\" / \"weekdays at 9am\" requests:\n  \"*/5 * * * *\" (every 5 min), \"0 * * * *\" (hourly), \"0 9 * * 1-5\" (weekdays at 9am local)\n\n## Avoid the :00 and :30 minute marks when the task allows it\n\nEvery user who asks for \"9am\" gets `0 9`, and every user who asks for \"hourly\" gets `0 *` — which means requests from across the planet land on the API at the same instant. When the user's request is approximate, pick a minute that is NOT 0 or 30:\n  \"every morning around 9\" → \"57 8 * * *\" or \"3 9 * * *\" (not \"0 9 * * *\")\n  \"hourly\" → \"7 * * * *\" (not \"0 * * * *\")\n  \"in an hour or so, remind me to...\" → pick whatever minute you land on, don't round\n\nOnly use minute 0 or 30 when the user names that exact time and clearly means it (\"at 9:00 sharp\", \"at half past\", coordinating with a meeting). When in doubt, nudge a few minutes early or late — the user will not notice, and the fleet will.\n\n## Session-only\n\nJobs live only in this Claude session — nothing is written to disk, and the job is gone when Claude exits.\n\n## Runtime behavior\n\nJobs only fire while the REPL is idle (not mid-query). The scheduler adds a small deterministic jitter on top of whatever you pick: recurring tasks fire up to 10% of their period late (max 15 min); one-shot tasks landing on :00 or :30 fire up to 90 s early. Picking an off-minute is still the bigger lever.\n\nRecurring tasks auto-expire after 7 days — they fire one final time, then are deleted. This bounds session lifetime. Tell the user about the 7-day limit when scheduling recurring jobs.\n\nReturns a job ID you can pass to CronDelete.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=CronCreate}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_CRONDELETE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.CronDelete.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：CronDelete（取消定时任务）。description 100B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:CronDelete tool (2.1.126)",
+  attribution: {
+    pattern: "Cancel a cron job previously scheduled with CronCreate. Removes it from the in-memory session store.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=CronDelete}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_CRONLIST_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.CronList.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：CronList（列出定时任务）。description 60B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:CronList tool (2.1.126)",
+  attribution: {
+    pattern: "List all cron jobs scheduled via CronCreate in this session.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=CronList}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_ENTERPLANMODE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.EnterPlanMode.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：EnterPlanMode。description 4022B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:EnterPlanMode tool (2.1.126)",
+  attribution: {
+    pattern: "Use this tool proactively when you're about to start a non-trivial implementation task. Getting user sign-off on your approach before writing code prevents wasted effort and ensures alignment. This tool transitions you into plan mode where you can explore the codebase and design an implementation approach for user approval.\n\n## When to Use This Tool\n\n**Prefer using EnterPlanMode** for implementation tasks unless they're simple. Use it when ANY of these conditions apply:\n\n1. **New Feature Implementation**: Adding meaningful new functionality\n   - Example: \"Add a logout button\" - where should it go? What should happen on click?\n   - Example: \"Add form validation\" - what rules? What error messages?\n\n2. **Multiple Valid Approaches**: The task can be solved in several different ways\n   - Example: \"Add caching to the API\" - could use Redis, in-memory, file-based, etc.\n   - Example: \"Improve performance\" - many optimization strategies possible\n\n3. **Code Modifications**: Changes that affect existing behavior or structure\n   - Example: \"Update the login flow\" - what exactly should change?\n   - Example: \"Refactor this component\" - what's the target architecture?\n\n4. **Architectural Decisions**: The task requires choosing between patterns or technologies\n   - Example: \"Add real-time updates\" - WebSockets vs SSE vs polling\n   - Example: \"Implement state management\" - Redux vs Context vs custom solution\n\n5. **Multi-File Changes**: The task will likely touch more than 2-3 files\n   - Example: \"Refactor the authentication system\"\n   - Example: \"Add a new API endpoint with tests\"\n\n6. **Unclear Requirements**: You need to explore before understanding the full scope\n   - Example: \"Make the app faster\" - need to profile and identify bottlenecks\n   - Example: \"Fix the bug in checkout\" - need to investigate root cause\n\n7. **User Preferences Matter**: The implementation could reasonably go multiple ways\n   - If you would use AskUserQuestion to clarify the approach, use EnterPlanMode instead\n   - Plan mode lets you explore first, then present options with context\n\n## When NOT to Use This Tool\n\nOnly skip EnterPlanMode for simple tasks:\n- Single-line or few-line fixes (typos, obvious bugs, small tweaks)\n- Adding a single function with clear requirements\n- Tasks where the user has given very specific, detailed instructions\n- Pure research/exploration tasks (use the Agent tool with explore agent instead)\n\n## What Happens in Plan Mode\n\nIn plan mode, you'll:\n1. Thoroughly explore the codebase using Glob, Grep, and Read tools\n2. Understand existing patterns and architecture\n3. Design an implementation approach\n4. Present your plan to the user for approval\n5. Use AskUserQuestion if you need to clarify approaches\n6. Exit plan mode with ExitPlanMode when ready to implement\n\n## Examples\n\n### GOOD - Use EnterPlanMode:\nUser: \"Add user authentication to the app\"\n- Requires architectural decisions (session vs JWT, where to store tokens, middleware structure)\n\nUser: \"Optimize the database queries\"\n- Multiple approaches possible, need to profile first, significant impact\n\nUser: \"Implement dark mode\"\n- Architectural decision on theme system, affects many components\n\nUser: \"Add a delete button to the user profile\"\n- Seems simple but involves: where to place it, confirmation dialog, API call, error handling, state updates\n\nUser: \"Update the error handling in the API\"\n- Affects multiple files, user should approve the approach\n\n### BAD - Don't use EnterPlanMode:\nUser: \"Fix the typo in the README\"\n- Straightforward, no planning needed\n\nUser: \"Add a console.log to debug this function\"\n- Simple, obvious implementation\n\nUser: \"What files handle routing?\"\n- Research task, not implementation planning\n\n## Important Notes\n\n- This tool REQUIRES user approval - they must consent to entering plan mode\n- If unsure whether to use it, err on the side of planning - it's better to get alignment upfront than to redo work\n- Users appreciate being consulted before significant changes are made to their codebase\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=EnterPlanMode}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_ENTERWORKTREE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.EnterWorktree.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：EnterWorktree。description 2190B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:EnterWorktree tool (2.1.126)",
+  attribution: {
+    pattern: "Use this tool ONLY when explicitly instructed to work in a worktree — either by the user directly, or by project instructions (CLAUDE.md / memory). This tool creates an isolated git worktree and switches the current session into it.\n\n## When to Use\n\n- The user explicitly says \"worktree\" (e.g., \"start a worktree\", \"work in a worktree\", \"create a worktree\", \"use a worktree\")\n- CLAUDE.md or memory instructions direct you to work in a worktree for the current task\n\n## When NOT to Use\n\n- The user asks to create a branch, switch branches, or work on a different branch — use git commands instead\n- The user asks to fix a bug or work on a feature — use normal git workflow unless worktrees are explicitly requested by the user or project instructions\n- Never use this tool unless \"worktree\" is explicitly mentioned by the user or in CLAUDE.md / memory instructions\n\n## Requirements\n\n- Must be in a git repository, OR have WorktreeCreate/WorktreeRemove hooks configured in settings.json\n- Must not already be in a worktree\n\n## Behavior\n\n- In a git repository: creates a new git worktree inside `.claude/worktrees/` with a new branch based on HEAD\n- Outside a git repository: delegates to WorktreeCreate/WorktreeRemove hooks for VCS-agnostic isolation\n- Switches the session's working directory to the new worktree\n- Use ExitWorktree to leave the worktree mid-session (keep or remove). On session exit, if still in the worktree, the user will be prompted to keep or remove it\n\n## Entering an existing worktree\n\nPass `path` instead of `name` to switch the session into a worktree that already exists (e.g., one you just created with `git worktree add`). The path must appear in `git worktree list` for the current repository — paths that are not registered worktrees of this repo are rejected. ExitWorktree will not remove a worktree entered this way; use `action: \"keep\"` to return to the original directory.\n\n## Parameters\n\n- `name` (optional): A name for a new worktree. If neither `name` nor `path` is provided, a random name is generated.\n- `path` (optional): Path to an existing worktree of the current repository to enter instead of creating one. Mutually exclusive with `name`.\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=EnterWorktree}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_EXITPLANMODE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.ExitPlanMode.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：ExitPlanMode。description 1849B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:ExitPlanMode tool (2.1.126)",
+  attribution: {
+    pattern: "Use this tool when you are in plan mode and have finished writing your plan to the plan file and are ready for user approval.\n\n## How This Tool Works\n- You should have already written your plan to the plan file specified in the plan mode system message\n- This tool does NOT take the plan content as a parameter - it will read the plan from the file you wrote\n- This tool simply signals that you're done planning and ready for the user to review and approve\n- The user will see the contents of your plan file when they review it\n\n## When to Use This Tool\nIMPORTANT: Only use this tool when the task requires planning the implementation steps of a task that requires writing code. For research tasks where you're gathering information, searching files, reading files or in general trying to understand the codebase - do NOT use this tool.\n\n## Before Using This Tool\nEnsure your plan is complete and unambiguous:\n- If you have unresolved questions about requirements or approach, use AskUserQuestion first (in earlier phases)\n- Once your plan is finalized, use THIS tool to request approval\n\n**Important:** Do NOT use AskUserQuestion to ask \"Is this plan okay?\" or \"Should I proceed?\" - that's exactly what THIS tool does. ExitPlanMode inherently requests user approval of your plan.\n\n## Examples\n\n1. Initial task: \"Search for and understand the implementation of vim mode in the codebase\" - Do not use the exit plan mode tool because you are not planning the implementation steps of a task.\n2. Initial task: \"Help me implement yank mode for vim\" - Use the exit plan mode tool after you have finished planning the implementation steps of the task.\n3. Initial task: \"Add a new feature to handle user authentication\" - If unsure about auth method (OAuth, JWT, etc.), use AskUserQuestion first, then use exit plan mode tool after clarifying the approach.\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=ExitPlanMode}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_EXITWORKTREE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.ExitWorktree.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：ExitWorktree。description 1929B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:ExitWorktree tool (2.1.126)",
+  attribution: {
+    pattern: "Exit a worktree session created by EnterWorktree and return the session to the original working directory.\n\n## Scope\n\nThis tool ONLY operates on worktrees created by EnterWorktree in this session. It will NOT touch:\n- Worktrees you created manually with `git worktree add`\n- Worktrees from a previous session (even if created by EnterWorktree then)\n- The directory you're in if EnterWorktree was never called\n\nIf called outside an EnterWorktree session, the tool is a **no-op**: it reports that no worktree session is active and takes no action. Filesystem state is unchanged.\n\n## When to Use\n\n- The user explicitly asks to \"exit the worktree\", \"leave the worktree\", \"go back\", or otherwise end the worktree session\n- Do NOT call this proactively — only when the user asks\n\n## Parameters\n\n- `action` (required): `\"keep\"` or `\"remove\"`\n  - `\"keep\"` — leave the worktree directory and branch intact on disk. Use this if the user wants to come back to the work later, or if there are changes to preserve.\n  - `\"remove\"` — delete the worktree directory and its branch. Use this for a clean exit when the work is done or abandoned.\n- `discard_changes` (optional, default false): only meaningful with `action: \"remove\"`. If the worktree has uncommitted files or commits not on the original branch, the tool will REFUSE to remove it unless this is set to `true`. If the tool returns an error listing changes, confirm with the user before re-invoking with `discard_changes: true`.\n\n## Behavior\n\n- Restores the session's working directory to where it was before EnterWorktree\n- Clears CWD-dependent caches (system prompt sections, memory files, plans directory) so the session state reflects the original directory\n- If a tmux session was attached to the worktree: killed on `remove`, left running on `keep` (its name is returned so the user can reattach)\n- Once exited, EnterWorktree can be called again to create a fresh worktree\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=ExitWorktree}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_MONITOR_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.Monitor.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：Monitor（后台事件流监听）。description 5220B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:Monitor tool (2.1.126)",
+  attribution: {
+    pattern: "Start a background monitor that streams events from a long-running script. Each stdout line is an event — you keep working and notifications arrive in the chat. Events arrive on their own schedule and are not replies from the user, even if one lands while you're waiting for the user to answer a question.\n\nPick by how many notifications you need:\n- **One** (\"tell me when the server is ready / the build finishes\") → use **Bash with `run_in_background`** and a command that exits when the condition is true, e.g. `until grep -q \"Ready in\" dev.log; do sleep 0.5; done`. You get a single completion notification when it exits.\n- **One per occurrence, indefinitely** (\"tell me every time an ERROR line appears\") → Monitor with an unbounded command (`tail -f`, `inotifywait -m`, `while true`).\n- **One per occurrence, until a known end** (\"emit each CI step result, stop when the run completes\") → Monitor with a command that emits lines and then exits.\n\nYour script's stdout is the event stream. Each line becomes a notification. Exit ends the watch.\n\n  # Each matching log line is an event\n  tail -f /var/log/app.log | grep --line-buffered \"ERROR\"\n\n  # Each file change is an event\n  inotifywait -m --format '%e %f' /watched/dir\n\n  # Poll GitHub for new PR comments and emit one line per new comment\n  last=$(date -u +%Y-%m-%dT%H:%M:%SZ)\n  while true; do\n    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)\n    gh api \"repos/owner/repo/issues/123/comments?since=$last\" --jq '.[] | \"\\(.user.login): \\(.body)\"'\n    last=$now; sleep 30\n  done\n\n  # Node script that emits events as they arrive (e.g. WebSocket listener)\n  node watch-for-events.js\n\n  # Per-occurrence with a natural end: emit each CI check as it lands, exit when the run completes\n  prev=\"\"\n  while true; do\n    s=$(gh pr checks 123 --json name,bucket)\n    cur=$(jq -r '.[] | select(.bucket!=\"pending\") | \"\\(.name): \\(.bucket)\"' <<<\"$s\" | sort)\n    comm -13 <(echo \"$prev\") <(echo \"$cur\")\n    prev=$cur\n    jq -e 'all(.bucket!=\"pending\")' <<<\"$s\" >/dev/null && break\n    sleep 30\n  done\n\n**Don't use an unbounded command for a single notification.** `tail -f`, `inotifywait -m`, and `while true` never exit on their own, so the monitor stays armed until timeout even after the event has fired. For \"tell me when X is ready,\" use Bash `run_in_background` with an `until` loop instead (one notification, ends in seconds). Note that `tail -f log | grep -m 1 ...` does *not* fix this: if the log goes quiet after the match, `tail` never receives SIGPIPE and the pipeline hangs anyway.\n\n**Script quality:**\n- Always use `grep --line-buffered` in pipes — without it, pipe buffering delays events by minutes.\n- In poll loops, handle transient failures (`curl ... || true`) — one failed request shouldn't kill the monitor.\n- Poll intervals: 30s+ for remote APIs (rate limits), 0.5-1s for local checks.\n- Write a specific `description` — it appears in every notification (\"errors in deploy.log\" not \"watching logs\").\n- Only stdout is the event stream. Stderr goes to the output file (readable via Read) but does not trigger notifications — for a command you run directly (e.g. `python train.py 2>&1 | grep --line-buffered ...`), merge stderr with `2>&1` so its failures reach your filter. (No effect on `tail -f` of an existing log — that file only contains what its writer redirected.)\n\n**Coverage — silence is not success.** When watching a job or process for an outcome, your filter must match every terminal state, not just the happy path. A monitor that greps only for the success marker stays silent through a crashloop, a hung process, or an unexpected exit — and silence looks identical to \"still running.\" Before arming, ask: *if this process crashed right now, would my filter emit anything?* If not, widen it.\n\n  # Wrong — silent on crash, hang, or any non-success exit\n  tail -f run.log | grep --line-buffered \"elapsed_steps=\"\n\n  # Right — one alternation covering progress + the failure signatures you'd act on\n  tail -f run.log | grep -E --line-buffered \"elapsed_steps=|Traceback|Error|FAILED|assert|Killed|OOM\"\n\nFor poll loops checking job state, emit on every terminal status (`succeeded|failed|cancelled|timeout`), not just success. If you cannot confidently enumerate the failure signatures, broaden the grep alternation rather than narrow it — some extra noise is better than missing a crashloop.\n\n**Output volume**: Every stdout line is a conversation message, so the filter should be selective — but selective means \"the lines you'd act on,\" not \"only good news.\" Never pipe raw logs; use `grep --line-buffered`, `awk`, or a wrapper that emits exactly the success and failure signals you care about. Monitors that produce too many events are automatically stopped; restart with a tighter filter if this happens.\n\nStdout lines within 200ms are batched into a single notification, so multiline output from a single event groups naturally.\n\nThe script runs in the same shell environment as Bash. Exit ends the watch (exit code is reported). Timeout → killed. Set `persistent: true` for session-length watches (PR monitoring, log tails) — the monitor runs until you call TaskStop or the session ends. Use TaskStop to cancel early.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Monitor}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_NOTEBOOKEDIT_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.NotebookEdit.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：NotebookEdit（编辑 Jupyter notebook）。description 513B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:NotebookEdit tool (2.1.126)",
+  attribution: {
+    pattern: "Completely replaces the contents of a specific cell in a Jupyter notebook (.ipynb file) with new source. Jupyter notebooks are interactive documents that combine code, text, and visualizations, commonly used for data analysis and scientific computing. The notebook_path parameter must be an absolute path, not a relative path. The cell_number is 0-indexed. Use edit_mode=insert to add a new cell at the index specified by cell_number. Use edit_mode=delete to delete the cell at the index specified by cell_number.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=NotebookEdit}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_PUSHNOTIFICATION_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.PushNotification.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：PushNotification（桌面/手机通知）。description 1160B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:PushNotification tool (2.1.126)",
+  attribution: {
+    pattern: "This tool sends a desktop notification in the user's terminal. If Remote Control is connected, it also pushes to their phone. Either way, it pulls their attention from whatever they're doing — a meeting, another task, dinner — to this session. That's the cost. The benefit is they learn something now that they'd want to know now: a long task finished while they were away, a build is ready, you've hit something that needs their decision before you can continue.\n\nBecause a notification they didn't need is annoying in a way that accumulates, err toward not sending one. Don't notify for routine progress, or to announce you've answered something they asked seconds ago and are clearly still watching, or when a quick task completes. Notify when there's a real chance they've walked away and there's something worth coming back for — or when they've explicitly asked you to notify them.\n\nKeep the message under 200 characters, one line, no markdown. Lead with what they'd act on — \"build failed: 2 auth tests\" tells them more than \"task done\" and more than a status dump.\n\nIf the result says the push wasn't sent, that's expected — no action needed.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=PushNotification}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_REMOTETRIGGER_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.RemoteTrigger.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：RemoteTrigger（调用 claude.ai remote-trigger API）。description 452B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:RemoteTrigger tool (2.1.126)",
+  attribution: {
+    pattern: "Call the claude.ai remote-trigger API. Use this instead of curl — the OAuth token is added automatically in-process and never exposed.\n\nActions:\n- list: GET /v1/code/triggers\n- get: GET /v1/code/triggers/{trigger_id}\n- create: POST /v1/code/triggers (requires body)\n- update: POST /v1/code/triggers/{trigger_id} (requires body, partial update)\n- run: POST /v1/code/triggers/{trigger_id}/run (optional body)\n\nThe response is the raw JSON from the API.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=RemoteTrigger}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_SENDMESSAGE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.SendMessage.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：SendMessage（向 agent 发消息）。description 1189B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:SendMessage tool (2.1.126)",
+  attribution: {
+    pattern: "# SendMessage\n\nSend a message to another agent.\n\n```json\n{\"to\": \"researcher\", \"summary\": \"assign task 1\", \"message\": \"start on task #1\"}\n```\n\n| `to` | |\n|---|---|\n| `\"researcher\"` | Teammate by name |\n\nYour plain text output is NOT visible to other agents — to communicate, you MUST call this tool. Messages from teammates are delivered automatically; you don't check an inbox. Refer to teammates by name, never by UUID. When relaying, don't quote the original — it's already rendered to the user.\n\n## Protocol responses (legacy)\n\nIf you receive a JSON message with `type: \"shutdown_request\"` or `type: \"plan_approval_request\"`, respond with the matching `_response` type — echo the `request_id`, set `approve` true/false:\n\n```json\n{\"to\": \"team-lead\", \"message\": {\"type\": \"shutdown_response\", \"request_id\": \"...\", \"approve\": true}}\n{\"to\": \"researcher\", \"message\": {\"type\": \"plan_approval_response\", \"request_id\": \"...\", \"approve\": false, \"feedback\": \"add error handling\"}}\n```\n\nApproving shutdown terminates your process. Rejecting plan sends the teammate back to revise. Don't originate `shutdown_request` unless asked. Don't send structured JSON status messages — use TaskUpdate.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=SendMessage}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_TASKCREATE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.TaskCreate.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：TaskCreate（创建任务）。description 2399B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:TaskCreate tool (2.1.126)",
+  attribution: {
+    pattern: "Use this tool to create a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.\nIt also helps the user understand the progress of the task and overall progress of their requests.\n\n## When to Use This Tool\n\nUse this tool proactively in these scenarios:\n\n- Complex multi-step tasks - When a task requires 3 or more distinct steps or actions\n- Non-trivial and complex tasks - Tasks that require careful planning or multiple operations and potentially assigned to teammates\n- Plan mode - When using plan mode, create a task list to track the work\n- User explicitly requests todo list - When the user directly asks you to use the todo list\n- User provides multiple tasks - When users provide a list of things to be done (numbered or comma-separated)\n- After receiving new instructions - Immediately capture user requirements as tasks\n- When you start working on a task - Mark it as in_progress BEFORE beginning work\n- After completing a task - Mark it as completed and add any new follow-up tasks discovered during implementation\n\n## When NOT to Use This Tool\n\nSkip using this tool when:\n- There is only a single, straightforward task\n- The task is trivial and tracking it provides no organizational benefit\n- The task can be completed in less than 3 trivial steps\n- The task is purely conversational or informational\n\nNOTE that you should not use this tool if there is only one trivial task to do. In this case you are better off just doing the task directly.\n\n## Task Fields\n\n- **subject**: A brief, actionable title in imperative form (e.g., \"Fix authentication bug in login flow\")\n- **description**: What needs to be done\n- **activeForm** (optional): Present continuous form shown in the spinner when the task is in_progress (e.g., \"Fixing authentication bug\"). If omitted, the spinner shows the subject instead.\n\nAll tasks are created with status `pending`.\n\n## Tips\n\n- Create tasks with clear, specific subjects that describe the outcome\n- After creating tasks, use TaskUpdate to set up dependencies (blocks/blockedBy) if needed\n- Include enough detail in the description for another agent to understand and complete the task\n- New tasks are created with status 'pending' and no owner - use TaskUpdate with the `owner` parameter to assign them\n- Check TaskList first to avoid creating duplicate tasks\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskCreate}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_TASKGET_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.TaskGet.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：TaskGet（获取任务详情）。description 732B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:TaskGet tool (2.1.126)",
+  attribution: {
+    pattern: "Use this tool to retrieve a task by its ID from the task list.\n\n## When to Use This Tool\n\n- When you need the full description and context before starting work on a task\n- To understand task dependencies (what it blocks, what blocks it)\n- After being assigned a task, to get complete requirements\n\n## Output\n\nReturns full task details:\n- **subject**: Task title\n- **description**: Detailed requirements and context\n- **status**: 'pending', 'in_progress', or 'completed'\n- **blocks**: Tasks waiting on this one to complete\n- **blockedBy**: Tasks that must complete before this one can start\n\n## Tips\n\n- After fetching a task, verify its blockedBy list is empty before beginning work.\n- Use TaskList to see all tasks in summary form.\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskGet}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_TASKLIST_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.TaskList.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：TaskList（列出所有任务）。description 1564B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:TaskList tool (2.1.126)",
+  attribution: {
+    pattern: "Use this tool to list all tasks in the task list.\n\n## When to Use This Tool\n\n- To see what tasks are available to work on (status: 'pending', no owner, not blocked)\n- To check overall progress on the project\n- To find tasks that are blocked and need dependencies resolved\n- Before assigning tasks to teammates, to see what's available\n- After completing a task, to check for newly unblocked work or claim the next available task\n- **Prefer working on tasks in ID order** (lowest ID first) when multiple tasks are available, as earlier tasks often set up context for later ones\n\n## Output\n\nReturns a summary of each task:\n- **id**: Task identifier (use with TaskGet, TaskUpdate)\n- **subject**: Brief description of the task\n- **status**: 'pending', 'in_progress', or 'completed'\n- **owner**: Agent ID if assigned, empty if available\n- **blockedBy**: List of open task IDs that must be resolved first (tasks with blockedBy cannot be claimed until dependencies resolve)\n\nUse TaskGet with a specific task ID to view full details including description and comments.\n\n## Teammate Workflow\n\nWhen working as a teammate:\n1. After completing your current task, call TaskList to find available work\n2. Look for tasks with status 'pending', no owner, and empty blockedBy\n3. **Prefer tasks in ID order** (lowest ID first) when multiple tasks are available, as earlier tasks often set up context for later ones\n4. Claim an available task using TaskUpdate (set `owner` to your name), or wait for leader assignment\n5. If blocked, focus on unblocking tasks or notify the team lead\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskList}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_TASKOUTPUT_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.TaskOutput.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：TaskOutput（获取任务输出）。description 1056B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:TaskOutput tool (2.1.126)",
+  attribution: {
+    pattern: "DEPRECATED: Background tasks return their output file path in the tool result, and you receive a <task-notification> with the same path when the task completes.\n- For bash tasks: prefer using the Read tool on that output file path — it contains stdout/stderr.\n- For local_agent tasks: use the Agent tool result directly. Do NOT Read the .output file — it is a symlink to the full sub-agent conversation transcript (JSONL) and will overflow your context window.\n- For remote_agent tasks: prefer using the Read tool on the output file path — it contains the streamed remote session output (same as bash).\n\n- Retrieves output from a running or completed task (background shell, agent, or remote session)\n- Takes a task_id parameter identifying the task\n- Returns the task output along with status information\n- Use block=true (default) to wait for task completion\n- Use block=false for non-blocking check of current status\n- Task IDs can be found using the /tasks command\n- Works with all task types: background shells, async agents, and remote sessions",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskOutput}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_TASKSTOP_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.TaskStop.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：TaskStop（停止后台任务）。description 203B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:TaskStop tool (2.1.126)",
+  attribution: {
+    pattern: "\n- Stops a running background task by its ID\n- Takes a task_id parameter identifying the task to stop\n- Returns a success or failure status\n- Use this tool when you need to terminate a long-running task\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskStop}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_TASKUPDATE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.TaskUpdate.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：TaskUpdate（更新任务状态/字段）。description 2247B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:TaskUpdate tool (2.1.126)",
+  attribution: {
+    pattern: "Use this tool to update a task in the task list.\n\n## When to Use This Tool\n\n**Mark tasks as resolved:**\n- When you have completed the work described in a task\n- When a task is no longer needed or has been superseded\n- IMPORTANT: Always mark your assigned tasks as resolved when you finish them\n- After resolving, call TaskList to find your next task\n\n- ONLY mark a task as completed when you have FULLY accomplished it\n- If you encounter errors, blockers, or cannot finish, keep the task as in_progress\n- When blocked, create a new task describing what needs to be resolved\n- Never mark a task as completed if:\n  - Tests are failing\n  - Implementation is partial\n  - You encountered unresolved errors\n  - You couldn't find necessary files or dependencies\n\n**Delete tasks:**\n- When a task is no longer relevant or was created in error\n- Setting status to `deleted` permanently removes the task\n\n**Update task details:**\n- When requirements change or become clearer\n- When establishing dependencies between tasks\n\n## Fields You Can Update\n\n- **status**: The task status (see Status Workflow below)\n- **subject**: Change the task title (imperative form, e.g., \"Run tests\")\n- **description**: Change the task description\n- **activeForm**: Present continuous form shown in spinner when in_progress (e.g., \"Running tests\")\n- **owner**: Change the task owner (agent name)\n- **metadata**: Merge metadata keys into the task (set a key to null to delete it)\n- **addBlocks**: Mark tasks that cannot start until this one completes\n- **addBlockedBy**: Mark tasks that must complete before this one can start\n\n## Status Workflow\n\nStatus progresses: `pending` → `in_progress` → `completed`\n\nUse `deleted` to permanently remove a task.\n\n## Staleness\n\nMake sure to read a task's latest state using `TaskGet` before updating it.\n\n## Examples\n\nMark task as in progress when starting work:\n```json\n{\"taskId\": \"1\", \"status\": \"in_progress\"}\n```\n\nMark task as completed after finishing work:\n```json\n{\"taskId\": \"1\", \"status\": \"completed\"}\n```\n\nDelete a task:\n```json\n{\"taskId\": \"1\", \"status\": \"deleted\"}\n```\n\nClaim a task by setting owner:\n```json\n{\"taskId\": \"1\", \"owner\": \"my-name\"}\n```\n\nSet up task dependencies:\n```json\n{\"taskId\": \"2\", \"addBlockedBy\": [\"1\"]}\n```\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskUpdate}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_TEAMCREATE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.TeamCreate.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：TeamCreate（创建 agent team）。description 6782B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:TeamCreate tool (2.1.126)",
+  attribution: {
+    // TeamCreate description 以 "# TeamCreate\n\n" 开头，内容较长但静态
+    pattern: "# TeamCreate\n\n## When to Use\n\nUse this tool proactively whenever:\n- The user explicitly asks to use a team, swarm, or group of agents\n- The user mentions wanting agents to work together, coordinate, or collaborate\n- A task is complex enough that it would benefit from parallel work by multiple agents (e.g., building a full-stack feature with frontend and backend work, refactoring a codebase while keeping tests passing, implementing a multi-step project with research, planning, and coding phases)\n\nWhen in doubt about whether a task warrants a team, prefer spawning a team.\n\n## Choosing Agent Types for Teammates\n\nWhen spawning teammates via the Agent tool, choose the `subagent_type` based on what tools the agent needs for its task. Each agent type has a different set of available tools — match the agent to the work:\n\n- **Read-only agents** (e.g., Explore, Plan) cannot edit or write files. Only assign them research, search, or planning tasks. Never assign them implementation work.\n- **Full-capability agents** (e.g., general-purpose) have access to all tools including file editing, writing, and bash. Use these for tasks that require making changes.\n- **Custom agents** defined in `.claude/agents/` may have their own tool restrictions. Check their descriptions to understand what they can and cannot do.\n\nAlways review the agent type descriptions and their available tools listed in the Agent tool prompt before selecting a `subagent_type` for a teammate.\n\nCreate a new team to coordinate multiple agents working on a project. Teams have a 1:1 correspondence with task lists (Team = TaskList).\n\n```\n{\n  \"team_name\": \"my-project\",\n  \"description\": \"Working on feature X\"\n}\n```\n\nThis creates:\n- A team file at `~/.claude/teams/{team-name}/config.json`\n- A corresponding task list directory at `~/.claude/tasks/{team-name}/`\n\n## Team Workflow\n\n1. **Create a team** with TeamCreate - this creates both the team and its task list\n2. **Create tasks** using the Task tools (TaskCreate, TaskList, etc.) - they automatically use the team's task list\n3. **Spawn teammates** using the Agent tool with `team_name` and `name` parameters to create teammates that join the team\n4. **Assign tasks** using TaskUpdate with `owner` to give tasks to idle teammates\n5. **Teammates work on assigned tasks** and mark them completed via TaskUpdate\n6. **Teammates go idle between turns** - after each turn, teammates automatically go idle and send a notification. IMPORTANT: Be patient with idle teammates! Don't comment on their idleness until it actually impacts your work.\n7. **Shutdown your team** - when the task is completed, gracefully shut down your teammates via SendMessage with `message: {type: \"shutdown_request\"}`.\n\n## Task Ownership\n\nTasks are assigned using TaskUpdate with the `owner` parameter. Any agent can set or change task ownership via TaskUpdate.\n\n## Automatic Message Delivery\n\n**IMPORTANT**: Messages from teammates are automatically delivered to you. You do NOT need to manually check your inbox.\n\nWhen you spawn teammates:\n- They will send you messages when they complete tasks or need help\n- These messages appear automatically as new conversation turns (like user messages)\n- If you're busy (mid-turn), messages are queued and delivered when your turn ends\n- The UI shows a brief notification with the sender's name when messages are waiting\n\nMessages will be delivered automatically.\n\nWhen reporting on teammate messages, you do NOT need to quote the original message—it's already rendered to the user.\n\n## Teammate Idle State\n\nTeammates go idle after every turn—this is completely normal and expected. A teammate going idle immediately after sending you a message does NOT mean they are done or unavailable. Idle simply means they are waiting for input.\n\n- **Idle teammates can receive messages.** Sending a message to an idle teammate wakes them up and they will process it normally.\n- **Idle notifications are automatic.** The system sends an idle notification whenever a teammate's turn ends. You do not need to react to idle notifications unless you want to assign new work or send a follow-up message.\n- **Do not treat idle as an error.** A teammate sending a message and then going idle is the normal flow—they sent their message and are now waiting for a response.\n- **Peer DM visibility.** When a teammate sends a DM to another teammate, a brief summary is included in their idle notification. This gives you visibility into peer collaboration without the full message content. You do not need to respond to these summaries — they are informational.\n\n## Discovering Team Members\n\nTeammates can read the team config file to discover other team members:\n- **Team config location**: `~/.claude/teams/{team-name}/config.json`\n\nThe config file contains a `members` array with each teammate's:\n- `name`: Human-readable name (**always use this** for messaging and task assignment)\n- `agentId`: Unique identifier (for reference only - do not use for communication)\n- `agentType`: Role/type of the agent\n\n**IMPORTANT**: Always refer to teammates by their NAME (e.g., \"team-lead\", \"researcher\", \"tester\"). Names are used for:\n- `to` when sending messages\n- Identifying task owners\n\nExample of reading team config:\n```\nUse the Read tool to read ~/.claude/teams/{team-name}/config.json\n```\n\n## Task List Coordination\n\nTeams share a task list that all teammates can access at `~/.claude/tasks/{team-name}/`.\n\nTeammates should:\n1. Check TaskList periodically, **especially after completing each task**, to find available work or see newly unblocked tasks\n2. Claim unassigned, unblocked tasks with TaskUpdate (set `owner` to your name). **Prefer tasks in ID order** (lowest ID first) when multiple tasks are available, as earlier tasks often set up context for later ones\n3. Create new tasks with `TaskCreate` when identifying additional work\n4. Mark tasks as completed with `TaskUpdate` when done, then check TaskList for next work\n5. Coordinate with other teammates by reading the task list status\n6. If all available tasks are blocked, notify the team lead or help resolve blocking tasks\n\n**IMPORTANT notes for communication with your team**:\n- Do not use terminal tools to view your team's activity; always send a message to your teammates (and remember, refer to them by name).\n- Your team cannot hear you if you do not use the SendMessage tool. Always send a message to your teammates if you are responding to them.\n- Do NOT send structured JSON status messages like `{\"type\":\"idle\",...}` or `{\"type\":\"task_completed\",...}`. Just communicate in plain text when you need to message teammates.\n- Use TaskUpdate to mark tasks completed.\n- If you are an agent in the team, the system will automatically send idle notifications to the team lead when you stop.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TeamCreate}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_TEAMDELETE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.TeamDelete.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：TeamDelete（删除 agent team）。description 619B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:TeamDelete tool (2.1.126)",
+  attribution: {
+    pattern: "# TeamDelete\n\nRemove team and task directories when the swarm work is complete.\n\nThis operation:\n- Removes the team directory (`~/.claude/teams/{team-name}/`)\n- Removes the task directory (`~/.claude/tasks/{team-name}/`)\n- Clears team context from the current session\n\n**IMPORTANT**: TeamDelete will fail if the team still has active members. Gracefully terminate teammates first, then call TeamDelete after all teammates have shut down.\n\nUse this when all teammates have finished their work and you want to clean up the team resources. The team name is automatically determined from the current session's team context.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TeamDelete}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_WEBFETCH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.WebFetch.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "Claude Code 工具：WebFetch（抓取网页内容）。description 1479B。",
+  stability: "semi-static",
+  sourcemapRef: "binary:WebFetch tool (2.1.126)",
+  attribution: {
+    pattern: "IMPORTANT: WebFetch WILL FAIL for authenticated or private URLs. Before using this tool, check if the URL points to an authenticated service (e.g. Google Docs, Confluence, Jira, GitHub). If so, look for a specialized MCP tool that provides authenticated access.\n\n- Fetches content from a specified URL and processes it using an AI model\n- Takes a URL and a prompt as input\n- Fetches the URL content, converts HTML to markdown\n- Processes the content with the prompt using a small, fast model\n- Returns the model's response about the content\n- Use this tool when you need to retrieve and analyze web content\n\nUsage notes:\n  - IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions.\n  - The URL must be a fully-formed valid URL\n  - HTTP URLs will be automatically upgraded to HTTPS\n  - The prompt should describe what information you want to extract from the page\n  - This tool is read-only and does not modify any files\n  - Results may be summarized if the content is very large\n  - Includes a self-cleaning 15-minute cache for faster responses when repeatedly accessing the same URL\n  - When a URL redirects to a different host, the tool will inform you and provide the redirect URL in a special format. You should then make a new WebFetch request with the redirect URL to fetch the content.\n  - For GitHub URLs, prefer using the gh CLI via Bash instead (e.g., gh pr view, gh issue view, gh api).\n",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=WebFetch}.description" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
 // ── side query rules ──────────────────────────────────────────────────────────
 //
 // queryHaiku()（claude.ts:3241）发出的内部 side query。
@@ -1240,7 +2075,7 @@ export const CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE: ContextLedgerRule = {
   ruleId: "claude-code.side-query.session-title.v1",
-  ruleVersion: "2.1.123",
+  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code 自动生成会话标题的 side query（generateSessionTitle）。" +
     "通过 queryHaiku() 发送给 Haiku 模型，tools=0，messages=1，" +
@@ -1324,6 +2159,40 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_SESSION_GUIDANCE_RULE,
   CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
   CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,
+  // ── 动态 context 注入（session 级）────────────────────────────────────────
+  CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE,
+  // ── tool schema rules ─────────────────────────────────────────────────────
+  CLAUDE_CODE_TOOL_EDIT_RULE,
+  CLAUDE_CODE_TOOL_WRITE_RULE,
+  CLAUDE_CODE_TOOL_READ_RULE,
+  CLAUDE_CODE_TOOL_SKILL_RULE,
+  CLAUDE_CODE_TOOL_TOOLSEARCH_RULE,
+  CLAUDE_CODE_TOOL_AGENT_RULE,
+  CLAUDE_CODE_TOOL_BASH_RULE,
+  CLAUDE_CODE_TOOL_SCHEDULEWAKEUP_RULE,
+  // harness 系统工具（22 条，全部 exact，dump 直接提取）
+  CLAUDE_CODE_TOOL_ASKUSERQUESTION_RULE,
+  CLAUDE_CODE_TOOL_CRONCREATE_RULE,
+  CLAUDE_CODE_TOOL_CRONDELETE_RULE,
+  CLAUDE_CODE_TOOL_CRONLIST_RULE,
+  CLAUDE_CODE_TOOL_ENTERPLANMODE_RULE,
+  CLAUDE_CODE_TOOL_ENTERWORKTREE_RULE,
+  CLAUDE_CODE_TOOL_EXITPLANMODE_RULE,
+  CLAUDE_CODE_TOOL_EXITWORKTREE_RULE,
+  CLAUDE_CODE_TOOL_MONITOR_RULE,
+  CLAUDE_CODE_TOOL_NOTEBOOKEDIT_RULE,
+  CLAUDE_CODE_TOOL_PUSHNOTIFICATION_RULE,
+  CLAUDE_CODE_TOOL_REMOTETRIGGER_RULE,
+  CLAUDE_CODE_TOOL_SENDMESSAGE_RULE,
+  CLAUDE_CODE_TOOL_TASKCREATE_RULE,
+  CLAUDE_CODE_TOOL_TASKGET_RULE,
+  CLAUDE_CODE_TOOL_TASKLIST_RULE,
+  CLAUDE_CODE_TOOL_TASKOUTPUT_RULE,
+  CLAUDE_CODE_TOOL_TASKSTOP_RULE,
+  CLAUDE_CODE_TOOL_TASKUPDATE_RULE,
+  CLAUDE_CODE_TOOL_TEAMCREATE_RULE,
+  CLAUDE_CODE_TOOL_TEAMDELETE_RULE,
+  CLAUDE_CODE_TOOL_WEBFETCH_RULE,
   // ── side query rules ──────────────────────────────────────────────────────
   CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE,
 ];
@@ -1334,6 +2203,36 @@ export const CONTEXT_LEDGER_RULE_BY_ID: ReadonlyMap<string, ContextLedgerRule> =
 
 export function getContextLedgerRule(ruleId: string): ContextLedgerRule | undefined {
   return CONTEXT_LEDGER_RULE_BY_ID.get(ruleId);
+}
+
+// ── 校对状态汇总（B1.4）─────────────────────────────────────────────────────────
+
+// 单条 rule 是否已对照 SUPPORTED_CLAUDE_CODE_VERSION 校对通过。
+// 只有严格相等才算 verified；任何其它字符串（含旧版号）等同于 null。
+export function isRuleVerified(rule: ContextLedgerRule): boolean {
+  return rule.verifiedFor === SUPPORTED_CLAUDE_CODE_VERSION;
+}
+
+export interface RuleVerificationSummary {
+  supportedVersion: string;
+  total: number;
+  verified: number;
+  pending: number;
+  pendingRuleIds: string[];
+}
+
+export function getRuleVerificationSummary(): RuleVerificationSummary {
+  const pending: string[] = [];
+  for (const rule of CONTEXT_LEDGER_RULES) {
+    if (!isRuleVerified(rule)) pending.push(rule.ruleId);
+  }
+  return {
+    supportedVersion: SUPPORTED_CLAUDE_CODE_VERSION,
+    total: CONTEXT_LEDGER_RULES.length,
+    verified: CONTEXT_LEDGER_RULES.length - pending.length,
+    pending: pending.length,
+    pendingRuleIds: pending,
+  };
 }
 
 // ── 兼容旧导出（过渡期，待下一阶段清理） ────────────────────────────────────────

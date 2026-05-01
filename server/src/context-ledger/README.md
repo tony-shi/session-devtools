@@ -84,24 +84,32 @@ That creates circular attribution and removes the audit value of the report.
 
 ### 当前 registry 状态
 
-首批只包含**一条人工确认**的 rule：
+每条 rule 的字段：`ruleId / verifiedFor / matchMode / stability / sourcemapRef`。
+`verifiedFor` 字段值含义见下节"版本口径"。
 
-| ruleId | matchMode | stability | ruleVersion |
-|--------|-----------|-----------|-------------|
-| `claude-code.system-prompt-identity.v1` | `exact` | `static` | `2.1.123` |
+### 版本口径（B1.4 单版本策略）
 
-该 rule 基于多次 proxy dump 的人工审核，确认 Claude Code system prompt 以固定字符串 `"You are Claude Code, Anthropic's official CLI for Claude."` 开头。
+我们只针对**当前实际安装**的一个 Claude Code 版本维护 rule，不做跨版本兼容。
 
-### ruleVersion 版本口径
+- 当前目标版本由 `SUPPORTED_CLAUDE_CODE_VERSION` 常量声明（见 `rule-registry.ts` 顶部，当前 `2.1.126`）。
+- 每条 rule 的 `verifiedFor` 字段记录"已对照该版本人工校对通过的版本号"：
+  - `verifiedFor === SUPPORTED_CLAUDE_CODE_VERSION` → 已校对，audit 报告标"verified"
+  - `verifiedFor === null` → 待人工校对（运行时仍参与 attribution，但 audit 报告标"pending"）
+  - 其它字符串（如旧版本号）→ 等同于 null
+- 升级 `SUPPORTED_CLAUDE_CODE_VERSION` 时，所有 `verifiedFor` 必须批量重置为 `null` 并逐条复审。
+- 校对来源优先级（与 AGENTS.md §6.3 一致）：
+  - **P0 事实**：`~/.api-dashboard/proxy/traffic.jsonl` dump + 本地安装的 `cli.js`（grep 验证）
+  - **P1 参考**：`claude-code-sourcemap@2.1.88` 还原源码 / `claude-code-survey` 文档
 
-`ruleVersion = "2.1.123"` 是**占位版本**，含义是"本 rule 基于对 Claude Code 2.1.x 系列的人工审核"，**不是**最小兼容版本声明，不代表在精确版本之前或之后该字符串不存在。后续如需锁定版本兼容性，应重新人工审核并更新。
+辅助工具：调用 `getRuleVerificationSummary()` 可拿到 `{ supportedVersion, total, verified, pending, pendingRuleIds }`。
 
-### 新增 rule 的人工审核流程
+### 新增/修订 rule 的人工审核流程
 
-1. 在 `claude-code-sourcemap/restored-src/` 中 grep 目标字段，确认合法值域和定义点。
-2. 收集 ≥2 次真实 proxy dump 样本，确认 pattern 稳定。
-3. 在 PR 中附上 sourcemap 路径和 proxy 样本截图，让 reviewer 人工确认。
-4. 确认后再在 `rule-registry.ts` 中新增 `AttributionRule` 条目，**不接受自动推断写入**。
+1. 在本地安装的 `cli.js` 里 grep 目标字段，确认当前版本的真实文本。
+2. 在 `~/.api-dashboard/proxy/traffic.jsonl` 里找 ≥1 条真实 dump 样本验证 pattern。
+3. （可选参考）在 `claude-code-sourcemap/restored-src/` 中找对应源码段，理解语义。
+4. PR 中附上 dump 行号 + cli.js grep 结果 + sourcemap 路径，reviewer 人工确认。
+5. 确认后在 `rule-registry.ts` 中将 `verifiedFor` 设为 `SUPPORTED_CLAUDE_CODE_VERSION`，**不接受自动推断写入**。
 5. 同步更新 `mock-report.json` fixture（通过 `bun -e` 重新生成）。
 
 ### 禁止的数据流

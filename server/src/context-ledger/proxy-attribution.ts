@@ -5,43 +5,31 @@
 //   - 不读取 rawBody，不重建 segment，不 mutate snapshot
 //   - 不读取 JSONL，不生成 ContextMutation
 //   - attribution 的 proxySegmentIds 直接使用 parser 产出的 segment.id
-//   - 所有语义判断（billing_noise / harness_injection / lifecycle 等）在此层完成
-//   - 依据 segment.rawText 做 pattern match，不依赖 parser 提前做的分类
+//   - 所有语义判断均由 CONTEXT_LEDGER_RULES 驱动，attribution 函数本身不写 pattern 假设
 //
-// rule 优先级（system section）：
-//   R1  billing_noise_pattern   — rawText 以 x-anthropic-billing-header: 开头
-//   R2  identity rule           — rawText startsWith identity pattern → system_prompt, lifecycle=session
-//   R2b dynamic section rule    — sectionHeader ∈ DYNAMIC_SECTION_HEADERS → harness_injection, lifecycle=query
-//   R2c static section fallback — 其余 system segment → system_prompt, lifecycle=session
+// 设计原则（rule 驱动）：
+//   - 每个 segment 遍历 RULE_TABLE（有序），第一个命中的 rule 决定 attribution 全部字段
+//   - attribution 函数只处理 rule 无法覆盖的 wire-schema 感知事项：
+//       · tool_use / tool_result：category 由 parser 的 wire schema 解析直接确定，无文本 pattern
+//       · billing header fallback：regex 未命中但前缀存在时保守兜底
+//       · prior_session_guess：messages[0] 结构性推断，无文本 pattern 可写
+//   - 未命中任何 rule 时明确标 rule_gap，不再用 heuristic 伪装归类
 //
-// rule 优先级（tools section）：
-//   R3  tools_schema_pattern    — category=tools_schema, lifecycle=session
-//
-// rule 优先级（messages section）：
-//   R1m billing_noise_pattern   — rawText 以 billing header 开头
-//   R4  system_reminder_pattern — rawText 以 <system-reminder> 开头
-//   R5  local_command_pattern   — rawText 以 <local-command-caveat>/<bash-*> 开头
-//   R6  tool_use_id_match       — category=tool_use / tool_result（wire schema）
-//   R9  prior_session_guess     — messages[0] 的 user text block
-//   R10 unknown                 — 无法归类
+// 规则表（RULE_TABLE）按优先级排列，section 约束由 rule.attribution.location.section 决定：
+//   优先级 1  side_query rules      (queryScope=side_query)
+//   优先级 2  billing_noise_pattern (system + messages)
+//   优先级 3  system prompt rules   (identity / dynamic sections / static body)
+//   优先级 4  context_management    (system，动态 git 状态)
+//   优先级 5  tool schema rules     (tools section，每个 tool 独立 rule)
+//   优先级 6  兜底：wire schema + prior_session_guess + rule_gap
 
 import {
-  CLAUDE_CODE_ACTIONS_SECTION_RULE,
-  CLAUDE_CODE_DOING_TASKS_RULE,
-  CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,
+  CONTEXT_LEDGER_RULES,
   CLAUDE_CODE_BILLING_NOISE_RULE,
-  CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
-  CLAUDE_CODE_INTRO_OUTPUT_STYLE_RULE,
-  CLAUDE_CODE_INTRO_STANDARD_RULE,
-  CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE,
   CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE,
-  CLAUDE_CODE_SESSION_GUIDANCE_RULE,
-  CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE,
-  CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE,
-  CLAUDE_CODE_SYSTEM_SECTION_RULE,
-  CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE,
-  CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE,
-  CLAUDE_CODE_USING_YOUR_TOOLS_RULE,
+  CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
+  CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,
+  CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE,
 } from "./rule-registry";
 import type { ContextLedgerRule } from "./rule-registry";
 import { DYNAMIC_SECTION_HEADERS } from "./proxy-block-splitter";
@@ -60,10 +48,10 @@ import type {
 
 const LARGE_SEGMENT_THRESHOLD = 10_000;
 
-// billing header 前缀（system 和 messages 两处都可能出现）
+// billing header 前缀（fallback 用，regex rule 未命中时的保守兜底）
 const BILLING_HEADER_PREFIX = "x-anthropic-billing-header:";
 
-// messages 里的 harness injection 标签
+// messages 里的 harness injection 标签（无文本 pattern rule 可覆盖，保留为 wire schema 检测）
 const SYSTEM_REMINDER_TAG = "<system-reminder>";
 const LOCAL_COMMAND_TAGS = [
   "<local-command-caveat>",
@@ -74,46 +62,148 @@ const LOCAL_COMMAND_TAGS = [
   "<local-command-stdout>",
 ];
 
-// ── rule pattern match ────────────────────────────────────────────────────────
+// ── rule 驱动的 pattern match ──────────────────────────────────────────────────
 
-function matchesRulePattern(
+// tryMatchRule：对单条 rule 做匹配，返回命名捕获组（regex）或 true（非 regex 命中）或 null（不命中）。
+// section 约束和 queryScope 约束在此统一处理，attribution 主流程只调用这一个函数。
+function tryMatchRule(
   rule: ContextLedgerRule,
   text: string,
   section: SegmentSection,
-  queryKind?: string,
-): boolean {
+  queryKind: string,
+): Record<string, string | undefined> | true | null {
   const attr = rule.attribution;
-  if (!attr?.pattern) return false;
-  if (attr.location?.section !== undefined && attr.location.section !== section) return false;
-  // queryScope 约束：rule.queryScope 与 snapshot.request.queryKind 不一致时不命中
-  if (rule.queryScope && rule.queryScope !== "any") {
-    if (queryKind && queryKind !== rule.queryScope) return false;
-  }
-  if (attr.matchMode === "regex") return new RegExp(attr.pattern).test(text);
-  if (attr.matchMode === "contains") return text.includes(attr.pattern);
-  // exact：wire 文本与 pattern 完全相等，不做任何 trim。
-  // pattern 必须包含 splitter 切出的完整文本（含尾部 \n\n），与 wire 内容一一对应。
-  if (attr.matchMode === "exact") return text === attr.pattern;
-  // prefix：trimStart 后以 pattern 开头（identity rule、billing rule 的默认行为）
-  return text.trimStart().startsWith(attr.pattern);
-}
+  if (!attr?.pattern) return null;
 
-// matchesRulePatternWithGroups：matchMode=regex 时同时返回命名捕获组，供 attribution 提取字段。
-// 非 regex 或无命名捕获组时返回 null。
-function matchesRulePatternWithGroups(
-  rule: ContextLedgerRule,
-  text: string,
-  section: SegmentSection,
-): Record<string, string | undefined> | null {
-  const attr = rule.attribution;
-  if (!attr?.pattern || attr.matchMode !== "regex") return null;
+  // section 约束
   if (attr.location?.section !== undefined && attr.location.section !== section) return null;
-  const m = new RegExp(attr.pattern).exec(text);
-  if (!m) return null;
-  return (m.groups ?? {}) as Record<string, string | undefined>;
+
+  // queryScope 约束
+  if (rule.queryScope && rule.queryScope !== "any") {
+    if (queryKind !== rule.queryScope) return null;
+  }
+
+  if (attr.matchMode === "regex") {
+    const m = new RegExp(attr.pattern, "s").exec(text);
+    if (!m) return null;
+    return (m.groups ?? {}) as Record<string, string | undefined>;
+  }
+  if (attr.matchMode === "exact") {
+    return text === attr.pattern ? true : null;
+  }
+  if (attr.matchMode === "contains") {
+    return text.includes(attr.pattern) ? true : null;
+  }
+  // prefix / structural
+  return text.trimStart().startsWith(attr.pattern) ? true : null;
 }
 
-// ── text 检测工具 ──────────────────────────────────────────────────────────────
+// findMatchingRule：按 CONTEXT_LEDGER_RULES 顺序遍历，返回第一个命中的 rule + 捕获组。
+function findMatchingRule(
+  text: string,
+  section: SegmentSection,
+  queryKind: string,
+): { rule: ContextLedgerRule; groups: Record<string, string | undefined> | null } | null {
+  for (const rule of CONTEXT_LEDGER_RULES) {
+    const result = tryMatchRule(rule, text, section, queryKind);
+    if (result !== null) {
+      return { rule, groups: result === true ? null : result };
+    }
+  }
+  return null;
+}
+
+// ── rule → attribution 字段映射 ───────────────────────────────────────────────
+// 从 rule 的 attribution 字段推导出 ProxySegmentAttribution 的各语义字段。
+// 这里是唯一的"rule → 字段"映射点，attribution 主流程不再重复这些逻辑。
+
+interface RuleMatchResult {
+  category: SegmentCategory;
+  mechanism: ProxySegmentAttribution["mechanism"];
+  confidence: ProxySegmentAttribution["confidence"];
+  attributedSource: MutationSourceKind;
+  lifecycle: SegmentLifecycle | undefined;
+  ruleId: string;
+  flags: SegmentFlag[];
+  notes: string[] | undefined;
+}
+
+function applyRuleMatch(
+  rule: ContextLedgerRule,
+  groups: Record<string, string | undefined> | null,
+): RuleMatchResult {
+  const attr = rule.attribution!;
+
+  // lifecycle：从 rule.reconstruction.emits.lifecycle 推导
+  const lifecycle = rule.reconstruction?.emits?.lifecycle;
+
+  // flags
+  const flags: SegmentFlag[] = [];
+  if (rule.reconstruction?.emits?.flags?.includes("injected")) flags.push("injected");
+  if (rule.reconstruction?.emits?.flags?.includes("known_noise")) flags.push("known_noise");
+
+  // category：从 rule.attribution.category
+  const category = attr.category;
+
+  // mechanism：从 rule.attribution.mechanism
+  const mechanism = attr.mechanism;
+
+  // confidence：有命名捕获组且全部非空 → exact；否则按 rule.reconciliation.confidence 降级
+  const hasGroups = groups && Object.keys(groups).length > 0;
+  const allGroupsFilled = hasGroups && Object.values(groups!).every((v) => v !== undefined && v !== "");
+  const baseConfidence = rule.reconciliation?.confidence ?? "inferred";
+  const confidence: ProxySegmentAttribution["confidence"] =
+    attr.matchMode === "exact" ? "exact"
+    : allGroupsFilled ? "exact"
+    : hasGroups ? "inferred"
+    : baseConfidence;
+
+  // attributedSource：tool_use/tool_result 由 wire schema 决定，其余由 rule 决定
+  const attributedSource: MutationSourceKind =
+    category === "tool_use" || category === "tool_result" ? "jsonl" : "harness_rule";
+
+  // notes：billing rule 专用捕获组、dynamic section 专用捕获组
+  let notes: string[] | undefined;
+  if (category === "billing_noise" && groups) {
+    notes = [
+      `cc_version=${groups["version"] ?? "?"}`,
+      `cc_entrypoint=${groups["entrypoint"] ?? "?"}`,
+      ...(groups["cch"] ? [`cch=${groups["cch"]}`] : []),
+      ...(groups["workload"] ? [`cc_workload=${groups["workload"]}`] : []),
+    ].filter((n) => !n.endsWith("?"));
+    if (notes.length === 0) notes = undefined;
+  } else if (rule.ruleId === CLAUDE_CODE_ENVIRONMENT_SECTION_RULE.ruleId && groups) {
+    notes = [
+      `cwd=${groups["cwd"] ?? "?"}`,
+      `platform=${groups["platform"] ?? "?"}`,
+      `shell=${groups["shell"] ?? "?"}`,
+      `osVersion=${groups["osVersion"] ?? "?"}`,
+      `model=${groups["modelDesc"] ?? "?"}`,
+      ...(groups["cutoff"] ? [`cutoff=${groups["cutoff"]}`] : []),
+    ];
+  } else if (rule.ruleId === CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE.ruleId && groups?.["memoryDir"]) {
+    notes = [`memoryDir=${groups["memoryDir"]}`];
+  } else if (rule.ruleId === CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE.ruleId && groups) {
+    if (groups["currentBranch"]) {
+      notes = [
+        `currentBranch=${groups["currentBranch"]}`,
+        `mainBranch=${groups["mainBranch"] ?? "?"}`,
+        ...(groups["gitUser"] ? [`gitUser=${groups["gitUser"]}`] : []),
+      ];
+    } else {
+      notes = ["no_git_repo: gitStatus block absent"];
+    }
+  }
+
+  // Session-specific guidance：embedded variant 升 confidence
+  if (rule.ruleId === CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE.ruleId) {
+    return { category, mechanism, confidence: "exact", attributedSource, lifecycle, ruleId: rule.ruleId, flags, notes };
+  }
+
+  return { category, mechanism, confidence, attributedSource, lifecycle, ruleId: rule.ruleId, flags, notes };
+}
+
+// ── text 検出工具（wire schema 感知、不依赖文本 pattern rule）────────────────────
 
 function isBillingNoise(text: string): boolean {
   return text.trimStart().toLowerCase().startsWith(BILLING_HEADER_PREFIX);
@@ -139,8 +229,11 @@ function parseMsgIndex(jsonPath: string | undefined): number | null {
 // ── 核心函数 ──────────────────────────────────────────────────────────────────
 
 /**
- * 消费 snapshot.segments，对每个 segment 应用 rule，产出 ProxySegmentAttribution[]。
- * 不修改 snapshot；attribution 与 segments 1:1 对应。
+ * 消费 snapshot.segments，对每个 segment 应用 CONTEXT_LEDGER_RULES，产出 ProxySegmentAttribution[]。
+ *
+ * 主流程：每个 segment → findMatchingRule → applyRuleMatch → push attribution。
+ * Rule 未覆盖的情况（wire schema / prior_session / rule_gap）在主流程末尾兜底。
+ * attribution 函数本身不写任何 pattern 假设，只处理 rule 无法覆盖的 wire-schema 感知事项。
  */
 export function inferClaudeProxyAttributions(
   snapshot: ProxyQuerySnapshot,
@@ -149,7 +242,7 @@ export function inferClaudeProxyAttributions(
   const results: ProxySegmentAttribution[] = [];
   const queryKind = snapshot.request?.queryKind ?? "unknown";
 
-  // 预收集 tool_use id，用于 tool_result cross-reference
+  // 预收集 tool_use id，用于 tool_result cross-reference（wire schema，无文本 pattern）
   const knownToolUseIds = new Set<string>();
   for (const seg of snapshot.segments) {
     if (seg.category === "tool_use" && seg.toolUseId) {
@@ -157,7 +250,7 @@ export function inferClaudeProxyAttributions(
     }
   }
 
-  // 总消息索引数（prior_session_guess 依赖）
+  // 总消息索引数（prior_session_guess 依赖，结构性推断）
   const msgIndices = new Set<number>();
   for (const seg of snapshot.segments) {
     if (seg.section !== "messages") continue;
@@ -176,6 +269,7 @@ export function inferClaudeProxyAttributions(
     const chars = seg.charCount ?? 0;
     const rawText = seg.rawText ?? "";
     const meta = seg.metadata as Record<string, unknown> | undefined;
+    const sectionHeader = typeof meta?.["sectionHeader"] === "string" ? meta["sectionHeader"] : null;
 
     let category: SegmentCategory = seg.category;
     let mechanism: ProxySegmentAttribution["mechanism"] = "unknown";
@@ -186,45 +280,27 @@ export function inferClaudeProxyAttributions(
     let notes: string[] | undefined;
     const flags: SegmentFlag[] = [];
 
-    // ── system section ──────────────────────────────────────────────────────
+    // ── 主路径：rule 驱动 ────────────────────────────────────────────────────
+    // findMatchingRule 按 CONTEXT_LEDGER_RULES 顺序遍历，返回第一个命中的 rule。
+    // section 约束、queryScope 约束、matchMode 全部在 tryMatchRule 里统一处理。
 
-    if (seg.section === "system") {
-      const sectionHeader = typeof meta?.["sectionHeader"] === "string"
-        ? meta["sectionHeader"]
-        : null;
+    const ruleMatch = findMatchingRule(rawText, seg.section, queryKind);
 
-      // R0：side query rules（queryScope="side_query" 제약으로 주 대화와 혼동 방지）
-      if (matchesRulePattern(CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE, rawText, "system", queryKind)) {
-        category = "system_prompt";
-        mechanism = "system_prompt_pattern";
-        confidence = "exact";
-        attributedSource = "harness_rule";
-        lifecycle = "query";
-        ruleId = CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE.ruleId;
-        notes = ["side_query: generateSessionTitle() — Haiku session title generation"];
-      } else {
-      // R0 未命中时进入 R1 以下分支
-      const billingGroups = matchesRulePatternWithGroups(CLAUDE_CODE_BILLING_NOISE_RULE, rawText, "system");
-      if (billingGroups !== null) {
-        // R1：billing header（regex 匹配，提取 cc_version/cc_entrypoint/cch/cc_workload）
-        category = "billing_noise";
-        mechanism = "billing_noise_pattern";
-        confidence = "exact";
-        attributedSource = "harness_rule";
-        lifecycle = "noise";
-        ruleId = CLAUDE_CODE_BILLING_NOISE_RULE.ruleId;
-        flags.push("known_noise");
-        // 把动态字段存入 attribution metadata，供 reconciliation/UI 展示
-        if (Object.keys(billingGroups).length > 0) {
-          notes = [
-            `cc_version=${billingGroups["version"] ?? "?"}`,
-            `cc_entrypoint=${billingGroups["entrypoint"] ?? "?"}`,
-            ...(billingGroups["cch"] ? [`cch=${billingGroups["cch"]}`] : []),
-            ...(billingGroups["workload"] ? [`cc_workload=${billingGroups["workload"]}`] : []),
-          ];
-        }
-      } else if (isBillingNoise(rawText)) {
-        // R1 fallback：前缀匹配兜底（regex 未命中但前缀存在，说明格式异常——仍标 billing_noise）
+    if (ruleMatch) {
+      const applied = applyRuleMatch(ruleMatch.rule, ruleMatch.groups);
+      category = applied.category;
+      mechanism = applied.mechanism;
+      confidence = applied.confidence;
+      attributedSource = applied.attributedSource;
+      lifecycle = applied.lifecycle;
+      ruleId = applied.ruleId;
+      notes = applied.notes;
+      flags.push(...applied.flags);
+
+    // ── 兜底路径：wire schema 感知（无文本 pattern rule 可覆盖）─────────────
+    } else if (seg.section === "system") {
+      // billing fallback：regex rule 未命中但前缀存在，说明 billing header 格式异常
+      if (isBillingNoise(rawText)) {
         category = "billing_noise";
         mechanism = "billing_noise_pattern";
         confidence = "inferred";
@@ -233,130 +309,46 @@ export function inferClaudeProxyAttributions(
         ruleId = CLAUDE_CODE_BILLING_NOISE_RULE.ruleId;
         flags.push("known_noise");
         notes = ["billing header detected by prefix fallback; regex did not match — format may differ from expected"];
-      } else if (matchesRulePattern(CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE, rawText, "system")) {
-        // R2：identity rule（57-char 固定前缀，exact pattern match）
-        category = "system_prompt";
-        mechanism = "system_prompt_pattern";
-        confidence = "exact";
-        attributedSource = "harness_rule";
-        lifecycle = "session";
-        ruleId = CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE.ruleId;
-      } else if (sectionHeader !== null && DYNAMIC_SECTION_HEADERS.has(sectionHeader)) {
-        // R2b：dynamic section——sectionHeader 精确匹配，各 header 对应各自的 rule
-        category = "harness_injection";
-        mechanism = "system_prompt_pattern";
-        confidence = "inferred";
-        attributedSource = "harness_rule";
-        lifecycle = "query";
-        if (sectionHeader === "Session-specific guidance") {
-          // 先尝试 embedded 精确变体，命中则 confidence 升为 exact
-          if (matchesRulePattern(CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE, rawText, "system", queryKind)) {
-            ruleId = CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE.ruleId;
-            confidence = "exact";
-          } else {
-            ruleId = CLAUDE_CODE_SESSION_GUIDANCE_RULE.ruleId;
-          }
-        } else if (sectionHeader === "Environment") {
-          ruleId = CLAUDE_CODE_ENVIRONMENT_SECTION_RULE.ruleId;
-          // regex captureGroups 로 동적 필드 추출 → notes 에 기록
-          const envGroups = matchesRulePatternWithGroups(CLAUDE_CODE_ENVIRONMENT_SECTION_RULE, rawText, "system");
-          if (envGroups && Object.keys(envGroups).length > 0) {
-            confidence = "exact";  // regex 구조 매칭 성공 → confidence 승급
-            notes = [
-              `cwd=${envGroups["cwd"] ?? "?"}`,
-              `platform=${envGroups["platform"] ?? "?"}`,
-              `shell=${envGroups["shell"] ?? "?"}`,
-              `osVersion=${envGroups["osVersion"] ?? "?"}`,
-              `model=${envGroups["modelDesc"] ?? "?"}`,
-              ...(envGroups["cutoff"] ? [`cutoff=${envGroups["cutoff"]}`] : []),
-            ];
-          }
-        } else if (sectionHeader === "auto memory") {
-          ruleId = CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE.ruleId;
-          // 用 regex captureGroups 提取 memoryDir（用户本地路径）
-          const memGroups = matchesRulePatternWithGroups(CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE, rawText, "system");
-          if (memGroups?.["memoryDir"]) {
-            notes = [`memoryDir=${memGroups["memoryDir"]}`];
-          }
-        }
-        // "Language" section 暂无独立 rule，ruleId 留空
-        flags.push("injected");
       } else {
-        // R2c：静态 body rules 顺序匹配（均按 sectionHeader 或 rawText 前缀精确识别）
-        // 顺序对应 getSystemPrompt() 的产出顺序（prompts.ts:560-576）
-        const STATIC_BODY_RULES = [
-          CLAUDE_CODE_INTRO_STANDARD_RULE,
-          CLAUDE_CODE_INTRO_OUTPUT_STYLE_RULE,
-          CLAUDE_CODE_SYSTEM_SECTION_RULE,
-          CLAUDE_CODE_DOING_TASKS_RULE,
-          CLAUDE_CODE_ACTIONS_SECTION_RULE,
-          CLAUDE_CODE_USING_YOUR_TOOLS_RULE,
-          CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE,
-          CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE,
-          CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE,
-        ] as const;
-
-        const matchedStaticRule = STATIC_BODY_RULES.find(
-          (r) => matchesRulePattern(r, rawText, "system", queryKind),
-        );
-
-        if (matchedStaticRule) {
-          // 命中静态 body rule：confidence=exact（正则精确匹配），lifecycle=session
-          category = "system_prompt";
-          mechanism = "system_prompt_pattern";
-          confidence = "exact";
-          attributedSource = "harness_rule";
-          lifecycle = "session";
-          ruleId = matchedStaticRule.ruleId;
+        // rule_gap：system segment 未命中任何 rule
+        category = "unknown";
+        mechanism = "unknown";
+        confidence = "unknown";
+        attributedSource = "unknown";
+        lifecycle = "unknown";
+        flags.push("unexplained");
+        if (!rawText.trim()) {
+          notes = ["rule_gap: empty system block"];
+        } else if (sectionHeader) {
+          notes = [`rule_gap: section header "${sectionHeader}" has no matching rule — needs rule coverage`];
         } else {
-          // rule gap：system segment 未命中任何 rule，说明 rule 覆盖不完整。
-          // 不再用 heuristic 伪装归类——明确标注为 unknown，触发后续 rule 补充。
-          // 常见缺口：# Doing tasks（USER_TYPE 条件分支复杂）、# Using your tools（enabledTools 动态）
-          category = "unknown";
-          mechanism = "unknown";
-          confidence = "unknown";
-          attributedSource = "unknown";
-          lifecycle = "unknown";
-          flags.push("unexplained");
-          if (!rawText.trim()) {
-            notes = ["rule_gap: empty system block"];
-          } else if (sectionHeader) {
-            notes = [`rule_gap: section header "${sectionHeader}" has no matching rule — needs rule coverage`];
-          } else {
-            notes = ["rule_gap: system block matched no rule — needs rule coverage"];
-          }
+          notes = ["rule_gap: system block matched no rule — needs rule coverage"];
         }
       }
 
-      if (chars > LARGE_SEGMENT_THRESHOLD) flags.push("large_segment");
-      } // R0 未命中时的 R1-R2c 分支结束
-    }
-
-    // ── tools section ───────────────────────────────────────────────────────
-
-    else if (seg.section === "tools") {
-      // R3：wire schema（blk.type 由 parser 直接确定）
+    } else if (seg.section === "tools") {
+      // tools segment：rule 未命中（新 tool 尚无 rule，或 tool 来自 MCP/plugin）。
+      // category/section 由 parser wire schema 确定（exact），只是具体 tool 无对应 rule。
       category = "tools_schema";
       mechanism = "tools_schema_pattern";
-      confidence = "exact";
+      confidence = "exact"; // wire schema 确定，parser 已验证 blk.type
       attributedSource = "harness_rule";
       lifecycle = "session";
-      if (chars > LARGE_SEGMENT_THRESHOLD) flags.push("large_segment");
-    }
+      // 从 jsonPath 提取 tool name 做 rule_gap 提示（有助于发现新 tool 需要补 rule）
+      const toolNameMatch = /reqBody\.tools\[\d+\]/.exec(jsonPath);
+      notes = [`rule_gap: no matching tool rule for ${toolNameMatch?.[0] ?? "unknown tool"} — add to registry if stable`];
 
-    // ── messages section ────────────────────────────────────────────────────
-
-    else if (seg.section === "messages") {
+    } else if (seg.section === "messages") {
       const msgIndex = parseMsgIndex(jsonPath);
 
       if (seg.category === "tool_use") {
-        // R6：wire schema
+        // wire schema：category 由 parser 直接确定，无文本 pattern 可写
         mechanism = "tool_use_id_match";
         confidence = "exact";
         attributedSource = "jsonl";
         lifecycle = "query";
       } else if (seg.category === "tool_result") {
-        // R6：cross-reference tool_use_id
+        // wire schema + cross-reference tool_use_id
         const tid = seg.toolUseId;
         const idMatched = !!tid && knownToolUseIds.has(tid);
         mechanism = idMatched ? "tool_use_id_match" : "unknown";
@@ -371,7 +363,7 @@ export function inferClaudeProxyAttributions(
           notes = [...(notes ?? []), `large_segment_detector: tool_result ${chars} chars > ${LARGE_SEGMENT_THRESHOLD} threshold`];
         }
       } else if (isSystemReminder(rawText)) {
-        // R4：<system-reminder>
+        // <system-reminder>：harness 注入，无独立文本 pattern rule（内容每次不同）
         category = "harness_injection";
         mechanism = "system_reminder_pattern";
         confidence = "exact";
@@ -379,32 +371,28 @@ export function inferClaudeProxyAttributions(
         lifecycle = "one_shot";
         flags.push("injected");
       } else if (isLocalCommand(rawText)) {
-        // R5：<bash-stdout> 等
+        // <bash-stdout> 等 local command 标签
         category = "local_command_history";
         mechanism = "local_command_pattern";
         confidence = "exact";
         attributedSource = "harness_rule";
         lifecycle = "one_shot";
         flags.push("injected");
+      } else if (seg.category === "user_message" && msgIndex === 0 && totalMessages > 1) {
+        // prior_session_guess：messages[0] 结构性推断，无文本 pattern
+        category = "prior_session_history";
+        mechanism = "unknown";
+        confidence = "inferred";
+        attributedSource = "prior_session";
+        lifecycle = "session";
+        notes = [`prior_session_guess: messages[0] user_message in a ${totalMessages}-message context`];
       } else if (seg.category === "user_message" || seg.category === "assistant_text") {
-        // prior_session_history：messages[0] 的 user text，推断为历史上下文
-        // 这是无 rule 的结构性推断（无法被精确 rule 覆盖），保持 inferred 但不标 approximate
-        if (seg.category === "user_message" && msgIndex === 0 && totalMessages > 1) {
-          category = "prior_session_history";
-          mechanism = "unknown";
-          confidence = "inferred";
-          attributedSource = "prior_session";
-          lifecycle = "session";
-          notes = [`prior_session_guess: messages[0] user_message in a ${totalMessages}-message context`];
-        } else {
-          // wire schema 确定类型（user_message / assistant_text），attribution 只补充 mechanism
-          mechanism = "unknown";
-          confidence = "inferred";
-          attributedSource = "jsonl";
-          lifecycle = "query";
-        }
+        // wire schema 确定类型，attribution 只补充 mechanism
+        mechanism = "unknown";
+        confidence = "inferred";
+        attributedSource = "jsonl";
+        lifecycle = "query";
       } else {
-        // R10：unknown
         category = "unknown";
         mechanism = "unknown";
         confidence = "unknown";
@@ -413,16 +401,16 @@ export function inferClaudeProxyAttributions(
         flags.push("unexplained");
         notes = [`unknown: segment ${segId} category=${seg.category} — no attribution rule matched`];
       }
-    }
 
-    // ── 未知 section ────────────────────────────────────────────────────────
-
-    else {
+    } else {
+      // 未知 section
       mechanism = "unknown";
       confidence = "unknown";
       attributedSource = "unknown";
       notes = [`unknown section: ${seg.section}`];
     }
+
+    if (chars > LARGE_SEGMENT_THRESHOLD) flags.push("large_segment");
 
     results.push({
       id: `attr-${++attrCounter}-${segId.slice(-8)}`,

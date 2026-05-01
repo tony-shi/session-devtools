@@ -130,7 +130,10 @@ describe("cross-fixture: system-tools-overhead 的 tools 被识别为 tools_sche
     const toolsAttr = attributions.find((a) => a.category === "tools_schema");
     expect(toolsAttr).toBeDefined();
     expect(toolsAttr?.mechanism).toBe("tools_schema_pattern");
-    expect(toolsAttr?.confidence).toBe("exact");
+    // exact = tool rule 精确命中（Edit/Write/Read 等静态 rule）
+    // inferred = regex rule 头尾锚定（Agent/Bash 等动态 rule）
+    // 两者都是合法结果，取决于具体 tool
+    expect(["exact", "inferred"]).toContain(toolsAttr?.confidence);
     expect(toolsAttr?.charCount ?? 0).toBeGreaterThan(0);
   });
 });

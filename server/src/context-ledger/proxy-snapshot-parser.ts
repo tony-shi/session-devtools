@@ -301,6 +301,11 @@ function parseToolsSegments(
     const flags: SegmentFlag[] = [];
     if (charCount >= LARGE_SEGMENT_THRESHOLD) flags.push("large_segment");
 
+    // attribution 用 rawText 做 pattern match（tool name / description）。
+    // tool rule 的 pattern 匹配 description 字段，不匹配整个 JSON，因此只存 description。
+    // 若 description 为空则退化到整体 JSON（至少让 name 可被 pattern 检测）。
+    const rawText = tool.description ?? raw;
+
     const seg: ContextSegment = {
       id: `pseg-tool-${i}`,
       section: "tools" as SegmentSection,
@@ -312,6 +317,7 @@ function parseToolsSegments(
           proxy: { file: proxyFile, jsonPath },
         } as Extract<SourceRef, { kind: "proxy" }>,
       ],
+      rawText,
       rawHash,
       charCount,
       cacheHint: "none",
