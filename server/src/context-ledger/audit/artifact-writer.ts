@@ -139,7 +139,7 @@ export function writeQueryArtifacts(
     updated.charDiffJsonPath = djPath;
     updated.charDiffHtmlPath = dhPath;
 
-    // proxy-attribution view（独立三列 HTML，不依赖 expected/mutation）
+    // proxy-attribution view（四列 HTML：raw / parser / attribution / expected）
     if (data.attributions) {
       const snap = data.report.snapshot;
       const pavHtml = renderProxyAttributionView({
@@ -151,6 +151,7 @@ export function writeQueryArtifacts(
         attributions: data.attributions,
         reqBody: data.reqBody ?? {},
         proxySourceRef: result.proxySourceRef,
+        reconciliationReport: data.report,
       });
       const pavPath = proxyAttributionViewPath(hash);
       writeFileSync(join(dir, pavPath), pavHtml, "utf-8");

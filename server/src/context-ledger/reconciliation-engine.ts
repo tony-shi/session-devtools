@@ -478,10 +478,14 @@ function matchOneExpected(
   // proxy 的 order 是 system+tools+messages 的全局序号，两者差值可达 30+，
   // 绝对差值容差无法覆盖。改为：在同 category+role 的候选中，取 proxy 里
   // 未匹配的第 N 个（N = expected 里同 category+role 中 eseg 的相对位置）。
+  //
+  // category 匹配优先用 attribution 层的 effective category：parser 只做 wire schema
+  // 分类（如 local_command_history 在 proxy 侧是 user_message），attribution 做语义识别。
+  // 因此 s.category（parser）OR attrBySegId.get(s.id)?.category（attribution）匹配即可。
   const heuristicCandidates = proxySegs.filter(
     (s) =>
       !matchedProxyIds.has(s.id) &&
-      s.category === eseg.category &&
+      (s.category === eseg.category || attrBySegId.get(s.id)?.category === eseg.category) &&
       s.role === eseg.role,
   );
   if (heuristicCandidates.length > 0) {

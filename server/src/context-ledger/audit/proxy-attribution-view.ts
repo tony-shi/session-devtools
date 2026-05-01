@@ -1,17 +1,24 @@
 // Proxy Attribution View
-// 四列 HTML，专注于 proxy → parser → attribution 的完整链路。
-// 不展示 expected / mutation / reconciliation。
+// 四列 HTML，proxy → parser → attribution → expected（reconciliation 结果）完整链路。
 //
 // 列定义：
 //   col-1 Raw Original  — reqBody 原始明文，直接从 JSON 取，不经过 parser
 //   col-2 Parser        — parseClaudeProxyRequest 产出的 segment（id/category/metadata）
 //   col-3 Attribution   — inferClaudeProxyAttributions 产出（category/mechanism/ruleId/notes）
+//   col-4 Expected      — reconciliation 结果：matched expected segment / attribution_only / expected_only
 //
-// 三列通过 segment id 对齐，点击行互相高亮。
+// 四列通过 segment id 对齐，点击行互相高亮。
+// col-4 需要传入 reconciliationReport；不传时退化为三列视图。
 
 import { CONTEXT_LEDGER_RULE_BY_ID } from "../rule-registry";
 import type { ContextLedgerRule } from "../rule-registry";
-import type { ContextSegment, ProxySegmentAttribution } from "../types";
+import type {
+  AlignmentRef,
+  ContextSegment,
+  ExpectedQueryContext,
+  ProxySegmentAttribution,
+  ReconciliationReport,
+} from "../types";
 
 // ── 颜色 / badge 映射 ─────────────────────────────────────────────────────────
 
@@ -105,20 +112,91 @@ function extractRawOriginal(
 
 // ── 数据准备 ─────────────────────────────────────────────────────────────────
 
+// 对齐状态：一个 proxy segment 对应的 reconciliation 结果
+interface AlignmentState {
+  kind: "matched" | "attribution_only" | "known_noise" | "unknown";
+  alignment: AlignmentRef | undefined;
+  // 对应的 expected segments（matched 时存在）
+  expectedSegs: ContextSegment[];
+  // alignment basis / confidence
+  basis?: AlignmentRef["basis"];
+  confidence?: AlignmentRef["confidence"];
+  matchKind?: AlignmentRef["matchKind"];
+  note?: string;
+}
+
+// 构建 proxy segment id → AlignmentState 的索引
+function buildAlignmentIndex(
+  report: ReconciliationReport,
+): Map<string, AlignmentState> {
+  const idx = new Map<string, AlignmentState>();
+  const expectedById = new Map<string, ContextSegment>(
+    (report.expected?.segments ?? []).map((s) => [s.id, s]),
+  );
+
+  for (const align of report.alignments) {
+    // 判断 kind
+    let kind: AlignmentState["kind"] = "matched";
+    if (align.expectedSegmentIds.length === 0) {
+      // 无 expected 对应：看 note 判断是 attribution_only 还是 known_noise
+      if (align.note?.startsWith("billing_noise")) {
+        kind = "known_noise";
+      } else {
+        kind = "attribution_only";
+      }
+    }
+
+    const expectedSegs = align.expectedSegmentIds
+      .map((id) => expectedById.get(id))
+      .filter(Boolean) as ContextSegment[];
+
+    const state: AlignmentState = {
+      kind,
+      alignment: align,
+      expectedSegs,
+      basis: align.basis,
+      confidence: align.confidence,
+      matchKind: align.matchKind,
+      note: align.note,
+    };
+
+    for (const proxyId of align.proxySegmentIds) {
+      idx.set(proxyId, state);
+    }
+  }
+
+  return idx;
+}
+
+// 未被任何 alignment 覆盖的 expected segments（expected_only）
+function buildExpectedOnlyList(report: ReconciliationReport): ContextSegment[] {
+  const coveredExpectedIds = new Set<string>();
+  for (const align of report.alignments) {
+    for (const id of align.expectedSegmentIds) coveredExpectedIds.add(id);
+  }
+  return (report.expected?.segments ?? []).filter((s) => !coveredExpectedIds.has(s.id));
+}
+
 interface SegmentRow {
   seg: ContextSegment;
   attr: ProxySegmentAttribution | undefined;
+  alignState: AlignmentState | undefined;
 }
 
 function buildRows(
   segments: ContextSegment[],
   attributions: ProxySegmentAttribution[],
+  alignmentIndex: Map<string, AlignmentState> | undefined,
 ): SegmentRow[] {
   const attrById = new Map<string, ProxySegmentAttribution>();
   for (const a of attributions) {
     for (const id of a.proxySegmentIds) attrById.set(id, a);
   }
-  return segments.map((seg) => ({ seg, attr: attrById.get(seg.id) }));
+  return segments.map((seg) => ({
+    seg,
+    attr: attrById.get(seg.id),
+    alignState: alignmentIndex?.get(seg.id),
+  }));
 }
 
 // ── 第一列：Raw Original（reqBody 原始明文）───────────────────────────────────
@@ -242,6 +320,84 @@ function renderAttrCell(row: SegmentRow): string {
     </div>`;
 }
 
+// ── 第四列：Expected（reconciliation 结果）──────────────────────────────────
+
+// alignment kind → 颜色 / badge 文案
+const ALIGN_KIND_STYLE: Record<string, { color: string; label: string }> = {
+  matched:          { color: "#10b981", label: "matched" },
+  attribution_only: { color: "#8b5cf6", label: "attribution only" },
+  known_noise:      { color: "#6b7280", label: "known noise" },
+  unknown:          { color: "#ef4444", label: "no alignment" },
+};
+
+function renderExpectedCell(row: SegmentRow): string {
+  const { alignState } = row;
+
+  if (!alignState) {
+    // reconciliationReport 未传，或此 proxy segment 没有对应的 alignment
+    return `<div class="expected-cell expected-missing"><span class="no-expected">— no reconciliation —</span></div>`;
+  }
+
+  const style = ALIGN_KIND_STYLE[alignState.kind] ?? ALIGN_KIND_STYLE["unknown"];
+  const kindBadge = badge(style.label, style.color);
+
+  // alignment basis / confidence badges
+  const basisBadge = alignState.basis ? badge(alignState.basis, "#334155") : "";
+  const confBadge = alignState.confidence ? confidenceBadge(alignState.confidence) : "";
+  const matchKindBadge = alignState.matchKind ? badge(alignState.matchKind, "#475569") : "";
+
+  // attribution_only / known_noise：无 expected segments
+  if (alignState.expectedSegs.length === 0) {
+    const noteHtml = alignState.note
+      ? `<div class="expected-note">${esc(truncate(alignState.note, 120))}</div>`
+      : "";
+    return `
+      <div class="expected-cell">
+        <div class="expected-kind">${kindBadge}</div>
+        <div class="expected-meta">${basisBadge}${confBadge}</div>
+        ${noteHtml}
+      </div>`;
+  }
+
+  // matched：展示 expected segments 的信息
+  const esegHtml = alignState.expectedSegs.map((eseg) => {
+    const color = categoryColor(eseg.category);
+    const charInfo = eseg.charCount !== undefined
+      ? `<span class="expected-chars">${eseg.charCount.toLocaleString()}c</span>`
+      : "";
+    const textPreview = eseg.contentRef?.kind === "inline" && eseg.contentRef.text
+      ? `<div class="expected-preview">${esc(truncate(eseg.contentRef.text, 120))}</div>`
+      : eseg.metadata?.preview
+        ? `<div class="expected-preview">${esc(truncate(String(eseg.metadata.preview), 120))}</div>`
+        : "";
+    return `
+      <div class="expected-seg">
+        <div class="expected-seg-meta">
+          ${badge(eseg.category, color)}
+          ${charInfo}
+          <code class="expected-seg-id">${esc(eseg.id)}</code>
+        </div>
+        ${textPreview}
+      </div>`;
+  }).join("");
+
+  // charDelta：expected chars - proxy chars
+  const proxyChars = row.seg.charCount ?? 0;
+  const expectedChars = alignState.expectedSegs.reduce((s, e) => s + (e.charCount ?? 0), 0);
+  const delta = expectedChars - proxyChars;
+  const deltaHtml = Math.abs(delta) > 0
+    ? `<div class="expected-delta ${delta > 0 ? "delta-pos" : "delta-neg"}">${delta > 0 ? "+" : ""}${delta.toLocaleString()} chars</div>`
+    : "";
+
+  return `
+    <div class="expected-cell">
+      <div class="expected-kind">${kindBadge}</div>
+      <div class="expected-meta">${basisBadge}${confBadge}${matchKindBadge}</div>
+      ${esegHtml}
+      ${deltaHtml}
+    </div>`;
+}
+
 // ── メイン HTML レンダー ───────────────────────────────────────────────────────
 
 export interface ProxyAttributionViewInput {
@@ -253,11 +409,27 @@ export interface ProxyAttributionViewInput {
   attributions: ProxySegmentAttribution[];
   reqBody: Record<string, unknown>;
   proxySourceRef?: string;
+  /** 可选。传入后启用第四列 Expected（reconciliation 结果）。 */
+  reconciliationReport?: ReconciliationReport;
 }
 
 export function renderProxyAttributionView(input: ProxyAttributionViewInput): string {
-  const { queryId, sessionId, timestamp, segments, attributions, reqBody, proxySourceRef } = input;
-  const rows = buildRows(segments, attributions);
+  const {
+    queryId, sessionId, timestamp, segments, attributions, reqBody, proxySourceRef,
+    reconciliationReport,
+  } = input;
+
+  // 第四列需要的索引
+  const alignmentIndex = reconciliationReport
+    ? buildAlignmentIndex(reconciliationReport)
+    : undefined;
+  const expectedOnlySegs = reconciliationReport
+    ? buildExpectedOnlyList(reconciliationReport)
+    : [];
+  const hasExpectedCol = !!reconciliationReport;
+  const colCount = hasExpectedCol ? 4 : 3;
+
+  const rows = buildRows(segments, attributions, alignmentIndex);
 
   const sectionOrder: ContextSegment["section"][] = ["system", "tools", "messages", "metadata", "unknown"];
   const grouped = new Map<string, SegmentRow[]>();
@@ -280,12 +452,13 @@ export function renderProxyAttributionView(input: ProxyAttributionViewInput): st
             <td class="col-raw-orig">${renderRawOriginalCell(row, reqBody)}</td>
             <td class="col-parser">${renderParserCell(row)}</td>
             <td class="col-attr">${renderAttrCell(row)}</td>
+            ${hasExpectedCol ? `<td class="col-expected">${renderExpectedCell(row)}</td>` : ""}
           </tr>`;
       }).join("");
 
       return `
         <tr class="section-header-row">
-          <td colspan="3">
+          <td colspan="${colCount}">
             <div class="section-banner">
               <span class="section-name">${esc(section)}</span>
               <span class="section-stats">${sectionRows.length} segments · ${totalChars.toLocaleString()} chars</span>
@@ -295,9 +468,49 @@ export function renderProxyAttributionView(input: ProxyAttributionViewInput): st
         ${rowHtml}`;
     }).join("");
 
+  // expected_only 行：没有对应 proxy segment 的 expected segments，追加到表尾
+  const expectedOnlyBlock = expectedOnlySegs.length > 0 && hasExpectedCol ? `
+    <tr class="section-header-row">
+      <td colspan="${colCount}">
+        <div class="section-banner">
+          <span class="section-name" style="color:#3b82f6">expected only</span>
+          <span class="section-stats">${expectedOnlySegs.length} segments · no proxy counterpart</span>
+        </div>
+      </td>
+    </tr>
+    ${expectedOnlySegs.map((eseg) => {
+      const color = categoryColor(eseg.category);
+      const textPreview = eseg.contentRef?.kind === "inline" && eseg.contentRef.text
+        ? `<pre class="raw-orig-text">${esc(truncate(eseg.contentRef.text, 400))}</pre>`
+        : eseg.metadata?.preview
+          ? `<div class="expected-preview">${esc(truncate(String(eseg.metadata.preview), 120))}</div>`
+          : "";
+      return `
+        <tr class="seg-row expected-only-row">
+          <td class="col-raw-orig"><div class="expected-only-cell">${textPreview}</div></td>
+          <td class="col-parser">
+            <div class="parser-cell">
+              <div class="seg-id"><code>${esc(eseg.id)}</code></div>
+              <div class="seg-meta">
+                ${badge(eseg.section, "#6b7280")}
+                ${badge(eseg.category, color)}
+              </div>
+              <div class="range-hint">${(eseg.charCount ?? 0).toLocaleString()}c</div>
+            </div>
+          </td>
+          <td class="col-attr"><div class="attr-cell attr-missing"><span class="no-attr">— proxy側に対応なし —</span></div></td>
+          <td class="col-expected">
+            <div class="expected-cell">
+              ${badge("expected only", "#3b82f6")}
+              <div class="expected-note" style="color:#3b82f6;margin-top:4px">
+                expected segment has no proxy counterpart
+              </div>
+            </div>
+          </td>
+        </tr>`;
+    }).join("")}` : "";
+
   // summary stats
-  const attrMap = new Map<string, ProxySegmentAttribution>();
-  for (const a of attributions) for (const id of a.proxySegmentIds) attrMap.set(id, a);
   const categoryCounts = new Map<string, number>();
   for (const a of attributions) {
     categoryCounts.set(a.category, (categoryCounts.get(a.category) ?? 0) + 1);
@@ -308,6 +521,27 @@ export function renderProxyAttributionView(input: ProxyAttributionViewInput): st
     .sort((a, b) => b[1] - a[1])
     .map(([cat, cnt]) => badge(`${cat} ×${cnt}`, categoryColor(cat)))
     .join(" ");
+
+  // reconciliation summary stats（第四列存在时）
+  const reconSummary = hasExpectedCol && reconciliationReport ? (() => {
+    const matched = reconciliationReport.alignments.filter(
+      (a) => a.expectedSegmentIds.length > 0,
+    ).length;
+    const attrOnly = reconciliationReport.alignments.filter(
+      (a) => a.expectedSegmentIds.length === 0 && !a.note?.startsWith("billing_noise"),
+    ).length;
+    const knownNoise = reconciliationReport.alignments.filter(
+      (a) => a.note?.startsWith("billing_noise"),
+    ).length;
+    return `<span class="stat" style="margin-left:12px;padding-left:12px;border-left:1px solid #334155">
+      reconcile: <b>${matched}</b> matched · <b>${attrOnly}</b> attr-only · <b>${knownNoise}</b> noise · <b>${expectedOnlySegs.length}</b> expected-only
+    </span>`;
+  })() : "";
+
+  // 列宽：4列模式下收窄，优先 Raw 和 Expected 内容
+  const colWidthStyle = hasExpectedCol
+    ? `col.col-raw-orig { width: 28%; } col.col-parser { width: 16%; } col.col-attr { width: 28%; } col.col-expected { width: 28%; }`
+    : `col.col-raw-orig { width: 38%; } col.col-parser { width: 22%; } col.col-attr { width: 40%; }`;
 
   return `<!DOCTYPE html>
 <html lang="zh">
@@ -328,11 +562,9 @@ body { font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 12px;
 .stat { color: #94a3b8; }
 .stat b { color: #e2e8f0; }
 
-/* ── table layout：3列 ── */
+/* ── table layout ── */
 table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-col.col-raw-orig { width: 38%; }
-col.col-parser   { width: 22%; }
-col.col-attr     { width: 40%; }
+${colWidthStyle}
 
 /* ── section banner ── */
 .section-header-row td { padding: 0; }
@@ -346,6 +578,8 @@ col.col-attr     { width: 40%; }
 .seg-row td { padding: 8px 12px; vertical-align: top; border-bottom: 1px solid #1e293b; }
 .seg-row:hover td { background: #1e293b80; }
 .seg-row.highlighted td { background: #1e3a5f; outline: 1px solid #3b82f6; }
+.expected-only-row td { background: #0c1a30; }
+.expected-only-row:hover td { background: #0e2040; }
 
 /* ── col-1: raw original ── */
 .raw-orig-cell { }
@@ -398,6 +632,26 @@ details.rule-detail:not([open]) .rule-id-text::before { content: "▸ "; }
 .rule-precond { color: #94a3b8; font-size: 9px; margin-top: 2px; }
 .rule-precond code { color: #7dd3fc; }
 
+/* ── col-4: expected（reconciliation）── */
+.expected-cell { }
+.expected-missing { color: #475569; }
+.no-expected { font-size: 11px; }
+.expected-kind { margin-bottom: 4px; }
+.expected-meta { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 4px; }
+.expected-seg { border: 1px solid #1e293b; border-radius: 3px; padding: 4px 6px;
+                margin-bottom: 4px; background: #0a1628; }
+.expected-seg-meta { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; margin-bottom: 2px; }
+.expected-seg-id { color: #a78bfa; font-size: 9px; }
+.expected-chars { color: #475569; font-size: 10px; }
+.expected-preview { font-size: 10px; color: #94a3b8; white-space: pre-wrap; word-break: break-all;
+                    max-height: 100px; overflow-y: auto; margin-top: 2px;
+                    border-top: 1px solid #1e293b; padding-top: 2px; }
+.expected-note { color: #64748b; font-size: 10px; margin-top: 2px; }
+.expected-delta { font-size: 10px; margin-top: 4px; font-weight: 600; }
+.delta-pos { color: #3b82f6; }
+.delta-neg { color: #ef4444; }
+.expected-only-cell { }
+
 /* ── badge ── */
 .badge { display: inline-block; padding: 1px 6px; border-radius: 3px;
          font-size: 10px; font-weight: 500; white-space: nowrap; }
@@ -422,6 +676,7 @@ details.rule-detail:not([open]) .rule-id-text::before { content: "▸ "; }
     <span class="stat"><b>${segments.length}</b> segments</span>
     <span class="stat"><b>${ruledCount}</b> with ruleId</span>
     <span style="flex:1">${summaryBadges}</span>
+    ${reconSummary}
   </div>
 </div>
 
@@ -430,16 +685,19 @@ details.rule-detail:not([open]) .rule-id-text::before { content: "▸ "; }
     <col class="col-raw-orig">
     <col class="col-parser">
     <col class="col-attr">
+    ${hasExpectedCol ? `<col class="col-expected">` : ""}
   </colgroup>
   <thead>
     <tr class="col-headers">
       <th>Raw（reqBody 原文）</th>
       <th>Parser Segments</th>
       <th>Attribution</th>
+      ${hasExpectedCol ? `<th>Expected（reconciliation）</th>` : ""}
     </tr>
   </thead>
   <tbody>
     ${sectionBlocks}
+    ${expectedOnlyBlock}
   </tbody>
 </table>
 

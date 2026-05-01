@@ -12,6 +12,7 @@ import { resolve, basename, dirname } from "path";
 import { computeCharDiff } from "../server/src/context-ledger/debug/char-diff";
 import type { CharDiffReport, SegmentText } from "../server/src/context-ledger/debug/char-diff";
 import { renderCharDiffHtml } from "../server/src/context-ledger/debug/render-char-diff-html";
+import { renderProxyAttributionView } from "../server/src/context-ledger/audit/proxy-attribution-view";
 import { MOCK_RECONCILIATION_REPORT } from "../server/src/context-ledger/report";
 import { reconcileClaudeContext } from "../server/src/context-ledger/reconciliation-engine";
 import { parseClaudeProxyRequest } from "../server/src/context-ledger/proxy-snapshot-parser";
@@ -186,12 +187,27 @@ if (args[0] === "--fixture") {
   report = reconcileClaudeContext({ snapshot, attributions, expected, fixtureName: caseName });
   outPath = explicitOut ?? resolve(`/tmp/context-char-diff-${caseName}.html`);
 
-  // 方案一：用原始 reqBody 反查 proxy segment 文本，不改核心路径
+  // char diff HTML
   const baseDiff = computeCharDiff(report);
   const diff = injectProxyTexts(baseDiff, report, proxyRaw.reqBody ?? {});
   const html = renderCharDiffHtml(diff);
   writeFileSync(outPath, html, "utf-8");
   printSummary(report.queryId, diff.summary, outPath);
+
+  // proxy-attribution view（四列：raw / parser / attribution / expected）
+  const pavOutPath = resolve(`/tmp/context-char-diff-${caseName}-attr-view.html`);
+  const pavHtml = renderProxyAttributionView({
+    snapshotId: snapshot.id,
+    queryId: snapshot.queryId,
+    sessionId: snapshot.sessionId,
+    timestamp: snapshot.timestamp,
+    segments: snapshot.segments,
+    attributions,
+    reqBody: proxyRaw.reqBody ?? {},
+    reconciliationReport: report,
+  });
+  writeFileSync(pavOutPath, pavHtml, "utf-8");
+  console.log(`Attribution view written to: ${pavOutPath}`);
   process.exit(0);
 
 } else if (args[0] === "--mock") {
