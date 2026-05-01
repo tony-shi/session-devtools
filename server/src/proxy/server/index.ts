@@ -5,6 +5,7 @@ import net from "node:net";
 import http from "node:http";
 import https from "node:https";
 import tls from "node:tls";
+import zlib from "node:zlib";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { getMitmWhitelist, PATHS, LISTEN_HOST, loadTargetCaPems } from "../config";
 import { connectEgress, UpstreamProxyError } from "../egress";
@@ -215,6 +216,8 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
         }
       }
     }
+    // B1.3: 强制上游只用我们能解的压缩算法，确保 dump 能解出原文
+    normalizeAcceptEncoding(fwdHeaders);
 
     const proxyReq = https.request(
       {
@@ -266,17 +269,35 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
         for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
           resHeaders[proxyRes.rawHeaders[i]!] = proxyRes.rawHeaders[i + 1]!;
         }
+        // B1.3: 累积全部原始（可能压缩）字节，end 时一次性解压并落盘。
+        // 原方案是边收边 parseSseChunk，但响应若 gzip 压缩则 c.toString("utf8") 全是乱码，事件计数永远为 0。
         const resChunks: Buffer[] = [];
         let resBytes = 0;
         const isStream = (proxyRes.headers["content-type"] ?? "").includes("event-stream");
-        // B1.1: SSE 流式解析状态
-        const sseState = { buf: "", index: 0 };
         proxyRes.on("data", (c: Buffer) => {
-          res.write(c);
+          res.write(c); // 客户端透传压缩字节，client 自行解压
           resBytes += c.length;
+          resChunks.push(c);
+        });
+        proxyRes.on("end", () => {
+          res.end();
+          recordUpstreamSuccess();
+          const rawBuf = Buffer.concat(resChunks);
+          const resContentEncoding = getContentEncoding(proxyRes.headers as Record<string, string | string[] | undefined>);
+          const decoded = decompressBody(rawBuf, resContentEncoding);
+          // 请求体目前 client→proxy 不会压缩（HTTP 客户端基本不会主动 gzip 请求体），
+          // 但仍按统一路径处理 reqHeaders 里的 Content-Encoding，未来兼容。
+          const reqContentEncoding = getContentEncoding(reqHeaders as Record<string, string | string[] | undefined>);
+          const reqDecoded = decompressBody(reqBody, reqContentEncoding);
+          const reqEncoded = encodeBodyForDump(reqDecoded);
+
+          let resBodyField: string;
+          let resBodyEncoding: "utf8" | "base64";
+          let sseEventCount = 0;
           if (isStream) {
-            // B1.1: 按 SSE 事件拆行落盘，每事件一条 JSONL
-            parseSseChunk(c.toString("utf8"), (eventType, data, idx) => {
+            // SSE：解压后整段喂给 parser，每个事件单独写一行 sse_event
+            const sseState = { buf: "", index: 0 };
+            parseSseChunk(decoded.toString("utf8"), (eventType, data, idx) => {
               writeTraffic({
                 ts: new Date().toISOString(),
                 kind: "sse_event",
@@ -287,13 +308,17 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
                 sseIndex: idx,
               });
             }, sseState);
+            sseEventCount = sseState.index;
+            // resBody 仍存解压后的完整 SSE 文本（不只是 placeholder），便于回放和调试
+            const decodedEncoded = encodeBodyForDump(decoded);
+            resBodyField = decodedEncoded.body;
+            resBodyEncoding = decodedEncoded.encoding;
           } else {
-            resChunks.push(c);
+            const decodedEncoded = encodeBodyForDump(decoded);
+            resBodyField = decodedEncoded.body;
+            resBodyEncoding = decodedEncoded.encoding;
           }
-        });
-        proxyRes.on("end", () => {
-          res.end();
-          recordUpstreamSuccess();
+
           writeTraffic({
             ts: new Date(startedAt).toISOString(),
             startedAt: new Date(startedAt).toISOString(),
@@ -304,10 +329,21 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
             status: proxyRes.statusCode,
             reqHeaders,
             resHeaders,
-            reqBody: safeBody(reqBody),
-            // B1.1: 流式响应记录总字节数和事件数，不再是 placeholder
-            resBody: isStream ? `[sse ${sseState.index} events, ${resBytes} bytes]` : safeBody(Buffer.concat(resChunks)),
-            meta: { durationMs: Date.now() - startedAt, upstream: !!process.env.API_DASHBOARD_PROXY_UPSTREAM },
+            reqBody: reqEncoded.body,
+            reqBodyEncoding: reqEncoded.encoding,
+            reqContentEncoding,
+            resBody: resBodyField,
+            resBodyEncoding,
+            resContentEncoding,
+            meta: {
+              durationMs: Date.now() - startedAt,
+              upstream: !!process.env.API_DASHBOARD_PROXY_UPSTREAM,
+              // 保留这些字段方便 audit / UI 显示而不必再去算
+              isStream,
+              sseEventCount,
+              rawBytes: resBytes,
+              decodedBytes: decoded.length,
+            },
           });
         });
         proxyRes.on("error", () => res.destroy());
@@ -396,6 +432,8 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
     }
     // 强制 Connection: close，兼容不支持 HTTP/1.1 keep-alive 的目标服务（如本地 Python 网关）
     forwardHeaders["Connection"] = "close";
+    // B1.3: 限定上游用我们能解的压缩算法
+    normalizeAcceptEncoding(forwardHeaders);
 
     // 转发到目标（直连，不再走 egress 避免循环）
     const fwdReq = http.request(
@@ -415,13 +453,29 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
         const resChunks: Buffer[] = [];
         let resBytes = 0;
         const isStream = (fwdRes.headers["content-type"] ?? "").includes("event-stream");
-        const sseState = { buf: "", index: 0 };
 
         fwdRes.on("data", (c: Buffer) => {
-          res.write(c);
+          res.write(c); // 透传压缩字节
           resBytes += c.length;
-          if (isStream && inWhitelist) {
-            parseSseChunk(c.toString("utf8"), (eventType, data, idx) => {
+          resChunks.push(c);
+        });
+
+        fwdRes.on("end", () => {
+          res.end();
+          if (!inWhitelist) return;
+          const rawBuf = Buffer.concat(resChunks);
+          const resContentEncoding = getContentEncoding(fwdRes.headers as Record<string, string | string[] | undefined>);
+          const decoded = decompressBody(rawBuf, resContentEncoding);
+          const reqContentEncoding = getContentEncoding(reqHeaders as Record<string, string | string[] | undefined>);
+          const reqDecoded = decompressBody(reqBody, reqContentEncoding);
+          const reqEncoded = encodeBodyForDump(reqDecoded);
+
+          let resBodyField: string;
+          let resBodyEncoding: "utf8" | "base64";
+          let sseEventCount = 0;
+          if (isStream) {
+            const sseState = { buf: "", index: 0 };
+            parseSseChunk(decoded.toString("utf8"), (eventType, data, idx) => {
               writeTraffic({
                 ts: new Date().toISOString(),
                 kind: "sse_event",
@@ -432,29 +486,41 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
                 sseIndex: idx,
               });
             }, sseState);
-          } else if (!isStream) {
-            resChunks.push(c);
+            sseEventCount = sseState.index;
+            const decodedEncoded = encodeBodyForDump(decoded);
+            resBodyField = decodedEncoded.body;
+            resBodyEncoding = decodedEncoded.encoding;
+          } else {
+            const decodedEncoded = encodeBodyForDump(decoded);
+            resBodyField = decodedEncoded.body;
+            resBodyEncoding = decodedEncoded.encoding;
           }
-        });
 
-        fwdRes.on("end", () => {
-          res.end();
-          if (inWhitelist) {
-            writeTraffic({
-              ts: new Date(startedAt).toISOString(),
-              startedAt: new Date(startedAt).toISOString(),
-              kind: "response",
-              sni: host,
-              method: req.method,
-              url: req.url ?? "",
-              status: fwdRes.statusCode,
-              reqHeaders,
-              resHeaders,
-              reqBody: safeBody(reqBody),
-              resBody: isStream ? `[sse ${sseState.index} events, ${resBytes} bytes]` : safeBody(Buffer.concat(resChunks)),
-              meta: { durationMs: Date.now() - startedAt, httpForward: true },
-            });
-          }
+          writeTraffic({
+            ts: new Date(startedAt).toISOString(),
+            startedAt: new Date(startedAt).toISOString(),
+            kind: "response",
+            sni: host,
+            method: req.method,
+            url: req.url ?? "",
+            status: fwdRes.statusCode,
+            reqHeaders,
+            resHeaders,
+            reqBody: reqEncoded.body,
+            reqBodyEncoding: reqEncoded.encoding,
+            reqContentEncoding,
+            resBody: resBodyField,
+            resBodyEncoding,
+            resContentEncoding,
+            meta: {
+              durationMs: Date.now() - startedAt,
+              httpForward: true,
+              isStream,
+              sseEventCount,
+              rawBytes: resBytes,
+              decodedBytes: decoded.length,
+            },
+          });
         });
         fwdRes.on("error", () => res.destroy());
       },
@@ -478,11 +544,67 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
   req.on("error", () => res.destroy());
 }
 
-function safeBody(buf: Buffer): string {
-  if (buf.length === 0) return "";
-  // 二进制检测：取前 64 字节采样，含控制字符则标记为 binary（不截断，记录真实大小）
-  const sample = buf.subarray(0, Math.min(buf.length, 64)).toString("utf8");
-  // eslint-disable-next-line no-control-regex
-  if (/[\x00-\x08\x0E-\x1F]/.test(sample)) return `[binary ${buf.length} bytes]`;
-  return buf.toString("utf8");
+// ─── B1.3 忠实存原文：解压 + base64 兜底，绝不截断 ──────────────────────────────
+
+// 我们能解压的 Content-Encoding 集合。zstd 仅在 Node 22.15+ 可用，做运行时探测。
+const ZSTD_SYNC: ((buf: Buffer) => Buffer) | null =
+  typeof (zlib as unknown as { zstdDecompressSync?: (b: Buffer) => Buffer }).zstdDecompressSync === "function"
+    ? (zlib as unknown as { zstdDecompressSync: (b: Buffer) => Buffer }).zstdDecompressSync
+    : null;
+
+const SUPPORTED_ENCODINGS = new Set(["gzip", "x-gzip", "deflate", "br", "identity", ""].concat(ZSTD_SYNC ? ["zstd"] : []));
+
+// 按 Content-Encoding 解压。失败 / 未知算法返回原 buffer（调用方 encodeBodyForDump 会以 base64 落盘，原文不丢）。
+function decompressBody(buf: Buffer, encoding?: string): Buffer {
+  if (!encoding || buf.length === 0) return buf;
+  const enc = encoding.toLowerCase().trim();
+  if (enc === "" || enc === "identity") return buf;
+  try {
+    if (enc === "gzip" || enc === "x-gzip") return zlib.gunzipSync(buf);
+    if (enc === "deflate") {
+      // RFC 7230 允许 zlib 包装或 raw deflate。先试带头，失败再试 raw。
+      try { return zlib.inflateSync(buf); } catch { return zlib.inflateRawSync(buf); }
+    }
+    if (enc === "br") return zlib.brotliDecompressSync(buf);
+    if (enc === "zstd" && ZSTD_SYNC) return ZSTD_SYNC(buf);
+  } catch (e) {
+    debug("decompress failed", enc, (e as Error).message);
+  }
+  return buf;
+}
+
+// 把字节落到 JSONL：能 utf8 round-trip 就用 utf8 原文，否则 base64。
+// 关键约束：永不截断，永不丢。
+function encodeBodyForDump(buf: Buffer): { body: string; encoding: "utf8" | "base64" } {
+  if (buf.length === 0) return { body: "", encoding: "utf8" };
+  const text = buf.toString("utf8");
+  // utf8 round-trip 校验：解码再编码字节数和内容完全一致才视为合法文本。
+  // 否则（含 NUL、半字符、二进制片段）一律 base64，保证下游可还原原始字节。
+  const reEncoded = Buffer.from(text, "utf8");
+  if (reEncoded.length === buf.length && reEncoded.equals(buf)) {
+    return { body: text, encoding: "utf8" };
+  }
+  return { body: buf.toString("base64"), encoding: "base64" };
+}
+
+// 转发前剥离我们解不了的 Accept-Encoding 算法（zstd 等），强制上游只用我们能解的。
+// 客户端那一侧仍然会拿到压缩字节（透传），所以不影响 client 兼容性——它本来就支持这些主流算法。
+function normalizeAcceptEncoding(headers: Record<string, string | string[]>): void {
+  const target = ZSTD_SYNC ? "gzip, deflate, br, zstd" : "gzip, deflate, br";
+  for (const k of Object.keys(headers)) {
+    if (k.toLowerCase() !== "accept-encoding") continue;
+    headers[k] = target;
+    return;
+  }
+  headers["Accept-Encoding"] = target;
+}
+
+// 取响应/请求 header 里的 content-encoding（大小写不敏感）。
+function getContentEncoding(headers: Record<string, string | string[] | undefined>): string | undefined {
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === "content-encoding") {
+      return Array.isArray(v) ? v[0] : v;
+    }
+  }
+  return undefined;
 }

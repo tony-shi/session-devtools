@@ -84,6 +84,9 @@ interface ProxyRequest {
   res_headers: Record<string, string> | string;
   req_body: string;
   res_body: string;
+  // B1.3: body 编码标记。base64 时 LazyBody 渲染前先 atob 还原原始字节
+  req_body_encoding?: "utf8" | "base64";
+  res_body_encoding?: "utf8" | "base64";
   sse_event_count: number;
   is_stream: number | boolean;
 }
@@ -157,7 +160,27 @@ function parsePlaceholder(value: string, lang: Lang): string | null {
   return null;
 }
 
-function LazyBody({ value, lang }: { value: string; lang: Lang }) {
+// B1.3: base64 → utf8。失败时 fallback 到原字节描述（不阻塞 UI）。
+function decodeBase64ToText(b64: string): { text: string; isBinary: boolean; bytes: number } {
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    // 含 NUL / 大量控制符则认为二进制
+    let ctrl = 0;
+    for (let i = 0; i < Math.min(bytes.length, 256); i++) {
+      const c = bytes[i];
+      if (c === 0 || (c < 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d)) ctrl++;
+    }
+    const isBinary = ctrl > 4;
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    return { text, isBinary, bytes: bytes.length };
+  } catch {
+    return { text: "", isBinary: true, bytes: 0 };
+  }
+}
+
+function LazyBody({ value, lang, encoding }: { value: string; lang: Lang; encoding?: "utf8" | "base64" }) {
   const [open, setOpen] = useState(false);
 
   if (!value || value === "") return <span style={{ color: "#ccc", fontSize: 12 }}>—</span>;
@@ -167,8 +190,26 @@ function LazyBody({ value, lang }: { value: string; lang: Lang }) {
     return <span style={{ color: "#999", fontSize: 12, fontStyle: "italic" }}>{placeholder}</span>;
   }
 
+  // base64 编码：先解码，binary 显示提示，文本走正常流程
+  let displayValue = value;
+  let binaryHint: string | null = null;
+  if (encoding === "base64") {
+    const decoded = decodeBase64ToText(value);
+    if (decoded.isBinary) {
+      binaryHint = lang === "zh"
+        ? `[二进制内容，${formatBytes(decoded.bytes)}（已 base64 落盘，原文完整）]`
+        : `[Binary payload, ${formatBytes(decoded.bytes)} (stored as base64, original intact)]`;
+    } else {
+      displayValue = decoded.text;
+    }
+  }
+
+  if (binaryHint) {
+    return <span style={{ color: "#999", fontSize: 12, fontStyle: "italic" }}>{binaryHint}</span>;
+  }
+
   if (!open) {
-    const preview = value.length > 80 ? value.slice(0, 80) + "…" : value;
+    const preview = displayValue.length > 80 ? displayValue.slice(0, 80) + "…" : displayValue;
     return (
       <button
         onClick={() => setOpen(true)}
@@ -180,8 +221,8 @@ function LazyBody({ value, lang }: { value: string; lang: Lang }) {
     );
   }
 
-  let pretty = value;
-  try { pretty = JSON.stringify(JSON.parse(value), null, 2); } catch { void 0; }
+  let pretty = displayValue;
+  try { pretty = JSON.stringify(JSON.parse(displayValue), null, 2); } catch { void 0; }
 
   return (
     <div>
@@ -248,7 +289,7 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
         </DetailSection>
 
         <DetailSection title={t("reqBody", lang)}>
-          <LazyBody value={req.req_body} lang={lang} />
+          <LazyBody value={req.req_body} lang={lang} encoding={req.req_body_encoding} />
         </DetailSection>
 
         <DetailSection title={t("resHeaders", lang)}>
@@ -256,7 +297,7 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
         </DetailSection>
 
         <DetailSection title={t("resBody", lang)}>
-          <LazyBody value={req.res_body} lang={lang} />
+          <LazyBody value={req.res_body} lang={lang} encoding={req.res_body_encoding} />
         </DetailSection>
       </div>
     </div>

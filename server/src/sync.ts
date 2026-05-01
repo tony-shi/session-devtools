@@ -237,8 +237,10 @@ export async function syncProxyTraffic(): Promise<{ inserted: number; errors: nu
     const insert = db.prepare(`
       INSERT INTO proxy_requests
         (ts, started_at, sni, method, url, status, bytes_in, bytes_out, duration_ms,
-         req_headers, res_headers, req_body, res_body, sse_event_count, is_stream)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         req_headers, res_headers, req_body, res_body,
+         req_body_encoding, res_body_encoding,
+         sse_event_count, is_stream)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     db.transaction(() => {
       for (const r of newRecords) {
@@ -247,6 +249,7 @@ export async function syncProxyTraffic(): Promise<{ inserted: number; errors: nu
             r.ts, r.started_at, r.sni, r.method, r.url, r.status,
             r.bytes_in, r.bytes_out, r.duration_ms,
             r.req_headers, r.res_headers, r.req_body, r.res_body,
+            r.req_body_encoding, r.res_body_encoding,
             r.sse_event_count, r.is_stream ? 1 : 0,
           );
           inserted++;

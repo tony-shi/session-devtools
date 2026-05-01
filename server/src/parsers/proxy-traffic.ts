@@ -18,6 +18,9 @@ export interface ProxyRequest {
   res_headers: string; // JSON 字符串
   req_body: string;
   res_body: string;
+  // B1.3: body 编码标记（"utf8" | "base64"）；老数据缺省为 "utf8"
+  req_body_encoding: "utf8" | "base64";
+  res_body_encoding: "utf8" | "base64";
   // SSE 专用字段
   sse_event_count: number;
   is_stream: boolean;
@@ -34,12 +37,21 @@ export function parseTrafficLine(line: string): ProxyRequest | null {
   if (rec.kind !== "response") return null;
 
   const resBody = (rec.resBody as string) ?? "";
-  // B1.1: 流式响应的 resBody 格式为 "[sse N events, M bytes]"
-  const sseMatch = resBody.match(/^\[sse (\d+) events, (\d+) bytes\]$/);
-  const isStream = !!sseMatch;
-  const sseEventCount = sseMatch ? Number(sseMatch[1]) : 0;
-
   const meta = (rec.meta as Record<string, unknown>) ?? {};
+
+  // B1.3: 优先读 meta.isStream / meta.sseEventCount（新格式）；
+  // 旧格式回退到 resBody 里 "[sse N events, M bytes]" 的 placeholder 解析（兼容历史 jsonl）。
+  let isStream: boolean;
+  let sseEventCount: number;
+  if (typeof meta.isStream === "boolean") {
+    isStream = meta.isStream;
+    sseEventCount = typeof meta.sseEventCount === "number" ? meta.sseEventCount : 0;
+  } else {
+    const sseMatch = resBody.match(/^\[sse (\d+) events, (\d+) bytes\]$/);
+    isStream = !!sseMatch;
+    sseEventCount = sseMatch ? Number(sseMatch[1]) : 0;
+  }
+
   const durationMs = typeof meta.durationMs === "number" ? meta.durationMs : null;
   const ts = (rec.ts as string) ?? new Date().toISOString();
   const startedAt = (rec.startedAt as string) ?? ts;
@@ -49,6 +61,9 @@ export function parseTrafficLine(line: string): ProxyRequest | null {
   const reqHeaders = (rec.reqHeaders as Record<string, string>) ?? {};
   const bytesOut = Number(resHeaders["content-length"] ?? resHeaders["Content-Length"] ?? 0);
   const bytesIn = Number(reqHeaders["content-length"] ?? reqHeaders["Content-Length"] ?? 0);
+
+  const reqBodyEncoding = ((rec.reqBodyEncoding as string) ?? "utf8") === "base64" ? "base64" : "utf8";
+  const resBodyEncoding = ((rec.resBodyEncoding as string) ?? "utf8") === "base64" ? "base64" : "utf8";
 
   return {
     ts,
@@ -64,6 +79,8 @@ export function parseTrafficLine(line: string): ProxyRequest | null {
     res_headers: JSON.stringify(resHeaders),
     req_body: (rec.reqBody as string) ?? "",
     res_body: resBody,
+    req_body_encoding: reqBodyEncoding,
+    res_body_encoding: resBodyEncoding,
     sse_event_count: sseEventCount,
     is_stream: isStream,
   };

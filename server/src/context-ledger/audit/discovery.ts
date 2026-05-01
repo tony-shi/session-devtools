@@ -97,10 +97,22 @@ export async function scanProxyRecords(opts?: {
     const reqBodyRaw = record["reqBody"];
     if (!reqBodyRaw) continue;
 
+    // B1.3: 兼容 base64 编码的 reqBody（proxy 落盘时若是二进制走 base64 分支）
+    const reqBodyEncoding = (record["reqBodyEncoding"] as string | undefined) ?? "utf8";
+    let reqBodyText: string | null = null;
+    if (typeof reqBodyRaw === "string") {
+      if (reqBodyEncoding === "base64") {
+        try { reqBodyText = Buffer.from(reqBodyRaw, "base64").toString("utf8"); }
+        catch { continue; }
+      } else {
+        reqBodyText = reqBodyRaw;
+      }
+    }
+
     let reqBody: Record<string, unknown>;
     try {
-      reqBody = typeof reqBodyRaw === "string"
-        ? (JSON.parse(reqBodyRaw) as Record<string, unknown>)
+      reqBody = reqBodyText !== null
+        ? (JSON.parse(reqBodyText) as Record<string, unknown>)
         : (reqBodyRaw as Record<string, unknown>);
     } catch {
       continue;

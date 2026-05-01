@@ -23,8 +23,17 @@ export type TrafficRecord = {
   status?: number;
   reqHeaders?: Record<string, string>;
   resHeaders?: Record<string, string>;
+  // body 落盘策略（设计文档 §B1.3 忠实存原文）：
+  // - utf8 文本（含 JSON、SSE 已解码后内容）：reqBody/resBody 直接放原文，*BodyEncoding="utf8"
+  // - 二进制（utf8 round-trip 失败、含 NUL 等）：reqBody/resBody 放 base64，*BodyEncoding="base64"
+  // - 绝不截断：>256 KB 也照样落盘
+  // - 上游若返回 gzip/br/deflate/zstd，proxy 解压后再落盘；resContentEncoding 字段记录原始算法用于审计
   reqBody?: string;
   resBody?: string;
+  reqBodyEncoding?: "utf8" | "base64";
+  resBodyEncoding?: "utf8" | "base64";
+  reqContentEncoding?: string; // 客户端原始 Content-Encoding（解压前）
+  resContentEncoding?: string; // 上游原始 Content-Encoding（解压前）
   // SSE 事件字段（B1.1）
   sseEventType?: string;  // SSE event: 字段，默认 "message"
   sseData?: string;       // SSE data: 字段内容

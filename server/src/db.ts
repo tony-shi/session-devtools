@@ -177,6 +177,8 @@ export function initProxySchema(): void {
       res_headers TEXT DEFAULT '{}',
       req_body TEXT DEFAULT '',
       res_body TEXT DEFAULT '',
+      req_body_encoding TEXT DEFAULT 'utf8',
+      res_body_encoding TEXT DEFAULT 'utf8',
       sse_event_count INTEGER DEFAULT 0,
       is_stream INTEGER DEFAULT 0
     );
@@ -198,6 +200,13 @@ export function initProxySchema(): void {
     // ts 保留为日志记录时间兼容旧数据；历史行迁移时用 ts 回填 started_at。
     db.exec("ALTER TABLE proxy_requests ADD COLUMN started_at TEXT");
     db.exec("UPDATE proxy_requests SET started_at = ts WHERE started_at IS NULL");
+  }
+  // B1.3: body 编码标记。"utf8"（默认）= 原文；"base64" = 二进制需 atob
+  if (!columns.some((c) => c.name === "req_body_encoding")) {
+    db.exec("ALTER TABLE proxy_requests ADD COLUMN req_body_encoding TEXT DEFAULT 'utf8'");
+  }
+  if (!columns.some((c) => c.name === "res_body_encoding")) {
+    db.exec("ALTER TABLE proxy_requests ADD COLUMN res_body_encoding TEXT DEFAULT 'utf8'");
   }
   db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_started ON proxy_requests(started_at)");
 }
