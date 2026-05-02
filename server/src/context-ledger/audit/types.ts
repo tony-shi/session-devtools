@@ -147,12 +147,45 @@ export interface PipelineResult {
 // Run Artifact
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** T0 控制变量 flags，记录本次 run 启用了哪些对照开关 */
+export interface AuditControlFlags {
+  /** --no-r9：禁用 attribution 反写 system/tools expected segments */
+  noR9?: boolean;
+  /** --verified-only：verifiedFor===null 的 rule 不进入 evidenceBacked */
+  verifiedOnly?: boolean;
+}
+
+/** T0 fixture 来源矩阵（fixture 模式下输出） */
+export interface FixtureMatrixEntry {
+  fixtureName: string;
+  source: string;  // "ant-native" | "external" | "synthetic" | "unknown"
+  queryId: string;
+  evidenceBackedCoverage?: number;
+  verdict?: string;
+}
+
+/** T0 rule registry 验证摘要（来自 rule-registry 的静态统计，不依赖 CLI binary） */
+export interface RuleRegistrySummary {
+  supportedVersion: string;
+  totalRules: number;
+  verifiedRules: number;
+  unverifiedRules: number;
+  /** 注意：与本地 CLI binary 对账结果需单独运行 verify-rules-against-cli.ts */
+  lastCliVerificationNote?: string;
+}
+
 // run.json 顶层结构
 export interface AuditRunRecord {
   runId: string;
   createdAt: string;
   baselineRunId?: string;
   mode: "fixtures" | "all-local" | "since-last";
+  /** T0 控制变量开关（默认均为 false/不存在即关闭） */
+  controlFlags?: AuditControlFlags;
+  /** T0 fixture 来源矩阵（仅 fixtures 模式下有值） */
+  fixtureMatrix?: FixtureMatrixEntry[];
+  /** T0 rule registry 验证摘要 */
+  ruleRegistrySummary?: RuleRegistrySummary;
   // discovery 计数
   discoveredProxyQueries: number;
   matchedProxyJsonlQueries: number;

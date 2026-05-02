@@ -231,6 +231,9 @@ export function writeRunJson(
   params: {
     mode: AuditRunRecord["mode"];
     baselineRunId?: string;
+    controlFlags?: import("./types").AuditControlFlags;
+    fixtureMatrix?: import("./types").FixtureMatrixEntry[];
+    ruleRegistrySummary?: import("./types").RuleRegistrySummary;
     discoveredProxyQueries: number;
     matchedProxyJsonlQueries: number;
     proxyWithoutJsonlQueries: number;
@@ -241,7 +244,7 @@ export function writeRunJson(
   },
 ): AuditRunRecord {
   const {
-    mode, baselineRunId,
+    mode, baselineRunId, controlFlags, fixtureMatrix, ruleRegistrySummary,
     discoveredProxyQueries, matchedProxyJsonlQueries,
     proxyWithoutJsonlQueries, jsonlOnlySessions, jsonlOnlyCandidateQueries,
     baselineEntries, currentEntries,
@@ -260,6 +263,9 @@ export function writeRunJson(
     createdAt: new Date().toISOString(),
     baselineRunId,
     mode,
+    ...(controlFlags && Object.keys(controlFlags).length > 0 ? { controlFlags } : {}),
+    ...(fixtureMatrix ? { fixtureMatrix } : {}),
+    ...(ruleRegistrySummary ? { ruleRegistrySummary } : {}),
     discoveredProxyQueries,
     matchedProxyJsonlQueries,
     proxyWithoutJsonlQueries,

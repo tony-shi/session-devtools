@@ -45,7 +45,9 @@ export function computeScorecard(
   // suspect match chars 从 char diff summary 取
   const suspectMatchChars = diff.summary.suspectMatchChars;
 
-  // alignedAuditedChars = evidence-backed matched chars（matched_exact + matched_char_diff）
+  // P3-3 双源问题：alignedAuditedChars 从 char-diff summary 取（diff.summary.evidenceBackedCoverage），
+  // 而 evidenceBackedProxyChars 从 reconciliation report 取（coverage.evidenceBackedCoverage）。
+  // 两者口径不同时会产生不一致——修复见 P3-3：reconciliation 为权威，char-diff 仅做渲染层。
   const alignedAuditedChars =
     diff.summary.totalProxyChars > 0
       ? Math.round(diff.summary.evidenceBackedCoverage * diff.summary.totalProxyChars)

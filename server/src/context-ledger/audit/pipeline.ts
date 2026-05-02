@@ -19,6 +19,7 @@ import { renderCharDiffHtml } from "../debug/render-char-diff-html";
 import type { ReconciliationReport } from "../types";
 import type { CharDiffReport } from "../debug/char-diff";
 import { computeScorecard } from "./scorecard";
+import { getContextLedgerRule, SUPPORTED_CLAUDE_CODE_VERSION } from "../rule-registry";
 import type {
   DiscoveredProxyRecord,
   PipelineResult,
@@ -26,9 +27,25 @@ import type {
 } from "./types";
 import { queryKeyHash } from "./paths";
 
+// T0 --verified-only：过滤掉 verifiedFor===null 的 rule 的 attribution，不进入 R9 重建
+function filterVerifiedAttributions(
+  attributions: import("../types").ProxySegmentAttribution[],
+): import("../types").ProxySegmentAttribution[] {
+  return attributions.filter((attr) => {
+    if (!attr.ruleId) return true;  // 无 ruleId 的 attribution（tool_use/tool_result wire）保留
+    const rule = getContextLedgerRule(attr.ruleId);
+    if (!rule) return true;  // 未知 rule 保留（不误杀）
+    return rule.verifiedFor === SUPPORTED_CLAUDE_CODE_VERSION;
+  });
+}
+
 export interface PipelineInput {
   proxy: DiscoveredProxyRecord;
   jsonlFile: string | null;  // null → proxy_without_jsonl
+  /** T0 控制变量：禁用 R9（attribution 反写 system/tools expected segments）*/
+  noR9?: boolean;
+  /** T0 控制变量：verifiedFor===null 的 rule 不进入 evidenceBacked，仅 attribution-only */
+  verifiedOnly?: boolean;
 }
 
 export interface PipelineOutputData {
@@ -102,7 +119,7 @@ function injectProxyTexts(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function runPipeline(input: PipelineInput): PipelineResult {
-  const { proxy, jsonlFile } = input;
+  const { proxy, jsonlFile, noR9, verifiedOnly } = input;
   const { queryKey, queryKeyHash: hash, timestamp, proxySourceFile, trafficLine } = proxy;
 
   // proxy_without_jsonl → skipped
@@ -139,13 +156,15 @@ export function runPipeline(input: PipelineInput): PipelineResult {
     const snapForAttr = JSON.parse(
       JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
     ) as typeof snapshot;
-    const attributions = inferClaudeProxyAttributions(snapForAttr);
+    const allAttributions = inferClaudeProxyAttributions(snapForAttr);
+    // T0 控制变量：--verified-only 过滤掉 verifiedFor===null 的 rule，不进入 R9 重建
+    const attributions = verifiedOnly ? filterVerifiedAttributions(allAttributions) : allAttributions;
 
     // 3. 解析 JSONL
     const jsonlRaw = readFileSync(jsonlFile, "utf-8");
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
 
-    // 4. 重建 expected
+    // 4. 重建 expected（noR9 禁用 attribution 反写，verifiedOnly 已在 step 2 过滤）
     const proxySegmentsById = new Map(snapshot.segments.map((s) => [s.id, s]));
     const expected = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
@@ -157,6 +176,8 @@ export function runPipeline(input: PipelineInput): PipelineResult {
       hasPreSessionActivity: parsed.hasPreSessionActivity,
       attributions,
       proxySegmentsById,
+      // T0 控制变量：--no-r9 时禁用 attribution 反写
+      rules: noR9 ? { injectFromAttributions: false } : undefined,
     });
 
     // 5. reconcile
@@ -200,7 +221,7 @@ export function runPipelineWithData(input: PipelineInput): {
   result: PipelineResult;
   data?: PipelineOutputData;
 } {
-  const { proxy, jsonlFile } = input;
+  const { proxy, jsonlFile, noR9 } = input;
   const { queryKey, queryKeyHash: hash, timestamp, proxySourceFile, trafficLine } = proxy;
 
   if (!jsonlFile || !existsSync(jsonlFile)) {
@@ -236,7 +257,10 @@ export function runPipelineWithData(input: PipelineInput): {
     const snapForAttr = JSON.parse(
       JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
     ) as typeof snapshot;
-    const attributions = inferClaudeProxyAttributions(snapForAttr);
+    const allAttributions = inferClaudeProxyAttributions(snapForAttr);
+    // T0 控制变量：--verified-only 过滤掉 verifiedFor===null 的 rule，不进入 R9 重建
+    const { verifiedOnly } = input;
+    const attributions = verifiedOnly ? filterVerifiedAttributions(allAttributions) : allAttributions;
 
     const jsonlRaw = readFileSync(jsonlFile, "utf-8");
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
@@ -252,6 +276,8 @@ export function runPipelineWithData(input: PipelineInput): {
       hasPreSessionActivity: parsed.hasPreSessionActivity,
       attributions,
       proxySegmentsById,
+      // T0 控制变量：--no-r9 时禁用 attribution 反写
+      rules: noR9 ? { injectFromAttributions: false } : undefined,
     });
 
     const report = reconcileClaudeContext({ snapshot, attributions, expected });

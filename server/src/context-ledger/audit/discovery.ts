@@ -161,6 +161,9 @@ async function scanSingleFile(
     if (seenQueryHashes.has(hash)) continue;
     seenQueryHashes.add(hash);
 
+    // P0-3 阻塞点：{ ...record, reqBody } 用解析后的对象覆盖了原始字符串，
+    // wire bytes（rawReqBodyText / rawReqBodyBytesHash）在此处丢失。
+    // 修复见 P0-3：需同时保留 rawReqBodyText + rawReqBodyBytesHash + parsedReqBody。
     results.push({
       queryKey: key,
       queryKeyHash: hash,
@@ -314,6 +317,33 @@ export async function discoverLocal(opts?: {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Fixture 来源检测（T0 fixture matrix）
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type FixtureSource = "ant-native" | "external" | "synthetic" | "unknown";
+
+/**
+ * 根据 proxy-request.json 的 sni/url 字段推断 fixture 录制来源。
+ * ant-native：通过 Anthropic 内部代理（internal-proxy.example / api.internal-proxy.example / *.anthropic.com）录制。
+ * external：通过外部公开 Claude Code 录制（api.anthropic.com + 非内部域名）。
+ * synthetic：手写/合成的测试 fixture，通常无真实 sni 或 url。
+ */
+function detectFixtureSource(raw: Record<string, unknown>): FixtureSource {
+  const sni = (raw["sni"] as string | undefined) ?? "";
+  const url = (raw["url"] as string | undefined) ?? "";
+  if (sni.includes("internal-proxy") || sni.includes("internal-proxy.example") || url.includes("internal-proxy") || url.includes("internal-proxy.example")) {
+    return "ant-native";
+  }
+  if (sni.includes("anthropic.com") || url.includes("api.anthropic.com")) {
+    return "external";
+  }
+  if (!sni && !url.startsWith("http")) {
+    return "synthetic";
+  }
+  return "unknown";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Fixture 模式 discovery（用 server/test/fixtures 数据）
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -342,6 +372,7 @@ export function discoverFixtures(fixtureNames?: string[]): DiscoveryResult {
     const key: QueryKey = { agentKind: "claude-code", sessionId, queryId };
     const hash = queryKeyHash(key);
 
+    const fixtureSource = detectFixtureSource(raw);
     const proxy: DiscoveredProxyRecord = {
       queryKey: key,
       queryKeyHash: hash,
@@ -350,7 +381,8 @@ export function discoverFixtures(fixtureNames?: string[]): DiscoveryResult {
       timestamp: ts,
       sessionId,
       agentKind: "claude-code",
-      raw,
+      // _fixtureSource 元字段（不影响 pipeline，仅供 audit 报告的 fixture matrix 使用）
+      raw: { ...raw, _fixtureName: name, _fixtureSource: fixtureSource },
     };
 
     if (existsSync(jsonlFile)) {

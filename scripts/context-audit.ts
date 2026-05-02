@@ -10,6 +10,10 @@
 //   bun run context:audit:mark-baseline <runId>
 //   bun run context:audit clear              # 清除所有 audit 产物（不删 proxy/jsonl 原始数据）
 //   bun run context:audit clear --keep <N>   # 保留最近 N 个 run，清除其余
+//
+// T0 控制变量 flags（用于 R9 污染量化对照）：
+//   --no-r9          禁用 R9（attribution 反写 system/tools expected），量化 R9 虚高贡献
+//   --verified-only  verifiedFor===null 的 rule 不进入 evidenceBacked（仅 attribution-only）
 
 import { existsSync, readFileSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -17,6 +21,7 @@ import { join } from "node:path";
 import { makeRunId, runDir, AUDIT_HOME, RUNS_DIR, LATEST_JSON, BASELINE_JSON } from "../server/src/context-ledger/audit/paths";
 import { discoverFixtures, discoverLocal } from "../server/src/context-ledger/audit/discovery";
 import { runPipelineWithData } from "../server/src/context-ledger/audit/pipeline";
+import { CONTEXT_LEDGER_RULES, SUPPORTED_CLAUDE_CODE_VERSION } from "../server/src/context-ledger/rule-registry";
 import {
   ensureAuditDirs,
   loadBaselineIndex,
@@ -124,6 +129,10 @@ const mode: AuditRunRecord["mode"] = args.includes("--fixtures")
   ? "since-last"
   : "all-local";
 
+// T0 控制变量
+const noR9 = args.includes("--no-r9");
+const verifiedOnly = args.includes("--verified-only");
+
 // --baseline 指定对比 run
 let baselineRunId: string | undefined;
 const baselineIdx = args.indexOf("--baseline");
@@ -141,6 +150,8 @@ if (baselineIdx !== -1 && args[baselineIdx + 1]) {
 console.log(`\nContext Audit Runner`);
 console.log(`mode: ${mode}`);
 console.log(`baseline: ${baselineRunId ?? "(none)"}`);
+if (noR9) console.log(`[control] --no-r9: R9 attribution 反写已禁用`);
+if (verifiedOnly) console.log(`[control] --verified-only: 未验证 rule 不进 evidenceBacked`);
 console.log(`Discovering...`);
 
 let discovery: ReturnType<typeof discoverFixtures>;
@@ -203,7 +214,7 @@ let skippedCount = 0;
 
 // proxy_without_jsonl → 直接生成 skipped result
 for (const proxy of discovery.proxyWithoutJsonl) {
-  const { result } = runPipelineWithData({ proxy, jsonlFile: null });
+  const { result } = runPipelineWithData({ proxy, jsonlFile: null, noR9, verifiedOnly });
   const written = writeQueryArtifacts(runId, result);
   allResults.push(written);
   skippedCount++;
@@ -216,7 +227,7 @@ for (let i = 0; i < total; i++) {
   const label = `${proxy.queryKey.sessionId.slice(0, 8)}…/${proxy.queryKey.queryId.slice(0, 20)}`;
   process.stdout.write(`  [${i + 1}/${total}] ${label} `);
 
-  const { result, data } = runPipelineWithData({ proxy, jsonlFile });
+  const { result, data } = runPipelineWithData({ proxy, jsonlFile, noR9, verifiedOnly });
   const written = writeQueryArtifacts(runId, result, data);
   allResults.push(written);
 
@@ -238,9 +249,47 @@ for (let i = 0; i < total; i++) {
 
 const indexEntries = writeIndex(runId, allResults, baseline);
 
+// 记录本次使用的控制变量 flags
+const controlFlags = { ...(noR9 ? { noR9: true } : {}), ...(verifiedOnly ? { verifiedOnly: true } : {}) };
+
+// T0 rule registry 静态摘要（每次 run 都输出，不依赖 CLI binary）
+const verifiedRules = CONTEXT_LEDGER_RULES.filter((r) => r.verifiedFor === SUPPORTED_CLAUDE_CODE_VERSION).length;
+const ruleRegistrySummary = {
+  supportedVersion: SUPPORTED_CLAUDE_CODE_VERSION,
+  totalRules: CONTEXT_LEDGER_RULES.length,
+  verifiedRules,
+  unverifiedRules: CONTEXT_LEDGER_RULES.length - verifiedRules,
+  lastCliVerificationNote: "2026-05-02：exact_text rules 40，1 unique / 5 multi / 34 missing（见 scripts/verify-rules-against-cli.ts）",
+};
+
+// T0 fixture matrix：fixture 模式下从 discovery raw 元字段提取来源信息
+import type { FixtureMatrixEntry } from "../server/src/context-ledger/audit/types";
+let fixtureMatrix: FixtureMatrixEntry[] | undefined;
+if (mode === "fixtures") {
+  const scorecardByHash = new Map(
+    indexEntries.map((e) => [e.queryKeyHash, e]),
+  );
+  fixtureMatrix = discovery.discoveredProxyQueries.map((proxy) => {
+    const raw = proxy.raw;
+    const entry = scorecardByHash.get(proxy.queryKeyHash);
+    return {
+      fixtureName: (raw["_fixtureName"] as string | undefined) ?? proxy.queryKey.sessionId,
+      source: (raw["_fixtureSource"] as string | undefined) ?? "unknown",
+      queryId: proxy.queryKey.queryId,
+      evidenceBackedCoverage: entry?.verdict !== undefined
+        ? undefined  // scorecard 在 indexEntry 里没有直接暴露 coverage，后续通过 scorecard.json 读取
+        : undefined,
+      verdict: entry?.verdict,
+    };
+  });
+}
+
 const run = writeRunJson(runId, {
   mode,
   baselineRunId,
+  controlFlags: Object.keys(controlFlags).length > 0 ? controlFlags : undefined,
+  fixtureMatrix,
+  ruleRegistrySummary,
   discoveredProxyQueries: discovery.discoveredProxyQueries.length,
   matchedProxyJsonlQueries: discovery.matchedProxyJsonl.length,
   proxyWithoutJsonlQueries: discovery.proxyWithoutJsonl.length,

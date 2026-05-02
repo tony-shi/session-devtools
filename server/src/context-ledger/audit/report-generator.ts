@@ -27,6 +27,9 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
     `- **createdAt**: ${run.createdAt}`,
     `- **baselineRunId**: ${run.baselineRunId ?? "(none — first run)"}`,
     `- **mode**: ${run.mode}`,
+    ...(run.controlFlags && Object.keys(run.controlFlags).length > 0 ? [
+      `- **controlFlags**: ${Object.entries(run.controlFlags).filter(([,v]) => v).map(([k]) => `\`--${k.replace(/([A-Z])/g, '-$1').toLowerCase()}\``).join(", ")}`,
+    ] : []),
     ``,
     `## Discovery Summary`,
     ``,
@@ -127,6 +130,69 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
     );
     lines.push(``);
   }
+
+  // T0 rule registry summary section
+  if (run.ruleRegistrySummary) {
+    const rs = run.ruleRegistrySummary;
+    lines.push(`## Rule Registry Summary`, ``);
+    lines.push(`| 字段 | 值 |`);
+    lines.push(`|------|-----|`);
+    lines.push(`| supportedVersion | \`${rs.supportedVersion}\` |`);
+    lines.push(`| totalRules | ${rs.totalRules} |`);
+    lines.push(`| verifiedRules | ${rs.verifiedRules} |`);
+    lines.push(`| unverifiedRules | ${rs.unverifiedRules} |`);
+    const unverifiedPct = rs.totalRules > 0 ? ((rs.unverifiedRules / rs.totalRules) * 100).toFixed(1) : "0.0";
+    lines.push(``);
+    if (rs.unverifiedRules > rs.totalRules * 0.3) {
+      lines.push(`> ⚠️  未验证 rule 占比 ${unverifiedPct}%（>30%）→ 当前覆盖率数字不可信，建议运行 \`bun run scripts/verify-rules-against-cli.ts\` 更新 verifiedFor。`);
+    } else {
+      lines.push(`> ✓ 未验证 rule 占比 ${unverifiedPct}%`);
+    }
+    if (rs.lastCliVerificationNote) {
+      lines.push(`> 最近 CLI 对账：${rs.lastCliVerificationNote}`);
+    }
+    lines.push(``);
+  }
+
+  // T0 fixture matrix section（fixture 模式下输出）
+  if (run.fixtureMatrix && run.fixtureMatrix.length > 0) {
+    lines.push(`## Fixture Source Matrix`, ``);
+    lines.push(`| fixture | 来源 | queryId | verdict |`);
+    lines.push(`|---------|------|---------|---------|`);
+    for (const m of run.fixtureMatrix) {
+      const sourceTag = m.source === "ant-native"
+        ? "🏠 ant-native（Anthropic 内部）"
+        : m.source === "external"
+        ? "🌐 external（公开 CLI）"
+        : m.source === "synthetic"
+        ? "🔧 synthetic（手写）"
+        : `❓ ${m.source}`;
+      lines.push(`| ${m.fixtureName} | ${sourceTag} | ${m.queryId.slice(0, 20)} | ${m.verdict ?? "-"} |`);
+    }
+    const antNative = run.fixtureMatrix.filter((m) => m.source === "ant-native").length;
+    const external = run.fixtureMatrix.filter((m) => m.source === "external").length;
+    lines.push(``);
+    lines.push(`> ant-native: ${antNative}  external: ${external}  total: ${run.fixtureMatrix.length}`);
+    if (external === 0) {
+      lines.push(`> ⚠️  **无 external CLI fixture**：所有 fixture 来自 Anthropic 内部环境，`
+        + `无法验证 rule 对公开 Claude Code 的适用性。建议录制至少 2 份 external fixture（P3-5）。`);
+    }
+    lines.push(``);
+  }
+
+  // T0 已知限制 section
+  lines.push(`## 已知限制与已确认风险（T0 状态）`, ``);
+  lines.push(`| 问题 | 状态 | 计划 |`);
+  lines.push(`|------|------|------|`);
+  lines.push(`| **R9 虚高**：R9 把 proxy 反写 system/tools expected，导致 evidenceBacked 大幅虚高 | ⚠️ 已确认（--no-r9 对照：fixture coverage 从 ~95% 降到 <30%） | P0-1 拆路径 |`);
+  lines.push(`| **raw body 丢失**：discovery.ts 用解析后对象覆盖了原始 reqBody 字符串，wire bytes 信息在此处丢失 | ⚠️ 已确认（P0-3 阻塞点） | P0-3 保留三层 body |`);
+  lines.push(`| **rule 漂移**：exact_text rule 与本地 CLI 2.1.126 严重漂移（40 exact rules：1 unique / 5 multi / 34 missing） | ⚠️ 已确认（verify-rules-against-cli.ts） | P3-5 verifiedFor 降级 |`);
+  lines.push(`| **char-diff vs reconcile 双源**：scorecard alignedAuditedChars 从 diff.summary 取，evidenceBackedCoverage 从 report.coverage 取，口径不一致 | ⚠️ 已确认（scorecard.ts:~50） | P3-3 reconcile 为权威 |`);
+  lines.push(`| **baseline 跨 mode 比较**：baseline.json 无 mode 标签，fixture run 会错误与 all-local baseline 对比 | ⚠️ 已确认（T0 §3.3） | E0 baseline 按 mode 分域 |`);
+  lines.push(``);
+  lines.push(`> 上述限制不影响当前 run 的完成，但**覆盖率数字在 P0 完成前不可信**。`);
+  lines.push(`> 使用 \`--no-r9\` flag 可获得去除 R9 虚高后的真实 evidenceBacked 基线。`);
+  lines.push(``);
 
   // Next actions
   lines.push(`## Next Action Suggestions`, ``);
