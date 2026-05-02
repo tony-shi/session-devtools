@@ -146,6 +146,7 @@ export function runPipeline(input: PipelineInput): PipelineResult {
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
 
     // 4. 重建 expected
+    const proxySegmentsById = new Map(snapshot.segments.map((s) => [s.id, s]));
     const expected = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
       boundary: {
@@ -154,6 +155,8 @@ export function runPipeline(input: PipelineInput): PipelineResult {
         sessionId: parsed.sessionId,
       },
       hasPreSessionActivity: parsed.hasPreSessionActivity,
+      attributions,
+      proxySegmentsById,
     });
 
     // 5. reconcile
@@ -238,6 +241,7 @@ export function runPipelineWithData(input: PipelineInput): {
     const jsonlRaw = readFileSync(jsonlFile, "utf-8");
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
 
+    const proxySegmentsById = new Map(snapshot.segments.map((s) => [s.id, s]));
     const expected = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
       boundary: {
@@ -246,6 +250,8 @@ export function runPipelineWithData(input: PipelineInput): {
         sessionId: parsed.sessionId,
       },
       hasPreSessionActivity: parsed.hasPreSessionActivity,
+      attributions,
+      proxySegmentsById,
     });
 
     const report = reconcileClaudeContext({ snapshot, attributions, expected });

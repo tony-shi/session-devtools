@@ -90,6 +90,7 @@ export type AlignmentBasis =
   | "raw_hash"
   | "normalized_hash"
   | "tool_use_id"
+  | "rule_id"
   | "timestamp"
   | "order"
   | "category"

@@ -111,7 +111,7 @@ describe("rule registry contract", () => {
   // ── registry 基础契约 ────────────────────────────────────────────────────
 
   test("registry 当前包含 48 条人工确认的 rule", () => {
-    expect(CONTEXT_LEDGER_RULES).toHaveLength(48);
+    expect(CONTEXT_LEDGER_RULES).toHaveLength(59);
   });
 
   test("ruleId 在 registry 中唯一", () => {

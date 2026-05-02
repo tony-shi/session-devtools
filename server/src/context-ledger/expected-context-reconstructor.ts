@@ -62,11 +62,14 @@ import type {
   ContextMutation,
   ContextSegment,
   ExpectedQueryContext,
+  ProxySegmentAttribution,
   SegmentCategory,
   SegmentRole,
   SegmentSection,
   SourceRef,
 } from "./types";
+import { CONTEXT_LEDGER_RULES, getContextLedgerRule } from "./rule-registry";
+import type { ContextLedgerRule } from "./rule-registry";
 
 // 与 proxy-snapshot-parser 口径一致：16位短截 SHA-256
 function sha256Short(text: string): string {
@@ -87,6 +90,7 @@ export interface HarnessRuleConfig {
   filterKnownNoise?: boolean; // R6
   apiErrorRetryAlignment?: boolean; // R7
   filterSyntheticApiError?: boolean; // R8
+  injectFromAttributions?: boolean; // R9: 从 attribution 反向生成 system/tools expected segments
 }
 
 const DEFAULT_RULES: Required<HarnessRuleConfig> = {
@@ -98,6 +102,7 @@ const DEFAULT_RULES: Required<HarnessRuleConfig> = {
   filterKnownNoise: true,
   apiErrorRetryAlignment: true,
   filterSyntheticApiError: true,
+  injectFromAttributions: true,
 };
 
 export interface QueryBoundary {
@@ -121,12 +126,20 @@ export interface ReconstructInput {
   fixtureName?: string;
   /** 来自 JsonlMutationParseResult.hasPreSessionActivity：--resume 时 JSONL 里存在活动前置信号。 */
   hasPreSessionActivity?: boolean;
+  /**
+   * proxy attribution 结果（来自 inferClaudeProxyAttributions）。
+   * 提供后，reconstructor 用 attribution 里已命中的 ruleId 反向生成
+   * system / tools expected segments（R9_inject_from_attribution）。
+   * 不提供时 system/tools 段仍列为 unimplementedRules。
+   */
+  attributions?: ProxySegmentAttribution[];
+  /** proxy segments 查找表（id → segment），用于 R9 从 proxy rawText 计算 rawHash。 */
+  proxySegmentsById?: Map<string, ContextSegment>;
 }
 
 /** 暂未实现规则的标识。结果中 metadata.unimplementedRules 会列出这些。 */
 export const UNIMPLEMENTED_RULES = [
-  "system_prompt_injection",
-  "tools_schema_injection",
+  // system_prompt_injection / tools_schema_injection：有 attributions 时由 R9 实现，否则保留
   "system_reminder_per_turn",
   "prior_session_history",
   "compaction_replacement",
@@ -158,11 +171,30 @@ export function reconstructExpectedClaudeContext(
 
   // 4. R1–R5：把每条 mutation 映射为 ContextSegment；在 metadata.logicalMessage
   //    标记同一逻辑 message 的归并组（不物理合并，给后续 reconciliation 做 N:1 对齐）。
-  const segments = mapMutationsToSegments(surviving, rules);
+  const messageSegments = mapMutationsToSegments(surviving, rules);
+
+  // 4b. R9：从 proxy attributions 反向生成 system / tools expected segments。
+  // 每条 attribution 里有 ruleId，从 CONTEXT_LEDGER_RULES 读 reconstruction 信息，
+  // 生成对应的 expected segment。order 用负数保证排在 messages 段之前。
+  const attributionSegments = rules.injectFromAttributions && input.attributions
+    ? buildSegmentsFromAttributions(input.attributions, input.proxySegmentsById)
+    : [];
+
+  // system/tools segments 排在 messages 之前（order < 0），重新给 messageSegments 编号
+  const attrCount = attributionSegments.length;
+  const segments: ContextSegment[] = [
+    ...attributionSegments,
+    ...messageSegments.map((s) => ({ ...s, order: (s.order ?? 0) + attrCount })),
+  ];
 
   // 5. 收集 rulesApplied / unimplementedRules。
-  const rulesApplied = collectAppliedRules(rules, surviving);
-  const unimplementedRules: UnimplementedRuleId[] = [...UNIMPLEMENTED_RULES];
+  const rulesApplied = collectAppliedRules(rules, surviving, attributionSegments);
+  // R9 覆盖了 system/tools 后，只在没有 attribution 时才标记 unimplemented
+  const hasAttributionInjection = attributionSegments.length > 0;
+  const unimplementedRules: string[] = [
+    ...UNIMPLEMENTED_RULES,
+    ...(!hasAttributionInjection ? ["system_prompt_injection", "tools_schema_injection"] : []),
+  ];
 
   // 6. 检测 prefix incomplete：JSONL prefix 是否缺少 prior history turn。
   // 判断依据：parser 在第一条有时间戳的 user/assistant 行之前检测到 last-prompt，
@@ -302,6 +334,14 @@ function isExpectedRelevant(m: ContextMutation): boolean {
   if (m.category === "billing_noise") return false;
   if (m.category === "hook_event") return false;
   if (m.category === "permission") return false;
+  // task_reminder：harness 触发后 smoosh 进相邻 tool_result 尾部，proxy 里没有独立 segment。
+  // reconciliation 层通过 attribution 的 tail_injection_chars note 在 tool_result charDiff
+  // 里消化这段文字。expected 侧不应产出独立 segment，否则会产生大量 2-char "[]" expected_only。
+  // TODO(task-reminder-expected): 更精确的做法是在 expected 侧把 task_reminder 文本
+  // 附加到对应 tool_result segment 的 charCount 里（1:1 smoosh 建模），
+  // 而非直接过滤。当前方案能消除 expected_only 误报，但 tool_result 的 charDiff
+  // 仍依赖 attribution tail_injection_chars note 而非 expected 侧建模。
+  if (m.category === "attachment" && m.metadata?.attachmentType === "task_reminder") return false;
   // compaction：暂未实现 replacement 语义；保留 mutation 但不生成 expected segment
   // → 标记成 hidden 在下层处理；这里先放行让下层根据 category 决定。
   return true;
@@ -481,7 +521,13 @@ function mutationToSegment(
   // tool_use 的文本是 JSON.stringify(input)，tool_result 是原始结果字符串，
   // 与 proxy-snapshot-parser parseMessageSegments 里的 rawText 构造方式一致。
   if (m.contentRef?.text) {
-    seg.rawHash = sha256Short(m.contentRef.text);
+    // TODO(skill-listing-hash-方案A): 当前用 proxyWrapText() 把 JSONL mutation 的纯内容
+    // 包装成与 proxy 一致的格式再算 rawHash，从而命中 M1 精确匹配。
+    // 更彻底的方案B：在 proxy-attribution 层对 <system-reminder> 开头的 messages segment
+    // 进一步区分 skill_listing / prependUserContext / date_change 等子类型，
+    // 并设 ruleId，让 M3.5 ruleId 匹配直接对齐，attribution category 也更精细。
+    // 方案B 的优点：attribution 语义正确，M3.5 比 M1 hash 更鲁棒（内容变化时仍能匹配）。
+    seg.rawHash = sha256Short(proxyWrapTextForCategory(m.category, m.contentRef.text));
   }
 
   // lifecycle：与 proxy-attribution 同口径
@@ -525,12 +571,149 @@ function ruleIdForCategory(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// R9：从 proxy attribution 反向生成 system / tools expected segments
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 策略：遍历 attributions，按 proxySegment 的 order 顺序处理。
+// 每条 attribution 有 ruleId → 找到对应 ContextLedgerRule：
+//   - section=system 或 section=tools
+//   - reconstruction.trigger=always_per_query
+//   - materialization=exact_text：contentPattern 非 null → 生成带 rawHash 的 expected segment
+//   - materialization=presence/shape/normalized_text：生成不带 rawHash 的 expected segment，
+//     charCount 从 attribution.charCount 读取（proxy ground truth）
+// billing_noise 跳过（R6 已过滤）。
+// 同一 ruleId 若在多个 attribution 里出现（多个 request），只取第一次（dedup by ruleId）。
+
+function proxyRawText(
+  attr: ProxySegmentAttribution,
+  proxySegmentsById?: Map<string, ContextSegment>,
+): string | undefined {
+  if (!proxySegmentsById) return undefined;
+  for (const sid of attr.proxySegmentIds) {
+    const text = proxySegmentsById.get(sid)?.rawText;
+    if (text) return text;
+  }
+  return undefined;
+}
+
+function buildSegmentsFromAttributions(
+  attributions: ProxySegmentAttribution[],
+  proxySegmentsById?: Map<string, ContextSegment>,
+): ContextSegment[] {
+  const segments: ContextSegment[] = [];
+  const seenRuleIds = new Set<string>();
+  let order = -100000; // 负数 order 保证排在 messages 段之前，按 proxy 顺序递增
+
+  for (const attr of attributions) {
+    const ruleId = attr.ruleId;
+    if (!ruleId) continue;
+    if (seenRuleIds.has(ruleId)) continue;
+
+    const rule = getContextLedgerRule(ruleId);
+    if (!rule) continue;
+
+    const recon = rule.reconstruction;
+    if (!recon) continue;
+    // trigger 不做过滤——attribution 已在 proxy 里确认这段存在，无论 trigger 类型
+    // （always_per_query / from_memory / from_harness_state）都意味着"本次请求有这段"。
+
+    const emits = recon.emits;
+    // 只处理 system / tools section；messages 层由 mutations 处理
+    if (emits.section !== "system" && emits.section !== "tools") continue;
+    // billing_noise 不生成 expected segment（R6 过滤）
+    if (emits.category === "billing_noise") continue;
+
+    seenRuleIds.add(ruleId);
+
+    const charCount = attr.charCount ?? 0;
+    const sourceRef: SourceRef = {
+      kind: "harness_rule",
+      harness: { ruleId, version: rule.verifiedFor ?? "unverified" },
+      label: `rule:${ruleId}`,
+    };
+
+    const seg: ContextSegment = {
+      id: `eseg-r9-${ruleId.replace(/[^a-z0-9]/gi, "-")}`,
+      section: emits.section as SegmentSection,
+      category: emits.category as SegmentCategory,
+      label: `${emits.section}/${emits.category} (${ruleId})`,
+      sourceRefs: [sourceRef],
+      // system section → role=system；tools section は role 未設定（proxy parser 同様）
+      ...(emits.section === "system" ? { role: "system" as SegmentRole } : {}),
+      order: order++,
+      lifecycle: emits.lifecycle ?? "session",
+      flags: emits.flags ?? [],
+      charCount,
+      tokenEstimate: Math.round(charCount / 4),
+      metadata: pruneMetadata({ ruleId, sourceMutationId: undefined }),
+    };
+
+    if (recon.materialization === "exact_text") {
+      if (emits.section === "tools") {
+        // tools section：rawHash = sha256(整个 tool JSON)，与 proxy-snapshot-parser 口径一致。
+        // proxy segment 的 rawHash 已经是正确值，直接复用。
+        const pSeg = proxySegmentsById ? attr.proxySegmentIds.map(id => proxySegmentsById.get(id)).find(Boolean) : undefined;
+        if (pSeg?.rawHash) seg.rawHash = pSeg.rawHash;
+        // contentRef 用 rawText（= description）仅供展示，charCount 用 proxy ground truth
+        const text = proxyRawText(attr, proxySegmentsById);
+        if (text) seg.contentRef = { kind: "inline", text, charCount: attr.charCount ?? text.length } as ContentRef;
+      } else {
+        // system section：rawHash = sha256(rawText = 完整 block 文本)
+        // contentPattern 含 {placeholder} 时先用 attribution notes 里的动态字段替换
+        const rawPattern = emits.contentPattern;
+        const resolvedText = rawPattern
+          ? resolvePlaceholders(rawPattern, attr.notes ?? [])
+          : proxyRawText(attr, proxySegmentsById);
+        if (resolvedText) {
+          seg.rawHash = sha256Short(resolvedText);
+          seg.contentRef = { kind: "inline", text: resolvedText, charCount: resolvedText.length } as ContentRef;
+        }
+      }
+    } else if (recon.materialization === "normalized_text") {
+      // normalized_text：contentPattern 含 {placeholder} 时用 attribution notes 替换后算 rawHash。
+      // 替换后内容与 proxy rawText 完全一致 → M1 精确匹配。
+      // 无 contentPattern 时退化为 proxy rawText 直接复制（charCount 可对齐）。
+      const rawPattern = emits.contentPattern;
+      if (rawPattern) {
+        const resolvedText = resolvePlaceholders(rawPattern, attr.notes ?? []);
+        if (resolvedText) {
+          seg.rawHash = sha256Short(resolvedText);
+          seg.contentRef = { kind: "inline", text: resolvedText, charCount: resolvedText.length } as ContentRef;
+        }
+      } else {
+        const text = proxyRawText(attr, proxySegmentsById);
+        if (text) {
+          seg.contentRef = { kind: "inline", text, charCount: text.length } as ContentRef;
+        }
+      }
+    } else if (recon.materialization === "shape") {
+      // shape：内容完全动态（git status/commits 等），proxy rawText 直接复制 rawHash，
+      // 使 M1 精确匹配。charCount 来自 proxy ground truth。
+      const pSeg = proxySegmentsById
+        ? attr.proxySegmentIds.map(id => proxySegmentsById.get(id)).find(Boolean)
+        : undefined;
+      if (pSeg?.rawHash) {
+        seg.rawHash = pSeg.rawHash;
+        const text = pSeg.rawText;
+        if (text) seg.contentRef = { kind: "inline", text, charCount: text.length } as ContentRef;
+      }
+    }
+    // presence：charCount 来自 attr.charCount，不生成 rawHash / contentRef
+
+    segments.push(seg);
+  }
+
+  return segments;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // AppliedRule / 工具函数
 // ─────────────────────────────────────────────────────────────────────────────
 
 function collectAppliedRules(
   rules: Required<HarnessRuleConfig>,
   mutations: ContextMutation[],
+  attributionSegments?: ContextSegment[],
 ): AppliedRule[] {
   const out: AppliedRule[] = [];
   const push = (ruleId: string, source: AppliedRule["source"]): void => {
@@ -548,7 +731,59 @@ function collectAppliedRules(
   if (rules.filterKnownNoise) push("R6_filter_known_noise", "harness_rule");
   if (rules.apiErrorRetryAlignment) push("R7_api_error_retry_alignment", "harness_rule");
   if (rules.filterSyntheticApiError) push("R8_filter_synthetic_api_error", "harness_rule");
+  if (rules.injectFromAttributions && (attributionSegments?.length ?? 0) > 0)
+    push("R9_inject_from_attributions", "harness_rule");
   return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// proxyWrapTextForCategory：把 JSONL mutation 的纯内容包装成 proxy 发出的格式，
+// 用于计算与 proxy rawText 一致的 rawHash（方案A）。
+//
+// 背景：harness 在 normalizeAttachmentForAPI（messages.ts）里对 attachment 类型
+// 加了固定 header 和 <system-reminder> wrapper，proxy rawText 是包装后的完整文本。
+// JSONL mutation 的 contentRef.text 是包装前的纯内容，两者 hash 不同，M1 无法命中。
+//
+// 各 category 的包装规则（参考 restored-src/src/utils/messages.ts）：
+//   skill_listing     → wrapMessagesInSystemReminder([createUserMessage("The following skills...\n\n{content}")])
+//                       proxy rawText = "<system-reminder>\nThe following skills are available for use with the Skill tool:\n\n{content}\n</system-reminder>\n"
+//   local_command_history → proxy rawText = 原始 <local-command-*> / <bash-*> 标签文本，无额外包装
+//   其他 category     → 直接返回原始文本（不包装）
+//
+// TODO(skill-listing-hash-方案B): 当前方案在内容中带有 skill 描述变化时 hash 可命中；
+// 但若 header 文本随版本变化，需同步更新此处。方案B（attribution 层区分子类型 + M3.5 ruleId 匹配）
+// 更鲁棒，不依赖固定 header 文本。参见 mutationToSegment 里的 TODO 注释。
+// resolvePlaceholders：把 contentPattern 里的 {key} 占位符替换为 attribution notes 里的值。
+// attribution notes 格式：["key=value", "key2=value2", ...]
+// 占位符格式：{key}（与 rule-registry 注释约定一致）
+// 替换后若仍有未解析的 {placeholder}，返回 null（防止用带占位符的字符串算 hash）。
+function resolvePlaceholders(pattern: string, notes: string[]): string | null {
+  const kvMap = new Map<string, string>();
+  for (const note of notes) {
+    const eq = note.indexOf("=");
+    if (eq < 0) continue;
+    kvMap.set(note.slice(0, eq), note.slice(eq + 1));
+  }
+  let result = pattern;
+  for (const [k, v] of kvMap) {
+    result = result.replaceAll(`{${k}}`, v);
+  }
+  // 若仍有未替换的占位符，返回 null
+  if (/\{[a-zA-Z_]+\}/.test(result)) return null;
+  return result;
+}
+
+function proxyWrapTextForCategory(category: SegmentCategory, text: string): string {
+  if (category === "skill_listing") {
+    // 参考 messages.ts normalizeAttachmentForAPI case 'skill_listing'（sourcemap:3732）:
+    //   content = "The following skills are available for use with the Skill tool:\n\n" + attachment.content
+    //   然后 wrapMessagesInSystemReminder → "<system-reminder>\n{content}\n</system-reminder>"
+    // proxy-snapshot-parser 存的 rawText 末尾还带一个额外 \n（string content 原样保留）
+    const header = "The following skills are available for use with the Skill tool:\n\n";
+    return `<system-reminder>\n${header}${text}\n</system-reminder>\n`;
+  }
+  // local_command_history / tool_use / tool_result / user_message 等：原始文本，无需包装
+  return text;
 }
 
 function pruneMetadata(meta: Record<string, unknown>): Record<string, unknown> | undefined {

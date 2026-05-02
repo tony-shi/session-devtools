@@ -2153,6 +2153,206 @@ export const CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE: ContextLedgerRule = {
   },
 };
 
+// ── MCP tool rules ────────────────────────────────────────────────────────────
+//
+// 以下 rule 覆盖用户配置的 MCP 工具（非 Claude Code 内置）。
+// 来源：claude.ai 官方 MCP proxy（gmailmcp / calendarmcp / drivemcp）以及 tavily。
+// P0 事实：本地 proxy dump 的 rawText（= tool.description）直接 exact 匹配。
+// charCount = JSON.stringify(整个 tool 对象) 长度，包含 input_schema。
+// attribution matchMode=prefix：MCP description 完全静态，用 prefix 精确命中。
+// reconciliation comparePolicy=raw_hash：整个 tool JSON 不变，hash 可精确比对。
+
+// ── claude.ai Gmail ───────────────────────────────────────────────────────────
+export const CLAUDE_CODE_TOOL_MCP_GMAIL_AUTH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.mcp__claude_ai_Gmail__authenticate.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "MCP tool: claude.ai Gmail OAuth 认证发起。description 351c，含 input_schema 总 548c。",
+  stability: "semi-static",
+  sourcemapRef: "mcp:claudeai-proxy@gmailmcp.googleapis.com/mcp/v1",
+  attribution: {
+    pattern: "The `claude.ai Gmail` MCP server (claudeai-proxy at https://gmailmcp.googleapis.com/mcp/v1) is installed but requires authentication.",
+    matchMode: "prefix",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Gmail__authenticate}" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_MCP_GMAIL_COMPLETE_AUTH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.mcp__claude_ai_Gmail__complete_authentication.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "MCP tool: claude.ai Gmail OAuth callback 完成。description 469c，含 input_schema 总 880c。",
+  stability: "semi-static",
+  sourcemapRef: "mcp:claudeai-proxy@gmailmcp.googleapis.com/mcp/v1",
+  attribution: {
+    pattern: "Complete an in-progress OAuth flow for the `claude.ai Gmail` MCP server by submitting the callback URL.",
+    matchMode: "prefix",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Gmail__complete_authentication}" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+// ── claude.ai Google Calendar ─────────────────────────────────────────────────
+export const CLAUDE_CODE_TOOL_MCP_GCAL_AUTH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.mcp__claude_ai_Google_Calendar__authenticate.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "MCP tool: claude.ai Google Calendar OAuth 认证发起。description 364c，总 571c。",
+  stability: "semi-static",
+  sourcemapRef: "mcp:claudeai-proxy@calendarmcp.googleapis.com/mcp/v1",
+  attribution: {
+    pattern: "The `claude.ai Google Calendar` MCP server (claudeai-proxy at https://calendarmcp.googleapis.com/mcp/v1) is installed but requires authentication.",
+    matchMode: "prefix",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Google_Calendar__authenticate}" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_MCP_GCAL_COMPLETE_AUTH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.mcp__claude_ai_Google_Calendar__complete_authentication.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "MCP tool: claude.ai Google Calendar OAuth callback 完成。description 489c，总 910c。",
+  stability: "semi-static",
+  sourcemapRef: "mcp:claudeai-proxy@calendarmcp.googleapis.com/mcp/v1",
+  attribution: {
+    pattern: "Complete an in-progress OAuth flow for the `claude.ai Google Calendar` MCP server by submitting the callback URL.",
+    matchMode: "prefix",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Google_Calendar__complete_authentication}" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+// ── claude.ai Google Drive ────────────────────────────────────────────────────
+export const CLAUDE_CODE_TOOL_MCP_GDRIVE_AUTH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.mcp__claude_ai_Google_Drive__authenticate.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "MCP tool: claude.ai Google Drive OAuth 认证发起。description 358c，总 562c。",
+  stability: "semi-static",
+  sourcemapRef: "mcp:claudeai-proxy@drivemcp.googleapis.com/mcp/v1",
+  attribution: {
+    pattern: "The `claude.ai Google Drive` MCP server (claudeai-proxy at https://drivemcp.googleapis.com/mcp/v1) is installed but requires authentication.",
+    matchMode: "prefix",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Google_Drive__authenticate}" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_MCP_GDRIVE_COMPLETE_AUTH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.mcp__claude_ai_Google_Drive__complete_authentication.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "MCP tool: claude.ai Google Drive OAuth callback 完成。description 483c，总 901c。",
+  stability: "semi-static",
+  sourcemapRef: "mcp:claudeai-proxy@drivemcp.googleapis.com/mcp/v1",
+  attribution: {
+    pattern: "Complete an in-progress OAuth flow for the `claude.ai Google Drive` MCP server by submitting the callback URL.",
+    matchMode: "prefix",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Google_Drive__complete_authentication}" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+// ── tavily MCP ────────────────────────────────────────────────────────────────
+export const CLAUDE_CODE_TOOL_MCP_TAVILY_CRAWL_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.mcp__tavily__tavily_crawl.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "MCP tool: tavily_crawl（网页爬取）。description 101c，含 input_schema 总 1949c。",
+  stability: "semi-static",
+  sourcemapRef: "mcp:tavily",
+  attribution: {
+    pattern: "Crawl a website starting from a URL. Extracts content from pages with configurable depth and breadth.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__tavily__tavily_crawl}" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_MCP_TAVILY_EXTRACT_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.mcp__tavily__tavily_extract.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "MCP tool: tavily_extract（URL 内容提取）。description 79c，总 849c。",
+  stability: "semi-static",
+  sourcemapRef: "mcp:tavily",
+  attribution: {
+    pattern: "Extract content from URLs. Returns raw page content in markdown or text format.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__tavily__tavily_extract}" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_MCP_TAVILY_MAP_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.mcp__tavily__tavily_map.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "MCP tool: tavily_map（网站结构映射）。description 83c，总 1289c。",
+  stability: "semi-static",
+  sourcemapRef: "mcp:tavily",
+  attribution: {
+    pattern: "Map a website's structure. Returns a list of URLs found starting from the base URL.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__tavily__tavily_map}" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_MCP_TAVILY_RESEARCH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.mcp__tavily__tavily_research.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "MCP tool: tavily_research（综合研究）。description 269c，总 766c。",
+  stability: "semi-static",
+  sourcemapRef: "mcp:tavily",
+  attribution: {
+    pattern: "Perform comprehensive research on a given topic or question. Use this tool when you need to gather information from multiple sources to answer a question or complete a task. Returns a detailed response based on the research findings. Rate limit: 20 requests per minute.",
+    matchMode: "exact",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__tavily__tavily_research}" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
+export const CLAUDE_CODE_TOOL_MCP_TAVILY_SEARCH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.tool.mcp__tavily__tavily_search.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description: "MCP tool: tavily_search（网页搜索）。description 145c，含 input_schema 总 2905c。",
+  stability: "semi-static",
+  sourcemapRef: "mcp:tavily",
+  attribution: {
+    pattern: "Search the web for current information on any topic. Use for news, facts, or data beyond your knowledge cutoff. Returns snippets and source URLs.",
+    matchMode: "prefix",
+    mechanism: "tools_schema_pattern",
+    category: "tools_schema",
+    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__tavily__tavily_search}" },
+  },
+  reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+};
+
 // ── messages 层注入 rule ──────────────────────────────────────────────────────
 //
 // task_reminder：每 10 个 assistant turn 且距上次提醒也 ≥ 10 turn 时触发。
@@ -2314,6 +2514,18 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_TOOL_TEAMCREATE_RULE,
   CLAUDE_CODE_TOOL_TEAMDELETE_RULE,
   CLAUDE_CODE_TOOL_WEBFETCH_RULE,
+  // ── MCP tool rules ────────────────────────────────────────────────────────
+  CLAUDE_CODE_TOOL_MCP_GMAIL_AUTH_RULE,
+  CLAUDE_CODE_TOOL_MCP_GMAIL_COMPLETE_AUTH_RULE,
+  CLAUDE_CODE_TOOL_MCP_GCAL_AUTH_RULE,
+  CLAUDE_CODE_TOOL_MCP_GCAL_COMPLETE_AUTH_RULE,
+  CLAUDE_CODE_TOOL_MCP_GDRIVE_AUTH_RULE,
+  CLAUDE_CODE_TOOL_MCP_GDRIVE_COMPLETE_AUTH_RULE,
+  CLAUDE_CODE_TOOL_MCP_TAVILY_CRAWL_RULE,
+  CLAUDE_CODE_TOOL_MCP_TAVILY_EXTRACT_RULE,
+  CLAUDE_CODE_TOOL_MCP_TAVILY_MAP_RULE,
+  CLAUDE_CODE_TOOL_MCP_TAVILY_RESEARCH_RULE,
+  CLAUDE_CODE_TOOL_MCP_TAVILY_SEARCH_RULE,
   // ── messages 层注入 rules ─────────────────────────────────────────────────
   CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,
   // ── side query rules ──────────────────────────────────────────────────────

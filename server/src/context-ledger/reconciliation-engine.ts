@@ -51,6 +51,7 @@ import type {
   SegmentCategory,
   SourceRef,
 } from "./types";
+import { getContextLedgerRule as getContextLedgerRuleById } from "./rule-registry";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 输入 / 输出
@@ -260,9 +261,14 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
           const isMeaningfulMatch =
             matchResult.alignment.basis === "raw_hash" ||
             matchResult.alignment.basis === "normalized_hash" ||
-            matchResult.alignment.basis === "tool_use_id";
+            matchResult.alignment.basis === "tool_use_id" ||
+            matchResult.alignment.basis === "rule_id";
+          // rule_id match 的 expected segment 来自 R9（system/tools section），
+          // order 用负数起始，与 proxy 的绝对 order 差距极大，order_mismatch 无意义，跳过。
+          const isR9Segment = matchResult.alignment.basis === "rule_id";
           if (
             isMeaningfulMatch &&
+            !isR9Segment &&
             expectedOrder >= 0 &&
             proxyOrder !== Infinity &&
             Math.abs(expectedOrder - proxyOrder) > 3
@@ -495,6 +501,48 @@ function matchOneExpected(
             ? [eseg.metadata.sourceMutationId as string]
             : undefined,
           attributionIds: attrBySegId.has(pseg.id) ? [attrBySegId.get(pseg.id)!.id] : undefined,
+        },
+        matchedProxyIds: [pseg.id],
+        matchedExpectedIds: [eseg.id],
+      };
+    }
+  }
+
+  // M3.5: ruleId match（R9 attribution-generated segments 专用）
+  // expected segment 由 R9 从 attribution 反向生成，metadata.ruleId 记录了命中的 rule。
+  // proxy segment 通过 attribution.ruleId 关联同一 rule。
+  // 两者 ruleId 相同 → 精确对齐，优先级高于 M4 category heuristic。
+  const esegRuleId = eseg.metadata?.ruleId as string | undefined;
+  if (esegRuleId) {
+    const candidates = proxySegs.filter((s) => {
+      if (matchedProxyIds.has(s.id)) return false;
+      const attr = attrBySegId.get(s.id);
+      return attr?.ruleId === esegRuleId;
+    });
+    if (candidates.length > 0) {
+      // 多个候选时取 charCount 最接近 expected 的（同一 rule 在同一 request 里只出现一次，一般只有一个候选）
+      candidates.sort((a, b) =>
+        Math.abs((a.charCount ?? 0) - (eseg.charCount ?? 0)) -
+        Math.abs((b.charCount ?? 0) - (eseg.charCount ?? 0))
+      );
+      const pseg = candidates[0];
+      const attr = attrBySegId.get(pseg.id);
+      // exact_text rule → matchKind=exact；shape/normalized_text → matchKind=heuristic
+      const rule = getContextLedgerRuleById(esegRuleId);
+      const mat = rule?.reconstruction?.materialization;
+      const matchKind: AlignmentRef["matchKind"] =
+        mat === "exact_text" ? "exact" : "heuristic";
+      const confidence: AlignmentRef["confidence"] =
+        mat === "exact_text" ? "exact" : "inferred";
+      return {
+        alignment: {
+          matchKind,
+          confidence,
+          expectedSegmentIds: [eseg.id],
+          proxySegmentIds: [pseg.id],
+          basis: "rule_id" as AlignmentBasis,
+          attributionIds: attr ? [attr.id] : undefined,
+          note: `ruleId match: ${esegRuleId} (${mat ?? "unknown"})`,
         },
         matchedProxyIds: [pseg.id],
         matchedExpectedIds: [eseg.id],
