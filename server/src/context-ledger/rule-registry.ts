@@ -142,6 +142,19 @@ export interface ContextLedgerRule {
     };
   };
 
+  // tailInjection：当此 rule 匹配的 segment 尾部附带了 harness 注入时的描述。
+  // 用于 smoosh 场景：tool_result segment 尾部携带 <system-reminder> 块。
+  // attribution 层在命中主 rule 后，额外用 tailInjection.pattern 检测 rawText 尾部；
+  // 若命中，在 notes 里写入 `tail_injection_chars:<N>` 供 reconciliation 层扣除。
+  tailInjection?: {
+    // 识别尾部注入的子串（contains 语义，不要求在最末尾）
+    pattern: string;
+    // 关联的 reconstruction rule id（expected 侧生成该注入段的 rule）
+    reconstructionRuleId: string;
+    // 尾部注入在 reconciliation 里的消化策略
+    comparePolicy: RuleComparePolicy;
+  };
+
   // reconciliation：对账视角
   reconciliation?: {
     comparePolicy: RuleComparePolicy;
@@ -2140,6 +2153,114 @@ export const CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE: ContextLedgerRule = {
   },
 };
 
+// ── messages 层注入 rule ──────────────────────────────────────────────────────
+//
+// task_reminder：每 10 个 assistant turn 且距上次提醒也 ≥ 10 turn 时触发。
+// 由 getTaskReminderAttachments()（attachments.ts:3375）生成 attachment，
+// 再经 normalizeAttachmentForAPI → wrapMessagesInSystemReminder 包成
+// <system-reminder>...</system-reminder>，最后由 smooshSystemReminderSiblings
+// 折叠进同一 user message 里最后一个 tool_result 的 content 尾部。
+//
+// 结果：proxy 里没有独立 segment，该文本附在 tool_result rawText 末尾。
+// attribution 层通过 CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE 的 tailInjection 字段
+// 在 tool_result 分支检测，reconciliation 层读 tail_injection_chars note 消化差值。
+//
+// 渲染模板（messages.ts:3688）：
+//   前缀：固定字符串（TASK_REMINDER_PREFIX_TEXT）
+//   后缀：tasks.map(t => `#${t.id}. [${t.status}] ${t.subject}`).join("\n")（可空）
+//   整体包裹：<system-reminder>\n{text}\n</system-reminder>
+//
+// 参考 restored-src/src/utils/attachments.ts:3375
+//      restored-src/src/utils/messages.ts:3680
+
+// task_reminder 固定前缀（用于 tailInjection pattern 和 attribution 检测）
+export const TASK_REMINDER_PREFIX =
+  "<system-reminder>\nThe task tools haven't been used recently.";
+
+export const CLAUDE_CODE_TASK_REMINDER_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.task-reminder.v1",
+  verifiedFor: null,
+  description:
+    "task_reminder attachment：每 10 个 assistant turn 触发一次，" +
+    "smoosh 进最后一个 tool_result 的 content 尾部。" +
+    "proxy 里无独立 segment，由 TOOL_RESULT_SMOOSH_RULE 的 tailInjection 识别。",
+  stability: "semi-static",
+  sourcemapRef: "restored-src/src/utils/attachments.ts:3375 + restored-src/src/utils/messages.ts:3680",
+
+  // attribution.pattern = null：此 rule 无独立 segment，由 tailInjection 覆盖；
+  // attribution 字段保留供文档与 ruleId 查找使用。
+  attribution: {
+    pattern: TASK_REMINDER_PREFIX,
+    matchMode: "prefix",
+    mechanism: "task_reminder_smoosh",
+    category: "attachment",
+    location: {
+      section: "messages",
+      segmentPosition: "anywhere",
+    },
+  },
+
+  reconstruction: {
+    // 内容从 JSONL attachment.content: Task[] 精确渲染
+    trigger: "from_jsonl",
+    materialization: "exact_text",
+    preCondition:
+      "isTodoV2Enabled() && turnsSinceLastTaskManagement >= 10 && turnsSinceLastReminder >= 10",
+    emits: {
+      section: "messages",
+      category: "attachment",
+      lifecycle: "one_shot",
+      flags: ["injected", "smooshed"],
+      contentPattern: null, // 动态（task list 内容由 reconstructor 渲染）
+    },
+  },
+
+  reconciliation: {
+    // smoosh 消化：通过 tail_injection_chars note 从相邻 tool_result 的 charDiff 里扣除
+    comparePolicy: "known_noise",
+    confidence: "exact",
+    exactTextExpected: false,
+  },
+};
+
+// tool_result 基础 rule：通过 tailInjection 声明可能携带 task_reminder smoosh。
+// attribution 层：tool_result 分支已由 wire schema 直接确定 category，
+// 本 rule 主要作为 tailInjection 的载体（attribution 代码在 tool_result 分支
+// 调用 findTailInjectionRule() 找到此 rule，再做 rawText 尾部检测）。
+export const CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.tool-result.smoosh.v1",
+  verifiedFor: null,
+  description:
+    "tool_result segment 的 smoosh 注入规则。" +
+    "当 tool_result rawText 尾部含有 task_reminder 注入时，" +
+    "attribution 在 notes 里记录 tail_injection_chars，" +
+    "reconciliation 据此消化 token_mismatch。",
+  stability: "semi-static",
+  sourcemapRef: "restored-src/src/utils/messages.ts:1835",
+
+  attribution: {
+    // tool_result 由 wire schema 确定，pattern 无需文本匹配；
+    // 此 rule 仅提供 tailInjection 字段，attribution 代码通过 ruleId 查找
+    pattern: null,
+    matchMode: "structural",
+    mechanism: "tool_use_id_match",
+    category: "tool_result",
+    location: { section: "messages" },
+  },
+
+  tailInjection: {
+    pattern: TASK_REMINDER_PREFIX,
+    reconstructionRuleId: "claude-code.messages.task-reminder.v1",
+    comparePolicy: "known_noise",
+  },
+
+  reconciliation: {
+    comparePolicy: "char_diff",
+    confidence: "exact",
+    exactTextExpected: false,
+  },
+};
+
 export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   // ── identity / noise ──────────────────────────────────────────────────────
   CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE,
@@ -2193,6 +2314,8 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_TOOL_TEAMCREATE_RULE,
   CLAUDE_CODE_TOOL_TEAMDELETE_RULE,
   CLAUDE_CODE_TOOL_WEBFETCH_RULE,
+  // ── messages 层注入 rules ─────────────────────────────────────────────────
+  CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,
   // ── side query rules ──────────────────────────────────────────────────────
   CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE,
 ];

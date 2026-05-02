@@ -201,9 +201,38 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
             .map((id) => snapshot.segments.find((s) => s.id === id)?.charCount ?? 0)
             .reduce((a, b) => a + b, 0);
           const expectedChars = eseg.charCount ?? 0;
-          const pct = proxyChars > 0 ? Math.abs(charDiff) / proxyChars : 0;
 
-          if (pct > 0.05 && charDiff !== 0) {
+          // tail_injection 扣除：attribution 层若检测到 smoosh 注入，在 notes 里写
+          // `tail_injection_chars:<N>`。reconciliation 把这 N 个字符从 proxyChars 里扣掉，
+          // 再与 expectedChars 比较，避免误报 token_mismatch。
+          const tailInjectionChars = matchResult.matchedProxyIds.reduce((sum, pid) => {
+            const attr = attrBySegId.get(pid);
+            if (!attr?.notes) return sum;
+            for (const note of attr.notes) {
+              const m = /^tail_injection_chars:(\d+)$/.exec(note);
+              if (m) return sum + parseInt(m[1]!, 10);
+            }
+            return sum;
+          }, 0);
+          const adjustedProxyChars = proxyChars - tailInjectionChars;
+          const adjustedDiff = expectedChars - adjustedProxyChars;
+          const pct = adjustedProxyChars > 0 ? Math.abs(adjustedDiff) / adjustedProxyChars : 0;
+
+          if (tailInjectionChars > 0) {
+            // smoosh 注入已消化，降级为 info
+            findings.push({
+              id: nextFindingId(),
+              type: "known_noise",
+              severity: "info",
+              category: eseg.category,
+              expectedSegmentIds: [eseg.id],
+              proxySegmentIds: matchResult.matchedProxyIds,
+              alignmentIds: [align.id],
+              charDiff: tailInjectionChars,
+              tokenDiffEstimate: Math.round(tailInjectionChars / 4),
+              message: `tail_injection smooshed into tool_result: ${tailInjectionChars} chars explained by harness (task_reminder)${Math.abs(adjustedDiff) > 0 ? `; residual ${Math.abs(adjustedDiff)} chars` : ""}`,
+            });
+          } else if (pct > 0.05 && adjustedDiff !== 0) {
             findings.push({
               id: nextFindingId(),
               type: "token_mismatch",
@@ -212,8 +241,8 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
               expectedSegmentIds: [eseg.id],
               proxySegmentIds: matchResult.matchedProxyIds,
               alignmentIds: [align.id],
-              charDiff: Math.abs(charDiff),
-              tokenDiffEstimate: Math.round(Math.abs(charDiff) / 4),
+              charDiff: Math.abs(adjustedDiff),
+              tokenDiffEstimate: Math.round(Math.abs(adjustedDiff) / 4),
               message: `char mismatch: expected ${expectedChars}, proxy ${proxyChars} (${(pct * 100).toFixed(1)}% diff)`,
             });
           }

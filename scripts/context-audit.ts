@@ -8,11 +8,13 @@
 //   bun run context:audit --since-last       # 只处理上次 run 以来的新 proxy records
 //   bun run context:audit --baseline <runId> # 对比指定 baseline 而非 latest
 //   bun run context:audit:mark-baseline <runId>
+//   bun run context:audit clear              # 清除所有 audit 产物（不删 proxy/jsonl 原始数据）
+//   bun run context:audit clear --keep <N>   # 保留最近 N 个 run，清除其余
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { makeRunId, runDir, AUDIT_HOME, BASELINE_JSON } from "../server/src/context-ledger/audit/paths";
+import { makeRunId, runDir, AUDIT_HOME, RUNS_DIR, LATEST_JSON, BASELINE_JSON } from "../server/src/context-ledger/audit/paths";
 import { discoverFixtures, discoverLocal } from "../server/src/context-ledger/audit/discovery";
 import { runPipelineWithData } from "../server/src/context-ledger/audit/pipeline";
 import {
@@ -34,6 +36,70 @@ import type { AuditRunRecord } from "../server/src/context-ledger/audit/types";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
+
+// clear 子命令：清除 audit 产物，不删除 proxy/jsonl 原始数据
+if (args[0] === "clear") {
+  const keepIdx = args.indexOf("--keep");
+  const keepN = keepIdx !== -1 ? parseInt(args[keepIdx + 1] ?? "0", 10) : 0;
+
+  if (!existsSync(RUNS_DIR)) {
+    console.log("没有 audit 产物（runs/ 目录不存在），无需清理。");
+    process.exit(0);
+  }
+
+  // 按字典序（= 时间序）列出所有 run 目录
+  const allRuns = readdirSync(RUNS_DIR)
+    .filter((name) => existsSync(join(RUNS_DIR, name, "run.json")))
+    .sort();  // runId 格式含 ISO 时间戳，字典序 = 时间序
+
+  if (allRuns.length === 0) {
+    console.log("runs/ 为空，无需清理。");
+    process.exit(0);
+  }
+
+  const keep = Math.max(0, keepN);
+  const toDelete = keep > 0 ? allRuns.slice(0, allRuns.length - keep) : allRuns;
+  const toKeep = keep > 0 ? allRuns.slice(allRuns.length - keep) : [];
+
+  if (toDelete.length === 0) {
+    console.log(`已有 ${allRuns.length} 个 run，--keep ${keep} 无需删除任何内容。`);
+    process.exit(0);
+  }
+
+  console.log(`将删除 ${toDelete.length} 个 run（保留 ${toKeep.length} 个）：`);
+  for (const r of toDelete) console.log(`  - ${r}`);
+  if (toKeep.length > 0) {
+    console.log(`保留：`);
+    for (const r of toKeep) console.log(`  + ${r}`);
+  }
+
+  for (const r of toDelete) {
+    rmSync(join(RUNS_DIR, r), { recursive: true, force: true });
+  }
+
+  // latest.json / baseline.json：若指向被删除的 run，清除指针
+  if (existsSync(LATEST_JSON)) {
+    try {
+      const p = JSON.parse(readFileSync(LATEST_JSON, "utf-8")) as { runId: string };
+      if (toDelete.includes(p.runId)) {
+        rmSync(LATEST_JSON, { force: true });
+        console.log("已清除 latest.json（指向的 run 已删除）");
+      }
+    } catch { /* 损坏的 json，直接删 */ rmSync(LATEST_JSON, { force: true }); }
+  }
+  if (existsSync(BASELINE_JSON)) {
+    try {
+      const p = JSON.parse(readFileSync(BASELINE_JSON, "utf-8")) as { runId: string };
+      if (toDelete.includes(p.runId)) {
+        rmSync(BASELINE_JSON, { force: true });
+        console.log("已清除 baseline.json（指向的 run 已删除）");
+      }
+    } catch { rmSync(BASELINE_JSON, { force: true }); }
+  }
+
+  console.log(`✓ 清理完成（${toDelete.length} 个 run 已删除）`);
+  process.exit(0);
+}
 
 // mark-baseline 子命令
 if (args[0] === "mark-baseline") {

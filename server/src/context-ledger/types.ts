@@ -82,7 +82,9 @@ export type SegmentFlag =
   | "injected"
   | "approximate"
   | "unexplained"
-  | "merged";
+  | "merged"
+  | "smooshed"         // reconstruction 侧：此 segment 被 smoosh 进相邻 tool_result
+  | "smooshed_reminder"; // attribution 侧：此 tool_result rawText 尾部含 smoosh 注入
 
 export type AlignmentBasis =
   | "raw_hash"
@@ -278,6 +280,7 @@ export interface ProxySegmentAttribution {
     | "local_command_pattern"
     | "large_segment_detector"
     | "cache_hint_detector"
+    | "task_reminder_smoosh"
     | "manual_fixture"
     | "unknown";
   confidence: Confidence;

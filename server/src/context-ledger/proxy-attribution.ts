@@ -30,6 +30,7 @@ import {
   CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
   CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,
   CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE,
+  CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,
 } from "./rule-registry";
 import type { ContextLedgerRule } from "./rule-registry";
 import { DYNAMIC_SECTION_HEADERS } from "./proxy-block-splitter";
@@ -361,6 +362,19 @@ export function inferClaudeProxyAttributions(
         if (chars > LARGE_SEGMENT_THRESHOLD) {
           flags.push("large_segment");
           notes = [...(notes ?? []), `large_segment_detector: tool_result ${chars} chars > ${LARGE_SEGMENT_THRESHOLD} threshold`];
+        }
+        // tailInjection 检测：rawText 尾部是否含 harness smoosh 注入（如 task_reminder）
+        const tailRule = CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE.tailInjection;
+        if (tailRule && rawText.includes(tailRule.pattern)) {
+          const tailStart = rawText.lastIndexOf(tailRule.pattern);
+          const tailChars = rawText.length - tailStart;
+          flags.push("smooshed_reminder");
+          ruleId = CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE.ruleId;
+          notes = [
+            ...(notes ?? []),
+            `tail_injection_chars:${tailChars}`,
+            `tail_injection_rule:${tailRule.reconstructionRuleId}`,
+          ];
         }
       } else if (isSystemReminder(rawText)) {
         // <system-reminder>：harness 注入，无独立文本 pattern rule（内容每次不同）

@@ -148,12 +148,15 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function writeIndexHtml(runId: string, run: AuditRunRecord, entries: AuditIndexEntry[]): void {
-  const regressions = entries.filter((e) => e.changeClass === "regressed");
-  const needsReview = entries.filter((e) => e.changeClass === "needs_review");
-  const newEntries = entries.filter((e) => e.changeClass === "new");
-  const proxyWithoutJsonl = entries.filter((e) => e.reasons.includes("proxy_without_jsonl"));
-  const failed = entries.filter((e) => e.changeClass === "failed");
-  const skipped = entries.filter((e) => e.changeClass === "skipped");
+  // 按 LLM 请求时间倒序（最近的在最前）
+  const sorted = [...entries].sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
+
+  const regressions = sorted.filter((e) => e.changeClass === "regressed");
+  const needsReview = sorted.filter((e) => e.changeClass === "needs_review");
+  const newEntries = sorted.filter((e) => e.changeClass === "new");
+  const proxyWithoutJsonl = sorted.filter((e) => e.reasons.includes("proxy_without_jsonl"));
+  const failed = sorted.filter((e) => e.changeClass === "failed");
+  const skipped = sorted.filter((e) => e.changeClass === "skipped");
 
   const verdictColor = (v: string): string => {
     if (v === "regressed" || v === "regression") return "#ef4444";
@@ -296,10 +299,10 @@ ${failed.length > 0 ? `
 ${failed.map(renderRow).join("\n")}
 </table>` : ""}
 
-<h2>All Queries (${entries.length})</h2>
+<h2>All Queries (${sorted.length})</h2>
 <table>
 <tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>reasons</th><th>links</th></tr>
-${entries.map(renderRow).join("\n")}
+${sorted.map(renderRow).join("\n")}
 </table>
 
 </body>

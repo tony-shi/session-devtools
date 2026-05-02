@@ -136,6 +136,18 @@ export function computeCharDiff(report: ReconciliationReport): CharDiffReport {
   const findingsByExpectedId = buildFindingsBySegId(findings, "expected");
   const findingsByProxyId = buildFindingsBySegId(findings, "proxy");
 
+  // attribution 索引：proxy segment id → attribution（category、notes 等）
+  const attrByProxyId = new Map<string, { category: SegmentCategory; notes?: string[] }>();
+  for (const attr of report.proxyAttributions ?? []) {
+    for (const sid of attr.proxySegmentIds) {
+      attrByProxyId.set(sid, { category: attr.category, notes: attr.notes });
+    }
+  }
+  const attrNotesByProxyId = new Map<string, string[]>();
+  for (const [sid, a] of attrByProxyId) {
+    if (a.notes?.length) attrNotesByProxyId.set(sid, a.notes);
+  }
+
   // Assign flat char offsets (ordered by segment.order, then insertion order)
   const expectedOffsets = buildFlatOffsets(expectedSegs);
   const proxyOffsets = buildFlatOffsets(proxySegs);
@@ -155,8 +167,12 @@ export function computeCharDiff(report: ReconciliationReport): CharDiffReport {
     for (const id of align.expectedSegmentIds) coveredExpectedIds.add(id);
     for (const id of align.proxySegmentIds) coveredProxyIds.add(id);
 
-    const kind = classifyAlignmentKind(align, eSegs, pSegs, findings);
-    const category = (eSegs[0] ?? pSegs[0])?.category ?? "unknown";
+    const kind = classifyAlignmentKind(align, eSegs, pSegs, findings, attrByProxyId);
+    // effective category：attribution 层语义优先，parser 保守分类作 fallback
+    const effectiveCat = pSegs.length > 0
+      ? (attrByProxyId.get(pSegs[0].id)?.category ?? pSegs[0].category)
+      : (eSegs[0]?.category ?? "unknown");
+    const category = effectiveCat;
     const label = buildLabel(eSegs, pSegs, align);
 
     const expectedRange = eSegs.length > 0 ? mergeRanges(eSegs.map((s) => expectedOffsets.get(s.id)!)) : undefined;
@@ -168,7 +184,7 @@ export function computeCharDiff(report: ReconciliationReport): CharDiffReport {
     const charDeltaPct =
       charDelta !== undefined && proxyChars > 0 ? Math.abs(charDelta) / proxyChars : undefined;
 
-    const notes = buildNotes(align, relatedFindings);
+    const notes = buildNotes(align, relatedFindings, align.proxySegmentIds, attrNotesByProxyId);
 
     entries.push({
       kind,
@@ -251,9 +267,14 @@ export function computeCharDiff(report: ReconciliationReport): CharDiffReport {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function segmentText(seg: ContextSegment): SegmentText {
+  // contentRef.text（inline）优先；proxy segment 只有 rawText 时 fallback 到 rawText。
+  const text =
+    seg.contentRef?.kind === "inline"
+      ? seg.contentRef.text
+      : seg.rawText ?? undefined;
   return {
     label: seg.label,
-    text: seg.contentRef?.kind === "inline" ? seg.contentRef.text : undefined,
+    text,
     chars: seg.charCount ?? 0,
     segmentId: seg.id,
   };
@@ -284,9 +305,13 @@ function classifyAlignmentKind(
   eSegs: ContextSegment[],
   pSegs: ContextSegment[],
   findings: ReconciliationFinding[],
+  attrByProxyId: Map<string, { category: SegmentCategory; notes?: string[] }>,
 ): DiffKind {
-  // known_noise: billing_noise proxy segments
-  if (pSegs.length > 0 && pSegs.every((s) => s.category === "billing_noise")) {
+  // known_noise: attribution 层识别的 billing_noise（parser 保守分类为 system_prompt）
+  if (pSegs.length > 0 && pSegs.every((s) => {
+    const effectiveCat = attrByProxyId.get(s.id)?.category ?? s.category;
+    return effectiveCat === "billing_noise";
+  })) {
     return "known_noise";
   }
   const alignFindings = findings.filter((f) => f.alignmentIds?.includes(align.id));
@@ -334,13 +359,25 @@ function buildLabel(
   return `${primary.label}${suffix}`;
 }
 
-function buildNotes(align: AlignmentRef, relatedFindings: ReconciliationFinding[]): string[] {
+function buildNotes(
+  align: AlignmentRef,
+  relatedFindings: ReconciliationFinding[],
+  proxySegmentIds: string[],
+  attrNotesByProxyId: Map<string, string[]>,
+): string[] {
   const notes: string[] = [];
   if (align.note) notes.push(align.note);
   notes.push(`basis:${align.basis} confidence:${align.confidence} matchKind:${align.matchKind}`);
   for (const f of relatedFindings) {
     if (f.type !== "matched" && f.type !== "known_noise") {
       notes.push(`[${f.type}] ${f.message}`);
+    }
+  }
+  // attribution notes（regex 捕获组、tail_injection 等）
+  for (const sid of proxySegmentIds) {
+    const an = attrNotesByProxyId.get(sid);
+    if (an?.length) {
+      for (const n of an) notes.push(n);
     }
   }
   return notes;

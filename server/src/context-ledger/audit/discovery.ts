@@ -6,7 +6,7 @@
 //   3. JSONL-only sessions 仅进入 inventory，不进入主流程
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname, basename } from "node:path";
 import { homedir } from "node:os";
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
@@ -62,13 +62,35 @@ function detectAgentKind(headers: Record<string, string> | undefined): AgentKind
 // 核心：扫描 traffic.jsonl 提取 proxy records
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function scanProxyRecords(opts?: {
-  trafficFile?: string;
-  sinceTs?: string;  // ISO 时间戳，只处理 >= sinceTs 的记录
-}): Promise<DiscoveredProxyRecord[]> {
-  const file = opts?.trafficFile ?? TRAFFIC_LOG;
-  if (!existsSync(file)) return [];
+// 枚举 traffic.jsonl 及同目录下所有 rotation 文件（traffic.jsonl.<timestamp>）
+// 按文件名排序（rotation 文件名含 ISO 时间戳，字典序 = 时间序）
+function listTrafficFiles(trafficFile: string): string[] {
+  const dir = dirname(trafficFile);
+  const base = basename(trafficFile);
+  const files: string[] = [];
 
+  if (!existsSync(dir)) return [];
+
+  // rotation 文件：base.<timestamp>，如 traffic.jsonl.2026-05-01T07-11-35-020Z
+  const rotated = readdirSync(dir)
+    .filter((f) => f.startsWith(base + ".") && f !== base)
+    .sort()  // ISO timestamp 字典序 = 时间序，旧 → 新
+    .map((f) => join(dir, f));
+
+  files.push(...rotated);
+
+  // 当前活跃文件最后读（包含最新记录）
+  if (existsSync(trafficFile)) files.push(trafficFile);
+
+  return files;
+}
+
+// 从单个文件读取 proxy records，返回结果及最大行号（用于 lineNo 去重）
+async function scanSingleFile(
+  file: string,
+  sinceTs: string | undefined,
+  seenQueryHashes: Set<string>,
+): Promise<DiscoveredProxyRecord[]> {
   const results: DiscoveredProxyRecord[] = [];
   let lineNo = 0;
 
@@ -121,19 +143,23 @@ export async function scanProxyRecords(opts?: {
     const ts = (record["ts"] as string | undefined) ?? new Date().toISOString();
     const startedAt = (record["startedAt"] as string | undefined) ?? ts;
 
-    // 过滤旧记录
-    if (opts?.sinceTs && ts < opts.sinceTs) continue;
+    // sinceTs 过滤
+    if (sinceTs && ts < sinceTs) continue;
 
     const headers = record["reqHeaders"] as Record<string, string> | undefined;
     const sessionId = extractSessionIdFromHeaders(headers) ?? "unknown";
     const agentKind = detectAgentKind(headers);
 
     // queryId 使用与 proxy-snapshot-parser 相同的算法
+    // lineNo 在同一文件内唯一；跨文件用 file+lineNo 组合去重
     const tsDigits = startedAt.replace(/[^0-9]/g, "");
     const queryId = `query-${tsDigits}-${lineNo}`;
-
     const key: QueryKey = { agentKind, sessionId, queryId };
     const hash = queryKeyHash(key);
+
+    // 跨 rotation 文件去重：相同 queryId（即相同时间戳+行号）只保留第一次出现
+    if (seenQueryHashes.has(hash)) continue;
+    seenQueryHashes.add(hash);
 
     results.push({
       queryKey: key,
@@ -148,6 +174,28 @@ export async function scanProxyRecords(opts?: {
   }
 
   return results;
+}
+
+export async function scanProxyRecords(opts?: {
+  trafficFile?: string;
+  sinceTs?: string;  // ISO 时间戳，只处理 >= sinceTs 的记录
+}): Promise<DiscoveredProxyRecord[]> {
+  const mainFile = opts?.trafficFile ?? TRAFFIC_LOG;
+  // 扫描主文件 + 所有 rotation 备份（traffic.jsonl.<timestamp>）
+  const files = listTrafficFiles(mainFile);
+  if (files.length === 0) return [];
+
+  const all: DiscoveredProxyRecord[] = [];
+  const seenQueryHashes = new Set<string>();
+
+  for (const file of files) {
+    const records = await scanSingleFile(file, opts?.sinceTs, seenQueryHashes);
+    all.push(...records);
+  }
+
+  // 按 timestamp 升序排列，保持与单文件时相同的时间顺序语义
+  all.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+  return all;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
