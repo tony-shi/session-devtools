@@ -41,11 +41,11 @@ describe("mock report: schema sanity", () => {
 
   test("coverage 字段完整", () => {
     const c = mock.coverage;
-    expect(typeof c.segmentCoverage).toBe("number");
-    expect(typeof c.charCoverage).toBe("number");
     expect(typeof c.proxyChars).toBe("number");
-    expect(typeof c.matchedProxyChars).toBe("number");
-    expect(typeof c.unexplainedProxyChars).toBe("number");
+    expect(typeof c.wireExactCoverage).toBe("number");
+    expect(typeof c.templateCoverage).toBe("number");
+    expect(typeof c.unexplainedCoverage).toBe("number");
+    expect(typeof c.unexplainedChars).toBe("number");
     expect(Array.isArray(c.byCategory)).toBe(true);
   });
 });
@@ -80,8 +80,9 @@ describe("reconcileClaudeContext: mock input", () => {
     expect(unmatched.length).toBeGreaterThan(0);
   });
 
-  test("coverage.charCoverage > 0", () => {
-    expect(report.coverage.charCoverage).toBeGreaterThan(0);
+  test("coverage.wireExactCoverage + templateCoverage > 0", () => {
+    const c = report.coverage;
+    expect(c.wireExactCoverage + c.templateCoverage).toBeGreaterThan(0);
   });
 
   test("attribution-only 和 expected-match 区别：expected-match finding 有 expectedSegmentIds", () => {
@@ -126,8 +127,8 @@ describe("reconcileClaudeContext: mock input", () => {
 interface FixtureExpect {
   proxySegmentCount: number;
   expectedSegmentCount: number;
-  // 最低 char coverage（attribution-only + expected-match 合并计算）
-  minCharCoverage: number;
+  // 最大 unexplained coverage（< 此值表示大部分 proxy 被覆盖）
+  maxUnexplainedCoverage: number;
   // 必须存在的 finding types
   requiredFindingTypes: string[];
   // 是否触发 api_error_retry finding
@@ -144,34 +145,28 @@ const FIXTURE_CASES: Record<string, FixtureExpect> = {
   "system-tools-overhead": {
     proxySegmentCount: 48,
     expectedSegmentCount: 2,
-    minCharCoverage: 0.78,
+    maxUnexplainedCoverage: 0.22,
     requiredFindingTypes: ["known_noise", "unmatched_expected_segment", "api_error_retry"],
     hasRetryFinding: true,
   },
-  // 53 proxy segments（12 system + 34 tools + 7 messages）
-  // expected: 7 segments（skill_listing + user + assistant_text + 2 tool_use + 2 tool_result）
   "single-tool-call": {
     proxySegmentCount: 53,
     expectedSegmentCount: 7,
-    minCharCoverage: 0.78,
+    maxUnexplainedCoverage: 0.22,
     requiredFindingTypes: ["matched", "known_noise", "unmatched_expected_segment", "api_error_retry"],
     hasRetryFinding: true,
   },
-  // 73 proxy segments（12 system + 34 tools + 27 messages）
-  // expected: 9 segments（3 local_command + user + assistant_text + 2 tool_use + 2 tool_result）
   "multi-turn-human": {
     proxySegmentCount: 73,
     expectedSegmentCount: 9,
-    minCharCoverage: 0.80,
+    maxUnexplainedCoverage: 0.20,
     requiredFindingTypes: ["matched", "known_noise", "unmatched_expected_segment"],
     hasRetryFinding: false,
   },
-  // 69 proxy segments（12 system + 34 tools + 23 messages）
-  // expected: 13 segments（2 user + skill_listing + 2 assistant_text + 4 tool_use + 4 tool_result）
   "large-tool-output": {
     proxySegmentCount: 69,
     expectedSegmentCount: 13,
-    minCharCoverage: 0.84,
+    maxUnexplainedCoverage: 0.16,
     requiredFindingTypes: ["matched", "known_noise", "unmatched_expected_segment"],
     hasRetryFinding: false,
   },
@@ -229,8 +224,8 @@ for (const caseName of Object.keys(FIXTURE_CASES)) {
       expect(report.expected!.segments.length).toBe(want.expectedSegmentCount);
     });
 
-    test(`charCoverage >= ${want.minCharCoverage}`, () => {
-      expect(report.coverage.charCoverage).toBeGreaterThanOrEqual(want.minCharCoverage);
+    test(`unexplainedCoverage <= ${want.maxUnexplainedCoverage}`, () => {
+      expect(report.coverage.unexplainedCoverage).toBeLessThanOrEqual(want.maxUnexplainedCoverage);
     });
 
     test("必须包含的 finding types 全部出现", () => {
@@ -304,7 +299,9 @@ describe("cross-fixture invariants", () => {
     });
 
     expect(report.schemaVersion).toBe("context-ledger.report.v1");
-    expect(report.coverage.charCoverage).toBeGreaterThan(0);
+    // 无 expected 时：wire/template=0，但 serverSide 或 attrOnly 应有值
+    const c = report.coverage;
+    expect(c.serverSideCoverage + c.attributionOnlyCoverage + c.unexplainedCoverage).toBeGreaterThan(0);
     // 没有 expected → 没有 unmatched_expected_segment
     const unmatchedExpected = report.findings.filter(
       (f) => f.type === "unmatched_expected_segment" && !f.proxySegmentIds?.length,

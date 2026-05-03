@@ -30,11 +30,11 @@ describe("context-ledger mock report contract", () => {
     expect(coverage.matchedProxySegmentCount + coverage.unmatchedProxySegmentCount).toBe(
       coverage.proxySegmentCount,
     );
-    expect(coverage.matchedProxyChars + coverage.unexplainedProxyChars).toBe(coverage.proxyChars);
-    const proxyTokenEstimate = coverage.proxyTokenEstimate ?? 0;
-    expect(
-      (coverage.matchedProxyTokenEstimate ?? 0) + (coverage.unexplainedProxyTokenEstimate ?? 0),
-    ).toBe(proxyTokenEstimate);
+    // 正交分桶各 chars 之和 = proxyChars
+    const bucketSum = coverage.wireExactChars + coverage.canonicalExactChars
+      + coverage.templateChars + coverage.regexChars + coverage.presenceChars
+      + coverage.serverSideChars + coverage.attributionOnlyChars + coverage.unexplainedChars;
+    expect(bucketSum).toBe(coverage.proxyChars);
 
     const segmentChars = report.snapshot.segments.reduce(
       (total, segment) => total + (segment.charCount ?? 0),
@@ -46,7 +46,8 @@ describe("context-ledger mock report contract", () => {
     );
 
     expect(segmentChars).toBe(coverage.proxyChars);
-    expect(segmentTokens).toBe(proxyTokenEstimate);
+    // token estimate 字段已从 CoverageSummary 移除，只验证 segment chars 与 proxyChars 一致
+    expect(typeof segmentTokens).toBe("number");
   });
 
   test("covers the required segment categories and audit pressures", () => {

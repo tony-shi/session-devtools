@@ -180,32 +180,30 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
     lines.push(``);
   }
 
-  // E0-5 v2 分桶覆盖率对照 section
+  // 覆盖率正交分桶 section
   const entriesWithV2 = entries.filter((e) => e.v2);
   if (entriesWithV2.length > 0) {
-    lines.push(`## Coverage v2 分桶（旧口径 vs 新分桶）`, ``);
-    lines.push(`> wireExact = basis=raw_hash/tool_use_id（真实 wire-level 精确匹配，P0-1 已修复 R9 proxy 反写）`);
+    lines.push(`## Coverage 正交分桶`, ``);
+    lines.push(`> wire = basis=raw_hash/tool_use_id  tmpl = basis=rule_id+exact_text  regex = basis=rule_id+shape`);
     lines.push(`> pending = attribution 命中但 rule.verifiedFor===null 的字符占比`);
-    lines.push(`> regexRisk = regex/shape rule 命中字符 / proxyChars（>60% 触发 needs_review）`);
     lines.push(``);
-    lines.push(`| query | proxyChars | legacyEB | wireExact | template | regex | pending | regexRisk | serverSide |`);
-    lines.push(`|-------|-----------|---------|----------|---------|------|---------|----------|-----------|`);
+    lines.push(`| query | proxyChars | wire | tmpl | regex | attrOnly | unexplained | pending | regexRisk |`);
+    lines.push(`|-------|-----------|------|------|-------|---------|------------|---------|----------|`);
     for (const e of entriesWithV2) {
       const v = e.v2!;
-      const pct = (n?: number) => n !== undefined ? `${(n * 100).toFixed(1)}%` : "-";
-      const chars = (n?: number) => n !== undefined ? `${n}` : "-";
-      const regexRiskFlag = (v.regexOverreachRisk ?? 0) > 0.6 ? "⚠️ " : "";
+      const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
+      const regexRiskFlag = v.regexOverreachRisk > 0.6 ? "⚠️ " : "";
       const pendingFlag = (v.pendingRuleCoverage ?? 0) > 0.3 ? "⚠️ " : "";
       lines.push(
         `| ${e.sessionId.slice(0, 8)}…/${e.queryId.slice(0, 16)}`
         + ` | ${v.proxyChars}`
-        + ` | ${pct(v.evidenceBackedCoverage)}`
         + ` | ${pct(v.wireExactCoverage)}`
         + ` | ${pct(v.templateCoverage)}`
         + ` | ${pct(v.regexCoverage)}`
-        + ` | ${pendingFlag}${pct(v.pendingRuleCoverage)}`
+        + ` | ${pct(v.attributionOnlyCoverage)}`
+        + ` | ${pct(v.unexplainedCoverage)}`
+        + ` | ${pendingFlag}${v.pendingRuleCoverage !== undefined ? pct(v.pendingRuleCoverage) : "-"}`
         + ` | ${regexRiskFlag}${pct(v.regexOverreachRisk)}`
-        + ` | ${chars(v.serverSideAttributionChars)}`
         + ` |`,
       );
     }
@@ -219,11 +217,10 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
   lines.push(`| **R9 虚高**：R9 把 proxy 反写 system/tools expected，导致 evidenceBacked 大幅虚高 | ✅ P0-1 已修复（wireExact 从 ~95% 降到真实的 15-40%，template 45-60%，regex 13-20%） | — |`);
   lines.push(`| **raw body 丢失**：discovery.ts 用解析后对象覆盖了原始 reqBody 字符串，wire bytes 信息在此处丢失 | ⚠️ 已确认（P0-3 阻塞点） | P0-3 保留三层 body |`);
   lines.push(`| **rule 漂移**：exact_text rule 与本地 CLI 2.1.126 严重漂移（40 exact rules：1 unique / 5 multi / 34 missing） | ⚠️ 已确认（verify-rules-against-cli.ts） | P3-5 verifiedFor 降级 |`);
-  lines.push(`| **char-diff vs reconcile 双源**：scorecard alignedAuditedChars 从 diff.summary 取，evidenceBackedCoverage 从 report.coverage 取，口径不一致 | ⚠️ 已确认（scorecard.ts:~50） | P3-3 reconcile 为权威 |`);
-  lines.push(`| **baseline 跨 mode 比较**：baseline.json 无 mode 标签，fixture run 会错误与 all-local baseline 对比 | ⚠️ 已确认（T0 §3.3） | E0 baseline 按 mode 分域 |`);
+  lines.push(`| **char-diff vs reconcile 双源**：scorecard alignedTextDriftChars 从 diff.summary 取，与 reconcile 口径不同 | ⚠️ 已确认 | P3-3 reconcile 为权威 |`);
+  lines.push(`| **baseline 跨 mode 比较** | ✅ E0 已修复（latest/baseline 按 mode 分域） | — |`);
   lines.push(``);
-  lines.push(`> 上述限制不影响当前 run 的完成，但**覆盖率数字在 P0 完成前不可信**。`);
-  lines.push(`> 使用 \`--no-r9\` flag 可获得去除 R9 虚高后的真实 evidenceBacked 基线。`);
+  lines.push(`> wireExact + template 是当前最可信的 exact coverage；regex + attrOnly 反映正向重建尚未覆盖的段。`);
   lines.push(``);
 
   // Next actions
@@ -288,18 +285,16 @@ export function writeIndexHtml(runId: string, run: AuditRunRecord, entries: Audi
   // E0-5：v2 分桶 mini-bar（wireExact + template + regex + pending + serverSide + unknown）
   const v2MiniBar = (v: import("./types").ScorecardV2Summary | undefined): string => {
     if (!v) return `<span style="color:#94a3b8">-</span>`;
-    const pct = (n?: number) => n !== undefined ? (n * 100).toFixed(0) : "0";
-    const wire = v.wireExactCoverage ?? 0;
-    const tmpl = v.templateCoverage ?? 0;
-    const regex = v.regexCoverage ?? 0;
+    const pct = (n: number) => (n * 100).toFixed(0);
+    const wire = v.wireExactCoverage;
+    const tmpl = v.templateCoverage;
     const pend = v.pendingRuleCoverage ?? 0;
-    const risk = v.regexOverreachRisk ?? 0;
-    const pendFlag = pend > 0.3 ? `<span style="color:#f59e0b" title="pending rule coverage ${pct(pend)}%">⚠</span>` : "";
-    const riskFlag = risk > 0.6 ? `<span style="color:#ef4444" title="regex overreach risk ${pct(risk)}%">⚠</span>` : "";
-    return `<span title="legacy:${pct(v.evidenceBackedCoverage)}% wire:${pct(wire)}% tmpl:${pct(tmpl)}% regex:${pct(regex)}% pending:${pct(pend)}%">`
+    const risk = v.regexOverreachRisk;
+    const pendFlag = pend > 0.3 ? `<span style="color:#f59e0b" title="pending ${pct(pend)}%">⚠</span>` : "";
+    const riskFlag = risk > 0.6 ? `<span style="color:#ef4444" title="regex risk ${pct(risk)}%">⚠</span>` : "";
+    return `<span title="wire:${pct(wire)}% tmpl:${pct(tmpl)}% regex:${pct(v.regexCoverage)}% attrOnly:${pct(v.attributionOnlyCoverage)}% unexplained:${pct(v.unexplainedCoverage)}%">`
       + `<span style="color:#22c55e">${pct(wire)}%</span>`
-      + `<span style="color:#94a3b8"> / </span>`
-      + `<span style="color:#6b7280">${pct(v.evidenceBackedCoverage)}%↓</span>`
+      + `<span style="color:#94a3b8">+${pct(tmpl)}%</span>`
       + `${pendFlag}${riskFlag}`
       + `</span>`;
   };

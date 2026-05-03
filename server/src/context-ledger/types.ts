@@ -95,6 +95,7 @@ export type AlignmentBasis =
   | "order"
   | "category"
   | "harness_rule"
+  | "server_side_attribution"  // P0-2：billing_noise / known server-side overhead
   | "manual_fixture";
 
 export type FindingType =
@@ -381,38 +382,52 @@ export interface CoverageByCategory {
   matchedProxyTokenEstimate?: number;
 }
 
+// P0-2：覆盖率正交分桶，每个 proxy char 落在且仅落在一个桶。
+// 正交性：wireExact + canonical + template + regex + presence + serverSide + attrOnly + unexplained = proxyChars
 export interface CoverageSummary {
+  // 基础计数
   proxySegmentCount: number;
   matchedProxySegmentCount: number;
   unmatchedProxySegmentCount: number;
   proxyChars: number;
-  matchedProxyChars: number;
-  unexplainedProxyChars: number;
-  segmentCoverage: number;
-  charCoverage: number;
   expectedSegmentCount?: number;
   unmatchedExpectedSegmentCount?: number;
-  proxyTokenEstimate?: number;
-  matchedProxyTokenEstimate?: number;
-  unexplainedProxyTokenEstimate?: number;
-  tokenCoverage?: number;
   byCategory?: CoverageByCategory[];
 
-  // ── 细化覆盖率拆分 ────────────────────────────────────────────────────────
-  // attribution-only + evidence-backed + suspect 三者合计 = charCoverage 的分子
-  //
-  // attributionCoverage：proxy segment 已被 attribution 识别类别（含 evidence-backed），
-  //   归因有效但不一定有 expected 对应。计算方式：has attribution && category != "unknown"
-  attributionCoverage?: number;
-  // evidenceBackedCoverage：matched 或 approximate_match（有 rawHash/normalizedHash/
-  //   toolUseId/ruleId 锚点）的 proxy chars / proxyChars。suspect_match 不计入。
-  evidenceBackedCoverage?: number;
-  // attributionOnlyGap：attributionCoverage - evidenceBackedCoverage，即"归因知道但
-  //   expected 未覆盖"的字符比例（系统规则未实现导致的 gap）
-  attributionOnlyGap?: number;
-  // alignedTextDrift：evidence-backed matched 中 |expectedChars - proxyChars| 之和 / proxyChars，
-  //   衡量已匹配内容的文本漂移程度
-  alignedTextDrift?: number;
+  // 正交分桶（字符数，相加 = proxyChars）
+  // basis=raw_hash / tool_use_id 精确匹配（P0-3 完成前与 canonicalExact 合并于此桶）
+  wireExactChars: number;
+  // basis=normalized_hash（规范化后相等）
+  canonicalExactChars: number;
+  // basis=rule_id + materialization=exact_text（contentPattern 字面匹配，正向重建后 rawHash 命中）
+  templateChars: number;
+  // basis=rule_id + materialization=shape/normalized_text（无可复现文本，presence_only 对齐）
+  regexChars: number;
+  // basis=harness_rule + category≠billing_noise（presence rule，当前路径预留）
+  presenceChars: number;
+  // billing_noise / known server-side overhead，basis=server_side_attribution
+  serverSideChars: number;
+  // 有归因但无 expected segment（U1-U5 缺口）
+  attributionOnlyChars: number;
+  // 无归因也无 expected（unknown / suspect_match）
+  unexplainedChars: number;
+
+  // 覆盖率比例（对应桶的 chars / proxyChars）
+  wireExactCoverage: number;
+  canonicalExactCoverage: number;
+  templateCoverage: number;
+  regexCoverage: number;
+  presenceCoverage: number;
+  serverSideCoverage: number;
+  attributionOnlyCoverage: number;
+  unexplainedCoverage: number;
+
+  // 治理指标
+  regexOverreachRisk: number;      // regexChars / proxyChars（>0.6 → needs_review）
+  placeholderRatio?: number;       // P1-1 完成后填充
+
+  // 总对齐文本漂移（evidence-backed matched 中 |expectedChars - proxyChars| 之和 / proxyChars）
+  alignedTextDrift: number;
 }
 
 export interface AgentCapabilityMatrix {

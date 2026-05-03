@@ -34,35 +34,26 @@ export type ChangeClass =
 export interface QueryScorecard {
   queryKey: string;
   queryKeyHash: string;
-  // 原始字符数指标（v1，旧口径，保留兼容）
+  // 基础计数
   proxyChars: number;
-  attributedProxyChars: number;
-  evidenceBackedProxyChars: number;
-  attributionOnlyProxyChars: number;
-  unknownProxyChars: number;
   suspectMatchChars: number;
-  alignedAuditedChars: number;
   alignedTextDriftChars: number;
-  // 计数指标
   falseReliableMatchCount: number;
   prefixIncompleteCount: number;
   sourceTextUnavailableCount: number;
-  // 覆盖率比例 (0..1)，v1
-  attributionCoverage: number;
-  evidenceBackedCoverage: number;
-  attributionOnlyRatio: number;
-  alignedTextDriftRatio: number;
-  // ── E0-3 v2 覆盖率分桶（需传入 attributions 才有值，否则 undefined）────────
-  // P0-3 完成前 wireExactCoverage 与 canonicalExactCoverage 合并在 wireExactCoverage，
-  // 两者未来会分离；当前 basis=raw_hash 同时代表 wire-exact。
-  wireExactCoverage?: number;        // basis=raw_hash / tool_use_id
-  canonicalExactCoverage?: number;   // basis=normalized_hash
-  templateCoverage?: number;         // basis=rule_id + materialization=exact_text
-  regexCoverage?: number;            // basis=rule_id + materialization=shape/normalized_text
-  presenceCoverage?: number;         // basis=harness_rule + category≠billing_noise（预留）
-  serverSideAttributionChars?: number; // category=billing_noise（known_noise chars）
-  pendingRuleCoverage?: number;      // attribution 命中但 rule.verifiedFor===null 的字符 / proxyChars
-  regexOverreachRisk?: number;       // regexChars / proxyChars（>60% 触发 needs_review）
+  // 正交分桶覆盖率（直接来自 CoverageSummary，相加 ≈ 1.0）
+  wireExactCoverage: number;
+  canonicalExactCoverage: number;
+  templateCoverage: number;
+  regexCoverage: number;
+  presenceCoverage: number;
+  serverSideCoverage: number;
+  attributionOnlyCoverage: number;
+  unexplainedCoverage: number;
+  // 治理指标
+  regexOverreachRisk: number;
+  pendingRuleCoverage?: number;   // attribution 命中但 rule.verifiedFor===null 的字符 / proxyChars
+  alignedTextDrift: number;
   // 元数据
   verdict: AuditVerdict;
   reasons: string[];
@@ -220,17 +211,18 @@ export interface AuditRunRecord {
   failedQueries: number;
 }
 
-/** E0-5：AuditIndexEntry 里内嵌的 v2 分桶摘要（用于 report-generator 直接渲染，避免二次读文件） */
+/** AuditIndexEntry 里内嵌的覆盖率摘要（用于 report-generator 直接渲染，避免二次读文件） */
 export interface ScorecardV2Summary {
-  evidenceBackedCoverage: number;  // v1 旧口径（legacy）
-  wireExactCoverage?: number;
-  canonicalExactCoverage?: number;
-  templateCoverage?: number;
-  regexCoverage?: number;
-  presenceCoverage?: number;
-  serverSideAttributionChars?: number;
+  wireExactCoverage: number;
+  canonicalExactCoverage: number;
+  templateCoverage: number;
+  regexCoverage: number;
+  presenceCoverage: number;
+  serverSideCoverage: number;
+  attributionOnlyCoverage: number;
+  unexplainedCoverage: number;
+  regexOverreachRisk: number;
   pendingRuleCoverage?: number;
-  regexOverreachRisk?: number;
   proxyChars: number;
 }
 

@@ -694,28 +694,33 @@ export const MOCK_RECONCILIATION_REPORT = {
     expectedSegmentCount: 9,
     unmatchedExpectedSegmentCount: 0,
     proxyChars: 16970,
-    // matchedProxyChars：proxyChars - unexplainedProxyChars（包含 attribution_only 和 known_noise）
-    matchedProxyChars: 15770,
-    // unexplainedProxyChars：仅 unattributed proxy（proxy_only + suspect_match）
-    //   prior_session(900, basis=category, suspect) + unknown(300, proxy_only) = 1200
-    unexplainedProxyChars: 1200,
-    proxyTokenEstimate: 4243,
-    matchedProxyTokenEstimate: 3943,
-    unexplainedProxyTokenEstimate: 300,
-    segmentCoverage: 0.8889,
-    // charCoverage = matchedProxyChars / proxyChars（含 server-side attribution）
-    charCoverage: 0.9293,
-    tokenCoverage: 0.9293,
-    // attributionCoverage：有 server-side attribution 的 proxy chars / proxyChars
-    //   evidence-backed(15680) + known_noise(90) = 15770 / 16970 ≈ 0.9293
-    attributionCoverage: 0.9293,
-    // evidenceBackedCoverage：有内容锚点的 proxy chars / proxyChars
-    //   system_prompt(1800)+tools_schema(5200)+user_message(120)+tool_chain(7780)+harness(780) = 15680 / 16970 ≈ 0.9239
-    evidenceBackedCoverage: 0.9239,
-    // attributionOnlyGap：billing_noise(90)/16970 ≈ 0.0053
-    attributionOnlyGap: 0.0053,
-    // alignedTextDrift：evidence-backed matched 全部 delta=0，故=0
-    //   （=0 仅表示 aligned 段无漂移，不代表 proxy == expected）
+    // 正交分桶（各桶之和 = proxyChars）
+    // wireExact：user_message(120) + tool_chain(7780) = 7900
+    wireExactChars: 7900,
+    // canonical：0（无 normalized_hash 匹配）
+    canonicalExactChars: 0,
+    // template：system_prompt(1800) + tools_schema(5200) = 7000（basis=rule_id+exact_text）
+    templateChars: 7000,
+    // regex：0（当前无 shape rule 匹配）
+    regexChars: 0,
+    // presence：harness_injection(780)
+    presenceChars: 780,
+    // serverSide：billing_noise(90)
+    serverSideChars: 90,
+    // attrOnly：0
+    attributionOnlyChars: 0,
+    // unexplained：prior_session(900 suspect) + unknown(300) = 1200
+    unexplainedChars: 1200,
+    // 覆盖率比例
+    wireExactCoverage: 0.4655,       // 7900/16970
+    canonicalExactCoverage: 0,
+    templateCoverage: 0.4125,        // 7000/16970
+    regexCoverage: 0,
+    presenceCoverage: 0.046,         // 780/16970
+    serverSideCoverage: 0.0053,      // 90/16970
+    attributionOnlyCoverage: 0,
+    unexplainedCoverage: 0.0707,     // 1200/16970
+    regexOverreachRisk: 0,
     alignedTextDrift: 0,
     byCategory: [
       {

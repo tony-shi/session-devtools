@@ -100,8 +100,9 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
       confidence: "exact",
       expectedSegmentIds: [],
       proxySegmentIds: [pseg.id],
-      basis: "harness_rule",
-      note: "billing_noise: known harness overhead, not reconciled against expected",
+      // P0-2：billing_noise 用 server_side_attribution basis，明确与 evidence-backed 分离
+      basis: "server_side_attribution",
+      note: "billing_noise: known server-side overhead, excluded from evidence-backed coverage",
     };
     alignments.push(align);
     findings.push({
@@ -816,10 +817,9 @@ function computeCoverage(
   }
 
   let proxyChars = 0;
-  let matchedProxyChars = 0;
   let unexplainedProxyChars = 0;
-  let attributionOnlyChars = 0;
-  let evidenceBackedChars = 0;   // matched / approximate_match 的 proxy chars
+  let serverSideChars = 0;       // billing_noise，basis=server_side_attribution
+  let attributionOnlyChars = 0;  // 有归因但无 expected（U1-U5 缺口）
 
   const catMap = new Map<
     SegmentCategory,
@@ -841,8 +841,7 @@ function computeCoverage(
     entry.proxyTokens += tokens;
 
     if (cat === "billing_noise") {
-      matchedProxyChars += chars;
-      evidenceBackedChars += chars;  // billing_noise 由确定性规则覆盖，算 evidence-backed
+      serverSideChars += chars;
       entry.matchedCount++;
       entry.matchedChars += chars;
       entry.matchedTokens += tokens;
@@ -852,35 +851,21 @@ function computeCoverage(
     const isAttributionKnown = attr && attr.category !== "unknown";
     const isEvidenceBacked = evidenceBackedProxyIds.has(pseg.id);
     const isSuspect = suspectProxyIds.has(pseg.id);
-    // attribution-only：归因识别但无 expected segment 对应（U1-U5 未实现规则）
     const isAttrOnly = isAttributionKnown && !isEvidenceBacked && !isSuspect;
 
     if (isEvidenceBacked) {
-      matchedProxyChars += chars;
-      evidenceBackedChars += chars;
       entry.matchedCount++;
       entry.matchedChars += chars;
       entry.matchedTokens += tokens;
     } else if (isAttrOnly) {
-      // attribution-only：计入 matchedProxyChars（归因有效）但不计入 evidenceBackedChars
-      matchedProxyChars += chars;
       attributionOnlyChars += chars;
       entry.matchedCount++;
       entry.matchedChars += chars;
       entry.matchedTokens += tokens;
     } else {
-      // suspect_match 或完全未知：无内容锚点，不计入 charCoverage
       unexplainedProxyChars += chars;
     }
   }
-
-  const proxyTokenEstimate = proxySegs.reduce((s, seg) => s + (seg.tokenEstimate ?? Math.round((seg.charCount ?? 0) / 4)), 0);
-  const matchedProxyTokenEstimate = Math.round(matchedProxyChars / 4);
-
-  const segmentCoverage =
-    proxySegs.length > 0 ? matchedProxyIds.size / proxySegs.length : 0;
-  const charCoverage = proxyChars > 0 ? matchedProxyChars / proxyChars : 0;
-  const tokenCoverage = proxyTokenEstimate > 0 ? matchedProxyTokenEstimate / proxyTokenEstimate : 0;
 
   const byCategory: CoverageByCategory[] = Array.from(catMap.entries())
     .sort((a, b) => b[1].proxyChars - a[1].proxyChars)
@@ -894,18 +879,60 @@ function computeCoverage(
       matchedProxyTokenEstimate: v.matchedTokens,
     }));
 
-  const unmatchedProxySegmentCount = proxySegs.length - matchedProxyIds.size;
+  // P0-2：从 alignments 按 basis 推导各正交桶的字符数
+  // 同一 proxy segment 取最强 basis（raw_hash > normalized_hash > tool_use_id > rule_id > ...）
+  const BASIS_RANK: Record<string, number> = {
+    raw_hash: 6, normalized_hash: 5, tool_use_id: 4, rule_id: 3,
+    server_side_attribution: 2, harness_rule: 1, category: 0,
+  };
+  const proxyBestBasis = new Map<string, { basis: string; ruleId?: string }>();
+  for (const align of alignments) {
+    const rank = BASIS_RANK[align.basis] ?? 0;
+    for (const pid of align.proxySegmentIds) {
+      const cur = proxyBestBasis.get(pid);
+      if (!cur || (BASIS_RANK[cur.basis] ?? 0) < rank) {
+        const ruleId = align.note?.match(/^ruleId match: ([^\s]+)/)?.[1];
+        proxyBestBasis.set(pid, { basis: align.basis, ruleId });
+      }
+    }
+  }
 
-  // attributionCoverage：直接从 attrBySegId 统计"有归因且 category != unknown"的 proxy chars，
-  // 不借用 evidenceBackedChars——避免"有内容锚点但无 attribution"的 segment 虚抬该指标
-  const attributionChars = proxySegs.reduce((sum, seg) => {
-    if (seg.category === "billing_noise") return sum + (seg.charCount ?? 0);
-    const attr = attrBySegId.get(seg.id);
-    return attr && attr.category !== "unknown" ? sum + (seg.charCount ?? 0) : sum;
-  }, 0);
-  const attributionCoverage = proxyChars > 0 ? attributionChars / proxyChars : 0;
-  const evidenceBackedCoverage = proxyChars > 0 ? evidenceBackedChars / proxyChars : 0;
-  const attributionOnlyGap = round2(attributionCoverage - evidenceBackedCoverage);
+  let wireExactChars = 0;
+  let canonicalExactChars = 0;
+  let templateChars = 0;
+  let regexChars = 0;
+  let presenceChars = 0;
+
+  for (const pseg of proxySegs) {
+    const chars = pseg.charCount ?? 0;
+    if (chars === 0) continue;
+    const m = proxyBestBasis.get(pseg.id);
+    if (!m) continue;
+    switch (m.basis) {
+      case "raw_hash":
+      case "tool_use_id":
+        wireExactChars += chars;
+        break;
+      case "normalized_hash":
+        canonicalExactChars += chars;
+        break;
+      case "rule_id": {
+        const rule = m.ruleId ? getContextLedgerRuleById(m.ruleId) : undefined;
+        if (rule?.reconstruction?.materialization === "exact_text") {
+          templateChars += chars;
+        } else {
+          regexChars += chars;
+        }
+        break;
+      }
+      case "harness_rule":
+        presenceChars += chars;
+        break;
+      // server_side_attribution 已计入 serverSideChars，不重复
+    }
+  }
+
+  const safeRatio = (c: number) => proxyChars > 0 ? round2(c / proxyChars) : 0;
   const alignedTextDrift = evidenceBackedProxyCharsForDrift > 0
     ? round2(evidenceBackedCharDrift / evidenceBackedProxyCharsForDrift)
     : 0;
@@ -913,20 +940,29 @@ function computeCoverage(
   const summary: CoverageSummary = {
     proxySegmentCount: proxySegs.length,
     matchedProxySegmentCount: matchedProxyIds.size,
-    unmatchedProxySegmentCount,
+    unmatchedProxySegmentCount: proxySegs.length - matchedProxyIds.size,
     proxyChars,
-    matchedProxyChars,
-    unexplainedProxyChars,
-    segmentCoverage: round2(segmentCoverage),
-    charCoverage: round2(charCoverage),
-    proxyTokenEstimate,
-    matchedProxyTokenEstimate,
-    unexplainedProxyTokenEstimate: Math.round(unexplainedProxyChars / 4),
-    tokenCoverage: round2(tokenCoverage),
     byCategory,
-    attributionCoverage: round2(attributionCoverage),
-    evidenceBackedCoverage: round2(evidenceBackedCoverage),
-    attributionOnlyGap,
+    // 正交分桶（字符数）
+    wireExactChars,
+    canonicalExactChars,
+    templateChars,
+    regexChars,
+    presenceChars,
+    serverSideChars,
+    attributionOnlyChars,
+    unexplainedChars: unexplainedProxyChars,
+    // 覆盖率比例
+    wireExactCoverage: safeRatio(wireExactChars),
+    canonicalExactCoverage: safeRatio(canonicalExactChars),
+    templateCoverage: safeRatio(templateChars),
+    regexCoverage: safeRatio(regexChars),
+    presenceCoverage: safeRatio(presenceChars),
+    serverSideCoverage: safeRatio(serverSideChars),
+    attributionOnlyCoverage: safeRatio(attributionOnlyChars),
+    unexplainedCoverage: safeRatio(unexplainedProxyChars),
+    // 治理指标
+    regexOverreachRisk: safeRatio(regexChars),
     alignedTextDrift,
   };
 
@@ -936,8 +972,6 @@ function computeCoverage(
       (s) => !matchedExpectedIds.has(s.id),
     ).length;
   }
-
-  void attributionOnlyChars;  // 仍被 isAttrOnly 分支引用以累加，但 attributionCoverage 已改用 attrBySegId 直接计算
 
   return summary;
 }

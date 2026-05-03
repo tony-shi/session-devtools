@@ -18,20 +18,21 @@ function makeScorecard(overrides: Partial<QueryScorecard> = {}): QueryScorecard 
     queryKey: "claude-code/sess-abc/q-123",
     queryKeyHash: "deadbeef01234567",
     proxyChars: 10000,
-    attributedProxyChars: 8000,
-    evidenceBackedProxyChars: 6000,
-    attributionOnlyProxyChars: 2000,
-    unknownProxyChars: 500,
     suspectMatchChars: 100,
-    alignedAuditedChars: 6000,
     alignedTextDriftChars: 50,
     falseReliableMatchCount: 0,
     prefixIncompleteCount: 0,
     sourceTextUnavailableCount: 0,
-    attributionCoverage: 0.8,
-    evidenceBackedCoverage: 0.6,
-    attributionOnlyRatio: 0.2,
-    alignedTextDriftRatio: 0.005,
+    wireExactCoverage: 0.25,
+    canonicalExactCoverage: 0,
+    templateCoverage: 0.35,
+    regexCoverage: 0.1,
+    presenceCoverage: 0.05,
+    serverSideCoverage: 0.0,
+    attributionOnlyCoverage: 0.2,
+    unexplainedCoverage: 0.05,
+    regexOverreachRisk: 0.1,
+    alignedTextDrift: 0.005,
     verdict: "ok",
     reasons: [],
     generatedAt: new Date().toISOString(),
@@ -40,17 +41,18 @@ function makeScorecard(overrides: Partial<QueryScorecard> = {}): QueryScorecard 
 }
 
 describe("classifyDelta", () => {
-  it("新 query（isNew=true）→ needs_review（evidenceBackedCoverage 低）", () => {
-    const cur = makeScorecard({ evidenceBackedCoverage: 0.3 });
+  it("新 query（isNew=true）→ needs_review（exact coverage 低）", () => {
+    // wireExact+canonical+template 合计 = 0.1+0+0.1 = 0.2 < 0.3
+    const cur = makeScorecard({ wireExactCoverage: 0.1, templateCoverage: 0.1 });
     const { verdict, reasons } = classifyDelta(cur, undefined, true);
     expect(verdict).toBe("needs_review");
     expect(reasons).toContain("new_query");
   });
 
-  it("新 query evidenceBackedCoverage 足够 → needs_review（新 query 保守）", () => {
-    const cur = makeScorecard({ evidenceBackedCoverage: 0.8 });
+  it("新 query exact coverage 足够 → needs_review（新 query 保守）", () => {
+    // wireExact+template = 0.25+0.35 = 0.6 >= 0.3，但新 query 仍是 needs_review
+    const cur = makeScorecard();
     const { verdict } = classifyDelta(cur, undefined, true);
-    // 新 query 不论覆盖率，仍是 needs_review
     expect(verdict).toBe("needs_review");
   });
 
@@ -62,30 +64,34 @@ describe("classifyDelta", () => {
     expect(reasons.some((r) => r.includes("suspect_match"))).toBe(true);
   });
 
-  it("evidenceBackedCoverage 明显下降 → regression", () => {
-    const prev = makeScorecard({ evidenceBackedCoverage: 0.7 });
-    const cur = makeScorecard({ evidenceBackedCoverage: 0.6 });  // 下降 0.1 > 0.05
+  it("unexplainedCoverage 明显上升 → regression", () => {
+    // unexplained 从 0.05 升到 0.12，delta=0.07 > 0.05
+    const prev = makeScorecard({ unexplainedCoverage: 0.05 });
+    const cur = makeScorecard({ unexplainedCoverage: 0.12 });
     const { verdict } = classifyDelta(cur, prev, false);
     expect(verdict).toBe("regression");
   });
 
-  it("unknownProxyChars 明显上升 → regression", () => {
-    const prev = makeScorecard({ unknownProxyChars: 100 });
-    const cur = makeScorecard({ unknownProxyChars: 700 });  // 上升 600 > 500
+  it("unexplainedChars 明显上升 → regression", () => {
+    // unexplainedChars: 100 → 700，delta=600 > 500
+    const prev = makeScorecard({ unexplainedCoverage: 0.01 });   // 0.01*10000=100
+    const cur = makeScorecard({ unexplainedCoverage: 0.07 });    // 0.07*10000=700
     const { verdict } = classifyDelta(cur, prev, false);
     expect(verdict).toBe("regression");
   });
 
-  it("evidenceBackedCoverage 明显上升 → improvement", () => {
-    const prev = makeScorecard({ evidenceBackedCoverage: 0.5 });
-    const cur = makeScorecard({ evidenceBackedCoverage: 0.6 });  // 上升 0.1 > 0.02
+  it("wireExact + template 明显上升 → improvement", () => {
+    // exactDelta = (0.35+0.45) - (0.25+0.35) = 0.2 > 0.02
+    const prev = makeScorecard({ wireExactCoverage: 0.25, templateCoverage: 0.35 });
+    const cur = makeScorecard({ wireExactCoverage: 0.35, templateCoverage: 0.45 });
     const { verdict } = classifyDelta(cur, prev, false);
     expect(verdict).toBe("improvement");
   });
 
-  it("unknownProxyChars 明显下降 → improvement", () => {
-    const prev = makeScorecard({ unknownProxyChars: 600 });
-    const cur = makeScorecard({ unknownProxyChars: 300 });  // 下降 300 > 200
+  it("unexplainedChars 明显下降 → improvement", () => {
+    // unexplainedChars: 600 → 300，delta=-300 < -200
+    const prev = makeScorecard({ unexplainedCoverage: 0.06 });
+    const cur = makeScorecard({ unexplainedCoverage: 0.03 });
     const { verdict } = classifyDelta(cur, prev, false);
     expect(verdict).toBe("improvement");
   });

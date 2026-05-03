@@ -194,17 +194,18 @@ export function writeIndex(
       };
     }
 
-    // E0-5：从 scorecard 提取 v2 分桶摘要，内嵌到 index entry
+    // 从 scorecard 提取覆盖率分桶摘要，内嵌到 index entry（report-generator 直接读取）
     const v2 = r.scorecard ? {
-      evidenceBackedCoverage: r.scorecard.evidenceBackedCoverage,
       wireExactCoverage: r.scorecard.wireExactCoverage,
       canonicalExactCoverage: r.scorecard.canonicalExactCoverage,
       templateCoverage: r.scorecard.templateCoverage,
       regexCoverage: r.scorecard.regexCoverage,
       presenceCoverage: r.scorecard.presenceCoverage,
-      serverSideAttributionChars: r.scorecard.serverSideAttributionChars,
-      pendingRuleCoverage: r.scorecard.pendingRuleCoverage,
+      serverSideCoverage: r.scorecard.serverSideCoverage,
+      attributionOnlyCoverage: r.scorecard.attributionOnlyCoverage,
+      unexplainedCoverage: r.scorecard.unexplainedCoverage,
       regexOverreachRisk: r.scorecard.regexOverreachRisk,
+      pendingRuleCoverage: r.scorecard.pendingRuleCoverage,
       proxyChars: r.scorecard.proxyChars,
     } : undefined;
 
