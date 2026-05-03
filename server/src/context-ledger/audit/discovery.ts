@@ -35,6 +35,7 @@ export const VALID_FIXTURE_NAMES = [
   "large-tool-output",
   "multi-turn-human",
   "system-tools-overhead",
+  "task-reminder-smoosh",
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
