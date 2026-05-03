@@ -302,9 +302,9 @@ if (mode === "fixtures") {
       fixtureName: (raw["_fixtureName"] as string | undefined) ?? proxy.queryKey.sessionId,
       source: (raw["_fixtureSource"] as string | undefined) ?? "unknown",
       queryId: proxy.queryKey.queryId,
-      evidenceBackedCoverage: entry?.verdict !== undefined
-        ? undefined  // scorecard 在 indexEntry 里没有直接暴露 coverage，后续通过 scorecard.json 读取
-        : undefined,
+      // P0-2 后从 indexEntry.v2 读正交桶；旧 evidenceBackedCoverage 字段已被 wireExact + template 取代
+      wireExactCoverage: entry?.v2?.wireExactCoverage,
+      templateCoverage: entry?.v2?.templateCoverage,
       verdict: entry?.verdict,
     };
   });

@@ -96,6 +96,7 @@ export type AlignmentBasis =
   | "category"
   | "harness_rule"
   | "server_side_attribution"  // P0-2：billing_noise / known server-side overhead
+  | "attribution_only"         // P1-3 修正：attribution 已识别但无 expected segment（U1-U5 缺口），与 presence 桶分离
   | "manual_fixture";
 
 export type FindingType =
@@ -433,11 +434,11 @@ export interface CoverageSummary {
   templateChars: number;
   // basis=rule_id + materialization=shape/normalized_text（无可复现文本，presence_only 对齐）
   regexChars: number;
-  // basis=harness_rule + category≠billing_noise（presence rule，当前路径预留）
+  // basis=harness_rule（presence rule 正向预留路径，目前未触发；与 attributionOnlyChars 严格互斥）
   presenceChars: number;
   // billing_noise / known server-side overhead，basis=server_side_attribution
   serverSideChars: number;
-  // 有归因但无 expected segment（U1-U5 缺口）
+  // basis=attribution_only：attribution 已识别但 expected 缺段（U1-U5 缺口）
   attributionOnlyChars: number;
   // 无归因也无 expected（unknown / suspect_match）
   unexplainedChars: number;

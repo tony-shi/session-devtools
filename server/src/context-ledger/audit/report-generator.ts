@@ -13,7 +13,7 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
   const regressions = entries
     .filter((e) => e.changeClass === "regressed")
     .sort((a, b) => {
-      // 按 suspectMatchChars + unknownProxyChars 降序（越大越需要优先看）
+      // 按 suspectMatchChars + unexplainedChars 降序（越大越需要优先看）
       return 0;  // 简化：保持 index 顺序
     });
   const needsReview = entries.filter((e) => e.changeClass === "needs_review");
@@ -230,7 +230,7 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
     lines.push(`- 参考路径：\`server/src/context-ledger/proxy-attribution.ts\` / \`reconciliation-engine.ts\``);
   }
   if (run.needsReviewQueries > 0) {
-    lines.push(`- **Needs review**: 检查 expected-context-reconstructor 的 U1-U5 未实现规则是否影响了 evidenceBackedCoverage。`);
+    lines.push(`- **Needs review**: 检查 expected-context-reconstructor 的 U1-U5 未实现规则是否压低了 wireExactCoverage + templateCoverage（push 到 attributionOnlyCoverage / unexplainedCoverage）。`);
   }
   lines.push(`- **No automatic code modification**: 本 audit 仅生成报告，不自动修改 parser/reconstructor/reconciliation 核心代码。`);
   lines.push(``);

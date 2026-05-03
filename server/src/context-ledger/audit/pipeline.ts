@@ -162,7 +162,7 @@ export function runPipeline(input: PipelineInput): PipelineResult {
     ) as typeof snapshot;
     const allAttributions = inferClaudeProxyAttributions(snapForAttr);
     // T0 --verified-only：仅用于 R9 expected 生成，reconcile/scorecard 仍使用全量 attribution，
-    // 保证 attributionCoverage / unknownProxyChars / attribution-only gap 统计不失真。
+    // 保证 attributionOnlyCoverage / unexplainedCoverage / serverSideCoverage 等正交桶统计不失真。
     const r9Attributions = verifiedOnly ? filterVerifiedAttributions(allAttributions) : allAttributions;
 
     // 3. 解析 JSONL

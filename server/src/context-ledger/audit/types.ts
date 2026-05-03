@@ -9,9 +9,10 @@ import type { AgentKind } from "../types";
 
 export type AuditVerdict =
   | "ok"           // 无显著变化，各指标在阈值内
-  | "improvement"  // evidenceBackedCoverage 上升 / unknownProxyChars 下降
-  | "regression"   // falseReliableMatchCount>0 / evidenceBackedCoverage 明显下降
-  | "needs_review" // 新 query / drift 暴露 / prefixIncomplete / proxy_without_jsonl
+  | "improvement"  // wireExact + template 上升 / unexplainedCoverage 下降
+  | "regression"   // falseReliableMatchCount>0 / wireExact + template 明显下降
+  | "needs_review" // 新 query / drift 暴露 / prefixIncomplete / proxy_without_jsonl /
+                   // pendingRuleCoverage>30% / regexOverreachRisk>60%
   | "unchanged"    // 与 baseline 完全一致
   | "skipped"      // proxy_without_jsonl 或缺少必要输入
   | "failed";      // pipeline 抛出异常
@@ -164,7 +165,12 @@ export interface FixtureMatrixEntry {
   fixtureName: string;
   source: string;  // "ant-native" | "external" | "synthetic" | "unknown"
   queryId: string;
-  evidenceBackedCoverage?: number;
+  // P0-2 后用正交桶替代旧 evidenceBackedCoverage：
+  //   wireExactCoverage  — basis=raw_hash / tool_use_id（精确锚点匹配）
+  //   templateCoverage   — basis=rule_id + materialization=exact_text（contentPattern 正向重建命中）
+  // 两者之和约等于"严格 exact"覆盖率；不含 regex/presence/attributionOnly。
+  wireExactCoverage?: number;
+  templateCoverage?: number;
   verdict?: string;
 }
 
