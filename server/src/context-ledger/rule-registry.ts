@@ -2125,12 +2125,14 @@ export const CLAUDE_CODE_TOOL_WEBFETCH_RULE: ContextLedgerRule = {
 // queryScope: "side_query"——parser 推断的 queryKind === "side_query" 时才命中。
 // 主请求（tools>0）永远不会命中 side_query rule，强约束防止误匹配。
 //
-// ⚠️  FIXTURE STATUS（2026-05-03 扫描结论）：
-//   扫描本地 2.1.126 所有 traffic.jsonl（15 个文件，覆盖 2026-05-01 至 2026-05-03），
-//   未发现任何 tools=0 + messages=1 + cc_version=2.1.126 + session-title prompt 的请求。
-//   旧版（2.1.122.d93）中存在此类请求（traffic.jsonl.2026-05-01T05-59-26-948Z:1995）。
-//   推断：2.1.126 可能暂时关闭了 generateSessionTitle，或触发条件变更，或尚未在本次采样窗口触发。
-//   fixture 待未来有真实 2.1.126 side query 时录制；当前无 fixture 覆盖，不做 unit test 补偿。
+// FIXTURE STATUS：
+//   proxy-request.json 已录制（server/test/fixtures/context-reconstruction/side-query-session-title/）。
+//   版本：cc_version=2.1.122.d93（traffic.jsonl.2026-05-01T05-59-26-948Z:1995）。
+//   无对应 session.jsonl——side query 不属于任何主 session JSONL，
+//   因此无法通过标准 mutation pipeline 重建 expected。
+//   当前从 VALID_FIXTURE_NAMES 排除，等待 P3-4（--proxy-only attribution-only 模式）支持。
+//   2.1.126 版本的 session-title side query 暂未在本地 traffic 中采样到；
+//   规则本身语义正确，fixture 已就绪，只缺 pipeline 路径。
 
 // ── session title generation ───────────────────────────────────────────────────
 // generateSessionTitle() — sessionTitle.ts:79
