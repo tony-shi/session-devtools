@@ -210,13 +210,17 @@ function applyRuleMatch(
   // mechanism：从 rule.attribution.mechanism
   const mechanism = attr.mechanism;
 
-  // confidence：有命名捕获组且全部非空 → exact；否则按 rule.reconciliation.confidence 降级
+  // P2-6（局部）：confidence 语义修正
+  //   exact matchMode → exact（字面精确匹配，识别与复现都确信）
+  //   regex + allGroupsFilled → estimated（识别确信，但 regex 本质上不能精确复现内容）
+  //   regex + partial groups  → inferred
+  //   其他（prefix/structural）→ rule.reconciliation.confidence
   const hasGroups = groups && Object.keys(groups).length > 0;
   const allGroupsFilled = hasGroups && Object.values(groups!).every((v) => v !== undefined && v !== "");
   const baseConfidence = rule.reconciliation?.confidence ?? "inferred";
   const confidence: ProxySegmentAttribution["confidence"] =
     attr.matchMode === "exact" ? "exact"
-    : allGroupsFilled ? "exact"
+    : allGroupsFilled ? "estimated"    // regex 全填：识别确信，复现仍 estimated
     : hasGroups ? "inferred"
     : baseConfidence;
 
@@ -287,15 +291,9 @@ export function inferClaudeProxyAttributions(
     }
   }
 
-  // 总消息索引数（prior_session_guess 依赖，结构性推断）
-  const msgIndices = new Set<number>();
-  for (const seg of snapshot.segments) {
-    if (seg.section !== "messages") continue;
-    const ref = seg.sourceRefs[0];
-    const idx = ref?.kind === "proxy" ? parseMsgIndex(ref.proxy.jsonPath) : null;
-    if (idx !== null) msgIndices.add(idx);
-  }
-  const totalMessages = msgIndices.size;
+  // P2-4：prior_session_guess 已删除，不再需要 totalMessages 结构性推断。
+  // prior_session_history 归因由 reconcile 层的 prefixIncomplete 信号决定，
+  // attribution 只输出 wire schema 类别（user_message），不主动猜测历史性。
 
   let attrCounter = 0;
 
@@ -364,8 +362,6 @@ export function inferClaudeProxyAttributions(
       notes = [`rule_gap: no matching tool rule for ${toolNameMatch?.[0] ?? "unknown tool"} — add to registry if stable`];
 
     } else if (seg.section === "messages") {
-      const msgIndex = parseMsgIndex(jsonPath);
-
       if (seg.category === "tool_use") {
         // wire schema：category 由 parser 直接确定，无文本 pattern 可写
         mechanism = "tool_use_id_match";
@@ -394,15 +390,6 @@ export function inferClaudeProxyAttributions(
           flags.push("smooshed_reminder");
           ruleId = CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE.ruleId;
         }
-      } else if (seg.category === "user_message" && msgIndex === 0 && totalMessages > 1) {
-        // prior_session_guess：messages[0] 结构性推断，无文本 pattern
-        // P2-1：system-reminder / local-command 由 rule match 命中，已不会落到此分支
-        category = "prior_session_history";
-        mechanism = "unknown";
-        confidence = "inferred";
-        attributedSource = "prior_session";
-        lifecycle = "session";
-        notes = [`prior_session_guess: messages[0] user_message in a ${totalMessages}-message context`];
       } else if (seg.category === "user_message" || seg.category === "assistant_text") {
         // wire schema 确定类型，attribution 只补充 mechanism
         mechanism = "unknown";

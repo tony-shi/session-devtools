@@ -129,12 +129,13 @@ describe("cross-fixture: system-tools-overhead 的 tools 被识别为 tools_sche
 
     const toolsAttr = attributions.find((a) => a.category === "tools_schema");
     expect(toolsAttr).toBeDefined();
-    expect(toolsAttr?.mechanism).toBe("tools_schema_pattern");
+    if (!toolsAttr) return; // 类型 narrow，下面可放心访问字段
+    expect(toolsAttr.mechanism).toBe("tools_schema_pattern");
     // exact = tool rule 精确命中（Edit/Write/Read 等静态 rule）
     // inferred = regex rule 头尾锚定（Agent/Bash 等动态 rule）
     // 两者都是合法结果，取决于具体 tool
-    expect(["exact", "inferred"]).toContain(toolsAttr?.confidence);
-    expect(toolsAttr?.charCount ?? 0).toBeGreaterThan(0);
+    expect(["exact", "inferred"]).toContain(toolsAttr.confidence);
+    expect(toolsAttr.charCount ?? 0).toBeGreaterThan(0);
   });
 });
 
@@ -250,8 +251,8 @@ describe("rule registry 集成：identity rule 驱动 attribution", () => {
     );
     expect(envAttr).toBeDefined();
     expect(envAttr!.category).toBe("harness_injection");
-    // regex 구조 매칭 성공 시 confidence=exact 로 승급
-    expect(["exact", "inferred"]).toContain(envAttr!.confidence);
+    // P2-6 修正：regex allGroupsFilled → estimated（识别确信，复现仍 estimated）
+    expect(["exact", "estimated", "inferred"]).toContain(envAttr!.confidence);
     // cwd, platform 등 동적 필드가 notes 에 추출됐는지 확인
     expect(envAttr!.notes?.some(n => n.startsWith("cwd="))).toBe(true);
   });

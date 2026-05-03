@@ -327,7 +327,8 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
         confidence: attr.confidence,
         expectedSegmentIds: [],
         proxySegmentIds: [pseg.id],
-        basis: "harness_rule",
+        // 用独立 basis 与 presence 预留路径分离，确保 coverage 桶正交
+        basis: "attribution_only",
         note: `attribution-only: ${attr.mechanism} (no expected segment — unimplemented rule)`,
       };
       alignments.push(align);
@@ -502,9 +503,7 @@ function matchOneExpected(
   }
 
   // M3.5: ruleId match（R9 attribution-generated segments 专用）
-  // expected segment 由 R9 从 attribution 反向生成，metadata.ruleId 记录了命中的 rule。
-  // proxy segment 通过 attribution.ruleId 关联同一 rule。
-  // 两者 ruleId 相同 → 精确对齐，优先级高于 M4 category heuristic。
+  // P2-3：命中后根据 rule.reconciliation.comparePolicy 决定 matchKind/confidence。
   const esegRuleId = eseg.metadata?.ruleId as string | undefined;
   if (esegRuleId) {
     const candidates = proxySegs.filter((s) => {
@@ -513,29 +512,47 @@ function matchOneExpected(
       return attr?.ruleId === esegRuleId;
     });
     if (candidates.length > 0) {
-      // 多个候选时取 charCount 最接近 expected 的（同一 rule 在同一 request 里只出现一次，一般只有一个候选）
       candidates.sort((a, b) =>
         Math.abs((a.charCount ?? 0) - (eseg.charCount ?? 0)) -
         Math.abs((b.charCount ?? 0) - (eseg.charCount ?? 0))
       );
       const pseg = candidates[0];
       const attr = attrBySegId.get(pseg.id);
-      // exact_text rule → matchKind=exact；shape/normalized_text → matchKind=heuristic
       const rule = getContextLedgerRuleById(esegRuleId);
+      const policy = rule?.reconciliation?.comparePolicy ?? "char_diff";
       const mat = rule?.reconstruction?.materialization;
-      const matchKind: AlignmentRef["matchKind"] =
-        mat === "exact_text" ? "exact" : "heuristic";
-      const confidence: AlignmentRef["confidence"] =
-        mat === "exact_text" ? "exact" : "inferred";
+
+      // P2-3：comparePolicy 决定 M3.5 命中后的 matchKind/confidence（不影响是否匹配）
+      // ruleId match 是独立对齐机制；comparePolicy 只影响对齐的"质量"标注和 finding 生成。
+      // presence_only/structural → heuristic/inferred（只验存在）
+      // raw_hash/normalized_hash → 理论上精确，但 M1/M2 会先命中，走到这里说明 hash 已不同 → heuristic
+      // char_diff + exact_text   → exact/exact（已通过 contentPattern 精确重建）
+      // char_diff + 其他材质      → heuristic/inferred
+      let matchKind: AlignmentRef["matchKind"] = "heuristic";
+      let alignConfidence: AlignmentRef["confidence"] = "inferred";
+
+      if (policy === "presence_only" || policy === "structural") {
+        matchKind = "heuristic";
+        alignConfidence = "inferred";
+      } else if (policy === "raw_hash" || policy === "normalized_hash") {
+        // M1/M2 先命中精确 hash → 走到 M3.5 说明 hash 不等，降为 heuristic
+        matchKind = "heuristic";
+        alignConfidence = "inferred";
+      } else {
+        // char_diff（及 known_noise，但 known_noise 已在 step 1 处理）
+        matchKind = mat === "exact_text" ? "exact" : "heuristic";
+        alignConfidence = mat === "exact_text" ? "exact" : "inferred";
+      }
+
       return {
         alignment: {
           matchKind,
-          confidence,
+          confidence: alignConfidence,
           expectedSegmentIds: [eseg.id],
           proxySegmentIds: [pseg.id],
           basis: "rule_id" as AlignmentBasis,
           attributionIds: attr ? [attr.id] : undefined,
-          note: `ruleId match: ${esegRuleId} (${mat ?? "unknown"})`,
+          note: `ruleId match: ${esegRuleId} (${mat ?? "unknown"}, policy=${policy})`,
         },
         matchedProxyIds: [pseg.id],
         matchedExpectedIds: [eseg.id],
@@ -704,19 +721,12 @@ function buildAttrBySegId(
         }
         // (b) 粒度不一致的两种已知情况：
         //
-        // TODO(jsonpath-prefix-match): 当前用双向前缀匹配处理两类粒度不一致：
-        //   1. tools 粒度差异：attribution 用 "reqBody.tools"（整体），
-        //      parser 用 "reqBody.tools[0]"..."reqBody.tools[33]"（逐个）。
-        //      来源：proxy-attribution.ts 把 tools[] 视为一个整体 attribution。
-        //   2. string content 路径差异：attribution 用 "reqBody.messages[2].content"，
-        //      parser 用 "reqBody.messages[2]"（string content 无 block 级路径）。
-        //      来源：attribution 多加了 .content 后缀，parser 没有。
-        //
-        // 双向前缀匹配是过宽的 heuristic——如果 attribution 粒度比 parser 粗很多
-        // （如整个 reqBody.messages），会把无关 segment 也标记为已覆盖。
-        // 预计随着 proxy-attribution 和 proxy-snapshot-parser 逐步细化拆分，
-        // 这里的 fallback 会被逐步替换为精确映射。在那之前，保持当前行为，
-        // 不引入更精确但更脆弱的专用规则。
+        // P2-5 分析：attribution 直接复用 parser segment 的 sourceRefs，
+        // 因此精确匹配（上方 parserId = parserByJsonPath.get(attrPath)）已先命中，
+        // 双向前缀 fallback 实际只处理以下已知遗留情况：
+        //   string content 路径差异：极少数情况下 attribution 带 .content 后缀
+        //   而 parser 没有（目前新的 local-command rule 已精确化，此情况基本不存在）。
+        // 现有边界安全（只匹配 [ 或 . 分隔的子路径），保留 fallback 不做大重构。
         if (parserSegments) {
           for (const seg of parserSegments) {
             for (const segRef of seg.sourceRefs) {
@@ -787,8 +797,9 @@ function computeCoverage(
   let evidenceBackedCharDrift = 0;
   let evidenceBackedProxyCharsForDrift = 0;
   for (const align of alignments) {
-    // 只统计 evidence-backed（raw_hash / normalized_hash / tool_use_id / harness_rule）
-    if (align.basis === "category") continue;
+    // 只统计 evidence-backed（raw_hash / normalized_hash / tool_use_id / rule_id 等）
+    // category（M4 heuristic）和 attribution_only（无 expected）不参与 drift 计算
+    if (align.basis === "category" || align.basis === "attribution_only") continue;
     const eChars = align.expectedSegmentIds
       .map((id) => expectedById.get(id)?.charCount ?? 0)
       .reduce((a, b) => a + b, 0);
@@ -868,7 +879,7 @@ function computeCoverage(
   // 同一 proxy segment 取最强 basis（raw_hash > normalized_hash > tool_use_id > rule_id > ...）
   const BASIS_RANK: Record<string, number> = {
     raw_hash: 6, normalized_hash: 5, tool_use_id: 4, rule_id: 3,
-    server_side_attribution: 2, harness_rule: 1, category: 0,
+    server_side_attribution: 2, harness_rule: 1, attribution_only: 1, category: 0,
   };
   const proxyBestBasis = new Map<string, { basis: string; ruleId?: string }>();
   for (const align of alignments) {
@@ -911,9 +922,13 @@ function computeCoverage(
         break;
       }
       case "harness_rule":
+        // presence rule 正向预留路径（目前未实际触发）。
+        // 注意：attribution-only fallback 已迁移到独立 basis "attribution_only"，
+        // 不会再误进 presence 桶。
         presenceChars += chars;
         break;
-      // server_side_attribution 已计入 serverSideChars，不重复
+      // server_side_attribution 已计入 serverSideChars，attribution_only 已计入 attributionOnlyChars，
+      // 这两类不再重复进任何桶。
     }
   }
 
