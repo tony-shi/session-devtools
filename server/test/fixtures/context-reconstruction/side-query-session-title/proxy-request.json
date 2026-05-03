@@ -84,5 +84,5 @@
   },
   "_traffic_jsonl_line": 1995,
   "_fixtureSource": "ant-native",
-  "_fixtureNote": "session-title side query (generateSessionTitle internal call)"
+  "_fixtureNote": "session-title side query: generateSessionTitle() internal Haiku call. Sourcemap proof (restored-src/src/utils/sideQuery.ts): sideQuery() bypasses sessionStorage entirely — no promptId is set, no JSONL entry is written. promptId is only set by processTextPrompt() (user main-session input path). Therefore: no session.jsonl exists for this query by design. Audit mode: --proxy-only (attribution-only, no JSONL reconcile)."
 }
