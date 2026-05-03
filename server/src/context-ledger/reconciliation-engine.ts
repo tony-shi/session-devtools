@@ -34,6 +34,7 @@
 // attribution 层已识别类别）。真正 unknown（attribution.category === "unknown"）才计
 // 入 unexplained，severity=critical。
 
+import { createHash } from "crypto";
 import type {
   AgentKind,
   AlignmentBasis,
@@ -52,6 +53,10 @@ import type {
   SourceRef,
 } from "./types";
 import { getContextLedgerRule as getContextLedgerRuleById } from "./rule-registry";
+
+function sha256Short(text: string): string {
+  return "sha256:" + createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 输入 / 输出
@@ -162,7 +167,7 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
       if (mergeResult) {
         for (const id of mergeResult.matchedExpectedIds) matchedExpectedIds.add(id);
         for (const id of mergeResult.matchedProxyIds) matchedProxyIds.add(id);
-        alignments.push(...mergeResult.alignments);
+        alignments.push(...mergeResult.alignments.map((a) => ({ ...a, id: nextAlignId() })));
         findings.push(...mergeResult.findings.map((f) => ({ ...f, id: nextFindingId() })));
         continue;
       }
@@ -582,7 +587,7 @@ function matchOneExpected(
 
 // 尝试 N:1 merge_alignment：同一 logicalMessage 的多个 expected → 同一 proxy segment
 interface MergeResult {
-  alignments: AlignmentRef[];
+  alignments: Omit<AlignmentRef, "id">[];
   findings: Omit<ReconciliationFinding, "id">[];
   matchedProxyIds: string[];
   matchedExpectedIds: string[];
@@ -617,11 +622,126 @@ function tryMergeAlignment(
   proxyByToolUseId: Map<string, ContextSegment[]>,
   attrBySegId: Map<string, ProxySegmentAttribution>,
 ): MergeResult | null {
-  if (group.length < 2) return null;
+  if (group.length === 0) return null;
 
-  // R-MERGE-N1 检测占位：
-  // 未来实现时在此处计算 group 内所有 segment contentRef.text 拼接后的 sha256，
-  // 与 proxyByRawHash 查询结果匹配。当前 4 个 fixture 无此场景，返回 null。
+  // ── R-MERGE-N1：多个 expected segments → 单一 proxy segment ────────────────
+  //
+  // 场景：JSONL 把一条 user message 拆成多个 mutation（如 user_message + skill_listing），
+  // 但 harness 在发 API 时把它们合并成一条 string content 的 user message。
+  // proxy parser 只能把这条 string 切成一个 segment，rawText = 多段拼接。
+  //
+  // 检测策略：把 group 内每个 expected segment 对应的 proxy rawText（通过 rawHash 反查）
+  // 依次拼接，计算拼接后的 sha256 短截，与 proxyByRawHash 比对。
+  // 若命中，产出 merge_alignment finding（N:1）。
+  //
+  // 前提：每个 expected segment 必须有 rawHash 且该 rawHash 能在 proxyByRawHash 里找到
+  // 对应的 proxy rawText（即每个独立 expected 都能反查到 proxy 文本）。
+
+  // 步骤1：收集 group 内所有 expected segment 对应的 proxy rawText
+  const proxyRawTexts: string[] = [];
+  const individualProxyIds: string[] = [];
+  let canAttemptMerge = true;
+
+  for (const eseg of group) {
+    if (matchedExpectedIds.has(eseg.id)) {
+      // 已被其他路径匹配，跳过 merge 尝试
+      canAttemptMerge = false;
+      break;
+    }
+    if (!eseg.rawHash) {
+      canAttemptMerge = false;
+      break;
+    }
+    // 通过 expected rawHash 反查 proxy segments（rawHash 相同 → 内容相同）
+    const proxyCandidates = (proxyByRawHash.get(eseg.rawHash) ?? []).filter(
+      (s) => !matchedProxyIds.has(s.id),
+    );
+    if (proxyCandidates.length === 0 || !proxyCandidates[0].rawText) {
+      canAttemptMerge = false;
+      break;
+    }
+    proxyRawTexts.push(proxyCandidates[0].rawText);
+    individualProxyIds.push(proxyCandidates[0].id);
+  }
+
+  if (group.length >= 2 && canAttemptMerge && proxyRawTexts.length === group.length) {
+    // 步骤2：拼接 proxy rawTexts（与 proxy-snapshot-parser 的 string content 构造方式一致）
+    const mergedText = proxyRawTexts.join("");
+    const mergedHash = sha256Short(mergedText);
+
+    const mergeCandidates = (proxyByRawHash.get(mergedHash) ?? []).filter(
+      (s) => !matchedProxyIds.has(s.id),
+    );
+
+    if (mergeCandidates.length > 0) {
+      const mergedProxySeg = mergeCandidates[0];
+      return {
+        alignments: [{
+          matchKind: "heuristic",
+          confidence: "inferred",
+          expectedSegmentIds: group.map((s) => s.id),
+          proxySegmentIds: [mergedProxySeg.id],
+          basis: "raw_hash" as AlignmentBasis,
+          attributionIds: attrBySegId.has(mergedProxySeg.id)
+            ? [attrBySegId.get(mergedProxySeg.id)!.id]
+            : undefined,
+          note: `R-MERGE-N1: ${group.length} expected segments merged → single proxy segment (${mergedText.length} chars)`,
+        }],
+        findings: [{
+          type: "merge_alignment",
+          severity: "info",
+          category: group[0].category,
+          expectedSegmentIds: group.map((s) => s.id),
+          proxySegmentIds: [mergedProxySeg.id],
+          message: `merge_alignment (N:1): ${group.length} expected segments (${group.map((s) => s.category).join("+")}) → proxy ${mergedProxySeg.id} (${mergedProxySeg.charCount ?? 0} chars)`,
+        }],
+        matchedProxyIds: [mergedProxySeg.id],
+        matchedExpectedIds: group.map((s) => s.id),
+      };
+    }
+  }
+
+  // ── R-MERGE-1N：单一 expected segment → 多个 proxy segments（同 toolUseId）──
+  //
+  // 场景：一个 expected tool_result segment 对应多个 proxy segments（某些实现里
+  // tool_result content 被拆成多个 text block）。通过共同的 toolUseId 识别。
+
+  if (group.length === 1) {
+    const eseg = group[0];
+    if (matchedExpectedIds.has(eseg.id)) return null;
+    if (!eseg.toolUseId) return null;
+
+    const allCandidates = (proxyByToolUseId.get(eseg.toolUseId) ?? []).filter(
+      (s) => !matchedProxyIds.has(s.id),
+    );
+    if (allCandidates.length < 2) return null;
+
+    // 1:N：expected 1 个 → proxy N 个（同 toolUseId）
+    return {
+      alignments: [{
+        matchKind: "exact",
+        confidence: "exact",
+        expectedSegmentIds: [eseg.id],
+        proxySegmentIds: allCandidates.map((s) => s.id),
+        basis: "tool_use_id" as AlignmentBasis,
+        attributionIds: allCandidates.flatMap((s) =>
+          attrBySegId.has(s.id) ? [attrBySegId.get(s.id)!.id] : []
+        ),
+        note: `R-MERGE-1N: 1 expected → ${allCandidates.length} proxy segments via toolUseId ${eseg.toolUseId}`,
+      }],
+      findings: [{
+        type: "one_to_many_alignment",
+        severity: "info",
+        category: eseg.category,
+        expectedSegmentIds: [eseg.id],
+        proxySegmentIds: allCandidates.map((s) => s.id),
+        message: `one_to_many_alignment (1:N): expected ${eseg.category} → ${allCandidates.length} proxy segments via toolUseId`,
+      }],
+      matchedProxyIds: allCandidates.map((s) => s.id),
+      matchedExpectedIds: [eseg.id],
+    };
+  }
+
   return null;
 }
 

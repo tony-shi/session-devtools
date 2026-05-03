@@ -331,3 +331,185 @@ describe("cross-fixture invariants", () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P1-4：N:1 merge_alignment 和 1:N one_to_many_alignment
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { reconcileClaudeContext } from "./reconciliation-engine";
+import { createHash } from "crypto";
+import type {
+  ContextSegment,
+  ProxyQuerySnapshot,
+  ExpectedQueryContext,
+  ProxySegmentAttribution,
+} from "./types";
+
+function sha256Short(text: string): string {
+  return "sha256:" + createHash("sha256").update(text).digest("hex").slice(0, 16);
+}
+
+function makeProxySnapshot(segments: Partial<ContextSegment>[]): ProxyQuerySnapshot {
+  return {
+    id: "snap-test",
+    agentKind: "claude-code",
+    sessionId: "sess-p14",
+    queryId: "q-p14",
+    timestamp: "2026-01-01T00:00:00Z",
+    rawRequestHash: "sha256:test",
+    sourceRef: { kind: "proxy", proxy: { file: "test.json", jsonPath: "reqBody" } },
+    segments: segments.map((s, i) => ({
+      id: `pseg-${i}`,
+      section: "messages" as const,
+      category: s.category ?? "user_message",
+      label: `seg-${i}`,
+      role: s.role ?? "user",
+      order: i,
+      rawHash: s.rawHash,
+      rawText: s.rawText,
+      toolUseId: s.toolUseId,
+      charCount: s.rawText?.length ?? 0,
+      sourceRefs: [{ kind: "proxy" as const, proxy: { file: "test.json", jsonPath: `messages[${i}]` } }],
+      ...s,
+    })),
+  };
+}
+
+function makeExpected(segments: Partial<ContextSegment>[]): ExpectedQueryContext {
+  return {
+    agentKind: "claude-code",
+    sessionId: "sess-p14",
+    queryId: "q-p14",
+    segments: segments.map((s, i) => ({
+      id: `eseg-${i}`,
+      section: "messages" as const,
+      category: s.category ?? "user_message",
+      label: `eseg-${i}`,
+      role: s.role ?? "user",
+      order: i,
+      rawHash: s.rawHash,
+      rawText: s.rawText,
+      toolUseId: s.toolUseId,
+      charCount: s.charCount ?? s.rawText?.length ?? 0,
+      sourceRefs: [],
+      metadata: s.metadata,
+      ...s,
+    })),
+    rulesApplied: [],
+    metadata: {},
+  };
+}
+
+describe("P1-4 N:1 merge_alignment", () => {
+  test("两个 expected segments 合并成一个 proxy segment → merge_alignment", () => {
+    // proxy: 单一 string-content segment，rawText = text1 + text2
+    const text1 = "Hello world from user message.";
+    const text2 = "<system-reminder>\nSkill listing content\n</system-reminder>\n";
+    const mergedText = text1 + text2;
+    const mergedHash = sha256Short(mergedText);
+
+    const snapshot = makeProxySnapshot([
+      { rawText: mergedText, rawHash: mergedHash, category: "user_message" },
+    ]);
+
+    // expected: 两个 segments，分别对应两段文本（各自有独立 rawHash）
+    const hash1 = sha256Short(text1);
+    const hash2 = sha256Short(text2);
+    const expected = makeExpected([
+      {
+        rawText: text1,
+        rawHash: hash1,
+        category: "user_message",
+        metadata: { logicalMessageId: "lm-1-user" },
+      },
+      {
+        rawText: text2,
+        rawHash: hash2,
+        category: "skill_listing",
+        metadata: { logicalMessageId: "lm-1-user" },
+      },
+    ]);
+
+    // 先给 proxy snapshot 加上 hash1 和 hash2 各自的 segment（用于 rawHash 反查）
+    // 注：N:1 merge 需要每个 expected rawHash 能在 proxy 里找到对应文本
+    // 在此场景中 expected 的 rawHash1/hash2 与 proxy 里不存在的单独 segments 对应
+    // → merge 路径要求 proxy 里有这两个单独 segment，否则无法反查 rawText
+    // 所以要在 proxy 里额外加入这两个单独 segment（模拟 proxy 在其他 position 也有这些内容）
+    const snapshotWithBoth = makeProxySnapshot([
+      { rawText: mergedText, rawHash: mergedHash, category: "user_message" },
+      { rawText: text1, rawHash: hash1, category: "user_message" },
+      { rawText: text2, rawHash: hash2, category: "skill_listing" },
+    ]);
+
+    // attributions：给两个单独 segments 加 attribution
+    const attributions: ProxySegmentAttribution[] = [
+      {
+        id: "attr-1",
+        snapshotId: "snap-test",
+        proxySegmentIds: ["pseg-1"],
+        category: "user_message",
+        attributedSource: "jsonl",
+        sourceRefs: [],
+        mechanism: "unknown",
+        confidence: "exact",
+      },
+      {
+        id: "attr-2",
+        snapshotId: "snap-test",
+        proxySegmentIds: ["pseg-2"],
+        category: "skill_listing",
+        attributedSource: "harness_rule",
+        sourceRefs: [],
+        mechanism: "system_prompt_pattern",
+        confidence: "exact",
+      },
+    ];
+
+    const report = reconcileClaudeContext({
+      snapshot: snapshotWithBoth,
+      attributions,
+      expected,
+    });
+
+    // 应该产出 merge_alignment finding
+    const mergeFindings = report.findings.filter((f) => f.type === "merge_alignment");
+    expect(mergeFindings.length).toBeGreaterThanOrEqual(1);
+
+    // merged proxy segment（pseg-0）应该被匹配
+    const mergeAlign = report.alignments.find(
+      (a) => a.note?.includes("R-MERGE-N1"),
+    );
+    expect(mergeAlign).toBeTruthy();
+    expect(mergeAlign!.proxySegmentIds).toContain("pseg-0");
+    expect(mergeAlign!.expectedSegmentIds).toHaveLength(2);
+  });
+
+  test("1:N：一个 expected tool_result → 多个 proxy segments 同 toolUseId", () => {
+    const toolUseId = "tu-abc-001";
+    const snapshot = makeProxySnapshot([
+      { toolUseId, rawText: "part A", rawHash: sha256Short("part A"), category: "tool_result" },
+      { toolUseId, rawText: "part B", rawHash: sha256Short("part B"), category: "tool_result" },
+    ]);
+
+    const expected = makeExpected([
+      {
+        toolUseId,
+        rawHash: sha256Short("part A part B"),  // 不匹配任一单独 hash
+        category: "tool_result",
+        metadata: { logicalMessageId: "lm-2-user" },
+      },
+    ]);
+
+    const attributions: ProxySegmentAttribution[] = [];
+    const report = reconcileClaudeContext({ snapshot, attributions, expected });
+
+    // 应该产出 one_to_many_alignment finding
+    const oneToManyFindings = report.findings.filter((f) => f.type === "one_to_many_alignment");
+    expect(oneToManyFindings.length).toBeGreaterThanOrEqual(1);
+
+    const align = report.alignments.find((a) => a.note?.includes("R-MERGE-1N"));
+    expect(align).toBeTruthy();
+    expect(align!.expectedSegmentIds).toHaveLength(1);
+    expect(align!.proxySegmentIds).toHaveLength(2);
+  });
+});
