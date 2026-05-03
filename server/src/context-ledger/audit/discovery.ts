@@ -36,6 +36,7 @@ export const VALID_FIXTURE_NAMES = [
   "multi-turn-human",
   "system-tools-overhead",
   "task-reminder-smoosh",
+  // side-query-session-title：无 JSONL，需 --proxy-only 模式运行
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
