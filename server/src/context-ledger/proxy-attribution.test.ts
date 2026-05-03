@@ -167,26 +167,21 @@ describe("cross-fixture: single-tool-call 的 tool_use/tool_result 通过 tool_u
   });
 });
 
-describe("prior_session_history 只出现在 messages[0]", () => {
-  test("multi-turn-human: messages[4] 的中文任务描述归为 user_message，不归为 prior_session_history", async () => {
+// P2-4 后：prior_session_guess 已从 attribution 层删除。
+// attribution 只输出 wire schema 类别（user_message），不主动猜测历史性。
+// prior_session_history 归因由 reconcile 层的 prefixIncomplete 信号决定。
+describe("P2-4 prior_session_guess 已删除", () => {
+  test("multi-turn-human: 所有 user messages 归为 user_message，attribution 不产出 prior_session_history", async () => {
     const snapshot = await loadSnapshot("multi-turn-human");
     const attributions = inferClaudeProxyAttributions(snapshot);
 
-    // messages[4] 包含用户任务描述，不应归为 prior_session_history
-    const msg4UserMsg = attributions.find(
-      (a) =>
-        a.category === "user_message" &&
-        (a.sourceRefs[0] as { kind: string; proxy?: { jsonPath?: string } })?.proxy?.jsonPath?.includes(
-          "messages[4]",
-        ),
-    );
-    expect(msg4UserMsg).toBeDefined();
-
-    // prior_session_history 的 note 应说明来自 messages[0]
+    // P2-4 后：attribution 不再猜测 prior_session_history
     const priorHistory = attributions.filter((a) => a.category === "prior_session_history");
-    for (const p of priorHistory) {
-      expect(p.notes?.some((n) => n.includes("messages[0]"))).toBe(true);
-    }
+    expect(priorHistory).toHaveLength(0);
+
+    // user message attributions 应有 user_message 类别
+    const userMsgAttrs = attributions.filter((a) => a.category === "user_message");
+    expect(userMsgAttrs.length).toBeGreaterThan(0);
   });
 });
 

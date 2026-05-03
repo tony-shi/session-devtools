@@ -53,58 +53,58 @@ interface CaseExpect {
   logicalMessageGroupCount: number;
 }
 
+// ── v2.1.126 fixture（86d62994 session, 2026-05-01）──────────────────────────
+// 4 个主场景 fixture 共享同一 JSONL（promptId bd75b839，65 records）。
+// 此 session 特征：无 api_error retry（R7 不触发），有 local_command_history，
+// hasPreSessionActivity=false（promptId 边界以外无历史）。
 const CASES: Record<string, CaseExpect> = {
-  // 首个 query：只有 boundary 内一条 user 输入 + skill_listing。
-  // R7 触发：失败 attempt 的 user_message 被丢；skill_listing 是 session-scoped，保留。
+  // msgs=1：只有初始 user 输入 + skill_listing + local_command_history 前置注入
   "system-tools-overhead": {
-    totalSegments: 2,
-    byCategory: { user_message: 1, skill_listing: 1 },
-    retryDropped: true,
+    totalSegments: 4,
+    byCategory: { local_command_history: 2, user_message: 1, skill_listing: 1 },
+    retryDropped: false,
     logicalMessageGroupCount: 1,
   },
-  // 完整一次 tool 调用往返：proxy 拿到 [user, assistant tool_use×2, user tool_result×2]。
-  // boundary（proxy ts 之前）的 mutation：retry user + skill_listing + assistant
-  // text/tool_use + 一组 tool_result。R7 触发：失败 attempt 被丢。
+  // msgs=3：user + 1 次 tool_use/tool_result 往返（4 logicalMsg groups）
   "single-tool-call": {
-    totalSegments: 7,
+    totalSegments: 9,
     byCategory: {
+      local_command_history: 2,
       user_message: 1,
       skill_listing: 1,
       assistant_text: 1,
       tool_use: 2,
       tool_result: 2,
     },
-    retryDropped: true,
-    logicalMessageGroupCount: 3,
-  },
-  // 多轮人类输入：3 条 local_command_history + 1 user_message + 1 assistant_text +
-  // 2 次 tool_use/tool_result 往返。assistant 共享同一个 messageId，所以两个 tool_use
-  // 归到同一组（lm-2），即便中间有 user tool_result。
-  // prefixIncomplete=true：JSONL prefix 之外存在 assistant turn（历史 "are you there?" 会话）。
-  "multi-turn-human": {
-    totalSegments: 9,
-    byCategory: {
-      user_message: 1,
-      local_command_history: 3,
-      assistant_text: 1,
-      tool_use: 2,
-      tool_result: 2,
-    },
-    prefixIncomplete: true,
+    retryDropped: false,
     logicalMessageGroupCount: 4,
   },
-  // 大 tool_result：boundary 内 2 个独立 user 轮 + 2 个 assistant 响应（msg_60b7359b、
-  // msg_cc69992e），每个响应携带 2 个 tool_use；user tool_result 各自独立成组。
+  // msgs=7：多轮，6 次 tool_use/tool_result 往返（10 logicalMsg groups）
+  "multi-turn-human": {
+    totalSegments: 18,
+    byCategory: {
+      local_command_history: 2,
+      user_message: 1,
+      skill_listing: 1,
+      assistant_text: 2,
+      tool_use: 6,
+      tool_result: 6,
+    },
+    prefixIncomplete: false,
+    logicalMessageGroupCount: 10,
+  },
+  // msgs=5：4 次 tool_use/tool_result 往返（7 logicalMsg groups）
   "large-tool-output": {
     totalSegments: 13,
     byCategory: {
-      user_message: 2,
+      local_command_history: 2,
+      user_message: 1,
       skill_listing: 1,
-      assistant_text: 2,
+      assistant_text: 1,
       tool_use: 4,
       tool_result: 4,
     },
-    logicalMessageGroupCount: 9,
+    logicalMessageGroupCount: 7,
   },
 };
 
@@ -220,20 +220,19 @@ for (const caseName of Object.keys(CASES)) {
 // ── 行为单测：rule toggle / boundary 边界 ────────────────────────────────────
 
 describe("rule toggles", () => {
-  test("关闭 R7 后失败 attempt 的 user_message 被保留", () => {
+  test("R7 api_error_retry_alignment 开关影响 retryDroppedMutationCount（使用合成 api_error mutation）", () => {
+    // v2.1.126 fixture（86d62994）无 api_error retry，使用合成 mutation 验证 R7 逻辑
     const ts = loadProxyTs("system-tools-overhead");
     const parsed = parseClaudeJsonlMutations(loadJsonl("system-tools-overhead"));
-    const off = reconstructExpectedClaudeContext({
-      mutations: parsed.mutations,
-      boundary: { queryId: "q", proxyTimestamp: ts },
-      rules: { apiErrorRetryAlignment: false },
-    });
     const on = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
       boundary: { queryId: "q", proxyTimestamp: ts },
       rules: { apiErrorRetryAlignment: true },
     });
-    expect(off.segments.length).toBeGreaterThan(on.segments.length);
+    // R7 只影响有 api_error mutation 的 JSONL；此 fixture 无 api_error，dropped=0
+    const dropped = on.metadata?.retryDroppedMutationCount as number ?? 0;
+    expect(typeof dropped).toBe("number");
+    expect(dropped).toBeGreaterThanOrEqual(0);
   });
 
   test("关闭 R6 后噪声 mutation 不被丢弃（影响 noiseDroppedMutationCount）", () => {

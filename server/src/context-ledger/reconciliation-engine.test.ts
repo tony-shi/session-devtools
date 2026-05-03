@@ -135,38 +135,35 @@ interface FixtureExpect {
   hasRetryFinding: boolean;
 }
 
+// ── v2.1.126 fixtures（86d62994 session, 2026-05-01）────────────────────────
+// 全部 4 个主场景 fixture 已更新为 v2.1.126，旧 v2.1.119 版本废弃。
+// session JSONL 包含 247 records（promptId bd75b839），版本 2.1.126.507。
 const FIXTURE_CASES: Record<string, FixtureExpect> = {
-  // 48 proxy segments（12 system + 34 tools + 2 messages）
-  //   system: billing(1) + identity(1) + system[2]→10 sections（prelude+6 static+3 dynamic）
-  // expected: 2 segments（skill_listing + user_message）
-  // charCoverage ~79%：proxy-attribution.ts 尚未消费 section-level segment id（pseg-system-2-sN），
-  //   仍产出 pseg-system-2-{hash} 形式的 attribution，导致 system[2] 的 10 个 section segments
-  //   没有被 attribution 覆盖。本阶段只建立 proxy recognition contract，attribution 更新是下一阶段。
   "system-tools-overhead": {
-    proxySegmentCount: 48,
-    expectedSegmentCount: 2,
-    maxUnexplainedCoverage: 0.22,
-    requiredFindingTypes: ["known_noise", "unmatched_expected_segment", "api_error_retry"],
-    hasRetryFinding: true,
+    proxySegmentCount: 59,   // 12 system + 40 tools + 1 message（仅第一条 user prompt，无 tool call）
+    expectedSegmentCount: 4,
+    maxUnexplainedCoverage: 0.01,
+    requiredFindingTypes: ["known_noise", "matched", "unmatched_expected_segment"],
+    hasRetryFinding: false,
   },
   "single-tool-call": {
-    proxySegmentCount: 53,
-    expectedSegmentCount: 7,
-    maxUnexplainedCoverage: 0.22,
-    requiredFindingTypes: ["matched", "known_noise", "unmatched_expected_segment", "api_error_retry"],
-    hasRetryFinding: true,
+    proxySegmentCount: 64,   // 12 system + 40 tools + 3 messages（user + 2×tool_use/tool_result）
+    expectedSegmentCount: 9,
+    maxUnexplainedCoverage: 0.01,
+    requiredFindingTypes: ["matched", "known_noise", "unmatched_expected_segment"],
+    hasRetryFinding: false,
   },
   "multi-turn-human": {
-    proxySegmentCount: 73,
-    expectedSegmentCount: 9,
-    maxUnexplainedCoverage: 0.20,
+    proxySegmentCount: 73,   // 12 system + 40 tools + 7 messages（multi-turn, has local_command）
+    expectedSegmentCount: 18,
+    maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "known_noise", "unmatched_expected_segment"],
     hasRetryFinding: false,
   },
   "large-tool-output": {
-    proxySegmentCount: 69,
+    proxySegmentCount: 68,   // 12 system + 40 tools + 5 messages（large tool result >22KB）
     expectedSegmentCount: 13,
-    maxUnexplainedCoverage: 0.16,
+    maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "known_noise", "unmatched_expected_segment"],
     hasRetryFinding: false,
   },
@@ -174,7 +171,7 @@ const FIXTURE_CASES: Record<string, FixtureExpect> = {
   "task-reminder-smoosh": {
     proxySegmentCount: 1341,
     expectedSegmentCount: 204,
-    maxUnexplainedCoverage: 0.01,  // 几乎全部有归因
+    maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "known_noise"],
     hasRetryFinding: false,
   },
