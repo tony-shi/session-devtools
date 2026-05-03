@@ -157,14 +157,15 @@ export function runPipeline(input: PipelineInput): PipelineResult {
       JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
     ) as typeof snapshot;
     const allAttributions = inferClaudeProxyAttributions(snapForAttr);
-    // T0 控制变量：--verified-only 过滤掉 verifiedFor===null 的 rule，不进入 R9 重建
-    const attributions = verifiedOnly ? filterVerifiedAttributions(allAttributions) : allAttributions;
+    // T0 --verified-only：仅用于 R9 expected 生成，reconcile/scorecard 仍使用全量 attribution，
+    // 保证 attributionCoverage / unknownProxyChars / attribution-only gap 统计不失真。
+    const r9Attributions = verifiedOnly ? filterVerifiedAttributions(allAttributions) : allAttributions;
 
     // 3. 解析 JSONL
     const jsonlRaw = readFileSync(jsonlFile, "utf-8");
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
 
-    // 4. 重建 expected（noR9 禁用 attribution 反写，verifiedOnly 已在 step 2 过滤）
+    // 4. 重建 expected（noR9 禁用 attribution 反写，verifiedOnly 通过 r9Attributions 限制 R9 注入）
     const proxySegmentsById = new Map(snapshot.segments.map((s) => [s.id, s]));
     const expected = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
@@ -174,14 +175,14 @@ export function runPipeline(input: PipelineInput): PipelineResult {
         sessionId: parsed.sessionId,
       },
       hasPreSessionActivity: parsed.hasPreSessionActivity,
-      attributions,
+      attributions: r9Attributions,
       proxySegmentsById,
       // T0 控制变量：--no-r9 时禁用 attribution 反写
       rules: noR9 ? { injectFromAttributions: false } : undefined,
     });
 
-    // 5. reconcile
-    const report = reconcileClaudeContext({ snapshot, attributions, expected });
+    // 5. reconcile：始终用全量 attribution，保证归因覆盖率统计正确
+    const report = reconcileClaudeContext({ snapshot, attributions: allAttributions, expected });
 
     // 6. char diff
     const baseDiff = computeCharDiff(report);
@@ -258,9 +259,9 @@ export function runPipelineWithData(input: PipelineInput): {
       JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
     ) as typeof snapshot;
     const allAttributions = inferClaudeProxyAttributions(snapForAttr);
-    // T0 控制变量：--verified-only 过滤掉 verifiedFor===null 的 rule，不进入 R9 重建
+    // T0 --verified-only：仅用于 R9 expected 生成，reconcile/scorecard/side-query 分类仍使用全量
     const { verifiedOnly } = input;
-    const attributions = verifiedOnly ? filterVerifiedAttributions(allAttributions) : allAttributions;
+    const r9Attributions = verifiedOnly ? filterVerifiedAttributions(allAttributions) : allAttributions;
 
     const jsonlRaw = readFileSync(jsonlFile, "utf-8");
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
@@ -274,13 +275,14 @@ export function runPipelineWithData(input: PipelineInput): {
         sessionId: parsed.sessionId,
       },
       hasPreSessionActivity: parsed.hasPreSessionActivity,
-      attributions,
+      attributions: r9Attributions,
       proxySegmentsById,
       // T0 控制变量：--no-r9 时禁用 attribution 反写
       rules: noR9 ? { injectFromAttributions: false } : undefined,
     });
 
-    const report = reconcileClaudeContext({ snapshot, attributions, expected });
+    // reconcile/scorecard/side-query 分类始终使用全量 attribution
+    const report = reconcileClaudeContext({ snapshot, attributions: allAttributions, expected });
     const baseDiff = computeCharDiff(report);
     const diff = injectProxyTexts(baseDiff, report, reqBody);
     const diffHtml = renderCharDiffHtml(diff);
@@ -290,7 +292,7 @@ export function runPipelineWithData(input: PipelineInput): {
     const baseQueryKind = snapshot.request?.queryKind ?? "unknown";
     const queryKind = (() => {
       if (baseQueryKind !== "side_query") return baseQueryKind;
-      const hasSessionTitleRule = attributions.some(
+      const hasSessionTitleRule = allAttributions.some(
         (a) => a.ruleId === "claude-code.side-query.session-title.v1",
       );
       return hasSessionTitleRule ? "session_title_side_query" : "side_query";
@@ -307,7 +309,7 @@ export function runPipelineWithData(input: PipelineInput): {
         scorecard,
         queryKind,
       },
-      data: { report, diff, diffHtml, attributions, reqBody },
+      data: { report, diff, diffHtml, attributions: allAttributions, reqBody },
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
