@@ -18,7 +18,7 @@
 import { existsSync, readFileSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { makeRunId, runDir, AUDIT_HOME, RUNS_DIR, LATEST_JSON, BASELINE_JSON } from "../server/src/context-ledger/audit/paths";
+import { makeRunId, runDir, AUDIT_HOME, RUNS_DIR, LATEST_JSON, BASELINE_JSON, latestJsonPath, baselineJsonPath } from "../server/src/context-ledger/audit/paths";
 import { discoverFixtures, discoverLocal } from "../server/src/context-ledger/audit/discovery";
 import { runPipelineWithData } from "../server/src/context-ledger/audit/pipeline";
 import { CONTEXT_LEDGER_RULES, SUPPORTED_CLAUDE_CODE_VERSION } from "../server/src/context-ledger/rule-registry";
@@ -82,24 +82,23 @@ if (args[0] === "clear") {
     rmSync(join(RUNS_DIR, r), { recursive: true, force: true });
   }
 
-  // latest.json / baseline.json：若指向被删除的 run，清除指针
-  if (existsSync(LATEST_JSON)) {
+  // 清理所有 latest/baseline 指针（全局 + 所有 mode-specific）
+  const pointerFiles = [
+    LATEST_JSON, BASELINE_JSON,
+    ...["fixtures", "all-local", "since-last"].flatMap((m) => [
+      latestJsonPath(m as "fixtures" | "all-local" | "since-last"),
+      baselineJsonPath(m as "fixtures" | "all-local" | "since-last"),
+    ]),
+  ];
+  for (const pf of pointerFiles) {
+    if (!existsSync(pf)) continue;
     try {
-      const p = JSON.parse(readFileSync(LATEST_JSON, "utf-8")) as { runId: string };
+      const p = JSON.parse(readFileSync(pf, "utf-8")) as { runId: string };
       if (toDelete.includes(p.runId)) {
-        rmSync(LATEST_JSON, { force: true });
-        console.log("已清除 latest.json（指向的 run 已删除）");
+        rmSync(pf, { force: true });
+        console.log(`已清除 ${pf.replace(AUDIT_HOME + "/", "")}（指向的 run 已删除）`);
       }
-    } catch { /* 损坏的 json，直接删 */ rmSync(LATEST_JSON, { force: true }); }
-  }
-  if (existsSync(BASELINE_JSON)) {
-    try {
-      const p = JSON.parse(readFileSync(BASELINE_JSON, "utf-8")) as { runId: string };
-      if (toDelete.includes(p.runId)) {
-        rmSync(BASELINE_JSON, { force: true });
-        console.log("已清除 baseline.json（指向的 run 已删除）");
-      }
-    } catch { rmSync(BASELINE_JSON, { force: true }); }
+    } catch { rmSync(pf, { force: true }); }
   }
 
   console.log(`✓ 清理完成（${toDelete.length} 个 run 已删除）`);
@@ -113,13 +112,22 @@ if (args[0] === "mark-baseline") {
     console.error("用法：bun run context:audit:mark-baseline <runId>");
     process.exit(1);
   }
-  if (!existsSync(runDir(runId))) {
+  const runJsonFile = join(runDir(runId), "run.json");
+  if (!existsSync(runJsonFile)) {
     console.error(`runId 不存在：${runId}`);
     process.exit(1);
   }
-  markBaseline(runId);
-  console.log(`已标记 baseline → ${runId}`);
-  console.log(`baseline.json：${BASELINE_JSON}`);
+  // 从 run.json 读取 mode，确保 baseline 指针按 mode 分域
+  let markMode: "fixtures" | "all-local" | "since-last" = "all-local";
+  try {
+    const r = JSON.parse(readFileSync(runJsonFile, "utf-8")) as { mode?: string };
+    if (r.mode === "fixtures" || r.mode === "all-local" || r.mode === "since-last") {
+      markMode = r.mode;
+    }
+  } catch { /* ignore, default to all-local */ }
+  markBaseline(runId, markMode);
+  console.log(`已标记 baseline → ${runId} (mode: ${markMode})`);
+  console.log(`baseline.${markMode}.json：${baselineJsonPath(markMode)}`);
   process.exit(0);
 }
 
@@ -129,18 +137,20 @@ const mode: AuditRunRecord["mode"] = args.includes("--fixtures")
   ? "since-last"
   : "all-local";
 
-// T0 控制变量
+// 控制变量 flags
 const noR9 = args.includes("--no-r9");
 const verifiedOnly = args.includes("--verified-only");
+// E0-1：proxy_without_jsonl 走 attribution-only 路径而非 skip
+const proxyOnly = args.includes("--proxy-only");
 
-// --baseline 指定对比 run
+// --baseline / --compare-run 指定对比 run（两个 flag 语义相同，--compare-run 是更直观的别名）
 let baselineRunId: string | undefined;
-const baselineIdx = args.indexOf("--baseline");
+const baselineIdx = args.indexOf("--baseline") !== -1 ? args.indexOf("--baseline") : args.indexOf("--compare-run");
 if (baselineIdx !== -1 && args[baselineIdx + 1]) {
   baselineRunId = args[baselineIdx + 1];
 } else {
-  // 默认：先找 baseline.json，再找 latest run（fixture 模式同样支持 delta 比较）
-  baselineRunId = readBaselineRunId() ?? readLatestRunId();
+  // 默认：按 mode 找 baseline.json，再找 latest run
+  baselineRunId = readBaselineRunId(mode) ?? readLatestRunId(mode);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,6 +162,7 @@ console.log(`mode: ${mode}`);
 console.log(`baseline: ${baselineRunId ?? "(none)"}`);
 if (noR9) console.log(`[control] --no-r9: R9 attribution 反写已禁用`);
 if (verifiedOnly) console.log(`[control] --verified-only: 未验证 rule 不进 evidenceBacked`);
+if (proxyOnly) console.log(`[control] --proxy-only: proxy_without_jsonl 走 attribution-only 路径`);
 console.log(`Discovering...`);
 
 let discovery: ReturnType<typeof discoverFixtures>;
@@ -212,9 +223,9 @@ let successCount = 0;
 let failedCount = 0;
 let skippedCount = 0;
 
-// proxy_without_jsonl → 直接生成 skipped result
+// proxy_without_jsonl → --proxy-only 时走 attribution-only，否则直接 skip
 for (const proxy of discovery.proxyWithoutJsonl) {
-  const { result } = runPipelineWithData({ proxy, jsonlFile: null, noR9, verifiedOnly });
+  const { result } = runPipelineWithData({ proxy, jsonlFile: null, noR9, verifiedOnly, proxyOnly });
   const written = writeQueryArtifacts(runId, result);
   allResults.push(written);
   skippedCount++;
@@ -250,7 +261,11 @@ for (let i = 0; i < total; i++) {
 const indexEntries = writeIndex(runId, allResults, baseline);
 
 // 记录本次使用的控制变量 flags
-const controlFlags = { ...(noR9 ? { noR9: true } : {}), ...(verifiedOnly ? { verifiedOnly: true } : {}) };
+const controlFlags = {
+  ...(noR9 ? { noR9: true } : {}),
+  ...(verifiedOnly ? { verifiedOnly: true } : {}),
+  ...(proxyOnly ? { proxyOnly: true } : {}),
+};
 
 // T0 rule registry 静态摘要（每次 run 都输出，不依赖 CLI binary）
 const verifiedRules = CONTEXT_LEDGER_RULES.filter((r) => r.verifiedFor === SUPPORTED_CLAUDE_CODE_VERSION).length;
@@ -301,7 +316,7 @@ const run = writeRunJson(runId, {
 
 writeAuditRunMd(runId, run, indexEntries);
 writeIndexHtml(runId, run, indexEntries);
-updateLatestPointer(runId);
+updateLatestPointer(runId, mode);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // stdout summary

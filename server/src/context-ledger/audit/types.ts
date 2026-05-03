@@ -34,7 +34,7 @@ export type ChangeClass =
 export interface QueryScorecard {
   queryKey: string;
   queryKeyHash: string;
-  // 原始字符数指标
+  // 原始字符数指标（v1，旧口径，保留兼容）
   proxyChars: number;
   attributedProxyChars: number;
   evidenceBackedProxyChars: number;
@@ -47,11 +47,22 @@ export interface QueryScorecard {
   falseReliableMatchCount: number;
   prefixIncompleteCount: number;
   sourceTextUnavailableCount: number;
-  // 覆盖率比例 (0..1)
+  // 覆盖率比例 (0..1)，v1
   attributionCoverage: number;
   evidenceBackedCoverage: number;
   attributionOnlyRatio: number;
   alignedTextDriftRatio: number;
+  // ── E0-3 v2 覆盖率分桶（需传入 attributions 才有值，否则 undefined）────────
+  // P0-3 完成前 wireExactCoverage 与 canonicalExactCoverage 合并在 wireExactCoverage，
+  // 两者未来会分离；当前 basis=raw_hash 同时代表 wire-exact。
+  wireExactCoverage?: number;        // basis=raw_hash / tool_use_id
+  canonicalExactCoverage?: number;   // basis=normalized_hash
+  templateCoverage?: number;         // basis=rule_id + materialization=exact_text
+  regexCoverage?: number;            // basis=rule_id + materialization=shape/normalized_text
+  presenceCoverage?: number;         // basis=harness_rule + category≠billing_noise（预留）
+  serverSideAttributionChars?: number; // category=billing_noise（known_noise chars）
+  pendingRuleCoverage?: number;      // attribution 命中但 rule.verifiedFor===null 的字符 / proxyChars
+  regexOverreachRisk?: number;       // regexChars / proxyChars（>60% 触发 needs_review）
   // 元数据
   verdict: AuditVerdict;
   reasons: string[];
@@ -147,12 +158,14 @@ export interface PipelineResult {
 // Run Artifact
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** T0 控制变量 flags，记录本次 run 启用了哪些对照开关 */
+/** T0/E0 控制变量 flags，记录本次 run 启用了哪些对照开关 */
 export interface AuditControlFlags {
   /** --no-r9：禁用 attribution 反写 system/tools expected segments */
   noR9?: boolean;
   /** --verified-only：verifiedFor===null 的 rule 不进入 evidenceBacked */
   verifiedOnly?: boolean;
+  /** --proxy-only：proxy_without_jsonl 走 attribution-only 路径（不 skip） */
+  proxyOnly?: boolean;
 }
 
 /** T0 fixture 来源矩阵（fixture 模式下输出） */
@@ -207,6 +220,20 @@ export interface AuditRunRecord {
   failedQueries: number;
 }
 
+/** E0-5：AuditIndexEntry 里内嵌的 v2 分桶摘要（用于 report-generator 直接渲染，避免二次读文件） */
+export interface ScorecardV2Summary {
+  evidenceBackedCoverage: number;  // v1 旧口径（legacy）
+  wireExactCoverage?: number;
+  canonicalExactCoverage?: number;
+  templateCoverage?: number;
+  regexCoverage?: number;
+  presenceCoverage?: number;
+  serverSideAttributionChars?: number;
+  pendingRuleCoverage?: number;
+  regexOverreachRisk?: number;
+  proxyChars: number;
+}
+
 // index.json 的单条 entry
 export interface AuditIndexEntry {
   queryKey: QueryKey;
@@ -222,6 +249,8 @@ export interface AuditIndexEntry {
   reasons: string[];
   // query 类型标注：main_session / session_title_side_query / side_query / unknown
   queryKind?: string;
+  // E0-5 v2 分桶摘要（有 scorecard 时有值）
+  v2?: ScorecardV2Summary;
   reportPath?: string;
   scorecardPath?: string;
   charDiffHtmlPath?: string;

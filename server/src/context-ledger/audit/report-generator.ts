@@ -180,6 +180,38 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
     lines.push(``);
   }
 
+  // E0-5 v2 分桶覆盖率对照 section
+  const entriesWithV2 = entries.filter((e) => e.v2);
+  if (entriesWithV2.length > 0) {
+    lines.push(`## Coverage v2 分桶（旧口径 vs 新分桶）`, ``);
+    lines.push(`> wireExact = basis=raw_hash（P0-1 修复前为 R9 proxy 自匹配虚高值）`);
+    lines.push(`> pending = attribution 命中但 rule.verifiedFor===null 的字符占比`);
+    lines.push(`> regexRisk = regex/shape rule 命中字符 / proxyChars（>60% 触发 needs_review）`);
+    lines.push(``);
+    lines.push(`| query | proxyChars | legacyEB | wireExact | template | regex | pending | regexRisk | serverSide |`);
+    lines.push(`|-------|-----------|---------|----------|---------|------|---------|----------|-----------|`);
+    for (const e of entriesWithV2) {
+      const v = e.v2!;
+      const pct = (n?: number) => n !== undefined ? `${(n * 100).toFixed(1)}%` : "-";
+      const chars = (n?: number) => n !== undefined ? `${n}` : "-";
+      const regexRiskFlag = (v.regexOverreachRisk ?? 0) > 0.6 ? "⚠️ " : "";
+      const pendingFlag = (v.pendingRuleCoverage ?? 0) > 0.3 ? "⚠️ " : "";
+      lines.push(
+        `| ${e.sessionId.slice(0, 8)}…/${e.queryId.slice(0, 16)}`
+        + ` | ${v.proxyChars}`
+        + ` | ${pct(v.evidenceBackedCoverage)}`
+        + ` | ${pct(v.wireExactCoverage)}`
+        + ` | ${pct(v.templateCoverage)}`
+        + ` | ${pct(v.regexCoverage)}`
+        + ` | ${pendingFlag}${pct(v.pendingRuleCoverage)}`
+        + ` | ${regexRiskFlag}${pct(v.regexOverreachRisk)}`
+        + ` | ${chars(v.serverSideAttributionChars)}`
+        + ` |`,
+      );
+    }
+    lines.push(``);
+  }
+
   // T0 已知限制 section
   lines.push(`## 已知限制与已确认风险（T0 状态）`, ``);
   lines.push(`| 问题 | 状态 | 计划 |`);
@@ -253,6 +285,25 @@ export function writeIndexHtml(runId: string, run: AuditRunRecord, entries: Audi
     return `<span style="color:#475569;font-size:10px">${esc(qk)}</span>`;
   };
 
+  // E0-5：v2 分桶 mini-bar（wireExact + template + regex + pending + serverSide + unknown）
+  const v2MiniBar = (v: import("./types").ScorecardV2Summary | undefined): string => {
+    if (!v) return `<span style="color:#94a3b8">-</span>`;
+    const pct = (n?: number) => n !== undefined ? (n * 100).toFixed(0) : "0";
+    const wire = v.wireExactCoverage ?? 0;
+    const tmpl = v.templateCoverage ?? 0;
+    const regex = v.regexCoverage ?? 0;
+    const pend = v.pendingRuleCoverage ?? 0;
+    const risk = v.regexOverreachRisk ?? 0;
+    const pendFlag = pend > 0.3 ? `<span style="color:#f59e0b" title="pending rule coverage ${pct(pend)}%">⚠</span>` : "";
+    const riskFlag = risk > 0.6 ? `<span style="color:#ef4444" title="regex overreach risk ${pct(risk)}%">⚠</span>` : "";
+    return `<span title="legacy:${pct(v.evidenceBackedCoverage)}% wire:${pct(wire)}% tmpl:${pct(tmpl)}% regex:${pct(regex)}% pending:${pct(pend)}%">`
+      + `<span style="color:#22c55e">${pct(wire)}%</span>`
+      + `<span style="color:#94a3b8"> / </span>`
+      + `<span style="color:#6b7280">${pct(v.evidenceBackedCoverage)}%↓</span>`
+      + `${pendFlag}${riskFlag}`
+      + `</span>`;
+  };
+
   const renderRow = (e: AuditIndexEntry): string => {
     const color = verdictColor(e.changeClass);
     const verdict = `<span style="color:${color};font-weight:600">${esc(e.verdict)}</span>`;
@@ -268,6 +319,7 @@ export function writeIndexHtml(runId: string, run: AuditRunRecord, entries: Audi
       <td style="color:${verdictColor(e.changeClass)}">${esc(e.changeClass)}</td>
       <td>${queryKindBadge(e.queryKind)}</td>
       <td><code>${esc(e.sessionId.slice(0, 8))}…/${esc(e.queryId.slice(0, 20))}</code></td>
+      <td>${v2MiniBar(e.v2)}</td>
       <td>${reasons}</td>
       <td>${reportLink} ${scLink} ${diffLink} ${attrLink}</td>
     </tr>`;
@@ -332,21 +384,21 @@ td a:hover { text-decoration: underline; }
 ${regressions.length > 0 ? `
 <h2>Top Regressions (${regressions.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>reasons</th><th>links <span style="color:#8b5cf6;font-weight:400">(attr=三列视图)</span></th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage (wire/legacy)</th><th>reasons</th><th>links <span style="color:#8b5cf6;font-weight:400">(attr=三列视图)</span></th></tr>
 ${regressions.map(renderRow).join("\n")}
 </table>` : ""}
 
 ${needsReview.length > 0 ? `
 <h2>Needs Review (${needsReview.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links</th></tr>
 ${needsReview.map(renderRow).join("\n")}
 </table>` : ""}
 
 ${newEntries.length > 0 ? `
 <h2>New Proxy Queries (${newEntries.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links</th></tr>
 ${newEntries.map(renderRow).join("\n")}
 </table>` : ""}
 
@@ -361,13 +413,13 @@ ${proxyWithoutJsonl.map((e) => `<tr><td><code>${esc(e.sessionId)}</code></td><td
 ${failed.length > 0 ? `
 <h2>Failed Queries (${failed.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links</th></tr>
 ${failed.map(renderRow).join("\n")}
 </table>` : ""}
 
 <h2>All Queries (${sorted.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links</th></tr>
 ${sorted.map(renderRow).join("\n")}
 </table>
 

@@ -1,11 +1,12 @@
 // Scorecard 计算：从 ReconciliationReport + CharDiffReport 提取量化指标
 // 参考：docs/context-reconstruction-correction.md 的指标定义
 
-import type { ReconciliationReport } from "../types";
+import type { ReconciliationReport, ProxySegmentAttribution } from "../types";
 import type { CharDiffReport } from "../debug/char-diff";
 import type { AuditVerdict, QueryScorecard } from "./types";
 import { queryKeyHash } from "./paths";
 import type { QueryKey } from "./types";
+import { getContextLedgerRule, SUPPORTED_CLAUDE_CODE_VERSION } from "../rule-registry";
 
 // verdict 判断阈值（本地常量，不需要配置 UI）
 const THRESHOLDS = {
@@ -25,12 +26,141 @@ const THRESHOLDS = {
   newQueryLowEvidenceCoverage: 0.5,
   // evidenceBackedCoverage 上升但 drift 也上升时的 drift 阈值
   driftRiseNeedsReview: 0.05,
+  // E0-4 治理阈值
+  pendingRuleCoverageNeedsReview: 0.30,  // pendingRuleCoverage > 30%
+  regexOverreachRiskNeedsReview: 0.60,   // regexOverreachRisk > 60%
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// E0-3：v2 分桶推导
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface V2Buckets {
+  // E0-3 v2 覆盖率分桶（字符数）
+  wireExactChars: number;         // basis=raw_hash（P0-3 前与 canonicalExact 合并）
+  canonicalExactChars: number;    // basis=normalized_hash
+  templateChars: number;          // basis=rule_id + materialization=exact_text（contentPattern 字面量）
+  regexChars: number;             // basis=rule_id + materialization=shape/normalized_text（regex/shape）
+  presenceChars: number;          // basis=harness_rule + category≠billing_noise（presence rule，预留路径）
+  serverSideChars: number;        // basis=harness_rule + category=billing_noise（known_noise）
+  pendingRuleChars: number;       // attribution 命中但 rule.verifiedFor===null 的字符
+  pendingRuleMatchedChars: number; // pendingRule 中同时被 reconcile 匹配的字符（交叉）
+}
+
+function computeV2Buckets(
+  report: ReconciliationReport,
+  attributions: ProxySegmentAttribution[],
+): V2Buckets {
+  const buckets: V2Buckets = {
+    wireExactChars: 0,
+    canonicalExactChars: 0,
+    templateChars: 0,
+    regexChars: 0,
+    presenceChars: 0,
+    serverSideChars: 0,
+    pendingRuleChars: 0,
+    pendingRuleMatchedChars: 0,
+  };
+
+  const proxySegs = report.snapshot.segments;
+  const attrBySegId = new Map(attributions.map((a) => [a.proxySegmentIds[0], a]));
+
+  // 为每个 proxy segment 建立 basis 索引（取最强的一条 alignment）
+  // basis 优先级：raw_hash > normalized_hash > rule_id > harness_rule > category
+  const BASIS_RANK: Record<string, number> = {
+    raw_hash: 6,
+    normalized_hash: 5,
+    tool_use_id: 4,
+    rule_id: 3,
+    harness_rule: 2,
+    category: 1,
+    order: 0,
+    timestamp: 0,
+  };
+  const proxyBasis = new Map<string, { basis: string; ruleId?: string }>();
+
+  for (const align of report.alignments) {
+    const rank = BASIS_RANK[align.basis] ?? 0;
+    for (const pid of align.proxySegmentIds) {
+      const cur = proxyBasis.get(pid);
+      const curRank = cur ? (BASIS_RANK[cur.basis] ?? 0) : -1;
+      if (rank > curRank) {
+        // 从 alignment note 解析 ruleId（格式：`ruleId match: <ruleId> (mat)`）
+        const ruleId = align.note?.match(/^ruleId match: ([^\s]+)/)?.[1];
+        proxyBasis.set(pid, { basis: align.basis, ruleId });
+      }
+    }
+  }
+
+  // 按桶统计
+  for (const pseg of proxySegs) {
+    const chars = pseg.charCount ?? 0;
+    if (chars === 0) continue;
+
+    const match = proxyBasis.get(pseg.id);
+    const effectiveCategory = attrBySegId.get(pseg.id)?.category ?? pseg.category;
+
+    if (match) {
+      switch (match.basis) {
+        case "raw_hash":
+          // P0-3 前：raw_hash 就是 wire-exact，同时也是 canonical-exact
+          buckets.wireExactChars += chars;
+          break;
+        case "normalized_hash":
+          buckets.canonicalExactChars += chars;
+          break;
+        case "tool_use_id":
+          // tool_use_id 匹配的 tool_result：归入 wireExact（tool_use_id 是确定性锚点）
+          buckets.wireExactChars += chars;
+          break;
+        case "rule_id": {
+          const rule = match.ruleId ? getContextLedgerRule(match.ruleId) : undefined;
+          const mat = rule?.reconstruction?.materialization;
+          if (mat === "exact_text") {
+            // exact_text rule：contentPattern 字面量匹配，归入 template
+            buckets.templateChars += chars;
+          } else {
+            // shape / normalized_text / presence / unavailable → regex 桶
+            // （P0-1 修复后 shape 会降为 presence_only；当前先统一归 regex）
+            buckets.regexChars += chars;
+          }
+          break;
+        }
+        case "harness_rule":
+          if (effectiveCategory === "billing_noise") {
+            buckets.serverSideChars += chars;
+          } else {
+            // presence rule（当前无此路径，预留）
+            buckets.presenceChars += chars;
+          }
+          break;
+        default:
+          break;
+      }
+    }
+
+    // pendingRuleCoverage：attribution 命中且 rule.verifiedFor===null 的字符
+    const attr = attrBySegId.get(pseg.id);
+    if (attr?.ruleId) {
+      const rule = getContextLedgerRule(attr.ruleId);
+      if (rule && rule.verifiedFor !== SUPPORTED_CLAUDE_CODE_VERSION) {
+        buckets.pendingRuleChars += chars;
+        // 若同时被 reconcile 匹配，则也计入 pendingRuleMatchedChars
+        if (match && match.basis !== "category") {
+          buckets.pendingRuleMatchedChars += chars;
+        }
+      }
+    }
+  }
+
+  return buckets;
+}
 
 export function computeScorecard(
   queryKey: QueryKey,
   report: ReconciliationReport,
   diff: CharDiffReport,
+  attributions?: ProxySegmentAttribution[],
 ): QueryScorecard {
   const { coverage } = report;
 
@@ -74,6 +204,24 @@ export function computeScorecard(
   const attributionOnlyRatio = coverage.attributionOnlyGap ?? 0;
   const alignedTextDriftRatio = coverage.alignedTextDrift ?? 0;
 
+  // ── E0-3 v2 分桶 ──────────────────────────────────────────────────────────
+  const v2 = attributions
+    ? computeV2Buckets(report, attributions)
+    : null;
+
+  const safeRatio = (chars: number) => proxyChars > 0 ? chars / proxyChars : 0;
+
+  // v2 覆盖率比例（无 attributions 时为 undefined，向后兼容）
+  const wireExactCoverage = v2 ? safeRatio(v2.wireExactChars) : undefined;
+  const canonicalExactCoverage = v2 ? safeRatio(v2.canonicalExactChars) : undefined;
+  const templateCoverage = v2 ? safeRatio(v2.templateChars) : undefined;
+  const regexCoverage = v2 ? safeRatio(v2.regexChars) : undefined;
+  const presenceCoverage = v2 ? safeRatio(v2.presenceChars) : undefined;
+  const serverSideAttributionChars = v2 ? v2.serverSideChars : undefined;
+  const pendingRuleCoverage = v2 ? safeRatio(v2.pendingRuleChars) : undefined;
+  // regexOverreachRisk = (regex + shape) / proxyChars（>60% 触发 needs_review）
+  const regexOverreachRisk = v2 ? safeRatio(v2.regexChars) : undefined;
+
   const hash = queryKeyHash(queryKey);
 
   // 初始 verdict（无 baseline 对比，单次 run 的基础判断）
@@ -86,6 +234,8 @@ export function computeScorecard(
     suspectMatchChars,
     proxyChars,
     alignedTextDriftRatio,
+    pendingRuleCoverage,
+    regexOverreachRisk,
   });
 
   return {
@@ -106,6 +256,15 @@ export function computeScorecard(
     evidenceBackedCoverage,
     attributionOnlyRatio,
     alignedTextDriftRatio,
+    // E0-3 v2 分桶（有 attributions 时有值，否则 undefined）
+    wireExactCoverage,
+    canonicalExactCoverage,
+    templateCoverage,
+    regexCoverage,
+    presenceCoverage,
+    serverSideAttributionChars,
+    pendingRuleCoverage,
+    regexOverreachRisk,
     verdict,
     reasons,
     generatedAt: new Date().toISOString(),
@@ -122,6 +281,8 @@ function classifySingleRunVerdict(m: {
   suspectMatchChars: number;
   proxyChars: number;
   alignedTextDriftRatio: number;
+  pendingRuleCoverage?: number;
+  regexOverreachRisk?: number;
 }): { verdict: AuditVerdict; reasons: string[] } {
   const reasons: string[] = [];
 
@@ -139,11 +300,20 @@ function classifySingleRunVerdict(m: {
       `low_evidence_backed_coverage (${(m.evidenceBackedCoverage * 100).toFixed(1)}%)`,
     );
   }
+  // E0-4 治理阈值
+  if (m.pendingRuleCoverage !== undefined && m.pendingRuleCoverage > THRESHOLDS.pendingRuleCoverageNeedsReview) {
+    reasons.push(`pending_rule_coverage (${(m.pendingRuleCoverage * 100).toFixed(1)}%)`);
+  }
+  if (m.regexOverreachRisk !== undefined && m.regexOverreachRisk > THRESHOLDS.regexOverreachRiskNeedsReview) {
+    reasons.push(`regex_overreach_risk (${(m.regexOverreachRisk * 100).toFixed(1)}%)`);
+  }
 
   const needsReview =
     m.evidenceBackedCoverage < THRESHOLDS.newQueryLowEvidenceCoverage ||
     m.prefixIncompleteCount > 0 ||
-    m.sourceTextUnavailableCount > 0;
+    m.sourceTextUnavailableCount > 0 ||
+    (m.pendingRuleCoverage !== undefined && m.pendingRuleCoverage > THRESHOLDS.pendingRuleCoverageNeedsReview) ||
+    (m.regexOverreachRisk !== undefined && m.regexOverreachRisk > THRESHOLDS.regexOverreachRiskNeedsReview);
 
   return {
     verdict: needsReview ? "needs_review" : "ok",
@@ -161,7 +331,6 @@ export function classifyDelta(
   isNew: boolean,
 ): { verdict: AuditVerdict; reasons: string[] } {
   if (isNew || !previous) {
-    // 新 query：直接按指标判断，不信任 current.verdict（可能是旧 run 写入的值）
     const reasons: string[] = [];
     if (isNew) reasons.push("new_query");
     if (current.prefixIncompleteCount > 0) reasons.push("prefix_incomplete");
@@ -170,7 +339,13 @@ export function classifyDelta(
     if (current.evidenceBackedCoverage < THRESHOLDS.newQueryLowEvidenceCoverage) {
       reasons.push(`low_evidence_backed_coverage (${(current.evidenceBackedCoverage * 100).toFixed(1)}%)`);
     }
-    // 新 query 默认 needs_review；高覆盖率且无异常时仍是 needs_review（保守）
+    // E0-4：新 query 也检查治理阈值
+    if (current.pendingRuleCoverage !== undefined && current.pendingRuleCoverage > THRESHOLDS.pendingRuleCoverageNeedsReview) {
+      reasons.push(`pending_rule_coverage (${(current.pendingRuleCoverage * 100).toFixed(1)}%)`);
+    }
+    if (current.regexOverreachRisk !== undefined && current.regexOverreachRisk > THRESHOLDS.regexOverreachRiskNeedsReview) {
+      reasons.push(`regex_overreach_risk (${(current.regexOverreachRisk * 100).toFixed(1)}%)`);
+    }
     return { verdict: "needs_review", reasons };
   }
 
@@ -186,29 +361,35 @@ export function classifyDelta(
     Math.max(current.proxyChars, 1);
   const driftDelta = current.alignedTextDriftRatio - previous.alignedTextDriftRatio;
 
-  // regression 条件（任意一个触发即 regression）
+  // E0-4：suspectMatchChars > 0 阻止 verdict 升为 ok/improvement
+  const hasSuspect = current.falseReliableMatchCount > 0;
+
+  // regression 条件
   const isRegression =
-    current.falseReliableMatchCount > 0 ||
+    hasSuspect ||
     ebDelta < -THRESHOLDS.evidenceBackedDropRegression ||
     unknownDelta > THRESHOLDS.unknownCharsRiseRegression ||
     attrOnlyDelta > 0.05 ||
     suspectDelta > THRESHOLDS.suspectRiseRegressionRatio;
 
-  // improvement 条件（任意一个满足，且无 regression）
+  // improvement 条件（无 regression，且无 suspect）
   const isImprovement =
     !isRegression &&
+    !hasSuspect &&
     (ebDelta > THRESHOLDS.evidenceBackedRiseImprovement ||
       unknownDelta < -THRESHOLDS.unknownCharsDropImprovement ||
       attrOnlyDelta < -THRESHOLDS.attrOnlyDropImprovementRatio);
 
-  // needs_review（上升但有 drift 暴露 / 已知标记）
+  // needs_review 条件（E0-4 新增治理阈值触发）
   const isNeedsReview =
     current.prefixIncompleteCount > 0 ||
     current.sourceTextUnavailableCount > 0 ||
-    (ebDelta > 0 && driftDelta > THRESHOLDS.driftRiseNeedsReview);
+    (ebDelta > 0 && driftDelta > THRESHOLDS.driftRiseNeedsReview) ||
+    (current.pendingRuleCoverage !== undefined && current.pendingRuleCoverage > THRESHOLDS.pendingRuleCoverageNeedsReview) ||
+    (current.regexOverreachRisk !== undefined && current.regexOverreachRisk > THRESHOLDS.regexOverreachRiskNeedsReview);
 
   if (isRegression) {
-    if (current.falseReliableMatchCount > 0)
+    if (hasSuspect)
       reasons.push(`suspect_match x${current.falseReliableMatchCount}`);
     if (ebDelta < -THRESHOLDS.evidenceBackedDropRegression)
       reasons.push(`evidence_backed_drop ${(ebDelta * 100).toFixed(1)}%`);
@@ -227,6 +408,10 @@ export function classifyDelta(
       reasons.push(`source_text_unavailable x${current.sourceTextUnavailableCount}`);
     if (ebDelta > 0 && driftDelta > THRESHOLDS.driftRiseNeedsReview)
       reasons.push(`drift_rise ${(driftDelta * 100).toFixed(1)}%`);
+    if (current.pendingRuleCoverage !== undefined && current.pendingRuleCoverage > THRESHOLDS.pendingRuleCoverageNeedsReview)
+      reasons.push(`pending_rule_coverage (${(current.pendingRuleCoverage * 100).toFixed(1)}%)`);
+    if (current.regexOverreachRisk !== undefined && current.regexOverreachRisk > THRESHOLDS.regexOverreachRiskNeedsReview)
+      reasons.push(`regex_overreach_risk (${(current.regexOverreachRisk * 100).toFixed(1)}%)`);
     return { verdict: "needs_review", reasons };
   }
 
@@ -240,7 +425,6 @@ export function classifyDelta(
     return { verdict: "improvement", reasons };
   }
 
-  // 完全相同
   if (
     current.evidenceBackedCoverage === previous.evidenceBackedCoverage &&
     current.unknownProxyChars === previous.unknownProxyChars &&

@@ -46,6 +46,8 @@ export interface PipelineInput {
   noR9?: boolean;
   /** T0 控制变量：verifiedFor===null 的 rule 不进入 evidenceBacked，仅 attribution-only */
   verifiedOnly?: boolean;
+  /** E0-1：允许 jsonlFile=null 的 query 走 proxy-only attribution 路径（不解析 JSONL，reconcile 无 expected） */
+  proxyOnly?: boolean;
 }
 
 export interface PipelineOutputData {
@@ -190,7 +192,7 @@ export function runPipeline(input: PipelineInput): PipelineResult {
     const diffHtml = renderCharDiffHtml(diff);
 
     // 7. scorecard
-    const scorecard = computeScorecard(queryKey, report, diff);
+    const scorecard = computeScorecard(queryKey, report, diff, allAttributions);
 
     return {
       queryKey,
@@ -222,20 +224,74 @@ export function runPipelineWithData(input: PipelineInput): {
   result: PipelineResult;
   data?: PipelineOutputData;
 } {
-  const { proxy, jsonlFile, noR9 } = input;
+  const { proxy, jsonlFile, noR9, proxyOnly } = input;
   const { queryKey, queryKeyHash: hash, timestamp, proxySourceFile, trafficLine } = proxy;
 
+  // proxy_without_jsonl：--proxy-only 时走 attribution-only 路径，否则 skip
   if (!jsonlFile || !existsSync(jsonlFile)) {
-    return {
-      result: {
-        queryKey,
-        queryKeyHash: hash,
-        status: "skipped",
-        skipReason: "proxy_without_jsonl",
-        proxySourceRef: `${proxySourceFile}:${trafficLine}`,
-        timestamp,
-      },
-    };
+    if (!proxyOnly) {
+      return {
+        result: {
+          queryKey,
+          queryKeyHash: hash,
+          status: "skipped",
+          skipReason: "proxy_without_jsonl",
+          proxySourceRef: `${proxySourceFile}:${trafficLine}`,
+          timestamp,
+        },
+      };
+    }
+    // E0-1 proxy-only 路径：proxy → snapshot → attribution → reconcile(expected=undefined)
+    try {
+      const raw = proxy.raw;
+      const reqBody = (raw["reqBody"] as Record<string, unknown>) ?? {};
+      const proxyInput: ProxyRequestInput = {
+        ts: raw["ts"] as string | undefined,
+        startedAt: raw["startedAt"] as string | undefined,
+        reqHeaders: raw["reqHeaders"] as Record<string, string> | undefined,
+        reqBody: reqBody as ProxyRequestInput["reqBody"],
+        _sse_events: raw["_sse_events"] as ProxyRequestInput["_sse_events"],
+        _traffic_jsonl_line: trafficLine,
+      };
+      const snapshot = parseClaudeProxyRequest(proxyInput, {
+        proxyFile: proxySourceFile,
+        queryId: queryKey.queryId,
+      });
+      const snapForAttr = JSON.parse(
+        JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
+      ) as typeof snapshot;
+      const allAttributions = inferClaudeProxyAttributions(snapForAttr);
+      // reconcile 无 expected：仅产出 known_noise + attribution-only 覆盖率
+      const report = reconcileClaudeContext({ snapshot, attributions: allAttributions, expected: undefined });
+      const baseDiff = computeCharDiff(report);
+      const diff = injectProxyTexts(baseDiff, report, reqBody);
+      const diffHtml = renderCharDiffHtml(diff);
+      const scorecard = computeScorecard(queryKey, report, diff, allAttributions);
+      return {
+        result: {
+          queryKey,
+          queryKeyHash: hash,
+          status: "success",
+          proxySourceRef: `${proxySourceFile}:${trafficLine}`,
+          timestamp,
+          scorecard,
+          queryKind: snapshot.request?.queryKind ?? "unknown",
+        },
+        data: { report, diff, diffHtml, attributions: allAttributions, reqBody },
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        result: {
+          queryKey,
+          queryKeyHash: hash,
+          status: "failed",
+          error: message,
+          proxySourceRef: `${proxySourceFile}:${trafficLine}`,
+          timestamp,
+        },
+      };
+    }
   }
 
   try {
@@ -286,7 +342,7 @@ export function runPipelineWithData(input: PipelineInput): {
     const baseDiff = computeCharDiff(report);
     const diff = injectProxyTexts(baseDiff, report, reqBody);
     const diffHtml = renderCharDiffHtml(diff);
-    const scorecard = computeScorecard(queryKey, report, diff);
+    const scorecard = computeScorecard(queryKey, report, diff, allAttributions);
 
     // queryKind 细化：side_query 中命中 session-title rule 的标注为 session_title_side_query
     const baseQueryKind = snapshot.request?.queryKind ?? "unknown";

@@ -16,6 +16,8 @@ import {
   RUNS_DIR,
   LATEST_JSON,
   BASELINE_JSON,
+  latestJsonPath,
+  baselineJsonPath,
   runDir,
   reportPath,
   scorecardPath,
@@ -24,6 +26,7 @@ import {
   proxyAttributionViewPath,
   errorPath,
 } from "./paths";
+import type { AuditMode } from "./paths";
 import { renderProxyAttributionView } from "./proxy-attribution-view";
 import type { ProxySegmentAttribution } from "../types";
 import type {
@@ -191,6 +194,20 @@ export function writeIndex(
       };
     }
 
+    // E0-5：从 scorecard 提取 v2 分桶摘要，内嵌到 index entry
+    const v2 = r.scorecard ? {
+      evidenceBackedCoverage: r.scorecard.evidenceBackedCoverage,
+      wireExactCoverage: r.scorecard.wireExactCoverage,
+      canonicalExactCoverage: r.scorecard.canonicalExactCoverage,
+      templateCoverage: r.scorecard.templateCoverage,
+      regexCoverage: r.scorecard.regexCoverage,
+      presenceCoverage: r.scorecard.presenceCoverage,
+      serverSideAttributionChars: r.scorecard.serverSideAttributionChars,
+      pendingRuleCoverage: r.scorecard.pendingRuleCoverage,
+      regexOverreachRisk: r.scorecard.regexOverreachRisk,
+      proxyChars: r.scorecard.proxyChars,
+    } : undefined;
+
     const entry: AuditIndexEntry = {
       queryKey: r.queryKey,
       queryKeyHash: r.queryKeyHash,
@@ -204,6 +221,7 @@ export function writeIndex(
       changeClass: delta?.changeClass ?? (isNew ? "new" : r.status === "skipped" ? "skipped" : "failed"),
       reasons: delta?.reasons ?? (r.skipReason ? [r.skipReason] : r.error ? ["pipeline_error"] : []),
       queryKind: r.queryKind,
+      v2,
       reportPath: r.reportPath,
       scorecardPath: r.scorecardPath,
       charDiffHtmlPath: r.charDiffHtmlPath,
@@ -296,36 +314,44 @@ export function writeRunJson(
 // 更新 latest.json / baseline.json
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function updateLatestPointer(runId: string): void {
+// E0-2：mode-aware 指针写入/读取。优先用 latest.<mode>.json，兼容读旧的 latest.json
+export function updateLatestPointer(runId: string, mode: AuditMode): void {
   mkdirSync(AUDIT_HOME, { recursive: true });
   const pointer: LatestPointer = { runId, createdAt: new Date().toISOString() };
-  writeFileSync(LATEST_JSON, JSON.stringify(pointer, null, 2), "utf-8");
+  const data = JSON.stringify(pointer, null, 2);
+  writeFileSync(latestJsonPath(mode), data, "utf-8");
 }
 
-export function readLatestRunId(): string | undefined {
-  if (!existsSync(LATEST_JSON)) return undefined;
+export function readLatestRunId(mode: AuditMode): string | undefined {
+  // 先读 mode-specific 文件，不存在时 fallback 到全局 latest.json（兼容旧 run）
+  const modeFile = latestJsonPath(mode);
+  const file = existsSync(modeFile) ? modeFile : existsSync(LATEST_JSON) ? LATEST_JSON : null;
+  if (!file) return undefined;
   try {
-    const p = JSON.parse(readFileSync(LATEST_JSON, "utf-8")) as LatestPointer;
+    const p = JSON.parse(readFileSync(file, "utf-8")) as LatestPointer;
     return p.runId;
   } catch {
     return undefined;
   }
 }
 
-export function markBaseline(runId: string, note?: string): void {
+export function markBaseline(runId: string, mode: AuditMode, note?: string): void {
   mkdirSync(AUDIT_HOME, { recursive: true });
   const pointer: BaselinePointer = {
     runId,
     pointedAt: new Date().toISOString(),
     note,
   };
-  writeFileSync(BASELINE_JSON, JSON.stringify(pointer, null, 2), "utf-8");
+  writeFileSync(baselineJsonPath(mode), JSON.stringify(pointer, null, 2), "utf-8");
 }
 
-export function readBaselineRunId(): string | undefined {
-  if (!existsSync(BASELINE_JSON)) return undefined;
+export function readBaselineRunId(mode: AuditMode): string | undefined {
+  // 先读 mode-specific 文件，不存在时 fallback 到全局 baseline.json（兼容旧 run）
+  const modeFile = baselineJsonPath(mode);
+  const file = existsSync(modeFile) ? modeFile : existsSync(BASELINE_JSON) ? BASELINE_JSON : null;
+  if (!file) return undefined;
   try {
-    const p = JSON.parse(readFileSync(BASELINE_JSON, "utf-8")) as BaselinePointer;
+    const p = JSON.parse(readFileSync(file, "utf-8")) as BaselinePointer;
     return p.runId;
   } catch {
     return undefined;
