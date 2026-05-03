@@ -167,8 +167,7 @@ export function runPipeline(input: PipelineInput): PipelineResult {
     const jsonlRaw = readFileSync(jsonlFile, "utf-8");
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
 
-    // 4. 重建 expected（noR9 禁用 attribution 反写，verifiedOnly 通过 r9Attributions 限制 R9 注入）
-    const proxySegmentsById = new Map(snapshot.segments.map((s) => [s.id, s]));
+    // 4. 重建 expected（P0-1：R9 严格正向，不再需要 proxySegmentsById）
     const expected = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
       boundary: {
@@ -178,8 +177,6 @@ export function runPipeline(input: PipelineInput): PipelineResult {
       },
       hasPreSessionActivity: parsed.hasPreSessionActivity,
       attributions: r9Attributions,
-      proxySegmentsById,
-      // T0 控制变量：--no-r9 时禁用 attribution 反写
       rules: noR9 ? { injectFromAttributions: false } : undefined,
     });
 
@@ -322,7 +319,7 @@ export function runPipelineWithData(input: PipelineInput): {
     const jsonlRaw = readFileSync(jsonlFile, "utf-8");
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
 
-    const proxySegmentsById = new Map(snapshot.segments.map((s) => [s.id, s]));
+    // P0-1：R9 严格正向，不再需要 proxySegmentsById
     const expected = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
       boundary: {
@@ -332,8 +329,6 @@ export function runPipelineWithData(input: PipelineInput): {
       },
       hasPreSessionActivity: parsed.hasPreSessionActivity,
       attributions: r9Attributions,
-      proxySegmentsById,
-      // T0 控制变量：--no-r9 时禁用 attribution 反写
       rules: noR9 ? { injectFromAttributions: false } : undefined,
     });
 

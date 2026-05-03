@@ -103,7 +103,8 @@ function computeV2Buckets(
     if (match) {
       switch (match.basis) {
         case "raw_hash":
-          // P0-3 前：raw_hash 就是 wire-exact，同时也是 canonical-exact
+          // P0-3 前：raw_hash 是真实 wire-exact（P0-1 后 R9 不再 proxy copy，所以此处不再虚高）
+          // P0-3 完成后将进一步区分 raw bytes hash vs canonical hash
           buckets.wireExactChars += chars;
           break;
         case "normalized_hash":

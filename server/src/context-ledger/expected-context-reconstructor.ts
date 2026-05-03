@@ -128,13 +128,16 @@ export interface ReconstructInput {
   hasPreSessionActivity?: boolean;
   /**
    * proxy attribution 结果（来自 inferClaudeProxyAttributions）。
-   * 提供后，reconstructor 用 attribution 里已命中的 ruleId 反向生成
+   * 提供后，reconstructor 用 attribution 里已命中的 ruleId 正向重建
    * system / tools expected segments（R9_inject_from_attribution）。
    * 不提供时 system/tools 段仍列为 unimplementedRules。
+   *
+   * P0-1：R9 严格正向重建，禁止读取 proxy rawText/rawHash。
+   * materialization=exact_text → 从 contentPattern 计算 rawHash；
+   * materialization=normalized_text → 从 contentPattern + captureGroups 解析后计算 rawHash；
+   * materialization=shape/presence/unavailable → 仅保留 charCount，不生成 rawHash。
    */
   attributions?: ProxySegmentAttribution[];
-  /** proxy segments 查找表（id → segment），用于 R9 从 proxy rawText 计算 rawHash。 */
-  proxySegmentsById?: Map<string, ContextSegment>;
 }
 
 /** 暂未实现规则的标识。结果中 metadata.unimplementedRules 会列出这些。 */
@@ -177,7 +180,7 @@ export function reconstructExpectedClaudeContext(
   // 每条 attribution 里有 ruleId，从 CONTEXT_LEDGER_RULES 读 reconstruction 信息，
   // 生成对应的 expected segment。order 用负数保证排在 messages 段之前。
   const attributionSegments = rules.injectFromAttributions && input.attributions
-    ? buildSegmentsFromAttributions(input.attributions, input.proxySegmentsById)
+    ? buildSegmentsFromAttributions(input.attributions)
     : [];
 
   // system/tools segments 排在 messages 之前（order < 0），重新给 messageSegments 编号
@@ -571,38 +574,28 @@ function ruleIdForCategory(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// R9：从 proxy attribution 反向生成 system / tools expected segments
+// R9（P0-1 修订版）：从 proxy attribution 正向重建 system / tools expected segments
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// 策略：遍历 attributions，按 proxySegment 的 order 顺序处理。
-// 每条 attribution 有 ruleId → 找到对应 ContextLedgerRule：
-//   - section=system 或 section=tools
-//   - reconstruction.trigger=always_per_query
-//   - materialization=exact_text：contentPattern 非 null → 生成带 rawHash 的 expected segment
-//   - materialization=presence/shape/normalized_text：生成不带 rawHash 的 expected segment，
-//     charCount 从 attribution.charCount 读取（proxy ground truth）
-// billing_noise 跳过（R6 已过滤）。
-// 同一 ruleId 若在多个 attribution 里出现（多个 request），只取第一次（dedup by ruleId）。
-
-function proxyRawText(
-  attr: ProxySegmentAttribution,
-  proxySegmentsById?: Map<string, ContextSegment>,
-): string | undefined {
-  if (!proxySegmentsById) return undefined;
-  for (const sid of attr.proxySegmentIds) {
-    const text = proxySegmentsById.get(sid)?.rawText;
-    if (text) return text;
-  }
-  return undefined;
-}
+// P0-1 核心约束：禁止从 proxy rawText/rawHash 反写 expected。
+// expected segment 的内容必须完全来自 rule.reconstruction.emits（rule 正向定义），
+// 不读 proxySegmentsById，因此参数已被移除。
+//
+// materialization 分流：
+//   exact_text      → 从 contentPattern（静态字面量）计算 rawHash
+//                     无 contentPattern 时不生成 rawHash（归入 unimplemented）
+//   normalized_text → 从 contentPattern + captureGroups 解析占位符后计算 rawHash
+//                     无 contentPattern 时不生成 rawHash
+//   shape           → 内容动态，仅保留 charCount（presence_only 语义）
+//   presence        → 仅保留 charCount
+//   unavailable     → 跳过，不生成 expected segment
 
 function buildSegmentsFromAttributions(
   attributions: ProxySegmentAttribution[],
-  proxySegmentsById?: Map<string, ContextSegment>,
 ): ContextSegment[] {
   const segments: ContextSegment[] = [];
   const seenRuleIds = new Set<string>();
-  let order = -100000; // 负数 order 保证排在 messages 段之前，按 proxy 顺序递增
+  let order = -100000; // 负数 order 保证排在 messages 段之前
 
   for (const attr of attributions) {
     const ruleId = attr.ruleId;
@@ -614,14 +607,14 @@ function buildSegmentsFromAttributions(
 
     const recon = rule.reconstruction;
     if (!recon) continue;
-    // trigger 不做过滤——attribution 已在 proxy 里确认这段存在，无论 trigger 类型
-    // （always_per_query / from_memory / from_harness_state）都意味着"本次请求有这段"。
 
     const emits = recon.emits;
     // 只处理 system / tools section；messages 层由 mutations 处理
     if (emits.section !== "system" && emits.section !== "tools") continue;
-    // billing_noise 不生成 expected segment（R6 过滤）
+    // billing_noise 不生成 expected segment（R6 已处理）
     if (emits.category === "billing_noise") continue;
+    // unavailable：无法重建，跳过
+    if (recon.materialization === "unavailable") continue;
 
     seenRuleIds.add(ruleId);
 
@@ -638,7 +631,6 @@ function buildSegmentsFromAttributions(
       category: emits.category as SegmentCategory,
       label: `${emits.section}/${emits.category} (${ruleId})`,
       sourceRefs: [sourceRef],
-      // system section → role=system；tools section は role 未設定（proxy parser 同様）
       ...(emits.section === "system" ? { role: "system" as SegmentRole } : {}),
       order: order++,
       lifecycle: emits.lifecycle ?? "session",
@@ -649,30 +641,8 @@ function buildSegmentsFromAttributions(
     };
 
     if (recon.materialization === "exact_text") {
-      if (emits.section === "tools") {
-        // tools section：rawHash = sha256(整个 tool JSON)，与 proxy-snapshot-parser 口径一致。
-        // proxy segment 的 rawHash 已经是正确值，直接复用。
-        const pSeg = proxySegmentsById ? attr.proxySegmentIds.map(id => proxySegmentsById.get(id)).find(Boolean) : undefined;
-        if (pSeg?.rawHash) seg.rawHash = pSeg.rawHash;
-        // contentRef 用 rawText（= description）仅供展示，charCount 用 proxy ground truth
-        const text = proxyRawText(attr, proxySegmentsById);
-        if (text) seg.contentRef = { kind: "inline", text, charCount: attr.charCount ?? text.length } as ContentRef;
-      } else {
-        // system section：rawHash = sha256(rawText = 完整 block 文本)
-        // contentPattern 含 {placeholder} 时先用 attribution notes 里的动态字段替换
-        const rawPattern = emits.contentPattern;
-        const resolvedText = rawPattern
-          ? resolvePlaceholders(rawPattern, attr.notes ?? [])
-          : proxyRawText(attr, proxySegmentsById);
-        if (resolvedText) {
-          seg.rawHash = sha256Short(resolvedText);
-          seg.contentRef = { kind: "inline", text: resolvedText, charCount: resolvedText.length } as ContentRef;
-        }
-      }
-    } else if (recon.materialization === "normalized_text") {
-      // normalized_text：contentPattern 含 {placeholder} 时用 attribution notes 替换后算 rawHash。
-      // 替换后内容与 proxy rawText 完全一致 → M1 精确匹配。
-      // 无 contentPattern 时退化为 proxy rawText 直接复制（charCount 可对齐）。
+      // 严格正向：必须有 contentPattern 才能计算 rawHash。
+      // tools section 的 contentPattern 是完整 JSON 字符串（与 proxy-snapshot-parser 口径一致）。
       const rawPattern = emits.contentPattern;
       if (rawPattern) {
         const resolvedText = resolvePlaceholders(rawPattern, attr.notes ?? []);
@@ -680,25 +650,23 @@ function buildSegmentsFromAttributions(
           seg.rawHash = sha256Short(resolvedText);
           seg.contentRef = { kind: "inline", text: resolvedText, charCount: resolvedText.length } as ContentRef;
         }
-      } else {
-        const text = proxyRawText(attr, proxySegmentsById);
-        if (text) {
-          seg.contentRef = { kind: "inline", text, charCount: text.length } as ContentRef;
+        // resolvedText 为空（占位符未能解析）→ 不设 rawHash，降级为 presence_only
+      }
+      // 无 contentPattern → 不设 rawHash，reconcile 只能靠 rule_id basis 对齐
+    } else if (recon.materialization === "normalized_text") {
+      // 从 contentPattern + attribution.notes 里的 captureGroups 解析占位符后计算 rawHash。
+      const rawPattern = emits.contentPattern;
+      if (rawPattern) {
+        const resolvedText = resolvePlaceholders(rawPattern, attr.notes ?? []);
+        if (resolvedText) {
+          seg.rawHash = sha256Short(resolvedText);
+          seg.contentRef = { kind: "inline", text: resolvedText, charCount: resolvedText.length } as ContentRef;
         }
       }
-    } else if (recon.materialization === "shape") {
-      // shape：内容完全动态（git status/commits 等），proxy rawText 直接复制 rawHash，
-      // 使 M1 精确匹配。charCount 来自 proxy ground truth。
-      const pSeg = proxySegmentsById
-        ? attr.proxySegmentIds.map(id => proxySegmentsById.get(id)).find(Boolean)
-        : undefined;
-      if (pSeg?.rawHash) {
-        seg.rawHash = pSeg.rawHash;
-        const text = pSeg.rawText;
-        if (text) seg.contentRef = { kind: "inline", text, charCount: text.length } as ContentRef;
-      }
+      // 无 contentPattern → 不设 rawHash
     }
-    // presence：charCount 来自 attr.charCount，不生成 rawHash / contentRef
+    // shape / presence：内容动态或仅标记存在，charCount 已在上方从 attr.charCount 设置，
+    // 不生成 rawHash / contentRef，reconcile 只能靠 rule_id basis 或 presence_only 对齐。
 
     segments.push(seg);
   }

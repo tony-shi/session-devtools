@@ -184,7 +184,7 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
   const entriesWithV2 = entries.filter((e) => e.v2);
   if (entriesWithV2.length > 0) {
     lines.push(`## Coverage v2 分桶（旧口径 vs 新分桶）`, ``);
-    lines.push(`> wireExact = basis=raw_hash（P0-1 修复前为 R9 proxy 自匹配虚高值）`);
+    lines.push(`> wireExact = basis=raw_hash/tool_use_id（真实 wire-level 精确匹配，P0-1 已修复 R9 proxy 反写）`);
     lines.push(`> pending = attribution 命中但 rule.verifiedFor===null 的字符占比`);
     lines.push(`> regexRisk = regex/shape rule 命中字符 / proxyChars（>60% 触发 needs_review）`);
     lines.push(``);
@@ -216,7 +216,7 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
   lines.push(`## 已知限制与已确认风险（T0 状态）`, ``);
   lines.push(`| 问题 | 状态 | 计划 |`);
   lines.push(`|------|------|------|`);
-  lines.push(`| **R9 虚高**：R9 把 proxy 反写 system/tools expected，导致 evidenceBacked 大幅虚高 | ⚠️ 已确认（--no-r9 对照：fixture coverage 从 ~95% 降到 <30%） | P0-1 拆路径 |`);
+  lines.push(`| **R9 虚高**：R9 把 proxy 反写 system/tools expected，导致 evidenceBacked 大幅虚高 | ✅ P0-1 已修复（wireExact 从 ~95% 降到真实的 15-40%，template 45-60%，regex 13-20%） | — |`);
   lines.push(`| **raw body 丢失**：discovery.ts 用解析后对象覆盖了原始 reqBody 字符串，wire bytes 信息在此处丢失 | ⚠️ 已确认（P0-3 阻塞点） | P0-3 保留三层 body |`);
   lines.push(`| **rule 漂移**：exact_text rule 与本地 CLI 2.1.126 严重漂移（40 exact rules：1 unique / 5 multi / 34 missing） | ⚠️ 已确认（verify-rules-against-cli.ts） | P3-5 verifiedFor 降级 |`);
   lines.push(`| **char-diff vs reconcile 双源**：scorecard alignedAuditedChars 从 diff.summary 取，evidenceBackedCoverage 从 report.coverage 取，口径不一致 | ⚠️ 已确认（scorecard.ts:~50） | P3-3 reconcile 为权威 |`);
