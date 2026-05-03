@@ -502,6 +502,20 @@ const proxyAttributions: ProxySegmentAttribution[] = [
     notes: ["One proxy block represents two expected sources."],
   },
   {
+    // P1-3：billing_noise 必须有 attribution，attribution.category 是权威来源
+    id: "attr-billing-noise",
+    snapshotId,
+    proxySegmentIds: ["pseg-billing-noise"],
+    category: "billing_noise",
+    attributedSource: "harness_rule",
+    sourceRefs: [proxyRef("reqBody.messages[5].content[0]")],
+    mechanism: "billing_noise_pattern",
+    confidence: "exact",
+    ruleId: "claude-code.billing-noise.mock-v1",  // 占位 ruleId（不在 registry，与 mock 约定一致）
+    charCount: 90,
+    tokenEstimate: 23,
+  },
+  {
     id: "attr-unknown",
     snapshotId,
     proxySegmentIds: ["pseg-unknown"],

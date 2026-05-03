@@ -87,11 +87,10 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
   const matchedExpectedIds = new Set<string>();
 
   // ── 第一步：known_noise 直接处理 ─────────────────────────────────────────
-  // category 权威来源：attribution（parser 已保守分类，attribution 做最终语义判断）
-  // 若 attribution 存在且 category=billing_noise，优先用 attribution；
-  // 否则 fallback 到 pseg.category（兼容未跑 attribution 的路径）
+  // P1-3：attribution.category 为唯一权威，无 attribution 时落 unknown（不 fallback 到 parser）。
+  // parser category 是 wire schema 的保守分类，不参与 reconcile 决策。
   for (const pseg of snapshot.segments) {
-    const effectiveCategory = attrBySegId.get(pseg.id)?.category ?? pseg.category;
+    const effectiveCategory = attrBySegId.get(pseg.id)?.category ?? "unknown";
     if (effectiveCategory !== "billing_noise") continue;
     matchedProxyIds.add(pseg.id);
     const align: AlignmentRef = {
@@ -320,6 +319,8 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
     if (isAttributionOnly && attr) {
       // attribution 已识别类别但 expected 没有对应 segment（U1-U5 未实现规则）
       matchedProxyIds.add(pseg.id);
+      // P1-3：category 字段统一用 attribution.category（权威），不用 pseg.category（parser draft）
+      const effectiveCat = attr.category;
       const align: AlignmentRef = {
         id: nextAlignId(),
         matchKind: "inferred",
@@ -334,26 +335,26 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
         id: nextFindingId(),
         type: "unmatched_expected_segment" as FindingType,
         severity: "warning" as FindingSeverity,
-        category: pseg.category,
+        category: effectiveCat,
         proxySegmentIds: [pseg.id],
         attributionIds: [attr.id],
         alignmentIds: [align.id],
         charDiff: pseg.charCount,
         tokenDiffEstimate: pseg.tokenEstimate,
-        message: `attribution-only: ${pseg.category} (${pseg.charCount ?? 0} chars) identified by ${attr.mechanism} but no expected segment — unimplemented rule covers this category`,
+        message: `attribution-only: ${effectiveCat} (${pseg.charCount ?? 0} chars) identified by ${attr.mechanism} but no expected segment — unimplemented rule covers this category`,
       });
     } else if (isUnknown) {
-      // 完全无法解释
+      // 完全无法解释（无 attribution，parser category 仅作 draft，finding category 用 "unknown"）
       findings.push({
         id: nextFindingId(),
         type: "unmatched_proxy_segment",
         severity: "critical",
-        category: pseg.category,
+        category: "unknown",
         proxySegmentIds: [pseg.id],
         attributionIds: attr ? [attr.id] : undefined,
         charDiff: pseg.charCount,
         tokenDiffEstimate: pseg.tokenEstimate,
-        message: `unmatched proxy segment: ${pseg.category} (${pseg.charCount ?? 0} chars) — no attribution and no expected segment`,
+        message: `unmatched proxy segment: ${pseg.charCount ?? 0} chars — no attribution and no expected segment`,
         evidence: pseg.sourceRefs,
       });
     }
@@ -548,13 +549,13 @@ function matchOneExpected(
   // 绝对差值容差无法覆盖。改为：在同 category+role 的候选中，取 proxy 里
   // 未匹配的第 N 个（N = expected 里同 category+role 中 eseg 的相对位置）。
   //
-  // category 匹配优先用 attribution 层的 effective category：parser 只做 wire schema
-  // 分类（如 local_command_history 在 proxy 侧是 user_message），attribution 做语义识别。
-  // 因此 s.category（parser）OR attrBySegId.get(s.id)?.category（attribution）匹配即可。
+  // P1-3：M4 category 匹配严格用 attribution.category（权威），不 OR parser category。
+  // parser category 是 wire schema 保守分类，local_command_history 等语义类别只在 attribution 层可见。
+  // 无 attribution 的 segment category 视为 "unknown"，不参与 M4 匹配（避免假阳性）。
   const heuristicCandidates = proxySegs.filter(
     (s) =>
       !matchedProxyIds.has(s.id) &&
-      (s.category === eseg.category || attrBySegId.get(s.id)?.category === eseg.category) &&
+      (attrBySegId.get(s.id)?.category ?? "unknown") === eseg.category &&
       s.role === eseg.role,
   );
   if (heuristicCandidates.length > 0) {
@@ -822,9 +823,9 @@ function computeCoverage(
     const tokens = pseg.tokenEstimate ?? Math.round(chars / 4);
     proxyChars += chars;
 
-    // attribution 是 category 的权威来源；parser 只做保守分类
+    // P1-3：attribution.category 为权威，无 attribution 时落 "unknown"（不 fallback 到 parser）
     const attr = attrBySegId.get(pseg.id);
-    const cat = attr?.category ?? pseg.category;
+    const cat = attr?.category ?? "unknown";
     if (!catMap.has(cat)) catMap.set(cat, { proxyCount: 0, matchedCount: 0, proxyChars: 0, matchedChars: 0, proxyTokens: 0, matchedTokens: 0 });
     const entry = catMap.get(cat)!;
     entry.proxyCount++;

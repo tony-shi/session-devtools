@@ -654,6 +654,29 @@
       ]
     },
     {
+      "id": "attr-billing-noise",
+      "snapshotId": "snapshot-query-0002",
+      "proxySegmentIds": [
+        "pseg-billing-noise"
+      ],
+      "category": "billing_noise",
+      "attributedSource": "harness_rule",
+      "sourceRefs": [
+        {
+          "kind": "proxy",
+          "proxy": {
+            "file": "server/test/fixtures/context-reconstruction/mock/proxy-request.json",
+            "jsonPath": "reqBody.messages[5].content[0]"
+          }
+        }
+      ],
+      "mechanism": "billing_noise_pattern",
+      "confidence": "exact",
+      "ruleId": "claude-code.billing-noise.mock-v1",
+      "charCount": 90,
+      "tokenEstimate": 23
+    },
+    {
       "id": "attr-unknown",
       "snapshotId": "snapshot-query-0002",
       "proxySegmentIds": [
