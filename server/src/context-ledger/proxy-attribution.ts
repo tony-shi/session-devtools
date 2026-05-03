@@ -26,9 +26,6 @@
 import {
   CONTEXT_LEDGER_RULES,
   CLAUDE_CODE_BILLING_NOISE_RULE,
-  CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE,
-  CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
-  CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,
   CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE,
   CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,
 } from "./rule-registry";
@@ -51,19 +48,9 @@ import type {
 
 const LARGE_SEGMENT_THRESHOLD = 10_000;
 
-// billing header 前缀（fallback 用，regex rule 未命中时的保守兜底）
-const BILLING_HEADER_PREFIX = "x-anthropic-billing-header:";
-
-// messages 里的 harness injection 标签（无文本 pattern rule 可覆盖，保留为 wire schema 检测）
-const SYSTEM_REMINDER_TAG = "<system-reminder>";
-const LOCAL_COMMAND_TAGS = [
-  "<local-command-caveat>",
-  "<bash-input>",
-  "<bash-stdout>",
-  "<bash-stderr>",
-  "<command-name>",
-  "<local-command-stdout>",
-];
+// P2-1：SYSTEM_REMINDER_TAG / LOCAL_COMMAND_TAGS / BILLING_HEADER_PREFIX 已迁入 rule-registry。
+// messages 层的 system-reminder / local-command 由 findMatchingRule 命中对应 rule，
+// billing noise 只走 rule match（无 fallback，格式异常时落 unknown）。
 
 // ── rule 驱动的 pattern match ──────────────────────────────────────────────────
 
@@ -237,64 +224,36 @@ function applyRuleMatch(
   const attributedSource: MutationSourceKind =
     category === "tool_use" || category === "tool_result" ? "jsonl" : "harness_rule";
 
-  // notes：billing rule 专用捕获组、dynamic section 专用捕获组
+  // P2-2：从 rule.attribution.notesTemplate 渲染 notes，不再用 ruleId 硬编码。
+  // notesTemplate 中 {groupName} 被捕获组值替换；requireGroup 指定的组必须命中才生成此 note。
   let notes: string[] | undefined;
-  if (category === "billing_noise" && groups) {
-    notes = [
-      `cc_version=${groups["version"] ?? "?"}`,
-      `cc_entrypoint=${groups["entrypoint"] ?? "?"}`,
-      ...(groups["cch"] ? [`cch=${groups["cch"]}`] : []),
-      ...(groups["workload"] ? [`cc_workload=${groups["workload"]}`] : []),
-    ].filter((n) => !n.endsWith("?"));
-    if (notes.length === 0) notes = undefined;
-  } else if (rule.ruleId === CLAUDE_CODE_ENVIRONMENT_SECTION_RULE.ruleId && groups) {
-    notes = [
-      `cwd=${groups["cwd"] ?? "?"}`,
-      `platform=${groups["platform"] ?? "?"}`,
-      `shell=${groups["shell"] ?? "?"}`,
-      `osVersion=${groups["osVersion"] ?? "?"}`,
-      `model=${groups["modelDesc"] ?? "?"}`,
-      ...(groups["cutoff"] ? [`cutoff=${groups["cutoff"]}`] : []),
-    ];
-  } else if (rule.ruleId === CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE.ruleId && groups?.["memoryDir"]) {
-    notes = [`memoryDir=${groups["memoryDir"]}`];
-  } else if (rule.ruleId === CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE.ruleId && groups) {
-    if (groups["currentBranch"]) {
-      notes = [
-        `currentBranch=${groups["currentBranch"]}`,
-        `mainBranch=${groups["mainBranch"] ?? "?"}`,
-        ...(groups["gitUser"] ? [`gitUser=${groups["gitUser"]}`] : []),
-      ];
-    } else {
-      notes = ["no_git_repo: gitStatus block absent"];
-    }
+  const tpl = rule.attribution?.notesTemplate;
+  if (tpl && tpl.length > 0 && groups) {
+    const rendered = tpl
+      .map(({ format, requireGroup }) => {
+        // requireGroup 指定的组缺失时跳过此 note
+        if (requireGroup && !groups[requireGroup]) return null;
+        // 替换 {key} 占位符
+        return format.replace(/\{(\w+)\}/g, (_, k) => groups[k] ?? "?");
+      })
+      .filter((n): n is string => n !== null && !n.endsWith("?"));
+    if (rendered.length > 0) notes = rendered;
+  }
+  // context-management 特殊处理：无 git repo 时补充说明性 note
+  if (rule.ruleId === CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE.ruleId && groups && !groups["currentBranch"]) {
+    notes = ["no_git_repo: gitStatus block absent"];
   }
 
   // P1-1：生成结构化 evidence（regex/template 命中时）
   const evidence = buildEvidence(rule, rawText, matchData);
 
-  // Session-specific guidance：embedded variant 升 confidence
-  if (rule.ruleId === CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE.ruleId) {
-    return { category, mechanism, confidence: "exact", attributedSource, lifecycle, ruleId: rule.ruleId, flags, notes, evidence };
-  }
+  // P2-2：confidenceOverride 覆盖 confidence（替代 ruleId 特殊 case）
+  const finalConfidence = rule.attribution?.confidenceOverride ?? confidence;
 
-  return { category, mechanism, confidence, attributedSource, lifecycle, ruleId: rule.ruleId, flags, notes, evidence };
+  return { category, mechanism, confidence: finalConfidence, attributedSource, lifecycle, ruleId: rule.ruleId, flags, notes, evidence };
 }
 
-// ── text 検出工具（wire schema 感知、不依赖文本 pattern rule）────────────────────
-
-function isBillingNoise(text: string): boolean {
-  return text.trimStart().toLowerCase().startsWith(BILLING_HEADER_PREFIX);
-}
-
-function isSystemReminder(text: string): boolean {
-  return text.trimStart().startsWith(SYSTEM_REMINDER_TAG);
-}
-
-function isLocalCommand(text: string): boolean {
-  const t = text.trimStart();
-  return LOCAL_COMMAND_TAGS.some((tag) => t.startsWith(tag));
-}
+// ── text 検出工具（wire schema 感知）─────────────────────────────────────────
 
 // ── jsonPath 解析 ─────────────────────────────────────────────────────────────
 
@@ -376,31 +335,20 @@ export function inferClaudeProxyAttributions(
 
     // ── 兜底路径：wire schema 感知（无文本 pattern rule 可覆盖）─────────────
     } else if (seg.section === "system") {
-      // billing fallback：regex rule 未命中但前缀存在，说明 billing header 格式异常
-      if (isBillingNoise(rawText)) {
-        category = "billing_noise";
-        mechanism = "billing_noise_pattern";
-        confidence = "inferred";
-        attributedSource = "harness_rule";
-        lifecycle = "noise";
-        ruleId = CLAUDE_CODE_BILLING_NOISE_RULE.ruleId;
-        flags.push("known_noise");
-        notes = ["billing header detected by prefix fallback; regex did not match — format may differ from expected"];
+      // P2-1：billing prefix fallback 已删除。billing noise 只走 rule match。
+      // regex rule 未命中直接落 unknown + rule_gap（让 audit 显式暴露格式异常）。
+      category = "unknown";
+      mechanism = "unknown";
+      confidence = "unknown";
+      attributedSource = "unknown";
+      lifecycle = "unknown";
+      flags.push("unexplained");
+      if (!rawText.trim()) {
+        notes = ["rule_gap: empty system block"];
+      } else if (sectionHeader) {
+        notes = [`rule_gap: section header "${sectionHeader}" has no matching rule — needs rule coverage`];
       } else {
-        // rule_gap：system segment 未命中任何 rule
-        category = "unknown";
-        mechanism = "unknown";
-        confidence = "unknown";
-        attributedSource = "unknown";
-        lifecycle = "unknown";
-        flags.push("unexplained");
-        if (!rawText.trim()) {
-          notes = ["rule_gap: empty system block"];
-        } else if (sectionHeader) {
-          notes = [`rule_gap: section header "${sectionHeader}" has no matching rule — needs rule coverage`];
-        } else {
-          notes = ["rule_gap: system block matched no rule — needs rule coverage"];
-        }
+        notes = ["rule_gap: system block matched no rule — needs rule coverage"];
       }
 
     } else if (seg.section === "tools") {
@@ -446,24 +394,9 @@ export function inferClaudeProxyAttributions(
           flags.push("smooshed_reminder");
           ruleId = CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE.ruleId;
         }
-      } else if (isSystemReminder(rawText)) {
-        // <system-reminder>：harness 注入，无独立文本 pattern rule（内容每次不同）
-        category = "harness_injection";
-        mechanism = "system_reminder_pattern";
-        confidence = "exact";
-        attributedSource = "harness_rule";
-        lifecycle = "one_shot";
-        flags.push("injected");
-      } else if (isLocalCommand(rawText)) {
-        // <bash-stdout> 等 local command 标签
-        category = "local_command_history";
-        mechanism = "local_command_pattern";
-        confidence = "exact";
-        attributedSource = "harness_rule";
-        lifecycle = "one_shot";
-        flags.push("injected");
       } else if (seg.category === "user_message" && msgIndex === 0 && totalMessages > 1) {
         // prior_session_guess：messages[0] 结构性推断，无文本 pattern
+        // P2-1：system-reminder / local-command 由 rule match 命中，已不会落到此分支
         category = "prior_session_history";
         mechanism = "unknown";
         confidence = "inferred";

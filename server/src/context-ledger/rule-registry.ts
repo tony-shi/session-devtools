@@ -117,6 +117,14 @@ export interface ContextLedgerRule {
     // matchMode=regex 时，列出 pattern 中命名捕获组的语义说明。
     // 纯文档性字段，attribution 代码通过 exec() 提取对应字段后存入 metadata。
     captureGroups?: Record<string, string>;
+    // P2-2：notes 模板，attribution 主流程根据此字段渲染 notes，不再用 ruleId 硬编码。
+    // format 中 {groupName} 会被捕获组值替换；requireGroup 指定必须命中的组才生成此 note。
+    notesTemplate?: Array<{
+      format: string;
+      requireGroup?: string;
+    }>;
+    // P2-2：覆盖 confidence 计算（用于 SESSION_GUIDANCE_EMBEDDED 等特殊 rule）。
+    confidenceOverride?: Confidence;
   };
 
   // reconstruction：mutation/harness → 构建 expected 视角
@@ -316,6 +324,8 @@ export const CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE: ContextLedgerRule = {
       section: "system",
       segmentPosition: "segment_start",
     },
+    // P2-2：exact 匹配时升 confidence 为 "exact"（替代 proxy-attribution.ts 里 EMBEDDED ruleId 特殊 case）
+    confidenceOverride: "exact",
   },
 
   reconstruction: {
@@ -467,6 +477,15 @@ export const CLAUDE_CODE_ENVIRONMENT_SECTION_RULE: ContextLedgerRule = {
       modelFamily:  "최신 모델 패밀리 라인（CLAUDE_4_5_OR_4_6_MODEL_IDS — @[MODEL LAUNCH] 업데이트）",
       fastModeModel:"Fast mode 모델명（FRONTIER_MODEL_NAME — @[MODEL LAUNCH] 업데이트）",
     },
+    // P2-2：notes 模板（替代 proxy-attribution.ts 里 CLAUDE_CODE_ENVIRONMENT_SECTION_RULE ruleId 分支）
+    notesTemplate: [
+      { format: "cwd={cwd}", requireGroup: "cwd" },
+      { format: "platform={platform}", requireGroup: "platform" },
+      { format: "shell={shell}", requireGroup: "shell" },
+      { format: "osVersion={osVersion}", requireGroup: "osVersion" },
+      { format: "model={modelDesc}", requireGroup: "modelDesc" },
+      { format: "cutoff={cutoff}", requireGroup: "cutoff" },
+    ],
   },
 
   reconstruction: {
@@ -555,6 +574,10 @@ export const CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE: ContextLedgerRule = {
     captureGroups: {
       memoryDir: "用户的 auto memory 本地路径（getAutoMemPath() 返回值），格式：~/.claude/projects/{sanitized-cwd}/memory/",
     },
+    // P2-2：notes 模板（替代 proxy-attribution.ts 里 CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE ruleId 分支）
+    notesTemplate: [
+      { format: "memoryDir={memoryDir}", requireGroup: "memoryDir" },
+    ],
   },
 
   reconstruction: {
@@ -664,6 +687,13 @@ export const CLAUDE_CODE_BILLING_NOISE_RULE: ContextLedgerRule = {
       cch:        "attestation token（hex），NATIVE_CLIENT_ATTESTATION 开启时才出现",
       workload:   "cc_workload tag，cron 等特殊场景才出现",
     },
+    // P2-2：notes 模板（替代 proxy-attribution.ts 里的硬编码 category === "billing_noise" 分支）
+    notesTemplate: [
+      { format: "cc_version={version}", requireGroup: "version" },
+      { format: "cc_entrypoint={entrypoint}", requireGroup: "entrypoint" },
+      { format: "cch={cch}", requireGroup: "cch" },
+      { format: "cc_workload={workload}", requireGroup: "workload" },
+    ],
   },
 
   reconstruction: {
@@ -1352,6 +1382,13 @@ export const CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE: ContextLedgerRule = {
       segmentPosition: "segment_start",
       jsonPathHint: "reqBody.system[3]（动态 block，index 可变）",
     },
+    // P2-2：notes 模板（替代 proxy-attribution.ts 里 CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE ruleId 分支）
+    // currentBranch 存在 → git repo；不存在 → 写 no_git_repo note
+    notesTemplate: [
+      { format: "currentBranch={currentBranch}", requireGroup: "currentBranch" },
+      { format: "mainBranch={mainBranch}", requireGroup: "mainBranch" },
+      { format: "gitUser={gitUser}", requireGroup: "gitUser" },
+    ],
   },
 
   reconstruction: {
@@ -2424,6 +2461,91 @@ export const CLAUDE_CODE_TASK_REMINDER_RULE: ContextLedgerRule = {
   },
 };
 
+// ── P2-1：messages 层 harness injection rules ─────────────────────────────────
+//
+// 这两条 rule 把 proxy-attribution.ts 里的硬编码 isSystemReminder / isLocalCommand
+// 常量检测迁入 rule registry，让 attribution 主流程通过 findMatchingRule 命中。
+
+export const CLAUDE_CODE_SYSTEM_REMINDER_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.system-reminder.v1",
+  verifiedFor: null,
+  description:
+    "Claude Code 在每个 user turn 头部注入的 <system-reminder> block。" +
+    "内容每次不同（包含 hook 输出、memory、file history 等动态数据），不可复现。",
+  stability: "dynamic",
+  sourcemapRef: "restored-src/src/utils/messages.ts (wrapMessagesInSystemReminder)",
+
+  attribution: {
+    pattern: "<system-reminder>",
+    matchMode: "prefix",
+    mechanism: "system_reminder_pattern",
+    category: "harness_injection",
+    location: {
+      section: "messages",
+      segmentPosition: "segment_start",
+    },
+  },
+
+  reconstruction: {
+    trigger: "always_per_query",
+    materialization: "shape",
+    emits: {
+      section: "messages",
+      category: "harness_injection",
+      lifecycle: "one_shot",
+      flags: ["injected"],
+      contentPattern: null,
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "presence_only",
+    confidence: "inferred",
+    exactTextExpected: false,
+  },
+};
+
+export const CLAUDE_CODE_LOCAL_COMMAND_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.local-command.v1",
+  verifiedFor: null,
+  description:
+    "Claude Code 在 user turn 里注入的本地命令历史块（bash/local-command 标签）。" +
+    "包含 <local-command-caveat>, <bash-input>, <bash-stdout>, <bash-stderr>, " +
+    "<command-name>, <local-command-stdout> 等标签。",
+  stability: "dynamic",
+  sourcemapRef: "restored-src/src/utils/messages.ts (createUserMessage local command)",
+
+  attribution: {
+    // 任意一个本地命令标签作为前缀即可命中（prefix + anywhere 语义）
+    pattern: "<local-command-caveat>|<bash-input>|<bash-stdout>|<bash-stderr>|<command-name>|<local-command-stdout>",
+    matchMode: "regex",
+    mechanism: "local_command_pattern",
+    category: "local_command_history",
+    location: {
+      section: "messages",
+      segmentPosition: "segment_start",
+    },
+  },
+
+  reconstruction: {
+    trigger: "from_jsonl",
+    materialization: "exact_text",
+    emits: {
+      section: "messages",
+      category: "local_command_history",
+      lifecycle: "one_shot",
+      flags: ["injected"],
+      contentPattern: null,
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "raw_hash",
+    confidence: "exact",
+    exactTextExpected: true,
+  },
+};
+
 // tool_result 基础 rule：通过 tailInjection 声明可能携带 task_reminder smoosh。
 // attribution 层：tool_result 分支已由 wire schema 直接确定 category，
 // 本 rule 主要作为 tailInjection 的载体（attribution 代码在 tool_result 分支
@@ -2527,6 +2649,8 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_TOOL_MCP_TAVILY_RESEARCH_RULE,
   CLAUDE_CODE_TOOL_MCP_TAVILY_SEARCH_RULE,
   // ── messages 层注入 rules ─────────────────────────────────────────────────
+  CLAUDE_CODE_SYSTEM_REMINDER_RULE,
+  CLAUDE_CODE_LOCAL_COMMAND_RULE,
   CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,
   // ── side query rules ──────────────────────────────────────────────────────
   CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE,
