@@ -45,14 +45,7 @@
 //         折叠"，segment 在 U3 system_reminder_per_turn 实现后再产出。
 //   目前先按 (a) 的反向（保留）实现，等 reconciliation engine 量化假阳性后再决定。
 //
-// TODO(rule-toggle-not-effective): HarnessRuleConfig 的
-//   appendBaseMessages / injectSkillListing / injectLocalCommand 三个开关目前只
-//   影响 sourceRefs / rulesApplied 的 ruleId 标签，没有真正 gate segment 生成。
-//   修复方向：在 mapMutationsToSegments 入口按 category 加 gate（例如
-//     if (m.category === "skill_listing" && !rules.injectSkillListing) continue;
-//   ），并补 toggle-off 的零 segment 单测。当前因为 "首批 4 个 fixture 不依赖此
-//   能力做回归调试"暂未实现；reconciliation engine 上线后会需要这个 gate 来做
-//   "关掉 R4 看 coverage 变化" 的对比实验。
+// P1-5 已实现：HarnessRuleConfig 开关在 mapMutationsToSegments 入口按 category gate。
 
 import { createHash } from "crypto";
 
@@ -435,6 +428,16 @@ function mapMutationsToSegments(
 
     const map = roleAndSectionFor(m.category);
     if (!map) continue;
+
+    // P1-5：按 HarnessRuleConfig 开关 gate segment 生成
+    // R4/R5 关闭时，对应 category 的 mutation 直接跳过，不产生 expected segment。
+    // R1 关闭时，基础 messages（user_message / assistant_text）也不产生 segment。
+    if (m.category === "skill_listing" && !rules.injectSkillListing) continue;
+    if (m.category === "local_command_history" && !rules.injectLocalCommand) continue;
+    if (
+      (m.category === "user_message" || m.category === "assistant_text") &&
+      !rules.appendBaseMessages
+    ) continue;
 
     const role = map.role;
     const messageId =

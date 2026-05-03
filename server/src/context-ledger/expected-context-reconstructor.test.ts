@@ -276,6 +276,101 @@ describe("rule toggles", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// P1-5：HarnessRuleConfig 开关真正 gate segment 生成
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("P1-5 HarnessRuleConfig gate（single-tool-call fixture）", () => {
+  const parsed = parseClaudeJsonlMutations(loadJsonl("single-tool-call"), {
+    jsonlFile: "server/test/fixtures/context-reconstruction/single-tool-call/session.jsonl",
+  });
+  const proxyTs = loadProxyTs("single-tool-call");
+  const boundary = {
+    queryId: "q-p15",
+    proxyTimestamp: proxyTs,
+    sessionId: parsed.sessionId,
+  };
+
+  // 基准：所有开关默认 ON
+  const base = reconstructExpectedClaudeContext({
+    mutations: parsed.mutations,
+    boundary,
+    hasPreSessionActivity: parsed.hasPreSessionActivity,
+  });
+  const baseTotal = base.segments.length;
+  const baseSkillCount = base.segments.filter((s) => s.category === "skill_listing").length;
+  const baseUserCount = base.segments.filter((s) => s.category === "user_message").length;
+  const baseAsstCount = base.segments.filter((s) => s.category === "assistant_text").length;
+
+  test("默认开启：skill_listing segment 存在", () => {
+    expect(baseSkillCount).toBeGreaterThan(0);
+  });
+
+  test("injectSkillListing=false → skill_listing segment 消失", () => {
+    const r = reconstructExpectedClaudeContext({
+      mutations: parsed.mutations,
+      boundary,
+      rules: { injectSkillListing: false },
+      hasPreSessionActivity: parsed.hasPreSessionActivity,
+    });
+    const skillSegs = r.segments.filter((s) => s.category === "skill_listing");
+    expect(skillSegs).toHaveLength(0);
+    expect(r.segments.length).toBe(baseTotal - baseSkillCount);
+  });
+
+  test("injectLocalCommand=false → local_command_history segment 消失", () => {
+    // single-tool-call fixture 本身无 local_command，用 multi-turn-human
+    const parsed2 = parseClaudeJsonlMutations(loadJsonl("multi-turn-human"), {
+      jsonlFile: "server/test/fixtures/context-reconstruction/multi-turn-human/session.jsonl",
+    });
+    const ts2 = loadProxyTs("multi-turn-human");
+    const base2 = reconstructExpectedClaudeContext({
+      mutations: parsed2.mutations,
+      boundary: { queryId: "q", proxyTimestamp: ts2, sessionId: parsed2.sessionId },
+      hasPreSessionActivity: parsed2.hasPreSessionActivity,
+    });
+    const baseLocalCount = base2.segments.filter((s) => s.category === "local_command_history").length;
+    expect(baseLocalCount).toBeGreaterThan(0);
+
+    const r = reconstructExpectedClaudeContext({
+      mutations: parsed2.mutations,
+      boundary: { queryId: "q", proxyTimestamp: ts2, sessionId: parsed2.sessionId },
+      rules: { injectLocalCommand: false },
+      hasPreSessionActivity: parsed2.hasPreSessionActivity,
+    });
+    const localSegs = r.segments.filter((s) => s.category === "local_command_history");
+    expect(localSegs).toHaveLength(0);
+    expect(r.segments.length).toBe(base2.segments.length - baseLocalCount);
+  });
+
+  test("appendBaseMessages=false → user_message と assistant_text segment 消失", () => {
+    const r = reconstructExpectedClaudeContext({
+      mutations: parsed.mutations,
+      boundary,
+      rules: { appendBaseMessages: false },
+      hasPreSessionActivity: parsed.hasPreSessionActivity,
+    });
+    const userSegs = r.segments.filter((s) => s.category === "user_message");
+    const asstSegs = r.segments.filter((s) => s.category === "assistant_text");
+    expect(userSegs).toHaveLength(0);
+    expect(asstSegs).toHaveLength(0);
+    expect(r.segments.length).toBe(baseTotal - baseUserCount - baseAsstCount);
+  });
+
+  test("开关关闭时 charCount 之和相应减少", () => {
+    const r = reconstructExpectedClaudeContext({
+      mutations: parsed.mutations,
+      boundary,
+      rules: { injectSkillListing: false },
+      hasPreSessionActivity: parsed.hasPreSessionActivity,
+    });
+    const baseChars = base.segments.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
+    const noSkillChars = r.segments.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
+    // 关闭 skill_listing 后 charCount 更小
+    expect(noSkillChars).toBeLessThan(baseChars);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // P1-2：task_reminder smoosh 加法重建
 // ─────────────────────────────────────────────────────────────────────────────
 
