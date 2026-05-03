@@ -34,7 +34,6 @@
 // attribution 层已识别类别）。真正 unknown（attribution.category === "unknown"）才计
 // 入 unexplained，severity=critical。
 
-import { createHash } from "crypto";
 import type {
   AgentKind,
   AlignmentBasis,
@@ -53,10 +52,6 @@ import type {
   SourceRef,
 } from "./types";
 import { getContextLedgerRule as getContextLedgerRuleById } from "./rule-registry";
-
-function sha256Short(text: string): string {
-  return "sha256:" + createHash("sha256").update(text).digest("hex").slice(0, 16);
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 输入 / 输出
@@ -593,24 +588,22 @@ interface MergeResult {
   matchedExpectedIds: string[];
 }
 
-// N:1 对齐规则说明：
+// N:1 / 1:N merge 对齐说明：
 //
-//   R-MERGE-N1  多个 expected segment → 单一 proxy segment
-//   ─────────────────────────────────────────────────────────────────────────
-//   场景：JSONL 把一条 user message 拆成多个 mutation（如先写 user_message，
-//         再追加 local_command_history），但 harness 在发送 API 请求时把它们
-//         合并成一条 string content 的 user message（而非 array of blocks）。
-//         proxy snapshot parser 只能把这条 string 拆成一个 local_command_history
-//         segment（因为整体 rawHash 与拆开的任意一条都不同）。
+//   R-MERGE-N1（多 expected → 单 proxy）：
+//     场景：harness 把多条 mutations（user_message + local_command_history）合并成
+//     一条 string content 的 user message。经全量扫描（Claude Code 2.1.x 全部历史记录），
+//     当前 harness 始终使用 array content 格式，此路径从未触发。
+//     前提条件在逻辑上也自相矛盾：若每个 expected 能在 proxy 单独 rawHash 命中，
+//     M1 就已经直接匹配，不会走到 merge 路径。
 //
-//   检测方法：同一 logicalMessage group 内的 expected segments 的内容拼接起来
-//         的 rawHash，与某个 proxy segment 的 rawHash 匹配。
+//   R-MERGE-1N（单 expected → 多 proxy，同 toolUseId）：
+//     场景：一个 tool_result expected 对应多个 proxy segments 相同 toolUseId。
+//     toolUseId 在 Messages API 里是唯一的，同一 user message 不可能有两个
+//     相同 toolUseId 的 tool_result block，此路径同样从未触发。
 //
-//   当前状态：4 个 fixture 均无此场景（proxy 使用 array content 而非 string content，
-//         parser 逐 block 切分）。保留此注释为未来 fixture 覆盖时的实现指南。
-//
-//   1:N 对齐（同一 proxy message 含多个 expected block）：tool_use / tool_result
-//         已由 logicalMessage grouping + 逐个 matchOneExpected 处理，不需要 merge。
+//   决策：两路均不实现，直接 return null，保留函数签名和调用处作为未来扩展点。
+//   若未来 harness 版本改变 content format，在此处添加实现并补充 fixture。
 
 function tryMergeAlignment(
   group: ContextSegment[],
@@ -622,126 +615,6 @@ function tryMergeAlignment(
   proxyByToolUseId: Map<string, ContextSegment[]>,
   attrBySegId: Map<string, ProxySegmentAttribution>,
 ): MergeResult | null {
-  if (group.length === 0) return null;
-
-  // ── R-MERGE-N1：多个 expected segments → 单一 proxy segment ────────────────
-  //
-  // 场景：JSONL 把一条 user message 拆成多个 mutation（如 user_message + skill_listing），
-  // 但 harness 在发 API 时把它们合并成一条 string content 的 user message。
-  // proxy parser 只能把这条 string 切成一个 segment，rawText = 多段拼接。
-  //
-  // 检测策略：把 group 内每个 expected segment 对应的 proxy rawText（通过 rawHash 反查）
-  // 依次拼接，计算拼接后的 sha256 短截，与 proxyByRawHash 比对。
-  // 若命中，产出 merge_alignment finding（N:1）。
-  //
-  // 前提：每个 expected segment 必须有 rawHash 且该 rawHash 能在 proxyByRawHash 里找到
-  // 对应的 proxy rawText（即每个独立 expected 都能反查到 proxy 文本）。
-
-  // 步骤1：收集 group 内所有 expected segment 对应的 proxy rawText
-  const proxyRawTexts: string[] = [];
-  const individualProxyIds: string[] = [];
-  let canAttemptMerge = true;
-
-  for (const eseg of group) {
-    if (matchedExpectedIds.has(eseg.id)) {
-      // 已被其他路径匹配，跳过 merge 尝试
-      canAttemptMerge = false;
-      break;
-    }
-    if (!eseg.rawHash) {
-      canAttemptMerge = false;
-      break;
-    }
-    // 通过 expected rawHash 反查 proxy segments（rawHash 相同 → 内容相同）
-    const proxyCandidates = (proxyByRawHash.get(eseg.rawHash) ?? []).filter(
-      (s) => !matchedProxyIds.has(s.id),
-    );
-    if (proxyCandidates.length === 0 || !proxyCandidates[0].rawText) {
-      canAttemptMerge = false;
-      break;
-    }
-    proxyRawTexts.push(proxyCandidates[0].rawText);
-    individualProxyIds.push(proxyCandidates[0].id);
-  }
-
-  if (group.length >= 2 && canAttemptMerge && proxyRawTexts.length === group.length) {
-    // 步骤2：拼接 proxy rawTexts（与 proxy-snapshot-parser 的 string content 构造方式一致）
-    const mergedText = proxyRawTexts.join("");
-    const mergedHash = sha256Short(mergedText);
-
-    const mergeCandidates = (proxyByRawHash.get(mergedHash) ?? []).filter(
-      (s) => !matchedProxyIds.has(s.id),
-    );
-
-    if (mergeCandidates.length > 0) {
-      const mergedProxySeg = mergeCandidates[0];
-      return {
-        alignments: [{
-          matchKind: "heuristic",
-          confidence: "inferred",
-          expectedSegmentIds: group.map((s) => s.id),
-          proxySegmentIds: [mergedProxySeg.id],
-          basis: "raw_hash" as AlignmentBasis,
-          attributionIds: attrBySegId.has(mergedProxySeg.id)
-            ? [attrBySegId.get(mergedProxySeg.id)!.id]
-            : undefined,
-          note: `R-MERGE-N1: ${group.length} expected segments merged → single proxy segment (${mergedText.length} chars)`,
-        }],
-        findings: [{
-          type: "merge_alignment",
-          severity: "info",
-          category: group[0].category,
-          expectedSegmentIds: group.map((s) => s.id),
-          proxySegmentIds: [mergedProxySeg.id],
-          message: `merge_alignment (N:1): ${group.length} expected segments (${group.map((s) => s.category).join("+")}) → proxy ${mergedProxySeg.id} (${mergedProxySeg.charCount ?? 0} chars)`,
-        }],
-        matchedProxyIds: [mergedProxySeg.id],
-        matchedExpectedIds: group.map((s) => s.id),
-      };
-    }
-  }
-
-  // ── R-MERGE-1N：单一 expected segment → 多个 proxy segments（同 toolUseId）──
-  //
-  // 场景：一个 expected tool_result segment 对应多个 proxy segments（某些实现里
-  // tool_result content 被拆成多个 text block）。通过共同的 toolUseId 识别。
-
-  if (group.length === 1) {
-    const eseg = group[0];
-    if (matchedExpectedIds.has(eseg.id)) return null;
-    if (!eseg.toolUseId) return null;
-
-    const allCandidates = (proxyByToolUseId.get(eseg.toolUseId) ?? []).filter(
-      (s) => !matchedProxyIds.has(s.id),
-    );
-    if (allCandidates.length < 2) return null;
-
-    // 1:N：expected 1 个 → proxy N 个（同 toolUseId）
-    return {
-      alignments: [{
-        matchKind: "exact",
-        confidence: "exact",
-        expectedSegmentIds: [eseg.id],
-        proxySegmentIds: allCandidates.map((s) => s.id),
-        basis: "tool_use_id" as AlignmentBasis,
-        attributionIds: allCandidates.flatMap((s) =>
-          attrBySegId.has(s.id) ? [attrBySegId.get(s.id)!.id] : []
-        ),
-        note: `R-MERGE-1N: 1 expected → ${allCandidates.length} proxy segments via toolUseId ${eseg.toolUseId}`,
-      }],
-      findings: [{
-        type: "one_to_many_alignment",
-        severity: "info",
-        category: eseg.category,
-        expectedSegmentIds: [eseg.id],
-        proxySegmentIds: allCandidates.map((s) => s.id),
-        message: `one_to_many_alignment (1:N): expected ${eseg.category} → ${allCandidates.length} proxy segments via toolUseId`,
-      }],
-      matchedProxyIds: allCandidates.map((s) => s.id),
-      matchedExpectedIds: [eseg.id],
-    };
-  }
-
   return null;
 }
 
