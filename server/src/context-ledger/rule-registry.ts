@@ -1105,18 +1105,29 @@ export const CLAUDE_CODE_ACTIONS_SECTION_RULE: ContextLedgerRule = {
 
 // ── # Output efficiency section ───────────────────────────────────────────────
 //
-// getOutputEfficiencySection() — prompts.ts:403-428
-// USER_TYPE !== 'ant' 分支，header 为 "# Output efficiency"（当前 sourcemap 2.1.123）。
-// USER_TYPE === 'ant' 分支暂不落地（仅内部用户可见，外部 proxy 不会出现）。
+// ⚠️  STALE RULE — 2.1.126 binary 及真实 proxy dump 确认此 section 从未出现。
+//
+// 旧 sourcemap（2.1.123）推测 external 分支 header 为 "# Output efficiency"，
+// 但 2.1.126 binary grep 结果：`Output efficiency` 出现次数 = 0。
+// 2.1.126 真实 dump 的 system section headers：
+//   # System / # Doing tasks / # Executing actions with care /
+//   # Using your tools / # Tone and style /
+//   # Text output (does not apply to tool calls) ← 当前实际 header
+//   # Session-specific guidance / # auto memory / # Environment / # Context management
+//
+// 结论：`# Output efficiency` 这个 header 可能仅存在于某个中间版本，
+// 或者 sourcemap 推断有误。保留 rule 仅作历史记录，P2-8 anchor 测试已从
+// fixtureHitRules 中排除（从未在真实 dump 命中）。
 
 export const CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-output-efficiency.external.v1",
-  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
+  verifiedFor: null, // ⚠️ STALE：2.1.126 binary + dump 均无此 section，规则事实上永远不命中
   description:
-    "Claude Code system prompt 的 # Output efficiency section（external / 3P 用户）。" +
-    "USER_TYPE !== 'ant' 时注入。",
+    "【STALE】旧 sourcemap 推测的 # Output efficiency section。" +
+    "2.1.126 binary 确认不存在此 header；当前实际使用 # Text output (does not apply to tool calls)。" +
+    "保留仅作历史记录，实际不参与 attribution 命中。",
   stability: "static",
-  sourcemapRef: "restored-src/src/constants/prompts.ts:403",
+  sourcemapRef: "restored-src/src/constants/prompts.ts:403 (stale, 2.1.123 era guess)",
 
   attribution: {
     pattern: "^# Output efficiency\\n",
@@ -1229,14 +1240,13 @@ export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-text-output-section.v1",
-  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="<2.1.123"，更可疑）
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION, // 已对照 2.1.126 binary + 真实 dump 校对
   description:
-    "Claude Code system prompt 的旧版 output efficiency section。" +
-    "header 为 '# Text output (does not apply to tool calls)'，" +
-    "当前版本（2.1.123）已更名为 '# Output efficiency'。" +
-    "保留用于兼容旧版本 proxy 请求。",
+    "Claude Code system prompt 的 # Text output (does not apply to tool calls) section。" +
+    "2.1.126 binary 及真实 dump 确认：此 header 是当前版本实际使用的名称；" +
+    "旧 sourcemap 所谓的 '# Output efficiency' 变体在真实 dump 中从未出现。",
   stability: "static",
-  sourcemapRef: "restored-src/src/constants/prompts.ts:403（旧版 header，当前版本已变更）",
+  sourcemapRef: "binary:2.1.126 实测（section headers 枚举确认）",
 
   attribution: {
     // 完整文本精确匹配（含尾部 \n\n）。
@@ -1259,7 +1269,7 @@ export const CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition: "USER_TYPE !== 'ant'（外部用户）— 旧版 header，对应 getOutputEfficiencySection() external 分支",
+    preCondition: "无（所有用户）— 2.1.126 binary 确认 Text output section 无条件注入",
     trigger: "always_per_query",
     materialization: "exact_text",
     emits: {
@@ -2114,6 +2124,13 @@ export const CLAUDE_CODE_TOOL_WEBFETCH_RULE: ContextLedgerRule = {
 //
 // queryScope: "side_query"——parser 推断的 queryKind === "side_query" 时才命中。
 // 主请求（tools>0）永远不会命中 side_query rule，强约束防止误匹配。
+//
+// ⚠️  FIXTURE STATUS（2026-05-03 扫描结论）：
+//   扫描本地 2.1.126 所有 traffic.jsonl（15 个文件，覆盖 2026-05-01 至 2026-05-03），
+//   未发现任何 tools=0 + messages=1 + cc_version=2.1.126 + session-title prompt 的请求。
+//   旧版（2.1.122.d93）中存在此类请求（traffic.jsonl.2026-05-01T05-59-26-948Z:1995）。
+//   推断：2.1.126 可能暂时关闭了 generateSessionTitle，或触发条件变更，或尚未在本次采样窗口触发。
+//   fixture 待未来有真实 2.1.126 side query 时录制；当前无 fixture 覆盖，不做 unit test 补偿。
 
 // ── session title generation ───────────────────────────────────────────────────
 // generateSessionTitle() — sessionTitle.ts:79

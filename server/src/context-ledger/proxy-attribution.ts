@@ -214,14 +214,14 @@ function applyRuleMatch(
   //   exact matchMode → exact（字面精确匹配，识别与复现都确信）
   //   regex + allGroupsFilled → estimated（识别确信，但 regex 本质上不能精确复现内容）
   //   regex + partial groups  → inferred
+  //   regex + no groups       → inferred（无捕获组的 regex 也是模式匹配，不能精确复现）
   //   其他（prefix/structural）→ rule.reconciliation.confidence
   const hasGroups = groups && Object.keys(groups).length > 0;
   const allGroupsFilled = hasGroups && Object.values(groups!).every((v) => v !== undefined && v !== "");
   const baseConfidence = rule.reconciliation?.confidence ?? "inferred";
   const confidence: ProxySegmentAttribution["confidence"] =
     attr.matchMode === "exact" ? "exact"
-    : allGroupsFilled ? "estimated"    // regex 全填：识别确信，复现仍 estimated
-    : hasGroups ? "inferred"
+    : attr.matchMode === "regex" ? (allGroupsFilled ? "estimated" : "inferred")  // regex 无论有无 groups 都不能精确复现
     : baseConfidence;
 
   // attributedSource：tool_use/tool_result 由 wire schema 决定，其余由 rule 决定
