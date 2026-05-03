@@ -439,18 +439,12 @@ export function inferClaudeProxyAttributions(
           flags.push("large_segment");
           notes = [...(notes ?? []), `large_segment_detector: tool_result ${chars} chars > ${LARGE_SEGMENT_THRESHOLD} threshold`];
         }
-        // tailInjection 检测：rawText 尾部是否含 harness smoosh 注入（如 task_reminder）
+        // P1-2：tail_injection_chars 协议已由加法重建替代，不再写入 notes。
+        // 检测 smooshed_reminder flag 供 report 参考，但不写 tail_injection_chars 计数。
         const tailRule = CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE.tailInjection;
         if (tailRule && rawText.includes(tailRule.pattern)) {
-          const tailStart = rawText.lastIndexOf(tailRule.pattern);
-          const tailChars = rawText.length - tailStart;
           flags.push("smooshed_reminder");
           ruleId = CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE.ruleId;
-          notes = [
-            ...(notes ?? []),
-            `tail_injection_chars:${tailChars}`,
-            `tail_injection_rule:${tailRule.reconstructionRuleId}`,
-          ];
         }
       } else if (isSystemReminder(rawText)) {
         // <system-reminder>：harness 注入，无独立文本 pattern rule（内容每次不同）

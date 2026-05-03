@@ -274,3 +274,183 @@ describe("rule toggles", () => {
     expect(r.metadata?.droppedMutationCount as number).toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P1-2：task_reminder smoosh 加法重建
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { reconstructExpectedClaudeContext as reconFn } from "./expected-context-reconstructor";
+import type { ContextMutation } from "./types";
+
+function makeMutation(overrides: Partial<ContextMutation>): ContextMutation {
+  return {
+    id: `mut-${Math.random().toString(36).slice(2)}`,
+    agentKind: "claude-code",
+    sessionId: "sess-test",
+    type: "append",
+    category: "tool_result",
+    source: "jsonl",
+    sourceRef: { kind: "jsonl", jsonl: { file: "test.jsonl" } },
+    charDeltaEstimate: 0,
+    confidence: "exact",
+    ...overrides,
+  };
+}
+
+describe("P1-2 task_reminder 加法重建", () => {
+  test("task_reminder 文本追加到对应 tool_result 尾部（空 task list）", () => {
+    const RECORD_UUID = "user-msg-uuid-001";
+    const toolResultMut = makeMutation({
+      id: "mut-tool-result-1",
+      category: "tool_result",
+      toolUseId: "tu-001",
+      contentRef: { kind: "inline", text: "tool output text", charCount: 16 },
+      charDeltaEstimate: 16,
+      metadata: { recordUuid: RECORD_UUID, messageId: "msg-001" },
+    });
+    const taskReminderMut = makeMutation({
+      id: "mut-task-reminder-1",
+      category: "attachment",
+      type: "inject",
+      contentRef: { kind: "inline", text: "[]", charCount: 2 },
+      charDeltaEstimate: 2,
+      metadata: {
+        attachmentType: "task_reminder",
+        parentUuid: RECORD_UUID,
+        itemCount: 0,
+      },
+    });
+
+    const r = reconFn({
+      mutations: [toolResultMut, taskReminderMut],
+      boundary: { queryId: "q" },
+    });
+
+    // task_reminder 不产出独立 segment
+    const taskReminderSegs = r.segments.filter(
+      (s) => s.category === "attachment" && s.metadata?.sourceMutationId === "mut-task-reminder-1",
+    );
+    expect(taskReminderSegs).toHaveLength(0);
+
+    // tool_result segment 应包含 task_reminder 文本
+    const toolResultSeg = r.segments.find((s) => s.category === "tool_result");
+    expect(toolResultSeg).toBeTruthy();
+    const text = toolResultSeg!.contentRef?.text ?? "";
+    expect(text).toContain("tool output text");
+    expect(text).toContain("The task tools haven't been used recently");
+    expect(text).toContain("<system-reminder>");
+    expect(text).toContain("</system-reminder>");
+    // smooshed_reminder flag 已设置
+    expect(toolResultSeg!.flags).toContain("smooshed_reminder");
+    // charCount 包含两部分
+    expect(toolResultSeg!.charCount).toBeGreaterThan(16);
+  });
+
+  test("task_reminder 文本追加到对应 tool_result 尾部（有 tasks）", () => {
+    const RECORD_UUID = "user-msg-uuid-002";
+    const tasks = [
+      { id: "1", subject: "Task One", status: "pending" },
+      { id: "2", subject: "Task Two", status: "in_progress" },
+    ];
+    const toolResultMut = makeMutation({
+      id: "mut-tr-2",
+      category: "tool_result",
+      toolUseId: "tu-002",
+      contentRef: { kind: "inline", text: "result", charCount: 6 },
+      charDeltaEstimate: 6,
+      metadata: { recordUuid: RECORD_UUID, messageId: "msg-002" },
+    });
+    const taskReminderMut = makeMutation({
+      id: "mut-task-2",
+      category: "attachment",
+      type: "inject",
+      contentRef: { kind: "inline", text: JSON.stringify(tasks), charCount: JSON.stringify(tasks).length },
+      charDeltaEstimate: JSON.stringify(tasks).length,
+      metadata: {
+        attachmentType: "task_reminder",
+        parentUuid: RECORD_UUID,
+        itemCount: 2,
+      },
+    });
+
+    const r = reconFn({
+      mutations: [toolResultMut, taskReminderMut],
+      boundary: { queryId: "q" },
+    });
+
+    const toolResultSeg = r.segments.find((s) => s.category === "tool_result");
+    expect(toolResultSeg).toBeTruthy();
+    const text = toolResultSeg!.contentRef?.text ?? "";
+    expect(text).toContain("Here are the existing tasks:");
+    expect(text).toContain("#1. [pending] Task One");
+    expect(text).toContain("#2. [in_progress] Task Two");
+  });
+
+  test("无 parentUuid 匹配时 fallback 到最后一个 tool_result", () => {
+    const taskReminderMut = makeMutation({
+      id: "mut-task-3",
+      category: "attachment",
+      type: "inject",
+      contentRef: { kind: "inline", text: "[]", charCount: 2 },
+      charDeltaEstimate: 2,
+      metadata: {
+        attachmentType: "task_reminder",
+        parentUuid: "nonexistent-uuid",
+        itemCount: 0,
+      },
+    });
+    const toolResultMut = makeMutation({
+      id: "mut-tr-3",
+      category: "tool_result",
+      toolUseId: "tu-003",
+      contentRef: { kind: "inline", text: "fallback target", charCount: 15 },
+      charDeltaEstimate: 15,
+      metadata: { recordUuid: "other-uuid", messageId: "msg-003" },
+    });
+
+    // tool_result 在 task_reminder 之前
+    const r = reconFn({
+      mutations: [toolResultMut, taskReminderMut],
+      boundary: { queryId: "q" },
+    });
+
+    const toolResultSeg = r.segments.find((s) => s.category === "tool_result");
+    expect(toolResultSeg).toBeTruthy();
+    const text = toolResultSeg!.contentRef?.text ?? "";
+    // fallback：task_reminder 追加到最后一个 tool_result
+    expect(text).toContain("fallback target");
+    expect(text).toContain("task tools haven't been used recently");
+  });
+
+  test("无 tool_result 时 task_reminder 被忽略（不产生独立 segment）", () => {
+    const userMsgMut = makeMutation({
+      id: "mut-user-1",
+      category: "user_message",
+      contentRef: { kind: "inline", text: "hello", charCount: 5 },
+      charDeltaEstimate: 5,
+      metadata: { recordUuid: "rec-001" },
+    });
+    const taskReminderMut = makeMutation({
+      id: "mut-task-4",
+      category: "attachment",
+      type: "inject",
+      contentRef: { kind: "inline", text: "[]", charCount: 2 },
+      charDeltaEstimate: 2,
+      metadata: {
+        attachmentType: "task_reminder",
+        parentUuid: "rec-001",
+        itemCount: 0,
+      },
+    });
+
+    const r = reconFn({
+      mutations: [userMsgMut, taskReminderMut],
+      boundary: { queryId: "q" },
+    });
+
+    // task_reminder 没有可附加的 tool_result，应被忽略
+    expect(r.segments.filter((s) => s.category === "attachment")).toHaveLength(0);
+    // user_message 段正常存在
+    expect(r.segments.filter((s) => s.category === "user_message")).toHaveLength(1);
+  });
+});

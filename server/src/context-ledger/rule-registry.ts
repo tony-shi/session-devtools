@@ -2416,10 +2416,11 @@ export const CLAUDE_CODE_TASK_REMINDER_RULE: ContextLedgerRule = {
   },
 
   reconciliation: {
-    // smoosh 消化：通过 tail_injection_chars note 从相邻 tool_result 的 charDiff 里扣除
-    comparePolicy: "known_noise",
+    // P1-2 加法重建后：task_reminder 文本已追加到对应 tool_result expected segment 尾部，
+    // reconcile 直接用 raw_hash/char_diff 比较，无需 known_noise 扣除。
+    comparePolicy: "char_diff",
     confidence: "exact",
-    exactTextExpected: false,
+    exactTextExpected: true,
   },
 };
 
@@ -2433,8 +2434,7 @@ export const CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE: ContextLedgerRule = {
   description:
     "tool_result segment 的 smoosh 注入规则。" +
     "当 tool_result rawText 尾部含有 task_reminder 注入时，" +
-    "attribution 在 notes 里记录 tail_injection_chars，" +
-    "reconciliation 据此消化 token_mismatch。",
+    "attribution 标记 smooshed_reminder flag（P1-2 后不再写 tail_injection_chars）。",
   stability: "semi-static",
   sourcemapRef: "restored-src/src/utils/messages.ts:1835",
 

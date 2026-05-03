@@ -337,16 +337,9 @@ function isExpectedRelevant(m: ContextMutation): boolean {
   if (m.category === "billing_noise") return false;
   if (m.category === "hook_event") return false;
   if (m.category === "permission") return false;
-  // task_reminder：harness 触发后 smoosh 进相邻 tool_result 尾部，proxy 里没有独立 segment。
-  // reconciliation 层通过 attribution 的 tail_injection_chars note 在 tool_result charDiff
-  // 里消化这段文字。expected 侧不应产出独立 segment，否则会产生大量 2-char "[]" expected_only。
-  // TODO(task-reminder-expected): 更精确的做法是在 expected 侧把 task_reminder 文本
-  // 附加到对应 tool_result segment 的 charCount 里（1:1 smoosh 建模），
-  // 而非直接过滤。当前方案能消除 expected_only 误报，但 tool_result 的 charDiff
-  // 仍依赖 attribution tail_injection_chars note 而非 expected 侧建模。
-  if (m.category === "attachment" && m.metadata?.attachmentType === "task_reminder") return false;
-  // compaction：暂未实现 replacement 语义；保留 mutation 但不生成 expected segment
-  // → 标记成 hidden 在下层处理；这里先放行让下层根据 category 决定。
+  // task_reminder：P1-2 加法重建——不在此过滤，在 mapMutationsToSegments 里
+  // 识别并追加到 parentUuid 对应的 tool_result expected segment 尾部，不生成独立 segment。
+  // compaction：暂未实现 replacement 语义，先放行让下层根据 category 决定。
   return true;
 }
 
@@ -410,8 +403,36 @@ function mapMutationsToSegments(
     return `lm-${groupCounter}-${label}`;
   };
 
+  // P1-2：收集 task_reminder mutations（不生成独立 segment，在主循环后追加到对应 tool_result）
+  // key: parentUuid（task_reminder 要 smoosh 进的 tool_result 所在 JSONL 记录的 uuid）
+  interface PendingTaskReminder {
+    mutationId: string;
+    content: unknown;        // Task[]
+    parentUuid: string;
+  }
+  const pendingTaskReminders: PendingTaskReminder[] = [];
+
+  // sourceMutationId → segment 索引（用于找到 tool_result expected segment）
+  const segByMutationId = new Map<string, number>();
+
   for (let i = 0; i < mutations.length; i++) {
     const m = mutations[i];
+
+    // P1-2：task_reminder 不生成独立 segment，收集后 post-process
+    if (m.category === "attachment" && m.metadata?.attachmentType === "task_reminder") {
+      const parentUuid = typeof m.metadata?.parentUuid === "string" ? m.metadata.parentUuid : null;
+      if (parentUuid) {
+        pendingTaskReminders.push({
+          mutationId: m.id,
+          content: m.contentRef?.text !== undefined
+            ? (() => { try { return JSON.parse(m.contentRef!.text!); } catch { return []; } })()
+            : [],
+          parentUuid,
+        });
+      }
+      continue;
+    }
+
     const map = roleAndSectionFor(m.category);
     if (!map) continue;
 
@@ -428,7 +449,6 @@ function mapMutationsToSegments(
         groupId = startNewGroup("assistant");
         if (messageId) assistantGroupByMsgId.set(messageId, groupId);
       }
-      // assistant 出现 → 当前 user 组失效（下一条 user 开新组）
       currentUserGroupId = null;
       currentUserCategory = null;
     } else {
@@ -448,7 +468,61 @@ function mapMutationsToSegments(
 
     lastSegmentRole = role;
     const seg = mutationToSegment(m, role, map.section, order++, groupId, rules);
+    segByMutationId.set(m.id, segments.length);
     segments.push(seg);
+  }
+
+  // P1-2 post-processing：把 task_reminder 渲染文本追加到对应 tool_result segment 尾部
+  if (pendingTaskReminders.length > 0) {
+    // 建立 parentUuid → 最后一个 tool_result segment 的映射
+    // parentUuid 指向 JSONL 里的 user message record，该 record 可能对应多个 tool_result mutation。
+    // sourceMutationId 在 metadata 里，用于定位 expected segment。
+    // 策略：找 metadata.parentUuid 等于 task_reminder.parentUuid 的 tool_result segment，
+    // 取最后一个（与 proxy smoosh 到最后一个 tool_result 的行为一致）。
+    for (const pending of pendingTaskReminders) {
+      // 找对应的 tool_result segment（通过 metadata.recordUuid 匹配）
+      // task_reminder.parentUuid = 那条 user message JSONL record 的 uuid
+      // tool_result mutation.metadata.recordUuid = 同一条 user message JSONL record 的 uuid
+      let targetIdx = -1;
+      for (let si = segments.length - 1; si >= 0; si--) {
+        const seg = segments[si];
+        if (
+          seg.category === "tool_result" &&
+          typeof seg.metadata?.["recordUuid"] === "string" &&
+          seg.metadata["recordUuid"] === pending.parentUuid
+        ) {
+          targetIdx = si;
+          break;
+        }
+      }
+
+      if (targetIdx < 0) {
+        // fallback：取 segments 里最后一个 tool_result（兼容 parentUuid 未传入的情况）
+        for (let si = segments.length - 1; si >= 0; si--) {
+          if (segments[si].category === "tool_result") {
+            targetIdx = si;
+            break;
+          }
+        }
+      }
+
+      if (targetIdx < 0) continue;
+
+      const target = segments[targetIdx];
+      const smooshText = renderTaskReminderSmoosh(pending.content);
+      const originalText = target.contentRef?.text ?? "";
+      const combinedText = originalText + smooshText;
+
+      // 更新 contentRef.text 并重新计算 rawHash
+      segments[targetIdx] = {
+        ...target,
+        contentRef: { kind: "inline", text: combinedText, charCount: combinedText.length },
+        charCount: combinedText.length,
+        tokenEstimate: Math.round(combinedText.length / 4),
+        rawHash: sha256Short(proxyWrapTextForCategory(target.category, combinedText)),
+        flags: [...(target.flags ?? []), "smooshed_reminder"],
+      };
+    }
   }
 
   return segments;
@@ -507,6 +581,8 @@ function mutationToSegment(
       messageId: m.metadata?.messageId,
       toolUseId: m.toolUseId,
       ruleId,
+      // P1-2：保留 parentUuid 供 task_reminder post-processing 查找对应 tool_result
+      parentUuid: m.metadata?.parentUuid,
       preview:
         m.contentRef?.text && m.contentRef.text.length > 80
           ? m.contentRef.text.slice(0, 80)
@@ -739,6 +815,42 @@ function resolvePlaceholders(pattern: string, notes: string[]): string | null {
   // 若仍有未替换的占位符，返回 null
   if (/\{[a-zA-Z_]+\}/.test(result)) return null;
   return result;
+}
+
+// P1-2：把 task_reminder mutation 的内容渲染为 proxy 格式的 smoosh 文本。
+//
+// proxy 实际格式（从 188e479d session 观测）：
+//   空 task list：
+//     <system-reminder>\n{BASE_TEXT}\n\n</system-reminder>
+//   有 tasks：
+//     <system-reminder>\n{BASE_TEXT}\n\n\nHere are the existing tasks:\n\n#N. [{status}] {subject}\n...</system-reminder>
+//
+// BASE_TEXT 来自 rule-registry TASK_REMINDER_PREFIX 去掉 "<system-reminder>\n" 前缀：
+//   "The task tools haven't been used recently. ..."
+//
+// attachment.content 是 Task[] 数组，每项含 { id, subject, status } 字段。
+function renderTaskReminderSmoosh(content: unknown): string {
+  const BASE =
+    "The task tools haven't been used recently. If you're working on tasks that would benefit from tracking progress, consider using TaskCreate to add new tasks and TaskUpdate to update task status (set to in_progress when starting, completed when done). Also consider cleaning up the task list if it has become stale. Only use these if relevant to the current work. This is just a gentle reminder - ignore if not applicable. Make sure that you NEVER mention this reminder to the user";
+
+  const tasks = Array.isArray(content) ? content : [];
+  if (tasks.length === 0) {
+    return `<system-reminder>\n${BASE}\n\n</system-reminder>`;
+  }
+
+  const taskLines = tasks
+    .map((t: unknown) => {
+      if (!t || typeof t !== "object") return null;
+      const task = t as Record<string, unknown>;
+      const id = String(task["id"] ?? "?");
+      const subject = String(task["subject"] ?? "");
+      const status = String(task["status"] ?? "pending");
+      return `#${id}. [${status}] ${subject}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  return `<system-reminder>\n${BASE}\n\n\nHere are the existing tasks:\n\n${taskLines}\n</system-reminder>`;
 }
 
 function proxyWrapTextForCategory(category: SegmentCategory, text: string): string {

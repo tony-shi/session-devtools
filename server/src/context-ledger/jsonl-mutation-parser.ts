@@ -413,6 +413,9 @@ function handleUserRecord(
           metadata: {
             isError: blk.is_error ?? false,
             parentUuid: rec.parentUuid ?? undefined,
+            // P1-2：recordUuid 是本条 user message JSONL record 的 uuid，
+            // 供 task_reminder post-processing 通过 task_reminder.parentUuid 匹配
+            recordUuid: uuid ?? undefined,
             promptId: rec.promptId,
             messageId: msg.id,
             ...(rec.isMeta ? { isMeta: true } : {}),
