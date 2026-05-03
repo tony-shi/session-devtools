@@ -140,6 +140,10 @@ async function scanSingleFile(
       continue;
     }
 
+    // P0-3：同时保留原始字符串，供 proxy-snapshot-parser 计算 wire bytes hash。
+    // rawReqBodyText 是 proxy 落盘的原始 UTF-8 字符串（未被 parse 修改）。
+    const rawReqBodyText = reqBodyText;
+
     const ts = (record["ts"] as string | undefined) ?? new Date().toISOString();
     const startedAt = (record["startedAt"] as string | undefined) ?? ts;
 
@@ -161,9 +165,6 @@ async function scanSingleFile(
     if (seenQueryHashes.has(hash)) continue;
     seenQueryHashes.add(hash);
 
-    // P0-3 阻塞点：{ ...record, reqBody } 用解析后的对象覆盖了原始字符串，
-    // wire bytes（rawReqBodyText / rawReqBodyBytesHash）在此处丢失。
-    // 修复见 P0-3：需同时保留 rawReqBodyText + rawReqBodyBytesHash + parsedReqBody。
     results.push({
       queryKey: key,
       queryKeyHash: hash,
@@ -172,7 +173,8 @@ async function scanSingleFile(
       timestamp: startedAt,
       sessionId,
       agentKind,
-      raw: { ...record, reqBody },
+      // P0-3：保留三层 body —— parsedReqBody（供 parser 使用）和 rawReqBodyText（供 wire hash 计算）
+      raw: { ...record, reqBody, _rawReqBodyText: rawReqBodyText },
     });
   }
 
@@ -285,8 +287,13 @@ function scanJsonlOnlySessions(proxySessionIds: Set<string>): DiscoveredJsonlSes
 export async function discoverLocal(opts?: {
   trafficFile?: string;
   sinceTs?: string;
+  /** 只处理指定 sessionId 的 proxy records（用于聚焦单 session 调试） */
+  sessionFilter?: string;
 }): Promise<DiscoveryResult> {
-  const proxyRecords = await scanProxyRecords(opts);
+  let proxyRecords = await scanProxyRecords(opts);
+  if (opts?.sessionFilter) {
+    proxyRecords = proxyRecords.filter((r) => r.sessionId === opts.sessionFilter);
+  }
 
   const matchedProxyJsonl: DiscoveryResult["matchedProxyJsonl"] = [];
   const proxyWithoutJsonl: DiscoveredProxyRecord[] = [];

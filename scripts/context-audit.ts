@@ -142,6 +142,9 @@ const noR9 = args.includes("--no-r9");
 const verifiedOnly = args.includes("--verified-only");
 // E0-1：proxy_without_jsonl 走 attribution-only 路径而非 skip
 const proxyOnly = args.includes("--proxy-only");
+// --session <sessionId>：只处理指定 session（聚焦调试用）
+const sessionIdx = args.indexOf("--session");
+const sessionFilter = sessionIdx !== -1 ? args[sessionIdx + 1] : undefined;
 
 // --baseline / --compare-run 指定对比 run（两个 flag 语义相同，--compare-run 是更直观的别名）
 let baselineRunId: string | undefined;
@@ -168,6 +171,7 @@ console.log(`baseline: ${baselineRunId ?? "(none)"}`);
 if (noR9) console.log(`[control] --no-r9: R9 attribution 反写已禁用`);
 if (verifiedOnly) console.log(`[control] --verified-only: 未验证 rule 不进 evidenceBacked`);
 if (proxyOnly) console.log(`[control] --proxy-only: proxy_without_jsonl 走 attribution-only 路径`);
+if (sessionFilter) console.log(`[filter] --session ${sessionFilter}`);
 console.log(`Discovering...`);
 
 let discovery: ReturnType<typeof discoverFixtures>;
@@ -186,7 +190,7 @@ if (mode === "fixtures") {
       } catch { /* ignore */ }
     }
   }
-  discovery = await discoverLocal({ sinceTs });
+  discovery = await discoverLocal({ sinceTs, sessionFilter });
 }
 
 console.log(`  proxy discovered: ${discovery.discoveredProxyQueries.length}`);

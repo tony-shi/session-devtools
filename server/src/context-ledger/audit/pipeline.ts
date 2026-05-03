@@ -147,6 +147,8 @@ export function runPipeline(input: PipelineInput): PipelineResult {
       reqBody: reqBody as ProxyRequestInput["reqBody"],
       _sse_events: raw["_sse_events"] as ProxyRequestInput["_sse_events"],
       _traffic_jsonl_line: trafficLine,
+      // P0-3：传递原始字符串供 parser 计算 wire bytes hash
+      _rawReqBodyText: (raw["_rawReqBodyText"] as string | null | undefined) ?? undefined,
     };
 
     const snapshot = parseClaudeProxyRequest(proxyInput, {
@@ -301,6 +303,8 @@ export function runPipelineWithData(input: PipelineInput): {
       reqBody: reqBody as ProxyRequestInput["reqBody"],
       _sse_events: raw["_sse_events"] as ProxyRequestInput["_sse_events"],
       _traffic_jsonl_line: trafficLine,
+      // P0-3：传递原始字符串供 parser 计算 wire bytes hash
+      _rawReqBodyText: (raw["_rawReqBodyText"] as string | null | undefined) ?? undefined,
     };
 
     const snapshot = parseClaudeProxyRequest(proxyInput, {

@@ -48,6 +48,8 @@ export interface ProxyRequestInput {
     sseData?: string;
   }>;
   _traffic_jsonl_line?: number;
+  /** P0-3：proxy 落盘的原始 UTF-8 reqBody 字符串，用于计算真实 wire bytes hash */
+  _rawReqBodyText?: string | null;
 }
 
 // ── 哈希工具 ──────────────────────────────────────────────────────────────────
@@ -474,8 +476,14 @@ export function parseClaudeProxyRequest(
   const trafficSuffix = input._traffic_jsonl_line !== undefined ? `-${input._traffic_jsonl_line}` : "";
   const queryId = opts?.queryId ?? `query-${tsDigits}${trafficSuffix}`;
 
-  // rawRequestHash：对整个 reqBody JSON 做哈希
+  // rawRequestHash：对整个 reqBody JSON.stringify 做哈希（旧口径，保留向后兼容）
   const rawRequestHash = sha256Full(JSON.stringify(body));
+
+  // P0-3：rawRequestBytesHash：用原始 wire 字符串计算 hash（比 JSON.stringify 更忠实于 proxy 落盘内容）
+  // 若未提供 _rawReqBodyText，则退化为 rawRequestHash（无法区分 canonical vs wire）
+  const rawRequestBytesHash = input._rawReqBodyText
+    ? sha256Full(input._rawReqBodyText)
+    : undefined;
 
   // request metadata
   const betaHeaders = extractBetaHeaders(input);
@@ -550,6 +558,7 @@ export function parseClaudeProxyRequest(
     segments,
     rawRequestHash,
     request,
+    ...(rawRequestBytesHash ? { rawRequestBytesHash } : {}),
   };
 
   if (opts?.queryIndex !== undefined) snapshot.queryIndex = opts.queryIndex;

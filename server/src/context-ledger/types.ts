@@ -243,7 +243,11 @@ export interface ProxyQuerySnapshot {
   timestamp: string;
   sourceRef: Extract<SourceRef, { kind: "proxy" }>;
   segments: ContextSegment[];
+  /** JSON.stringify(parsedBody) 的 hash（旧口径，用于向后兼容） */
   rawRequestHash: string;
+  /** P0-3：proxy 落盘的原始 UTF-8 字节的 sha256（真实 wire bytes hash）。
+   *  P0-3 完成前可能为 undefined；完成后 wireExactCoverage 将使用此字段。 */
+  rawRequestBytesHash?: string;
   agentId?: string;
   subagentId?: string;
   parentAgentId?: string;
