@@ -720,9 +720,10 @@ function buildSegmentsFromAttributions(
     };
 
     if (recon.materialization === "exact_text") {
-      // 严格正向：必须有 contentPattern 才能计算 rawHash。
-      // tools section 的 contentPattern 是完整 JSON 字符串（与 proxy-snapshot-parser 口径一致）。
-      const rawPattern = emits.contentPattern;
+      // P2-7 单源：exact_text rule 的文本权威来自 contentPattern，
+      // contentPattern 未设置时 fallback 到 attribution.pattern（两者语义相同：同一段静态文本）。
+      // 这样 tools rules 无需重复定义 contentPattern，attribution.pattern 即为单一来源。
+      const rawPattern = emits.contentPattern ?? rule.attribution?.pattern ?? null;
       if (rawPattern) {
         const resolvedText = resolvePlaceholders(rawPattern, attr.notes ?? []);
         if (resolvedText) {
@@ -731,7 +732,7 @@ function buildSegmentsFromAttributions(
         }
         // resolvedText 为空（占位符未能解析）→ 不设 rawHash，降级为 presence_only
       }
-      // 无 contentPattern → 不设 rawHash，reconcile 只能靠 rule_id basis 对齐
+      // 无 contentPattern 也无 attribution.pattern → 不设 rawHash
     } else if (recon.materialization === "normalized_text") {
       // 从 contentPattern + attribution.notes 里的 captureGroups 解析占位符后计算 rawHash。
       const rawPattern = emits.contentPattern;

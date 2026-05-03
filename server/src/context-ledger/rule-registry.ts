@@ -458,7 +458,8 @@ export const CLAUDE_CODE_ENVIRONMENT_SECTION_RULE: ContextLedgerRule = {
       " - Assistant knowledge cutoff is (?<cutoff>[^\\n]+)\.\n" +
       " - The most recent Claude model family is (?<modelFamily>[^\\n]+)\n" +
       " - Claude Code is available as a CLI in the terminal, desktop app \\(Mac/Windows\\), web app \\(claude\\.ai/code\\), and IDE extensions \\(VS Code, JetBrains\\)\.\n" +
-      " - Fast mode for Claude Code uses (?<fastModeModel>[^\\n]+)\n",
+      // P2-8：末尾用 [\s\S]*$ 允许 appendSystemContext 追加的 gitStatus 等内容
+      " - Fast mode for Claude Code uses (?<fastModeModel>[^\\n]+)\n[\\s\\S]*$",
     matchMode: "regex",
     mechanism: "system_prompt_pattern",
     category: "harness_injection",
@@ -563,7 +564,8 @@ export const CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE: ContextLedgerRule = {
     pattern:
       "^# auto memory\\n\\nYou have a persistent, file-based memory system at `(?<memoryDir>[^`]+)`\\. " +
       "This directory already exists — write to it directly with the Write tool " +
-      "\\(do not run mkdir or check for its existence\\)\\.",
+      // P2-8：末尾用 [\s\S]*$ 允许完整 auto-memory section 的剩余内容
+      "\\(do not run mkdir or check for its existence\\)\\.[\\.\\s\\S]*$",
     matchMode: "regex",
     mechanism: "system_prompt_pattern",
     category: "harness_injection",
@@ -2516,8 +2518,8 @@ export const CLAUDE_CODE_LOCAL_COMMAND_RULE: ContextLedgerRule = {
   sourcemapRef: "restored-src/src/utils/messages.ts (createUserMessage local command)",
 
   attribution: {
-    // 任意一个本地命令标签作为前缀即可命中（prefix + anywhere 语义）
-    pattern: "<local-command-caveat>|<bash-input>|<bash-stdout>|<bash-stderr>|<command-name>|<local-command-stdout>",
+    // P2-8：加 ^ anchor，任意一个本地命令标签作为 segment 开头即可命中
+    pattern: "^(?:<local-command-caveat>|<bash-input>|<bash-stdout>|<bash-stderr>|<command-name>|<local-command-stdout>)[\\s\\S]*$",
     matchMode: "regex",
     mechanism: "local_command_pattern",
     category: "local_command_history",

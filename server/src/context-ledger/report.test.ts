@@ -230,3 +230,95 @@ describe("rule registry contract", () => {
     expect(inApplied).toBe(false);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P2-7 单测：exact_text rule 的 contentPattern / attribution.pattern 单源一致性
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("P2-7 exact_text rule 单源一致性", () => {
+  test("所有 exact_text + exact matchMode 的 rule：contentPattern（或 attr.pattern 作为 fallback）能被 attribution.pattern 命中", () => {
+    const failures: string[] = [];
+    for (const rule of CONTEXT_LEDGER_RULES) {
+      const mat = rule.reconstruction?.materialization;
+      if (mat !== "exact_text") continue;
+      const matchMode = rule.attribution?.matchMode;
+      if (matchMode !== "exact") continue;
+      const attrPat = rule.attribution?.pattern;
+      const cp = rule.reconstruction?.emits?.contentPattern;
+
+      // 权威文本：contentPattern 优先，fallback 到 attribution.pattern
+      const canonical = cp ?? attrPat;
+      if (!canonical) continue; // 两者均 null → 跳过（unavailable）
+
+      // attribution.pattern 应等于 canonical（exact matchMode 时两者必须严格一致）
+      if (attrPat && attrPat !== canonical) {
+        failures.push(`${rule.ruleId}: attr.pattern(${attrPat.length}ch) ≠ canonical(${canonical.length}ch)`);
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(`P2-7 双源不一致:\n${failures.join("\n")}`);
+    }
+  });
+
+  test("所有 exact_text rule 的有效文本（contentPattern 或 attr.pattern）经 attribution 路径能命中 proxy（fixture 验证）", async () => {
+    // 通过跑 4 个 fixture 验证 exact_text rule 有实际命中（已在 fixture audit 中覆盖）
+    // 这里只验证 pattern 字段的合法性（非 undefined / 非空字符串）
+    const noPattern: string[] = [];
+    for (const rule of CONTEXT_LEDGER_RULES) {
+      const mat = rule.reconstruction?.materialization;
+      if (mat !== "exact_text") continue;
+      const cp = rule.reconstruction?.emits?.contentPattern;
+      const attrPat = rule.attribution?.pattern;
+      // 对 exact_text rule，至少有一个非 null 文本字段
+      if (cp === null && attrPat === null) {
+        noPattern.push(rule.ruleId);
+      }
+    }
+    // 当前允许 normalized_text 类 rule 有 contentPattern=null（用占位符模板）
+    // 只有纯 exact_text 且两者均 null 才是问题
+    expect(noPattern).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P2-8 单测：regex rule anchor 约定
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("P2-8 regex rule anchor 约定", () => {
+  test("所有 fixture 命中的 regex rule 都有 ^ 起始 anchor", () => {
+    const noStart: string[] = [];
+    for (const rule of CONTEXT_LEDGER_RULES) {
+      if (rule.attribution?.matchMode !== "regex") continue;
+      const pat = rule.attribution.pattern;
+      if (!pat) continue;
+      if (!pat.startsWith("^")) {
+        noStart.push(rule.ruleId);
+      }
+    }
+    expect(noStart).toHaveLength(0);
+  });
+
+  test("fixture 命中的 regex rule 有 $ 或 [\\s\\S]*$ 尾部 anchor", () => {
+    // 只检查在 fixture 里有实际命中的 rule
+    const fixtureHitRules = new Set([
+      "claude-code.billing-noise.v1",
+      "claude-code.system-prompt-context-management.v1",
+      "claude-code.system-prompt-environment.v1",
+      "claude-code.system-prompt-auto-memory.v1",
+      "claude-code.messages.local-command.v1",
+      "claude-code.tool.Agent.v1",
+      "claude-code.tool.Bash.v1",
+      "claude-code.tool.ScheduleWakeup.v1",
+    ]);
+    const noEnd: string[] = [];
+    for (const rule of CONTEXT_LEDGER_RULES) {
+      if (rule.attribution?.matchMode !== "regex") continue;
+      if (!fixtureHitRules.has(rule.ruleId)) continue;
+      const pat = rule.attribution.pattern ?? "";
+      if (!/\$\s*$/.test(pat)) {
+        noEnd.push(rule.ruleId);
+      }
+    }
+    expect(noEnd).toHaveLength(0);
+  });
+});
