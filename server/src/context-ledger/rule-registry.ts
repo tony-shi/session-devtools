@@ -2162,6 +2162,14 @@ export const CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
+    // TODO(side-query-expected): side query 不写 JSONL（sourcemap 确认：sideQuery.ts 完全绕开
+    // sessionStorage，promptId 只由 processTextPrompt() 设置）。因此 reconstructor 目前无法
+    // 为 side-query-session-title fixture 重建 expected。
+    // 未来路径：为 side query 实现一条独立的 attribution-driven expected 重建路径：
+    //   1. 检测 snapshot.request.queryKind === "side_query"
+    //   2. 根据 attribution 命中的 rule（session-title.v1）及其 contentPattern
+    //      直接产出 expected system[2] segment，不依赖 JSONL mutations
+    // 当前状态：pipeline 以 --proxy-only 模式运行，只做 attribution-only 报告。
     preCondition: "generateSessionTitle() 调用时（新会话首条消息之后触发）",
     trigger: "from_harness_state",
     materialization: "exact_text",
