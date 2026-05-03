@@ -387,7 +387,23 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
   // ── 第四步：coverage 计算 ────────────────────────────────────────────────
   const coverage = computeCoverage(snapshot, attributions, matchedProxyIds, matchedExpectedIds, expected, findings, alignments);
 
-  // ── 第五步：api_error_retry finding（从 expected metadata 读取）──────────
+  // ── 第五步：P1-1 regex_too_loose finding（placeholderRatio > 60%）────────
+  // 对每条 attribution，若 evidence.placeholderRatio > 0.6，说明该 rule pattern 过宽。
+  for (const attr of attributions) {
+    if (!attr.evidence || attr.evidence.placeholderRatio <= 0.6) continue;
+    const segChars = attr.charCount ?? 0;
+    findings.push({
+      id: nextFindingId(),
+      type: "regex_too_loose",
+      severity: "warning",
+      category: attr.category,
+      proxySegmentIds: attr.proxySegmentIds,
+      attributionIds: [attr.id],
+      message: `rule ${attr.ruleId}: placeholderRatio=${(attr.evidence.placeholderRatio * 100).toFixed(0)}% (${attr.evidence.placeholderChars}/${segChars} chars) — pattern anchors too little literal text`,
+    });
+  }
+
+  // ── 第六步：api_error_retry finding（从 expected metadata 读取）──────────
   if (expected?.metadata?.retryDroppedMutationCount && (expected.metadata.retryDroppedMutationCount as number) > 0) {
     findings.push({
       id: nextFindingId(),
@@ -937,6 +953,21 @@ function computeCoverage(
     ? round2(evidenceBackedCharDrift / evidenceBackedProxyCharsForDrift)
     : 0;
 
+  // P1-1：placeholderRatio = 所有 template/regex rule 命中字符中，captureGroup 字符占比
+  // 只统计有 evidence 的 attribution（即 regex/template 命中）；presence/exact/unknown 不计入
+  let evidenceTotalChars = 0;
+  let evidencePlaceholderChars = 0;
+  for (const attr of attributions) {
+    if (!attr.evidence) continue;
+    const segChars = attr.charCount ?? 0;
+    evidenceTotalChars += segChars;
+    // placeholderChars 占该 segment 的比例，再乘以 segment 字符数
+    evidencePlaceholderChars += Math.round(attr.evidence.placeholderRatio * segChars);
+  }
+  const placeholderRatio = evidenceTotalChars > 0
+    ? round2(evidencePlaceholderChars / evidenceTotalChars)
+    : undefined;
+
   const summary: CoverageSummary = {
     proxySegmentCount: proxySegs.length,
     matchedProxySegmentCount: matchedProxyIds.size,
@@ -963,6 +994,7 @@ function computeCoverage(
     unexplainedCoverage: safeRatio(unexplainedProxyChars),
     // 治理指标
     regexOverreachRisk: safeRatio(regexChars),
+    ...(placeholderRatio !== undefined ? { placeholderRatio } : {}),
     alignedTextDrift,
   };
 

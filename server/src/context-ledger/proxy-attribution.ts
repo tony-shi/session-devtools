@@ -39,6 +39,8 @@ import type {
   MutationSourceKind,
   ProxyQuerySnapshot,
   ProxySegmentAttribution,
+  RuleMatchCapture,
+  RuleMatchEvidence,
   SegmentCategory,
   SegmentFlag,
   SegmentLifecycle,
@@ -65,50 +67,58 @@ const LOCAL_COMMAND_TAGS = [
 
 // ── rule 驱动的 pattern match ──────────────────────────────────────────────────
 
-// tryMatchRule：对单条 rule 做匹配，返回命名捕获组（regex）或 true（非 regex 命中）或 null（不命中）。
-// section 约束和 queryScope 约束在此统一处理，attribution 主流程只调用这一个函数。
+// RuleMatchData：tryMatchRule 的返回结构，携带捕获组值和偏移 indices（P1-1）
+interface RuleMatchData {
+  groups: Record<string, string | undefined> | null;
+  // regex 命中时的命名捕获组偏移（ES2022 d flag），非 regex 时为 null
+  groupIndices: Record<string, [number, number] | undefined> | null;
+}
+
+// tryMatchRule：对单条 rule 做匹配，返回 RuleMatchData 或 null（不命中）。
 function tryMatchRule(
   rule: ContextLedgerRule,
   text: string,
   section: SegmentSection,
   queryKind: string,
-): Record<string, string | undefined> | true | null {
+): RuleMatchData | null {
   const attr = rule.attribution;
   if (!attr?.pattern) return null;
 
-  // section 约束
   if (attr.location?.section !== undefined && attr.location.section !== section) return null;
 
-  // queryScope 约束
   if (rule.queryScope && rule.queryScope !== "any") {
     if (queryKind !== rule.queryScope) return null;
   }
 
   if (attr.matchMode === "regex") {
-    const m = new RegExp(attr.pattern, "s").exec(text);
+    // d flag 开启 indices，用于 P1-1 捕获组偏移计算
+    const m = new RegExp(attr.pattern, "sd").exec(text);
     if (!m) return null;
-    return (m.groups ?? {}) as Record<string, string | undefined>;
+    return {
+      groups: (m.groups ?? {}) as Record<string, string | undefined>,
+      groupIndices: (m.indices?.groups ?? null) as Record<string, [number, number] | undefined> | null,
+    };
   }
   if (attr.matchMode === "exact") {
-    return text === attr.pattern ? true : null;
+    return text === attr.pattern ? { groups: null, groupIndices: null } : null;
   }
   if (attr.matchMode === "contains") {
-    return text.includes(attr.pattern) ? true : null;
+    return text.includes(attr.pattern) ? { groups: null, groupIndices: null } : null;
   }
   // prefix / structural
-  return text.trimStart().startsWith(attr.pattern) ? true : null;
+  return text.trimStart().startsWith(attr.pattern) ? { groups: null, groupIndices: null } : null;
 }
 
-// findMatchingRule：按 CONTEXT_LEDGER_RULES 顺序遍历，返回第一个命中的 rule + 捕获组。
+// findMatchingRule：按 CONTEXT_LEDGER_RULES 顺序遍历，返回第一个命中的 rule + 匹配数据。
 function findMatchingRule(
   text: string,
   section: SegmentSection,
   queryKind: string,
-): { rule: ContextLedgerRule; groups: Record<string, string | undefined> | null } | null {
+): { rule: ContextLedgerRule; matchData: RuleMatchData } | null {
   for (const rule of CONTEXT_LEDGER_RULES) {
-    const result = tryMatchRule(rule, text, section, queryKind);
-    if (result !== null) {
-      return { rule, groups: result === true ? null : result };
+    const matchData = tryMatchRule(rule, text, section, queryKind);
+    if (matchData !== null) {
+      return { rule, matchData };
     }
   }
   return null;
@@ -127,12 +137,76 @@ interface RuleMatchResult {
   ruleId: string;
   flags: SegmentFlag[];
   notes: string[] | undefined;
+  evidence: RuleMatchEvidence | undefined;
+}
+
+// P1-1：从捕获组 name 推断动态字段来源
+function inferCaptureSource(name: string): RuleMatchCapture["source"] {
+  if (/cwd|platform|shell|osVersion|model|cutoff/.test(name)) return "env";
+  if (/memory|memoryDir/.test(name)) return "memory";
+  if (/branch|gitUser|version|entrypoint|cch|workload/.test(name)) return "runtime";
+  return "unknown";
+}
+
+// P1-1：从 matchData 生成结构化 RuleMatchEvidence
+function buildEvidence(
+  rule: ContextLedgerRule,
+  rawText: string,
+  matchData: RuleMatchData,
+): RuleMatchEvidence | undefined {
+  const mat = rule.reconstruction?.materialization;
+
+  // mode 映射
+  const mode: RuleMatchEvidence["mode"] =
+    rule.attribution?.matchMode === "exact" ? "exact"
+    : mat === "exact_text" ? "template"
+    : matchData.groups && Object.keys(matchData.groups).length > 0 ? "regex"
+    : "presence";
+
+  if (mode === "presence" || mode === "exact") {
+    // presence/exact 无捕获组，不需要详细 evidence
+    return undefined;
+  }
+
+  const captures: RuleMatchCapture[] = [];
+  const groups = matchData.groups ?? {};
+  const indices = matchData.groupIndices ?? {};
+
+  for (const [name, value] of Object.entries(groups)) {
+    if (value === undefined) continue;
+    const range = indices[name];
+    const charStart = range?.[0] ?? 0;
+    const charEnd = range?.[1] ?? (charStart + value.length);
+    captures.push({
+      name,
+      valuePreview: value.length > 120 ? value.slice(0, 117) + "…" : value,
+      charStart,
+      charEnd,
+      source: inferCaptureSource(name),
+    });
+  }
+
+  const placeholderChars = captures.reduce((s, c) => s + (c.charEnd - c.charStart), 0);
+  const totalChars = rawText.length;
+  const literalChars = Math.max(0, totalChars - placeholderChars);
+  const placeholderRatio = totalChars > 0 ? placeholderChars / totalChars : 0;
+
+  return {
+    ruleId: rule.ruleId,
+    mode,
+    literalChars,
+    placeholderChars,
+    placeholderRatio,
+    captures,
+  };
 }
 
 function applyRuleMatch(
   rule: ContextLedgerRule,
-  groups: Record<string, string | undefined> | null,
+  rawText: string,
+  matchData: RuleMatchData,
 ): RuleMatchResult {
+  const groups = matchData.groups;
   const attr = rule.attribution!;
 
   // lifecycle：从 rule.reconstruction.emits.lifecycle 推导
@@ -196,12 +270,15 @@ function applyRuleMatch(
     }
   }
 
+  // P1-1：生成结构化 evidence（regex/template 命中时）
+  const evidence = buildEvidence(rule, rawText, matchData);
+
   // Session-specific guidance：embedded variant 升 confidence
   if (rule.ruleId === CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE.ruleId) {
-    return { category, mechanism, confidence: "exact", attributedSource, lifecycle, ruleId: rule.ruleId, flags, notes };
+    return { category, mechanism, confidence: "exact", attributedSource, lifecycle, ruleId: rule.ruleId, flags, notes, evidence };
   }
 
-  return { category, mechanism, confidence, attributedSource, lifecycle, ruleId: rule.ruleId, flags, notes };
+  return { category, mechanism, confidence, attributedSource, lifecycle, ruleId: rule.ruleId, flags, notes, evidence };
 }
 
 // ── text 検出工具（wire schema 感知、不依赖文本 pattern rule）────────────────────
@@ -279,16 +356,14 @@ export function inferClaudeProxyAttributions(
     let lifecycle: SegmentLifecycle | undefined;
     let ruleId: string | undefined;
     let notes: string[] | undefined;
+    let evidence: RuleMatchEvidence | undefined;
     const flags: SegmentFlag[] = [];
 
     // ── 主路径：rule 驱动 ────────────────────────────────────────────────────
-    // findMatchingRule 按 CONTEXT_LEDGER_RULES 顺序遍历，返回第一个命中的 rule。
-    // section 约束、queryScope 约束、matchMode 全部在 tryMatchRule 里统一处理。
-
     const ruleMatch = findMatchingRule(rawText, seg.section, queryKind);
 
     if (ruleMatch) {
-      const applied = applyRuleMatch(ruleMatch.rule, ruleMatch.groups);
+      const applied = applyRuleMatch(ruleMatch.rule, rawText, ruleMatch.matchData);
       category = applied.category;
       mechanism = applied.mechanism;
       confidence = applied.confidence;
@@ -296,6 +371,7 @@ export function inferClaudeProxyAttributions(
       lifecycle = applied.lifecycle;
       ruleId = applied.ruleId;
       notes = applied.notes;
+      evidence = applied.evidence;
       flags.push(...applied.flags);
 
     // ── 兜底路径：wire schema 感知（无文本 pattern rule 可覆盖）─────────────
@@ -438,6 +514,7 @@ export function inferClaudeProxyAttributions(
       charCount: chars,
       tokenEstimate: seg.tokenEstimate ?? Math.round(chars / 4),
       ...(notes ? { notes } : {}),
+      ...(evidence ? { evidence } : {}),
       ...(ruleId ? { ruleId } : {}),
       ...(lifecycle || flags.length > 0
         ? { metadata: { ...(lifecycle ? { lifecycle } : {}), ...(flags.length > 0 ? { flags } : {}) } }

@@ -102,7 +102,7 @@ export type FindingType =
   | "matched"
   | "approximate_match"
   // 无强证据（无 rawHash/normalizedHash/toolUseId/ruleId）时的 category+role heuristic 匹配，
-  // 置信度低，不计入 evidenceBackedCoverage
+  // 置信度低，不计入 wireExact / canonicalExact / template 桶（落入 unexplainedChars）
   | "suspect_match"
   | "unmatched_proxy_segment"
   | "unmatched_expected_segment"
@@ -112,7 +112,9 @@ export type FindingType =
   | "merge_alignment"
   | "one_to_many_alignment"
   | "api_error_retry"
-  | "known_noise";
+  | "known_noise"
+  // P1-1：regex rule 捕获组字符占比 > 60%，说明 pattern 过宽，大部分内容是动态字段
+  | "regex_too_loose";
 
 export type FindingSeverity = "info" | "warning" | "critical";
 
@@ -270,6 +272,27 @@ export interface ProxyQuerySnapshot {
   metadata?: Record<string, unknown>;
 }
 
+// P1-1：单个捕获组的命中区间与来源
+export interface RuleMatchCapture {
+  name: string;                      // captureGroup 名称（来自 rule.attribution.captureGroups）
+  valuePreview: string;              // 实际捕获值（最多 120 字符）
+  charStart: number;                 // 在 rawText 里的起始位置（含）
+  charEnd: number;                   // 在 rawText 里的结束位置（不含）
+  source: "env" | "memory" | "runtime" | "unknown";  // 动态字段来源推断
+}
+
+// P1-1：结构化 rule 命中证据（替代 notes: string[]）
+export interface RuleMatchEvidence {
+  ruleId: string;
+  mode: "exact" | "template" | "regex" | "presence";
+  // 字符统计
+  literalChars: number;              // 非占位符的静态文本字符数
+  placeholderChars: number;          // 所有 captureGroup 的字符数之和
+  placeholderRatio: number;          // placeholderChars / (literalChars + placeholderChars)
+  // 各捕获组详情
+  captures: RuleMatchCapture[];
+}
+
 export interface ProxySegmentAttribution {
   id: string;
   snapshotId: string;
@@ -293,6 +316,9 @@ export interface ProxySegmentAttribution {
   ruleId?: string;
   charCount?: number;
   tokenEstimate?: number;
+  /** P1-1：结构化 rule 命中证据（regex/template 命中时有值） */
+  evidence?: RuleMatchEvidence;
+  /** 兼容旧口径，P1-1 后 evidence 为权威；notes 仅在 evidence 不覆盖的场景下保留 */
   notes?: string[];
   metadata?: Record<string, unknown>;
 }
@@ -428,7 +454,7 @@ export interface CoverageSummary {
 
   // 治理指标
   regexOverreachRisk: number;      // regexChars / proxyChars（>0.6 → needs_review）
-  placeholderRatio?: number;       // P1-1 完成后填充
+  placeholderRatio?: number;       // P1-1：所有 template/regex rule 命中字符中，captureGroup 字符占比
 
   // 总对齐文本漂移（evidence-backed matched 中 |expectedChars - proxyChars| 之和 / proxyChars）
   alignedTextDrift: number;
