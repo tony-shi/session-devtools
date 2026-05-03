@@ -150,7 +150,12 @@ if (baselineIdx !== -1 && args[baselineIdx + 1]) {
   baselineRunId = args[baselineIdx + 1];
 } else {
   // 默认：按 mode 找 baseline.json，再找 latest run
-  baselineRunId = readBaselineRunId(mode) ?? readLatestRunId(mode);
+  // since-last 特殊：sinceTs 边界应取最近一次 all-local run（不是 latest.since-last.json），
+  // 否则首次运行 since-last 时 latest.since-last.json 不存在，导致 sinceTs 为空扫全量。
+  const latestForBoundary = mode === "since-last"
+    ? readBaselineRunId(mode) ?? readLatestRunId("all-local") ?? readLatestRunId(mode)
+    : readBaselineRunId(mode) ?? readLatestRunId(mode);
+  baselineRunId = latestForBoundary;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,10 +230,12 @@ let skippedCount = 0;
 
 // proxy_without_jsonl → --proxy-only 时走 attribution-only，否则直接 skip
 for (const proxy of discovery.proxyWithoutJsonl) {
-  const { result } = runPipelineWithData({ proxy, jsonlFile: null, noR9, verifiedOnly, proxyOnly });
-  const written = writeQueryArtifacts(runId, result);
+  const { result, data } = runPipelineWithData({ proxy, jsonlFile: null, noR9, verifiedOnly, proxyOnly });
+  const written = writeQueryArtifacts(runId, result, data);
   allResults.push(written);
-  skippedCount++;
+  if (result.status === "success") successCount++;
+  else if (result.status === "failed") failedCount++;
+  else skippedCount++;
 }
 
 // proxy+jsonl matched → 完整 pipeline
