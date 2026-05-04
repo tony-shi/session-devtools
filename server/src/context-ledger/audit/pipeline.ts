@@ -1,13 +1,12 @@
 // Audit Pipeline
 // 对每个 proxy+jsonl 匹配的 query 运行完整 reconciliation → scorecard → char diff
 //
-// 调用链（与 context-char-diff.ts 相同，不重复发明）：
+// 调用链：
 //   parseClaudeProxyRequest → inferClaudeProxyAttributions
 //   → parseClaudeJsonlMutations → reconstructExpectedClaudeContext
 //   → reconcileClaudeContext → computeCharDiff → renderCharDiffHtml
 
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
 import { parseClaudeProxyRequest } from "../proxy-snapshot-parser";
 import type { ProxyRequestInput } from "../proxy-snapshot-parser";
 import { inferClaudeProxyAttributions } from "../proxy-attribution";
@@ -20,41 +19,14 @@ import { renderCharDiffHtml } from "../debug/render-char-diff-html";
 import type { ReconciliationReport } from "../types";
 import type { CharDiffReport } from "../debug/char-diff";
 import { computeScorecard } from "./scorecard";
-import { getContextLedgerRule, SUPPORTED_CLAUDE_CODE_VERSION } from "../rule-registry";
 import type {
   DiscoveredProxyRecord,
   PipelineResult,
-  QueryKey,
 } from "./types";
-import { queryKeyHash } from "./paths";
-
-// T0 --verified-only：过滤掉 verifiedFor===null 的 rule 的 attribution，不进入 R9 重建
-function filterVerifiedAttributions(
-  attributions: import("../types").ProxySegmentAttribution[],
-): import("../types").ProxySegmentAttribution[] {
-  return attributions.filter((attr) => {
-    if (!attr.ruleId) return true;  // 无 ruleId 的 attribution（tool_use/tool_result wire）保留
-    const rule = getContextLedgerRule(attr.ruleId);
-    if (!rule) return true;  // 未知 rule 保留（不误杀）
-    return rule.verifiedFor === SUPPORTED_CLAUDE_CODE_VERSION;
-  });
-}
 
 export interface PipelineInput {
   proxy: DiscoveredProxyRecord;
-  jsonlFile: string | null;  // null → proxy_without_jsonl
-  /**
-   * P0-1 R9 控制：R9 默认关闭（injectFromAttributions=false）。
-   * noR9=true → 明确关闭（与默认行为相同，保留兼容）。
-   * withR9=true → 显式开启（compare-modes 的 "current" 路用来对照 R9 贡献）。
-   * noR9 和 withR9 不应同时为 true。
-   */
-  noR9?: boolean;
-  withR9?: boolean;
-  /** T0 控制变量：verifiedFor===null 的 rule 不进入 evidenceBacked，仅 attribution-only */
-  verifiedOnly?: boolean;
-  /** E0-1：允许 jsonlFile=null 的 query 走 proxy-only attribution 路径（不解析 JSONL，reconcile 无 expected） */
-  proxyOnly?: boolean;
+  jsonlFile: string | null;  // null → proxy_without_jsonl，直接 skip
 }
 
 export interface PipelineOutputData {
@@ -123,107 +95,56 @@ function injectProxyTexts(
   return { ...diff, entries };
 }
 
+function buildProxyInput(proxy: DiscoveredProxyRecord): {
+  reqBody: Record<string, unknown>;
+  proxyInput: ProxyRequestInput;
+} {
+  const raw = proxy.raw;
+  const reqBody = (raw["reqBody"] as Record<string, unknown>) ?? {};
+  const proxyInput: ProxyRequestInput = {
+    ts: raw["ts"] as string | undefined,
+    startedAt: raw["startedAt"] as string | undefined,
+    reqHeaders: raw["reqHeaders"] as Record<string, string> | undefined,
+    reqBody: reqBody as ProxyRequestInput["reqBody"],
+    _sse_events: raw["_sse_events"] as ProxyRequestInput["_sse_events"],
+    _traffic_jsonl_line: proxy.trafficLine,
+    _rawReqBodyText: (raw["_rawReqBodyText"] as string | null | undefined) ?? undefined,
+  };
+  return { reqBody, proxyInput };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 主函数
 // ─────────────────────────────────────────────────────────────────────────────
 
+// 轻量版：只需要 scorecard（用于测试和 compare-modes 内部循环）
 export function runPipeline(input: PipelineInput): PipelineResult {
-  const { proxy, jsonlFile, noR9, verifiedOnly, proxyOnly } = input;
+  const { proxy, jsonlFile } = input;
   const { queryKey, queryKeyHash: hash, timestamp, proxySourceFile, trafficLine } = proxy;
 
-  // proxy_without_jsonl：proxyOnly 时走 attribution-only 路径，否则 skip
   if (!jsonlFile || !existsSync(jsonlFile)) {
-    if (!proxyOnly) {
-      return {
-        queryKey,
-        queryKeyHash: hash,
-        status: "skipped",
-        skipReason: "proxy_without_jsonl",
-        proxySourceRef: `${proxySourceFile}:${trafficLine}`,
-        timestamp,
-      };
-    }
-    // proxy-only attribution-only 路径
-    try {
-      const raw = proxy.raw;
-      const reqBody = (raw["reqBody"] as Record<string, unknown>) ?? {};
-      const proxyInput: ProxyRequestInput = {
-        ts: raw["ts"] as string | undefined,
-        startedAt: raw["startedAt"] as string | undefined,
-        reqHeaders: raw["reqHeaders"] as Record<string, string> | undefined,
-        reqBody: reqBody as ProxyRequestInput["reqBody"],
-        _sse_events: raw["_sse_events"] as ProxyRequestInput["_sse_events"],
-        _traffic_jsonl_line: trafficLine,
-      };
-      const snapshot = parseClaudeProxyRequest(proxyInput, {
-        proxyFile: proxySourceFile,
-        queryId: queryKey.queryId,
-      });
-      const snapForAttr = JSON.parse(
-        JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
-      ) as typeof snapshot;
-      const allAttributions = inferClaudeProxyAttributions(snapForAttr);
-      const report = reconcileClaudeContext({ snapshot, attributions: allAttributions, expected: undefined });
-      const baseDiff = computeCharDiff(report);
-      const diff = injectProxyTexts(baseDiff, report, reqBody);
-      const scorecard = computeScorecard(queryKey, report, diff, allAttributions);
-      return {
-        queryKey,
-        queryKeyHash: hash,
-        status: "success",
-        proxySourceRef: `${proxySourceFile}:${trafficLine}`,
-        timestamp,
-        scorecard,
-        queryKind: snapshot.request?.queryKind ?? "unknown",
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        queryKey,
-        queryKeyHash: hash,
-        status: "failed",
-        error: message,
-        proxySourceRef: `${proxySourceFile}:${trafficLine}`,
-        timestamp,
-      };
-    }
+    return {
+      queryKey,
+      queryKeyHash: hash,
+      status: "skipped",
+      skipReason: "proxy_without_jsonl",
+      proxySourceRef: `${proxySourceFile}:${trafficLine}`,
+      timestamp,
+    };
   }
 
   try {
-    // 1. 解析 proxy
-    const raw = proxy.raw;
-    const reqBody = (raw["reqBody"] as Record<string, unknown>) ?? {};
-    const proxyInput: ProxyRequestInput = {
-      ts: raw["ts"] as string | undefined,
-      startedAt: raw["startedAt"] as string | undefined,
-      reqHeaders: raw["reqHeaders"] as Record<string, string> | undefined,
-      reqBody: reqBody as ProxyRequestInput["reqBody"],
-      _sse_events: raw["_sse_events"] as ProxyRequestInput["_sse_events"],
-      _traffic_jsonl_line: trafficLine,
-      // P0-3：传递原始字符串供 parser 计算 wire bytes hash
-      _rawReqBodyText: (raw["_rawReqBodyText"] as string | null | undefined) ?? undefined,
-    };
-
+    const { reqBody, proxyInput } = buildProxyInput(proxy);
     const snapshot = parseClaudeProxyRequest(proxyInput, {
       proxyFile: proxySourceFile,
       queryId: queryKey.queryId,
     });
-
-    // 2. 归因
     const snapForAttr = JSON.parse(
       JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
     ) as typeof snapshot;
-    const allAttributions = inferClaudeProxyAttributions(snapForAttr);
-    // T0 --verified-only：仅用于 R9 expected 生成，reconcile/scorecard 仍使用全量 attribution，
-    // 保证 attributionOnlyCoverage / unexplainedCoverage / serverSideCoverage 等正交桶统计不失真。
-    const r9Attributions = verifiedOnly ? filterVerifiedAttributions(allAttributions) : allAttributions;
-
-    // 3. 解析 JSONL
+    const attributions = inferClaudeProxyAttributions(snapForAttr);
     const jsonlRaw = readFileSync(jsonlFile, "utf-8");
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
-
-    // 4. 重建 expected（P0-1：R9 默认关闭，withR9=true 时显式开启）
-    const r9Enabled = input.withR9 === true && !noR9;
     const expected = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
       boundary: {
@@ -232,21 +153,11 @@ export function runPipeline(input: PipelineInput): PipelineResult {
         sessionId: parsed.sessionId,
       },
       hasPreSessionActivity: parsed.hasPreSessionActivity,
-      attributions: r9Enabled ? r9Attributions : undefined,
-      rules: r9Enabled ? { injectFromAttributions: true } : { injectFromAttributions: false },
     });
-
-    // 5. reconcile：始终用全量 attribution，保证归因覆盖率统计正确
-    const report = reconcileClaudeContext({ snapshot, attributions: allAttributions, expected });
-
-    // 6. char diff
+    const report = reconcileClaudeContext({ snapshot, attributions, expected });
     const baseDiff = computeCharDiff(report);
     const diff = injectProxyTexts(baseDiff, report, reqBody);
-    const diffHtml = renderCharDiffHtml(diff);
-
-    // 7. scorecard
-    const scorecard = computeScorecard(queryKey, report, diff, allAttributions);
-
+    const scorecard = computeScorecard(queryKey, report, diff, attributions);
     return {
       queryKey,
       queryKeyHash: hash,
@@ -255,11 +166,9 @@ export function runPipeline(input: PipelineInput): PipelineResult {
       jsonlSourceRef: jsonlFile,
       timestamp,
       scorecard,
-      // artifact 路径由 artifact-writer 填入，此处留空
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const stack = err instanceof Error ? err.stack : undefined;
     return {
       queryKey,
       queryKeyHash: hash,
@@ -272,113 +181,42 @@ export function runPipeline(input: PipelineInput): PipelineResult {
   }
 }
 
-// 带产出数据的版本（用于 artifact 写入）
+// 带产出数据的完整版（用于 artifact 写入）
 export function runPipelineWithData(input: PipelineInput): {
   result: PipelineResult;
   data?: PipelineOutputData;
 } {
-  const { proxy, jsonlFile, noR9, proxyOnly } = input;
+  const { proxy, jsonlFile } = input;
   const { queryKey, queryKeyHash: hash, timestamp, proxySourceFile, trafficLine } = proxy;
 
-  // proxy_without_jsonl：--proxy-only 时走 attribution-only 路径，否则 skip
   if (!jsonlFile || !existsSync(jsonlFile)) {
-    if (!proxyOnly) {
-      return {
-        result: {
-          queryKey,
-          queryKeyHash: hash,
-          status: "skipped",
-          skipReason: "proxy_without_jsonl",
-          proxySourceRef: `${proxySourceFile}:${trafficLine}`,
-          timestamp,
-        },
-      };
-    }
-    // E0-1 proxy-only 路径：proxy → snapshot → attribution → reconcile(expected=undefined)
-    try {
-      const raw = proxy.raw;
-      const reqBody = (raw["reqBody"] as Record<string, unknown>) ?? {};
-      const proxyInput: ProxyRequestInput = {
-        ts: raw["ts"] as string | undefined,
-        startedAt: raw["startedAt"] as string | undefined,
-        reqHeaders: raw["reqHeaders"] as Record<string, string> | undefined,
-        reqBody: reqBody as ProxyRequestInput["reqBody"],
-        _sse_events: raw["_sse_events"] as ProxyRequestInput["_sse_events"],
-        _traffic_jsonl_line: trafficLine,
-      };
-      const snapshot = parseClaudeProxyRequest(proxyInput, {
-        proxyFile: proxySourceFile,
-        queryId: queryKey.queryId,
-      });
-      const snapForAttr = JSON.parse(
-        JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
-      ) as typeof snapshot;
-      const allAttributions = inferClaudeProxyAttributions(snapForAttr);
-      // reconcile 无 expected：仅产出 server_side_attribution + attribution-only 覆盖率
-      const report = reconcileClaudeContext({ snapshot, attributions: allAttributions, expected: undefined });
-      const baseDiff = computeCharDiff(report);
-      const diff = injectProxyTexts(baseDiff, report, reqBody);
-      const diffHtml = renderCharDiffHtml(diff);
-      const scorecard = computeScorecard(queryKey, report, diff, allAttributions);
-      return {
-        result: {
-          queryKey,
-          queryKeyHash: hash,
-          status: "success",
-          proxySourceRef: `${proxySourceFile}:${trafficLine}`,
-          timestamp,
-          scorecard,
-          queryKind: snapshot.request?.queryKind ?? "unknown",
-        },
-        data: { report, diff, diffHtml, attributions: allAttributions, reqBody },
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        result: {
-          queryKey,
-          queryKeyHash: hash,
-          status: "failed",
-          error: message,
-          proxySourceRef: `${proxySourceFile}:${trafficLine}`,
-          timestamp,
-        },
-      };
-    }
+    return {
+      result: {
+        queryKey,
+        queryKeyHash: hash,
+        status: "skipped",
+        skipReason: "proxy_without_jsonl",
+        proxySourceRef: `${proxySourceFile}:${trafficLine}`,
+        timestamp,
+      },
+    };
   }
 
   try {
-    const raw = proxy.raw;
-    const reqBody = (raw["reqBody"] as Record<string, unknown>) ?? {};
-    const proxyInput: ProxyRequestInput = {
-      ts: raw["ts"] as string | undefined,
-      startedAt: raw["startedAt"] as string | undefined,
-      reqHeaders: raw["reqHeaders"] as Record<string, string> | undefined,
-      reqBody: reqBody as ProxyRequestInput["reqBody"],
-      _sse_events: raw["_sse_events"] as ProxyRequestInput["_sse_events"],
-      _traffic_jsonl_line: trafficLine,
-      // P0-3：传递原始字符串供 parser 计算 wire bytes hash
-      _rawReqBodyText: (raw["_rawReqBodyText"] as string | null | undefined) ?? undefined,
-    };
-
+    const { reqBody, proxyInput } = buildProxyInput(proxy);
     const snapshot = parseClaudeProxyRequest(proxyInput, {
       proxyFile: proxySourceFile,
       queryId: queryKey.queryId,
     });
-
     const snapForAttr = JSON.parse(
       JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
     ) as typeof snapshot;
-    const allAttributions = inferClaudeProxyAttributions(snapForAttr);
-    // T0 --verified-only：仅用于 R9 expected 生成，reconcile/scorecard/side-query 分类仍使用全量
-    const { verifiedOnly } = input;
-    const r9Attributions = verifiedOnly ? filterVerifiedAttributions(allAttributions) : allAttributions;
+    const attributions = inferClaudeProxyAttributions(snapForAttr);
 
     const jsonlRaw = readFileSync(jsonlFile, "utf-8");
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
 
-    // P0-1：R9 默认关闭，withR9=true 时显式开启
-    const r9Enabled = input.withR9 === true && !noR9;
+    // rule 驱动重建，不注入 proxy attribution
     const expected = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
       boundary: {
@@ -387,18 +225,14 @@ export function runPipelineWithData(input: PipelineInput): {
         sessionId: parsed.sessionId,
       },
       hasPreSessionActivity: parsed.hasPreSessionActivity,
-      attributions: r9Enabled ? r9Attributions : undefined,
-      rules: r9Enabled ? { injectFromAttributions: true } : { injectFromAttributions: false },
     });
 
-    // P3-1：TargetRequest 只从 expected + request metadata 正向构建，不读取 proxy raw segment。
-    // P3-1：inferredModel 从 JSONL assistant 行提取，优先于 proxy snapshot model 字段
+    // model 优先从 JSONL assistant 行推断，fallback 到 proxy snapshot
     const targetRequest = buildTargetRequest({ expected, snapshot, inferredModel: parsed.inferredModel });
 
-    // reconcile/scorecard/side-query 分类始终使用全量 attribution
     const report = reconcileClaudeContext({
       snapshot,
-      attributions: allAttributions,
+      attributions,
       expected,
       targetRequest,
       proxyRequestBody: reqBody,
@@ -406,13 +240,13 @@ export function runPipelineWithData(input: PipelineInput): {
     const baseDiff = computeCharDiff(report);
     const diff = injectProxyTexts(baseDiff, report, reqBody);
     const diffHtml = renderCharDiffHtml(diff);
-    const scorecard = computeScorecard(queryKey, report, diff, allAttributions);
+    const scorecard = computeScorecard(queryKey, report, diff, attributions);
 
     // queryKind 细化：side_query 中命中 session-title rule 的标注为 session_title_side_query
     const baseQueryKind = snapshot.request?.queryKind ?? "unknown";
     const queryKind = (() => {
       if (baseQueryKind !== "side_query") return baseQueryKind;
-      const hasSessionTitleRule = allAttributions.some(
+      const hasSessionTitleRule = attributions.some(
         (a) => a.ruleId === "claude-code.side-query.session-title.v1",
       );
       return hasSessionTitleRule ? "session_title_side_query" : "side_query";
@@ -429,7 +263,7 @@ export function runPipelineWithData(input: PipelineInput): {
         scorecard,
         queryKind,
       },
-      data: { report, diff, diffHtml, attributions: allAttributions, reqBody },
+      data: { report, diff, diffHtml, attributions, reqBody },
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

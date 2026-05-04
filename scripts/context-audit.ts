@@ -4,16 +4,11 @@
 // 用法：
 //   bun run context:audit                    # 扫描本地所有 proxy records
 //   bun run context:audit --fixtures         # 用 test fixtures 快速跑通调测 loop
-//   bun run context:audit --all-local        # 明确指定扫描全量本地数据
 //   bun run context:audit --since-last       # 只处理上次 run 以来的新 proxy records
 //   bun run context:audit --baseline <runId> # 对比指定 baseline 而非 latest
 //   bun run context:audit:mark-baseline <runId>
 //   bun run context:audit clear              # 清除所有 audit 产物（不删 proxy/jsonl 原始数据）
 //   bun run context:audit clear --keep <N>   # 保留最近 N 个 run，清除其余
-//
-// T0 控制变量 flags（用于 R9 污染量化对照）：
-//   --no-r9          禁用 R9（attribution 反写 system/tools expected），量化 R9 虚高贡献
-//   --verified-only  verifiedFor===null 的 rule 不进入 evidenceBacked（仅 attribution-only）
 
 import { existsSync, readFileSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -34,7 +29,7 @@ import {
   markBaseline,
 } from "../server/src/context-ledger/audit/artifact-writer";
 import { writeAuditRunMd, writeIndexHtml } from "../server/src/context-ledger/audit/report-generator";
-import type { AuditRunRecord } from "../server/src/context-ledger/audit/types";
+import type { AuditRunRecord, FixtureMatrixEntry } from "../server/src/context-ledger/audit/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 参数解析
@@ -52,10 +47,9 @@ if (args[0] === "clear") {
     process.exit(0);
   }
 
-  // 按字典序（= 时间序）列出所有 run 目录
   const allRuns = readdirSync(RUNS_DIR)
     .filter((name) => existsSync(join(RUNS_DIR, name, "run.json")))
-    .sort();  // runId 格式含 ISO 时间戳，字典序 = 时间序
+    .sort();
 
   if (allRuns.length === 0) {
     console.log("runs/ 为空，无需清理。");
@@ -82,7 +76,6 @@ if (args[0] === "clear") {
     rmSync(join(RUNS_DIR, r), { recursive: true, force: true });
   }
 
-  // 清理所有 latest/baseline 指针（全局 + 所有 mode-specific）
   const pointerFiles = [
     LATEST_JSON, BASELINE_JSON,
     ...["fixtures", "all-local", "since-last"].flatMap((m) => [
@@ -117,14 +110,13 @@ if (args[0] === "mark-baseline") {
     console.error(`runId 不存在：${runId}`);
     process.exit(1);
   }
-  // 从 run.json 读取 mode，确保 baseline 指针按 mode 分域
   let markMode: "fixtures" | "all-local" | "since-last" = "all-local";
   try {
     const r = JSON.parse(readFileSync(runJsonFile, "utf-8")) as { mode?: string };
     if (r.mode === "fixtures" || r.mode === "all-local" || r.mode === "since-last") {
       markMode = r.mode;
     }
-  } catch { /* ignore, default to all-local */ }
+  } catch { /* ignore */ }
   markBaseline(runId, markMode);
   console.log(`已标记 baseline → ${runId} (mode: ${markMode})`);
   console.log(`baseline.${markMode}.json：${baselineJsonPath(markMode)}`);
@@ -137,28 +129,16 @@ const mode: AuditRunRecord["mode"] = args.includes("--fixtures")
   ? "since-last"
   : "all-local";
 
-// 控制变量 flags
-const noR9 = args.includes("--no-r9");
-// P0-1：R9 默认关闭；--with-r9 显式开启（主要用于 --compare-modes 时查看 R9 贡献）
-const withR9 = args.includes("--with-r9");
-const verifiedOnly = args.includes("--verified-only");
-// E0-1：proxy_without_jsonl 走 attribution-only 路径而非 skip
-const proxyOnly = args.includes("--proxy-only");
-// E0 --compare-modes：同一批 query 跑 current/no-r9/verified-only 三路，生成对照表
-const compareModes = args.includes("--compare-modes");
-// --session <sessionId>：只处理指定 session（聚焦调试用）
+// --session：只处理指定 session（聚焦调试用）
 const sessionIdx = args.indexOf("--session");
 const sessionFilter = sessionIdx !== -1 ? args[sessionIdx + 1] : undefined;
 
-// --baseline / --compare-run 指定对比 run（两个 flag 语义相同，--compare-run 是更直观的别名）
+// --baseline / --compare-run 指定对比 run
 let baselineRunId: string | undefined;
 const baselineIdx = args.indexOf("--baseline") !== -1 ? args.indexOf("--baseline") : args.indexOf("--compare-run");
 if (baselineIdx !== -1 && args[baselineIdx + 1]) {
   baselineRunId = args[baselineIdx + 1];
 } else {
-  // 默认：按 mode 找 baseline.json，再找 latest run
-  // since-last 特殊：sinceTs 边界应取最近一次 all-local run（不是 latest.since-last.json），
-  // 否则首次运行 since-last 时 latest.since-last.json 不存在，导致 sinceTs 为空扫全量。
   const latestForBoundary = mode === "since-last"
     ? readBaselineRunId(mode) ?? readLatestRunId("all-local") ?? readLatestRunId(mode)
     : readBaselineRunId(mode) ?? readLatestRunId(mode);
@@ -172,11 +152,6 @@ if (baselineIdx !== -1 && args[baselineIdx + 1]) {
 console.log(`\nContext Audit Runner`);
 console.log(`mode: ${mode}`);
 console.log(`baseline: ${baselineRunId ?? "(none)"}`);
-if (noR9) console.log(`[control] --no-r9: R9 attribution 反写已禁用（与默认行为相同）`);
-if (withR9) console.log(`[control] --with-r9: R9 attribution 反写已显式开启（非默认）`);
-if (verifiedOnly) console.log(`[control] --verified-only: 未验证 rule 不进 evidenceBacked`);
-if (proxyOnly) console.log(`[control] --proxy-only: proxy_without_jsonl 走 attribution-only 路径`);
-if (compareModes) console.log(`[control] --compare-modes: 同一批 query 跑 current/no-r9/verified-only 三路对照`);
 if (sessionFilter) console.log(`[filter] --session ${sessionFilter}`);
 console.log(`Discovering...`);
 
@@ -187,7 +162,6 @@ if (mode === "fixtures") {
 } else {
   let sinceTs: string | undefined;
   if (mode === "since-last" && baselineRunId) {
-    // 读取 baseline run.json 的 createdAt 作为起点
     const runJsonFile = join(runDir(baselineRunId), "run.json");
     if (existsSync(runJsonFile)) {
       try {
@@ -221,16 +195,14 @@ if (discovery.matchedProxyJsonl.length === 0 && discovery.proxyWithoutJsonl.leng
 
 const runId = makeRunId();
 ensureAuditDirs(runId);
-
 console.log(`\nrun: ${runId}`);
 console.log(`output: ${runDir(runId)}`);
 console.log(`\nRunning pipeline...`);
 
-// 加载 baseline index（用于 delta 比较）
 const baseline = loadBaselineIndex(baselineRunId);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Pipeline（proxy+jsonl matched）
+// Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
 const allResults = [];
@@ -238,14 +210,12 @@ let successCount = 0;
 let failedCount = 0;
 let skippedCount = 0;
 
-// proxy_without_jsonl → --proxy-only 时走 attribution-only，否则直接 skip
+// proxy_without_jsonl → skip（没有 JSONL 无法做 rule 驱动对账）
 for (const proxy of discovery.proxyWithoutJsonl) {
-  const { result, data } = runPipelineWithData({ proxy, jsonlFile: null, noR9, withR9, verifiedOnly, proxyOnly });
-  const written = writeQueryArtifacts(runId, result, data);
+  const { result } = runPipelineWithData({ proxy, jsonlFile: null });
+  const written = writeQueryArtifacts(runId, result, undefined);
   allResults.push(written);
-  if (result.status === "success") successCount++;
-  else if (result.status === "failed") failedCount++;
-  else skippedCount++;
+  skippedCount++;
 }
 
 // proxy+jsonl matched → 完整 pipeline
@@ -255,7 +225,7 @@ for (let i = 0; i < total; i++) {
   const label = `${proxy.queryKey.sessionId.slice(0, 8)}…/${proxy.queryKey.queryId.slice(0, 20)}`;
   process.stdout.write(`  [${i + 1}/${total}] ${label} `);
 
-  const { result, data } = runPipelineWithData({ proxy, jsonlFile, noR9, withR9, verifiedOnly });
+  const { result, data } = runPipelineWithData({ proxy, jsonlFile });
   const written = writeQueryArtifacts(runId, result, data);
   allResults.push(written);
 
@@ -277,15 +247,7 @@ for (let i = 0; i < total; i++) {
 
 const indexEntries = writeIndex(runId, allResults, baseline);
 
-// 记录本次使用的控制变量 flags
-const controlFlags = {
-  ...(noR9 ? { noR9: true } : {}),
-  ...(withR9 ? { withR9: true } : {}),
-  ...(verifiedOnly ? { verifiedOnly: true } : {}),
-  ...(proxyOnly ? { proxyOnly: true } : {}),
-};
-
-// T0 rule registry 静态摘要（每次 run 都输出，不依赖 CLI binary）
+// rule registry 静态摘要
 const verifiedRules = CONTEXT_LEDGER_RULES.filter((r) => r.verifiedFor === SUPPORTED_CLAUDE_CODE_VERSION).length;
 const ruleRegistrySummary = {
   supportedVersion: SUPPORTED_CLAUDE_CODE_VERSION,
@@ -295,72 +257,10 @@ const ruleRegistrySummary = {
   lastCliVerificationNote: "2026-05-02：exact_text rules 40，1 unique / 5 multi / 34 missing（见 scripts/verify-rules-against-cli.ts）",
 };
 
-// E0 --compare-modes：对同一批 query 额外跑 no-r9 / verified-only 两路，生成三列对照表
-import type { FixtureMatrixEntry, ModeComparisonRow, ScorecardV2Summary } from "../server/src/context-ledger/audit/types";
-
-// 把 QueryScorecard 转成 ScorecardV2Summary（两者字段集合相同）
-function toV2Summary(sc: import("../server/src/context-ledger/audit/types").QueryScorecard | undefined): ScorecardV2Summary | null {
-  if (!sc) return null;
-  return {
-    wireExactCoverage: sc.wireExactCoverage,
-    canonicalExactCoverage: sc.canonicalExactCoverage,
-    templateCoverage: sc.templateCoverage,
-    regexCoverage: sc.regexCoverage,
-    presenceCoverage: sc.presenceCoverage,
-    serverSideCoverage: sc.serverSideCoverage,
-    attributionOnlyCoverage: sc.attributionOnlyCoverage,
-    unexplainedCoverage: sc.unexplainedCoverage,
-    regexOverreachRisk: sc.regexOverreachRisk,
-    pendingRuleCoverage: sc.pendingRuleCoverage,
-    requestLevelExact: sc.requestLevelExact,
-    proxyChars: sc.proxyChars,
-  };
-}
-
-// E0 三路对照：对同一批 matchedProxyJsonl 额外跑 no-r9 / verified-only
-let modeComparison: ModeComparisonRow[] | undefined;
-if (compareModes) {
-  console.log(`\n[compare-modes] 开始三路对照（no-r9 / verified-only）...`);
-  const currentScorecardByHash = new Map(
-    allResults.filter((r) => r.scorecard).map((r) => [r.queryKeyHash, r.scorecard!]),
-  );
-  const noR9ScorecardByHash = new Map<string, NonNullable<typeof allResults[0]["scorecard"]>>();
-  const verifiedOnlyScorecardByHash = new Map<string, NonNullable<typeof allResults[0]["scorecard"]>>();
-
-  const matchedTotal = discovery.matchedProxyJsonl.length;
-  for (let i = 0; i < matchedTotal; i++) {
-    const { proxy, jsonlFile } = discovery.matchedProxyJsonl[i];
-    process.stdout.write(`  [compare ${i + 1}/${matchedTotal}] `);
-    const { result: noR9Result } = runPipelineWithData({ proxy, jsonlFile, noR9: true, verifiedOnly: false });
-    if (noR9Result.scorecard) noR9ScorecardByHash.set(noR9Result.queryKeyHash, noR9Result.scorecard);
-    const { result: voResult } = runPipelineWithData({ proxy, jsonlFile, noR9: false, verifiedOnly: true });
-    if (voResult.scorecard) verifiedOnlyScorecardByHash.set(voResult.queryKeyHash, voResult.scorecard);
-    process.stdout.write(`✓\n`);
-  }
-
-  modeComparison = discovery.matchedProxyJsonl.map(({ proxy }) => {
-    const hash = proxy.queryKeyHash;
-    const currentSc = currentScorecardByHash.get(hash);
-    const mainResult = allResults.find((r) => r.queryKeyHash === hash);
-    return {
-      queryKeyHash: hash,
-      queryId: proxy.queryKey.queryId,
-      sessionId: proxy.queryKey.sessionId,
-      queryKind: mainResult?.queryKind,
-      proxyChars: currentSc?.proxyChars ?? noR9ScorecardByHash.get(hash)?.proxyChars ?? 0,
-      current: toV2Summary(currentSc),
-      noR9: toV2Summary(noR9ScorecardByHash.get(hash)),
-      verifiedOnly: toV2Summary(verifiedOnlyScorecardByHash.get(hash)),
-    } satisfies ModeComparisonRow;
-  });
-  console.log(`[compare-modes] 三路对照完成，${modeComparison.length} 条记录`);
-}
-
+// fixture matrix（fixture 模式下输出来源分布）
 let fixtureMatrix: FixtureMatrixEntry[] | undefined;
 if (mode === "fixtures") {
-  const scorecardByHash = new Map(
-    indexEntries.map((e) => [e.queryKeyHash, e]),
-  );
+  const scorecardByHash = new Map(indexEntries.map((e) => [e.queryKeyHash, e]));
   fixtureMatrix = discovery.discoveredProxyQueries.map((proxy) => {
     const raw = proxy.raw;
     const entry = scorecardByHash.get(proxy.queryKeyHash);
@@ -368,7 +268,6 @@ if (mode === "fixtures") {
       fixtureName: (raw["_fixtureName"] as string | undefined) ?? proxy.queryKey.sessionId,
       source: (raw["_fixtureSource"] as string | undefined) ?? "unknown",
       queryId: proxy.queryKey.queryId,
-      // P0-2 后从 indexEntry.v2 读正交桶；旧 evidenceBackedCoverage 字段已被 wireExact + template 取代
       wireExactCoverage: entry?.v2?.wireExactCoverage,
       templateCoverage: entry?.v2?.templateCoverage,
       verdict: entry?.verdict,
@@ -379,10 +278,8 @@ if (mode === "fixtures") {
 const run = writeRunJson(runId, {
   mode,
   baselineRunId,
-  controlFlags: Object.keys(controlFlags).length > 0 ? controlFlags : undefined,
   fixtureMatrix,
   ruleRegistrySummary,
-  modeComparison,
   discoveredProxyQueries: discovery.discoveredProxyQueries.length,
   matchedProxyJsonlQueries: discovery.matchedProxyJsonl.length,
   proxyWithoutJsonlQueries: discovery.proxyWithoutJsonl.length,

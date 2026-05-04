@@ -252,10 +252,8 @@ export function writeRunJson(
   params: {
     mode: AuditRunRecord["mode"];
     baselineRunId?: string;
-    controlFlags?: import("./types").AuditControlFlags;
     fixtureMatrix?: import("./types").FixtureMatrixEntry[];
     ruleRegistrySummary?: import("./types").RuleRegistrySummary;
-    modeComparison?: import("./types").ModeComparisonRow[];
     discoveredProxyQueries: number;
     matchedProxyJsonlQueries: number;
     proxyWithoutJsonlQueries: number;
@@ -266,7 +264,7 @@ export function writeRunJson(
   },
 ): AuditRunRecord {
   const {
-    mode, baselineRunId, controlFlags, fixtureMatrix, ruleRegistrySummary, modeComparison,
+    mode, baselineRunId, fixtureMatrix, ruleRegistrySummary,
     discoveredProxyQueries, matchedProxyJsonlQueries,
     proxyWithoutJsonlQueries, jsonlOnlySessions, jsonlOnlyCandidateQueries,
     baselineEntries, currentEntries,
@@ -285,10 +283,8 @@ export function writeRunJson(
     createdAt: new Date().toISOString(),
     baselineRunId,
     mode,
-    ...(controlFlags && Object.keys(controlFlags).length > 0 ? { controlFlags } : {}),
     ...(fixtureMatrix ? { fixtureMatrix } : {}),
     ...(ruleRegistrySummary ? { ruleRegistrySummary } : {}),
-    ...(modeComparison ? { modeComparison } : {}),
     discoveredProxyQueries,
     matchedProxyJsonlQueries,
     proxyWithoutJsonlQueries,

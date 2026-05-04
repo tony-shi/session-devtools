@@ -27,9 +27,6 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
     `- **createdAt**: ${run.createdAt}`,
     `- **baselineRunId**: ${run.baselineRunId ?? "(none — first run)"}`,
     `- **mode**: ${run.mode}`,
-    ...(run.controlFlags && Object.keys(run.controlFlags).length > 0 ? [
-      `- **controlFlags**: ${Object.entries(run.controlFlags).filter(([,v]) => v).map(([k]) => `\`--${k.replace(/([A-Z])/g, '-$1').toLowerCase()}\``).join(", ")}`,
-    ] : []),
     ``,
     `## Discovery Summary`,
     ``,
@@ -211,99 +208,33 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
     lines.push(``);
   }
 
-  // T0 审计说明 section（动态生成，不硬编码"已修复"状态）
+  // 覆盖率口径说明
   lines.push(`## 覆盖率口径说明`, ``);
-  const isNoR9 = run.controlFlags?.noR9 === true;
-  const isVerifiedOnly = run.controlFlags?.verifiedOnly === true;
-  const isProxyOnly = run.controlFlags?.proxyOnly === true;
-  lines.push(`本次 run 控制变量：`);
-  lines.push(`- R9 attribution 注入：${isNoR9 ? "**已关闭**（--no-r9）" : "开启（injectFromAttributions=true）"}`);
-  lines.push(`- verifiedOnly：${isVerifiedOnly ? "**已开启**（仅 verifiedFor 匹配的 rule 进入 expected）" : "关闭（全量 rule）"}`);
-  lines.push(`- proxyOnly：${isProxyOnly ? "**已开启**（attribution-only 路径）" : "关闭"}`);
-  lines.push(``);
   if (run.ruleRegistrySummary) {
     const rs = run.ruleRegistrySummary;
-    lines.push(`rule registry 状态：`);
-    lines.push(`- 支持版本：\`${rs.supportedVersion}\``);
-    lines.push(`- 总规则数：${rs.totalRules}，已验证：${rs.verifiedRules}，未验证：${rs.unverifiedRules}`);
+    lines.push(`| rule registry | 值 |`);
+    lines.push(`|--------------|-----|`);
+    lines.push(`| 支持版本 | \`${rs.supportedVersion}\` |`);
+    lines.push(`| 总规则数 | ${rs.totalRules} |`);
+    lines.push(`| 已验证 | ${rs.verifiedRules} |`);
+    lines.push(`| 未验证 | ${rs.unverifiedRules} |`);
     if (rs.unverifiedRules > 0) {
-      lines.push(`- ⚠️ ${rs.unverifiedRules} 条规则 verifiedFor=null，template/regex 覆盖率可能来自未经验证的规则`);
+      lines.push(``);
+      lines.push(`> ⚠️ ${rs.unverifiedRules} 条规则 verifiedFor=null，template/regex 覆盖率可能包含未经 CLI 验证的 rule`);
     }
     if (rs.lastCliVerificationNote) {
-      lines.push(`- CLI 对账备注：${rs.lastCliVerificationNote}`);
+      lines.push(`> CLI 对账备注：${rs.lastCliVerificationNote}`);
     }
     lines.push(``);
   }
-  lines.push(`覆盖率桶含义：`);
-  lines.push(`- **wireExact**：raw_hash 精确匹配（basis=raw_hash/tool_use_id），最可信`);
-  lines.push(`- **template**：rule contentPattern 正向重建后 ruleId 对齐（basis=rule_id + exact_text materialization）`);
+  lines.push(`覆盖率桶含义（按可信度降序）：`);
+  lines.push(`- **wireExact**：raw_hash 精确匹配，最可信`);
+  lines.push(`- **template**：rule contentPattern 正向重建命中（exact_text materialization）`);
   lines.push(`- **regex**：normalized_text/shape rule 的 ruleId 对齐`);
-  lines.push(`- **presence**：仅验证段存在（raw_hash/normalized_hash policy 失败后的降级，或 shape/presence rule）`);
-  lines.push(`- **attrOnly**：有归因但无 expected（P0-1 修复后，R9 关闭时此桶大幅增加）`);
+  lines.push(`- **presence**：仅验证段存在（hash policy 失败降级，或 shape/presence rule）`);
+  lines.push(`- **attrOnly**：有归因无 expected（rule 未物化）`);
   lines.push(`- **unexplained**：无归因无 expected`);
   lines.push(``);
-
-  // E0 --compare-modes 三模式对比表
-  if (run.modeComparison && run.modeComparison.length > 0) {
-    lines.push(`## 三模式 Coverage 对比（--compare-modes）`, ``);
-    lines.push(`> 三列分别对应：current（默认）/ no-r9（关闭 R9 attribution 注入）/ verified-only（仅 verifiedFor 匹配 rule）`);
-    lines.push(`> 列差 = R9 对覆盖率的实际贡献 / unverified rule 对覆盖率的实际贡献`);
-    lines.push(``);
-    lines.push(`| query | chars | 桶 | current | no-r9 | verified-only | Δno-r9 | Δverified |`);
-    lines.push(`|-------|-------|----|---------|-------|---------------|--------|-----------|`);
-    const pct = (n: number | null | undefined) => n != null ? `${(n * 100).toFixed(1)}%` : "-";
-    const delta = (a: number | null | undefined, b: number | null | undefined) => {
-      if (a == null || b == null) return "-";
-      const d = (b - a) * 100;
-      return d > 0.05 ? `+${d.toFixed(1)}%` : d < -0.05 ? `${d.toFixed(1)}%` : "≈0";
-    };
-    for (const row of run.modeComparison) {
-      const label = `${row.sessionId.slice(0, 8)}…/${row.queryId.slice(0, 16)}`;
-      // 每个 query 输出 4 行：wire/template/regex/attrOnly
-      const buckets: Array<{ name: string; cur: number | null | undefined; nr: number | null | undefined; vo: number | null | undefined }> = [
-        { name: "wire",     cur: row.current?.wireExactCoverage,      nr: row.noR9?.wireExactCoverage,      vo: row.verifiedOnly?.wireExactCoverage },
-        { name: "template", cur: row.current?.templateCoverage,       nr: row.noR9?.templateCoverage,       vo: row.verifiedOnly?.templateCoverage },
-        { name: "regex",    cur: row.current?.regexCoverage,          nr: row.noR9?.regexCoverage,          vo: row.verifiedOnly?.regexCoverage },
-        { name: "attrOnly", cur: row.current?.attributionOnlyCoverage, nr: row.noR9?.attributionOnlyCoverage, vo: row.verifiedOnly?.attributionOnlyCoverage },
-      ];
-      for (let bi = 0; bi < buckets.length; bi++) {
-        const b = buckets[bi];
-        const queryLabel = bi === 0 ? label : "";
-        const charsLabel = bi === 0 ? String(row.proxyChars) : "";
-        lines.push(
-          `| ${queryLabel} | ${charsLabel} | ${b.name}`
-          + ` | ${pct(b.cur)} | ${pct(b.nr)} | ${pct(b.vo)}`
-          + ` | ${delta(b.cur, b.nr)} | ${delta(b.cur, b.vo)} |`
-        );
-      }
-      lines.push(`| | | | | | | | |`);  // 分隔行
-    }
-    lines.push(``);
-
-    // 聚合摘要
-    const nonNull = run.modeComparison.filter((r) => r.current && r.noR9 && r.verifiedOnly);
-    if (nonNull.length > 0) {
-      const avg = (getter: (r: typeof nonNull[0]) => number | null | undefined) => {
-        const vals = nonNull.map(getter).filter((v): v is number => v != null);
-        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-      };
-      lines.push(`### 聚合均值（${nonNull.length} 条 query）`, ``);
-      lines.push(`| 桶 | current | no-r9 | verified-only | Δno-r9 | Δverified |`);
-      lines.push(`|----|---------|-------|---------------|--------|-----------|`);
-      const aggRows: Array<{ name: string; c: number | null; n: number | null; v: number | null }> = [
-        { name: "wire",     c: avg((r) => r.current?.wireExactCoverage),       n: avg((r) => r.noR9?.wireExactCoverage),       v: avg((r) => r.verifiedOnly?.wireExactCoverage) },
-        { name: "template", c: avg((r) => r.current?.templateCoverage),        n: avg((r) => r.noR9?.templateCoverage),        v: avg((r) => r.verifiedOnly?.templateCoverage) },
-        { name: "regex",    c: avg((r) => r.current?.regexCoverage),           n: avg((r) => r.noR9?.regexCoverage),           v: avg((r) => r.verifiedOnly?.regexCoverage) },
-        { name: "attrOnly", c: avg((r) => r.current?.attributionOnlyCoverage), n: avg((r) => r.noR9?.attributionOnlyCoverage), v: avg((r) => r.verifiedOnly?.attributionOnlyCoverage) },
-      ];
-      for (const b of aggRows) {
-        lines.push(`| ${b.name} | ${pct(b.c)} | ${pct(b.n)} | ${pct(b.v)} | ${delta(b.c, b.n)} | ${delta(b.c, b.v)} |`);
-      }
-      lines.push(``);
-      lines.push(`> Δno-r9 为负值 → R9 对该桶有虚高贡献；Δverified 为负值 → unverified rule 对该桶有虚高贡献。`);
-      lines.push(``);
-    }
-  }
 
   // Next actions
   lines.push(`## Next Action Suggestions`, ``);

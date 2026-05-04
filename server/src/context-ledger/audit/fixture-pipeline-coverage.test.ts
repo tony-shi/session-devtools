@@ -11,13 +11,13 @@ import { runPipelineWithData } from "./pipeline";
 
 const discovery = discoverFixtures();
 
-// proxy_without_jsonl fixtures（如 side-query-session-title）走 proxyOnly 路径
+// proxy_without_jsonl fixtures（如 side-query-session-title）→ 验证 skip 行为
 for (const proxy of discovery.proxyWithoutJsonl) {
   const name = (proxy.raw["_fixtureName"] as string | undefined) ?? proxy.queryKey.sessionId;
-  test(`fixture [proxy-only] ${name}`, () => {
-    const { result } = runPipelineWithData({ proxy, jsonlFile: null, proxyOnly: true });
-    // 只要 pipeline 不抛异常就算覆盖到了；具体业务正确性由 audit.test.ts 保证
-    expect(result.status).toBe("success");
+  test(`fixture [no-jsonl] ${name}`, () => {
+    const { result } = runPipelineWithData({ proxy, jsonlFile: null });
+    expect(result.status).toBe("skipped");
+    expect(result.skipReason).toBe("proxy_without_jsonl");
   });
 }
 

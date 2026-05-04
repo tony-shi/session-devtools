@@ -394,67 +394,6 @@ describe("cross-fixture invariants", () => {
     }
   });
 
-  // ── P2-3：comparePolicy 驱动 M3.5 comparisonGrade（fixture 驱动） ─────────────────
-  // task-reminder-smoosh (v2.1.126) 覆盖 4 种 comparePolicy 分支
-  // 注：需传 attributions 给 reconstructor 才能触发 R9 → rule_id alignments
-  test("P2-3: M3.5 rule_id match 产出正确的 comparisonGrade/confidence（fixture 驱动）", () => {
-    const caseName = "task-reminder-smoosh";
-    const proxyRaw = JSON.parse(readFileSync(`${FIXTURE_DIR}/${caseName}/proxy-request.json`, "utf8"));
-    const jsonlRaw = readFileSync(`${FIXTURE_DIR}/${caseName}/session.jsonl`, "utf8");
-    const snapshot = parseClaudeProxyRequest(proxyRaw, { proxyFile: `${FIXTURE_DIR}/${caseName}/proxy-request.json` });
-    const snapForAttr = JSON.parse(JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: proxyRaw.reqBody } })) as typeof snapshot;
-    const attributions = inferClaudeProxyAttributions(snapForAttr);
-    const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile: `${FIXTURE_DIR}/${caseName}/session.jsonl` });
-    // 传 attributions 并显式开启 R9（P0-1 后默认关闭）以测试 M3.5 rule_id 对齐行为
-    const expectedWithR9 = reconstructExpectedClaudeContext({
-      mutations: parsed.mutations,
-      boundary: { queryId: `q-${caseName}`, proxyTimestamp: proxyRaw.ts, sessionId: parsed.sessionId },
-      hasPreSessionActivity: parsed.hasPreSessionActivity,
-      attributions,
-      rules: { injectFromAttributions: true },
-    });
-    const report = reconcileClaudeContext({ snapshot, attributions, expected: expectedWithR9, fixtureName: caseName });
-    const ruleIdAlignments = report.alignments.filter((a) => a.basis === "rule_id");
-
-    // 至少有覆盖到 rule_id alignments
-    expect(ruleIdAlignments.length).toBeGreaterThan(0);
-
-    for (const a of ruleIdAlignments) {
-      const policy = a.note?.match(/policy=(\w+)/)?.[1];
-      expect(policy).toBeDefined();
-
-      if (policy === "raw_hash") {
-        // raw_hash policy：exact_text rule，M3.5 命中说明 M1 未命中（hash 不等），降为 presence
-        expect(a.comparisonGrade).toBe("presence");
-      } else if (policy === "normalized_hash") {
-        // normalized_hash：M2 未命中时降为 presence
-        expect(a.comparisonGrade).toBe("presence");
-      } else if (policy === "presence_only" || policy === "structural") {
-        // presence/structural：只验存在性
-        expect(a.comparisonGrade).toBe("presence");
-        expect(a.confidence).toBe("inferred");
-      } else if (policy === "char_diff") {
-        // char_diff + exact_text → template；其他材质 → regex
-        expect(["template", "regex"]).toContain(a.comparisonGrade);
-      }
-    }
-
-    // 验证 note 格式包含 policy 字段（P2-3 改动的标志）
-    const notesWithPolicy = ruleIdAlignments.filter((a) => a.note?.includes("policy="));
-    expect(notesWithPolicy.length).toBe(ruleIdAlignments.length);
-
-    // 分 policy 统计（确认各分支都有命中）
-    const policyCounts: Record<string, number> = {};
-    for (const a of ruleIdAlignments) {
-      const p = a.note?.match(/policy=(\w+)/)?.[1] ?? "unknown";
-      policyCounts[p] = (policyCounts[p] ?? 0) + 1;
-    }
-    // task-reminder-smoosh 应覆盖 raw_hash / presence_only / normalized_hash / structural
-    expect(policyCounts["raw_hash"] ?? 0).toBeGreaterThan(0);
-    expect(policyCounts["presence_only"] ?? 0).toBeGreaterThan(0);
-    expect(policyCounts["normalized_hash"] ?? 0).toBeGreaterThan(0);
-    expect(policyCounts["structural"] ?? 0).toBeGreaterThan(0);
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

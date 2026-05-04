@@ -361,61 +361,31 @@ function makeSideQueryProxyRecord() {
   };
 }
 
-describe("P3-4: pipeline attribution-only（proxy_without_jsonl + proxyOnly=true）", () => {
+describe("proxy_without_jsonl：无 JSONL 时 pipeline 返回 skipped", () => {
   it("side-query-session-title fixture 在 discoverFixtures 结果中出现在 proxyWithoutJsonl", () => {
-    // side-query-session-title 已加入 VALID_FIXTURE_NAMES，但无 session.jsonl
     expect(VALID_FIXTURE_NAMES).toContain("side-query-session-title");
     const discovery = discoverFixtures();
-    const pwj = discovery.proxyWithoutJsonl;
-    const found = pwj.find((r) => (r.raw["_fixtureName"] as string) === "side-query-session-title");
+    const found = discovery.proxyWithoutJsonl.find(
+      (r) => (r.raw["_fixtureName"] as string) === "side-query-session-title",
+    );
     expect(found).toBeDefined();
-    // 不在 matchedProxyJsonl 里（无 JSONL）
     const matched = discovery.matchedProxyJsonl.find(
       (m) => (m.proxy.raw["_fixtureName"] as string) === "side-query-session-title",
     );
     expect(matched).toBeUndefined();
   });
 
-  it("proxyOnly=false 时 runPipeline 返回 status=skipped, skipReason=proxy_without_jsonl", () => {
+  it("jsonlFile=null 时 runPipeline 返回 status=skipped", () => {
     const proxy = makeSideQueryProxyRecord();
-    const result = runPipeline({ proxy, jsonlFile: null, proxyOnly: false });
+    const result = runPipeline({ proxy, jsonlFile: null });
     expect(result.status).toBe("skipped");
     expect(result.skipReason).toBe("proxy_without_jsonl");
   });
 
-  it("proxyOnly=true 时 runPipeline 返回 status=success，包含 scorecard", () => {
+  it("jsonlFile=null 时 runPipelineWithData 返回 status=skipped，无 data", () => {
     const proxy = makeSideQueryProxyRecord();
-    const result = runPipeline({ proxy, jsonlFile: null, proxyOnly: true });
-    expect(result.status).toBe("success");
-    expect(result.scorecard).toBeDefined();
-    // attribution-only 模式：无 expected → 所有 proxy chars 落在 attributionOnly / serverSide / unexplained 桶
-    const sc = result.scorecard!;
-    expect(sc.proxyChars).toBeGreaterThan(0);
-    // wireExact 和 templateCoverage 应为 0（无 expected segments）
-    expect(sc.wireExactCoverage).toBe(0);
-    expect(sc.templateCoverage).toBe(0);
-    // attributionOnly + serverSide + unexplained ≈ 1.0
-    const accountedFor =
-      sc.attributionOnlyCoverage + sc.serverSideCoverage + sc.unexplainedCoverage;
-    expect(accountedFor).toBeCloseTo(1.0, 1);
-  });
-
-  it("proxyOnly=true 时 runPipelineWithData 返回 data，report 无 expected segments", () => {
-    const proxy = makeSideQueryProxyRecord();
-    const { result, data } = runPipelineWithData({ proxy, jsonlFile: null, proxyOnly: true });
-    expect(result.status).toBe("success");
-    expect(data).toBeDefined();
-    // 无 expected → reconciliationReport.expected 为 undefined
-    expect(data!.report.expected).toBeUndefined();
-    // attributions 非空（proxy 有 billing header + system prompt → 有归因）
-    expect(data!.attributions.length).toBeGreaterThan(0);
-  });
-
-  it("attribution-only 报告的 queryKind 应为 side_query 或 session_title_side_query", () => {
-    const proxy = makeSideQueryProxyRecord();
-    const result = runPipeline({ proxy, jsonlFile: null, proxyOnly: true });
-    expect(result.status).toBe("success");
-    // side query fixture 应当被识别为 side_query 或 session_title_side_query
-    expect(["side_query", "session_title_side_query", "unknown"]).toContain(result.queryKind ?? "unknown");
+    const { result, data } = runPipelineWithData({ proxy, jsonlFile: null });
+    expect(result.status).toBe("skipped");
+    expect(data).toBeUndefined();
   });
 });

@@ -55,13 +55,12 @@ import type {
   ContextMutation,
   ContextSegment,
   ExpectedQueryContext,
-  ProxySegmentAttribution,
   SegmentCategory,
   SegmentRole,
   SegmentSection,
   SourceRef,
 } from "./types";
-import { CONTEXT_LEDGER_RULES, getContextLedgerRule } from "./rule-registry";
+import { CONTEXT_LEDGER_RULES } from "./rule-registry";
 import type { ContextLedgerRule } from "./rule-registry";
 
 // 与 proxy-snapshot-parser 口径一致：16位短截 SHA-256
@@ -73,7 +72,7 @@ function sha256Short(text: string): string {
 // 输入 / 输出 / 配置
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** harness rule 开关；默认全部启用。每条规则可独立关闭，便于回归调试。 */
+/** harness rule 开关；默认全部启用。每条规则可独立关闭，便于单元回归调试。 */
 export interface HarnessRuleConfig {
   appendBaseMessages?: boolean; // R1
   mergeAssistantToolUses?: boolean; // R2
@@ -83,7 +82,6 @@ export interface HarnessRuleConfig {
   filterKnownNoise?: boolean; // R6
   apiErrorRetryAlignment?: boolean; // R7
   filterSyntheticApiError?: boolean; // R8
-  injectFromAttributions?: boolean; // R9: 从 attribution 反向生成 system/tools expected segments
 }
 
 const DEFAULT_RULES: Required<HarnessRuleConfig> = {
@@ -95,10 +93,6 @@ const DEFAULT_RULES: Required<HarnessRuleConfig> = {
   filterKnownNoise: true,
   apiErrorRetryAlignment: true,
   filterSyntheticApiError: true,
-  // P0-1：R9 默认关闭，避免 proxy attribution 反向注入 expected。
-  // 需要 R9 时请显式传 rules: { injectFromAttributions: true }，
-  // 或在 context-audit.ts 里使用 --with-r9 flag。
-  injectFromAttributions: false,
 };
 
 export interface QueryBoundary {
@@ -122,26 +116,15 @@ export interface ReconstructInput {
   fixtureName?: string;
   /** 来自 JsonlMutationParseResult.hasPreSessionActivity：--resume 时 JSONL 里存在活动前置信号。 */
   hasPreSessionActivity?: boolean;
-  /**
-   * proxy attribution 结果（来自 inferClaudeProxyAttributions）。
-   * 提供后，reconstructor 用 attribution 里已命中的 ruleId 正向重建
-   * system / tools expected segments（R9_inject_from_attribution）。
-   * 不提供时 system/tools 段仍列为 unimplementedRules。
-   *
-   * P0-1：R9 严格正向重建，禁止读取 proxy rawText/rawHash。
-   * materialization=exact_text → 从 contentPattern 计算 rawHash；
-   * materialization=normalized_text → 从 contentPattern + captureGroups 解析后计算 rawHash；
-   * materialization=shape/presence/unavailable → 仅保留 charCount，不生成 rawHash。
-   */
-  attributions?: ProxySegmentAttribution[];
 }
 
 /** 暂未实现规则的标识。结果中 metadata.unimplementedRules 会列出这些。 */
 export const UNIMPLEMENTED_RULES = [
-  // system_prompt_injection / tools_schema_injection：有 attributions 时由 R9 实现，否则保留
   "system_reminder_per_turn",
   "prior_session_history",
   "compaction_replacement",
+  "system_prompt_injection",
+  "tools_schema_injection",
 ] as const;
 
 export type UnimplementedRuleId = (typeof UNIMPLEMENTED_RULES)[number];
@@ -170,30 +153,11 @@ export function reconstructExpectedClaudeContext(
 
   // 4. R1–R5：把每条 mutation 映射为 ContextSegment；在 metadata.logicalMessage
   //    标记同一逻辑 message 的归并组（不物理合并，给后续 reconciliation 做 N:1 对齐）。
-  const messageSegments = mapMutationsToSegments(surviving, rules);
-
-  // 4b. R9：从 proxy attributions 反向生成 system / tools expected segments。
-  // 每条 attribution 里有 ruleId，从 CONTEXT_LEDGER_RULES 读 reconstruction 信息，
-  // 生成对应的 expected segment。order 用负数保证排在 messages 段之前。
-  const attributionSegments = rules.injectFromAttributions && input.attributions
-    ? buildSegmentsFromAttributions(input.attributions)
-    : [];
-
-  // system/tools segments 排在 messages 之前（order < 0），重新给 messageSegments 编号
-  const attrCount = attributionSegments.length;
-  const segments: ContextSegment[] = [
-    ...attributionSegments,
-    ...messageSegments.map((s) => ({ ...s, order: (s.order ?? 0) + attrCount })),
-  ];
+  const segments = mapMutationsToSegments(surviving, rules);
 
   // 5. 收集 rulesApplied / unimplementedRules。
-  const rulesApplied = collectAppliedRules(rules, surviving, attributionSegments);
-  // R9 覆盖了 system/tools 后，只在没有 attribution 时才标记 unimplemented
-  const hasAttributionInjection = attributionSegments.length > 0;
-  const unimplementedRules: string[] = [
-    ...UNIMPLEMENTED_RULES,
-    ...(!hasAttributionInjection ? ["system_prompt_injection", "tools_schema_injection"] : []),
-  ];
+  const rulesApplied = collectAppliedRules(rules, surviving);
+  const unimplementedRules: string[] = [...UNIMPLEMENTED_RULES];
 
   // 6. 检测 prefix incomplete：JSONL prefix 是否缺少 prior history turn。
   // 判断依据：parser 在第一条有时间戳的 user/assistant 行之前检测到 last-prompt，
@@ -654,107 +618,6 @@ function ruleIdForCategory(
   return undefined;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// R9（P0-1 修订版）：从 proxy attribution 正向重建 system / tools expected segments
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// P0-1 核心约束：禁止从 proxy rawText/rawHash 反写 expected。
-// expected segment 的内容必须完全来自 rule.reconstruction.emits（rule 正向定义），
-// 不读 proxySegmentsById，因此参数已被移除。
-//
-// materialization 分流：
-//   exact_text      → 从 contentPattern（静态字面量）计算 rawHash
-//                     无 contentPattern 时不生成 rawHash（归入 unimplemented）
-//   normalized_text → 从 contentPattern + captureGroups 解析占位符后计算 rawHash
-//                     无 contentPattern 时不生成 rawHash
-//   shape           → 内容动态，仅保留 charCount（presence_only 语义）
-//   presence        → 仅保留 charCount
-//   unavailable     → 跳过，不生成 expected segment
-
-function buildSegmentsFromAttributions(
-  attributions: ProxySegmentAttribution[],
-): ContextSegment[] {
-  const segments: ContextSegment[] = [];
-  const seenRuleIds = new Set<string>();
-  let order = -100000; // 负数 order 保证排在 messages 段之前
-
-  for (const attr of attributions) {
-    const ruleId = attr.ruleId;
-    if (!ruleId) continue;
-    if (seenRuleIds.has(ruleId)) continue;
-
-    const rule = getContextLedgerRule(ruleId);
-    if (!rule) continue;
-
-    const recon = rule.reconstruction;
-    if (!recon) continue;
-
-    const emits = recon.emits;
-    // 只处理 system / tools section；messages 层由 mutations 处理
-    if (emits.section !== "system" && emits.section !== "tools") continue;
-    // billing_noise 不生成 expected segment（R6 已处理）
-    if (emits.category === "billing_noise") continue;
-    // unavailable：无法重建，跳过
-    if (recon.materialization === "unavailable") continue;
-
-    seenRuleIds.add(ruleId);
-
-    const charCount = attr.charCount ?? 0;
-    const sourceRef: SourceRef = {
-      kind: "harness_rule",
-      harness: { ruleId, version: rule.verifiedFor ?? "unverified" },
-      label: `rule:${ruleId}`,
-    };
-
-    const seg: ContextSegment = {
-      id: `eseg-r9-${ruleId.replace(/[^a-z0-9]/gi, "-")}`,
-      section: emits.section as SegmentSection,
-      category: emits.category as SegmentCategory,
-      label: `${emits.section}/${emits.category} (${ruleId})`,
-      sourceRefs: [sourceRef],
-      ...(emits.section === "system" ? { role: "system" as SegmentRole } : {}),
-      order: order++,
-      lifecycle: emits.lifecycle ?? "session",
-      flags: emits.flags ?? [],
-      charCount,
-      tokenEstimate: Math.round(charCount / 4),
-      metadata: pruneMetadata({ ruleId, sourceMutationId: undefined }),
-    };
-
-    if (recon.materialization === "exact_text") {
-      // P2-7 单源：exact_text rule 的文本权威来自 contentPattern，
-      // contentPattern 未设置时 fallback 到 attribution.pattern（两者语义相同：同一段静态文本）。
-      // 这样 tools rules 无需重复定义 contentPattern，attribution.pattern 即为单一来源。
-      const rawPattern = emits.contentPattern ?? rule.attribution?.pattern ?? null;
-      if (rawPattern) {
-        const resolvedText = resolvePlaceholders(rawPattern, attr.notes ?? []);
-        if (resolvedText) {
-          seg.rawHash = sha256Short(resolvedText);
-          seg.contentRef = { kind: "inline", text: resolvedText, charCount: resolvedText.length } as ContentRef;
-        }
-        // resolvedText 为空（占位符未能解析）→ 不设 rawHash，降级为 presence_only
-      }
-      // 无 contentPattern 也无 attribution.pattern → 不设 rawHash
-    } else if (recon.materialization === "normalized_text") {
-      // 从 contentPattern + attribution.notes 里的 captureGroups 解析占位符后计算 rawHash。
-      const rawPattern = emits.contentPattern;
-      if (rawPattern) {
-        const resolvedText = resolvePlaceholders(rawPattern, attr.notes ?? []);
-        if (resolvedText) {
-          seg.rawHash = sha256Short(resolvedText);
-          seg.contentRef = { kind: "inline", text: resolvedText, charCount: resolvedText.length } as ContentRef;
-        }
-      }
-      // 无 contentPattern → 不设 rawHash
-    }
-    // shape / presence：内容动态或仅标记存在，charCount 已在上方从 attr.charCount 设置，
-    // 不生成 rawHash / contentRef，reconcile 只能靠 rule_id basis 或 presence_only 对齐。
-
-    segments.push(seg);
-  }
-
-  return segments;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppliedRule / 工具函数
@@ -763,7 +626,6 @@ function buildSegmentsFromAttributions(
 function collectAppliedRules(
   rules: Required<HarnessRuleConfig>,
   mutations: ContextMutation[],
-  attributionSegments?: ContextSegment[],
 ): AppliedRule[] {
   const out: AppliedRule[] = [];
   const push = (ruleId: string, source: AppliedRule["source"]): void => {
@@ -781,8 +643,6 @@ function collectAppliedRules(
   if (rules.filterKnownNoise) push("R6_filter_known_noise", "harness_rule");
   if (rules.apiErrorRetryAlignment) push("R7_api_error_retry_alignment", "harness_rule");
   if (rules.filterSyntheticApiError) push("R8_filter_synthetic_api_error", "harness_rule");
-  if (rules.injectFromAttributions && (attributionSegments?.length ?? 0) > 0)
-    push("R9_inject_from_attributions", "harness_rule");
   return out;
 }
 
@@ -800,28 +660,6 @@ function collectAppliedRules(
 //   local_command_history → proxy rawText = 原始 <local-command-*> / <bash-*> 标签文本，无额外包装
 //   其他 category     → 直接返回原始文本（不包装）
 //
-// TODO(skill-listing-hash-方案B): 当前方案在内容中带有 skill 描述变化时 hash 可命中；
-// 但若 header 文本随版本变化，需同步更新此处。方案B（attribution 层区分子类型 + M3.5 ruleId 匹配）
-// 更鲁棒，不依赖固定 header 文本。参见 mutationToSegment 里的 TODO 注释。
-// resolvePlaceholders：把 contentPattern 里的 {key} 占位符替换为 attribution notes 里的值。
-// attribution notes 格式：["key=value", "key2=value2", ...]
-// 占位符格式：{key}（与 rule-registry 注释约定一致）
-// 替换后若仍有未解析的 {placeholder}，返回 null（防止用带占位符的字符串算 hash）。
-function resolvePlaceholders(pattern: string, notes: string[]): string | null {
-  const kvMap = new Map<string, string>();
-  for (const note of notes) {
-    const eq = note.indexOf("=");
-    if (eq < 0) continue;
-    kvMap.set(note.slice(0, eq), note.slice(eq + 1));
-  }
-  let result = pattern;
-  for (const [k, v] of kvMap) {
-    result = result.replaceAll(`{${k}}`, v);
-  }
-  // 若仍有未替换的占位符，返回 null
-  if (/\{[a-zA-Z_]+\}/.test(result)) return null;
-  return result;
-}
 
 // P1-2：把 task_reminder mutation 的内容渲染为 proxy 格式的 smoosh 文本。
 //
