@@ -1,12 +1,16 @@
 // audit artifact 路径管理
-// 所有产物写到 ~/.api-dashboard/context-audit/
+// 默认产物写到 ~/.api-dashboard/context-audit/。
+// 并行 worktree 跑 fixture/audit 时，可用 CONTEXT_AUDIT_HOME 指向同一个隔离目录：
+//   CONTEXT_AUDIT_HOME=$PWD/.audit/reconstruct bun run context:audit:fixtures --no-update-latest
+// 这样各 run 目录仍共享 baseline，但不会污染用户主 dashboard 的 audit 指针。
 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type { QueryKey } from "./types";
 
-export const AUDIT_HOME = join(homedir(), ".api-dashboard", "context-audit");
+export const AUDIT_HOME =
+  process.env.CONTEXT_AUDIT_HOME ?? join(homedir(), ".api-dashboard", "context-audit");
 export const RUNS_DIR = join(AUDIT_HOME, "runs");
 // 全局 fallback（兼容旧文件，E0-2 后不再写这两个路径）
 export const LATEST_JSON = join(AUDIT_HOME, "latest.json");

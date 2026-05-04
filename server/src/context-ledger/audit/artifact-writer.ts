@@ -1,6 +1,7 @@
 // Artifact Writer
-// 把 pipeline 产出写到 ~/.api-dashboard/context-audit/runs/<runId>/ 目录
-// 每次 run 目录不可变，不覆盖旧 run。
+// 把 pipeline 产出写到 AUDIT_HOME/runs/<runId>/ 目录。
+// AUDIT_HOME 默认是 ~/.api-dashboard/context-audit/，并行 worktree 可通过
+// CONTEXT_AUDIT_HOME 覆盖。每次 run 目录不可变，不覆盖旧 run。
 
 import {
   mkdirSync,

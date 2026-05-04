@@ -31,7 +31,10 @@
     "context:audit:clear": "bun run scripts/context-audit.ts clear",
     "context:audit:clear:keep": "bun run scripts/context-audit.ts clear --keep",
     "context:audit:fixtures:rule-coverage": "bun run scripts/context-audit-rule-coverage.ts",
-    "context:audit:fixtures:full": "bun run scripts/context-audit-fixtures-full.ts"
+    "context:audit:fixtures:full": "bun run scripts/context-audit-fixtures-full.ts",
+    "reconstruct:list": "bun run scripts/reconstruct-parallel.ts list",
+    "reconstruct:command": "bun run scripts/reconstruct-parallel.ts command",
+    "reconstruct:commands": "bun run scripts/reconstruct-parallel.ts commands"
   },
   "dependencies": {
     "node-forge": "^1.3.1"

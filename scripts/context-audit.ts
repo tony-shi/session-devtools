@@ -6,6 +6,8 @@
 //   bun run context:audit --fixtures         # 用 test fixtures 快速跑通调测 loop
 //   bun run context:audit --since-last       # 只处理上次 run 以来的新 proxy records
 //   bun run context:audit --baseline <runId> # 对比指定 baseline 而非 latest
+//   bun run context:audit --fixtures --no-update-latest
+//                                      # 并行 worker 场景：写 run 产物，但不更新 latest 指针
 //   bun run context:audit:mark-baseline <runId>
 //   bun run context:audit clear              # 清除所有 audit 产物（不删 proxy/jsonl 原始数据）
 //   bun run context:audit clear --keep <N>   # 保留最近 N 个 run，清除其余
@@ -36,6 +38,7 @@ import type { AuditRunRecord, FixtureMatrixEntry } from "../server/src/context-l
 // ─────────────────────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
+const shouldUpdateLatest = !args.includes("--no-update-latest");
 
 // clear 子命令：清除 audit 产物，不删除 proxy/jsonl 原始数据
 if (args[0] === "clear") {
@@ -291,7 +294,11 @@ const run = writeRunJson(runId, {
 
 writeAuditRunMd(runId, run, indexEntries);
 writeIndexHtml(runId, run, indexEntries);
-updateLatestPointer(runId, mode);
+if (shouldUpdateLatest) {
+  updateLatestPointer(runId, mode);
+} else {
+  console.log(`latest pointer: skipped (--no-update-latest)`);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // stdout summary
