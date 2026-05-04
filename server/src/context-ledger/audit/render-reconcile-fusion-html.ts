@@ -173,7 +173,7 @@ function renderCoverageHeader(sc: QueryScorecard): string {
     ok: "No significant changes; metrics within thresholds",
     improvement: "wireExact + template coverage improved or unexplained decreased",
     regression: "falseReliableMatchCount > 0, or wireExact + template coverage dropped significantly",
-    needs_review: "New query / drift detected / prefixIncomplete / pendingRuleCoverage > 30%",
+    needs_review: "New query / drift detected / pendingRuleCoverage > 30%",
     unchanged: "Identical to baseline",
     skipped: "proxy_without_jsonl or required inputs missing",
     failed: "Pipeline threw an exception",

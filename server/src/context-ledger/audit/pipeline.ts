@@ -155,7 +155,6 @@ export function runPipeline(input: PipelineInput): PipelineResult {
         proxyTimestamp: snapshot.timestamp,
         sessionId: parsed.sessionId,
       },
-      hasPreSessionActivity: parsed.hasPreSessionActivity,
     });
     const report = reconcileClaudeContext({ snapshot, attributions, expected });
     const baseDiff = computeCharDiff(report);
@@ -228,7 +227,6 @@ export function runPipelineWithData(input: PipelineInput): {
         proxyTimestamp: snapshot.timestamp,
         sessionId: parsed.sessionId,
       },
-      hasPreSessionActivity: parsed.hasPreSessionActivity,
     });
 
     // model 优先从 JSONL assistant 行推断，fallback 到 proxy snapshot

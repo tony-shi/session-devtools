@@ -28,10 +28,11 @@ export interface JsonlMutationParseResult {
   sidechainMutations: ContextMutation[];
   unknownLines: UnknownJsonlLine[];
   sessionId: string;
-  // --resume / continue 时，session.jsonl 里第一条有时间戳的 user/assistant mutation
-  // 之前会出现 last-prompt 条目（当前查询之前的会话活动遗留）。这类情况下
-  // JSONL prefix 可能不包含完整的历史 turn，对账时应当注意 prior_session_history 缺失。
-  hasPreSessionActivity: boolean;
+  // TODO(prior-session-prefix): --resume 场景下，若 JSONL 文件中第一条有时间戳的
+  // user/assistant 行之前出现了 last-prompt 条目，说明 prefix 缺少历史 turn。
+  // 经 Claude Code 2.1.x 全量本地扫描（244 个 JSONL），此场景从未出现：
+  // last-prompt 始终由 Claude Code 在 query 结束时 append，不会出现在文件头部。
+  // 如未来出现此场景，需在此处恢复检测逻辑，并在 reconcile 层降级 order_mismatch 告警。
   // 从 assistant mutations 的 message.model 字段推断的模型名。
   // 只有 JSONL 包含 assistant 行时才有值；proxy snapshot 的 model 字段来自请求参数，
   // 两者一致时可互相验证；不一致时 targetRequest 优先用 JSONL 推断值。
@@ -200,14 +201,6 @@ export function parseClaudeJsonlMutations(
   let currentIsSidechain = false;
   let currentAgentId: string | undefined;
 
-  // hasPreSessionActivity 检测：
-  // 第一条有时间戳的 user/assistant 行之前若出现 last-prompt，
-  // 说明这个 session 在当前查询之前就有活动（--resume 场景），
-  // JSONL prefix 可能缺少历史 turn（prior_session_history）。
-  let hasPreSessionActivity = false;
-  let seenFirstTimestampedUserOrAssistant = false;
-  let lastPromptBeforeFirst = false;
-
   const newMutation = (
     partial: Omit<ContextMutation, "id" | "agentKind" | "sessionId">,
   ): ContextMutation => {
@@ -306,17 +299,6 @@ export function parseClaudeJsonlMutations(
       continue;
     }
 
-    // hasPreSessionActivity 追踪：
-    // 遇到第一条有时间戳的 user/assistant 行之前，若出现 last-prompt，则标记。
-    if (!seenFirstTimestampedUserOrAssistant) {
-      if (ts && (t === "user" || t === "assistant")) {
-        seenFirstTimestampedUserOrAssistant = true;
-        if (lastPromptBeforeFirst) hasPreSessionActivity = true;
-      } else if (t === "last-prompt") {
-        lastPromptBeforeFirst = true;
-      }
-    }
-
     switch (t) {
       case "user": {
         handleUserRecord(rec, lineNum, file, uuid, ts, pushMutation, unknownLines);
@@ -380,7 +362,7 @@ export function parseClaudeJsonlMutations(
     }
   }
 
-  return { mutations, sidechainMutations, unknownLines, sessionId, hasPreSessionActivity, inferredModel };
+  return { mutations, sidechainMutations, unknownLines, sessionId, inferredModel };
 }
 
 // ── user 行 ─────────────────────────────────────────────────────────────────

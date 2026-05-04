@@ -204,8 +204,8 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
           // order_mismatch finding（仅当匹配是 M3 tool_use_id 或 M1/M2 hash 时才对比——
           // M4 heuristic 本身就按相对位置取第一个候选，绝对 order 差值必然很大（量纲不同），
           // 不应产生误报；只在有内容锚点的匹配下做 order 核对）。
-          // prefixIncomplete=true 时：prior history 导致 order 偏移是预期内的，
-          // 降级为 info 而不是 warning，避免误报。
+          // TODO(prior-session-prefix): --resume 场景下 prefix 缺少历史 turn 时，
+          // order 偏移是预期内的，应将 severity 降为 info。检测逻辑见 jsonl-mutation-parser.ts。
           const proxyOrder = matchResult.matchedProxyIds
             .map((id) => snapshot.segments.find((s) => s.id === id)?.order ?? -1)
             .reduce((a, b) => Math.min(a, b), Infinity);
@@ -226,18 +226,15 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
             proxyOrder !== Infinity &&
             Math.abs(expectedOrder - proxyOrder) > 3
           ) {
-            // prefix 不完整时 order 偏移是 prior history 导致的，降为 info
-            const orderMismatchSeverity =
-              expected?.metadata?.prefixIncomplete ? "info" : "warning";
             findings.push({
               id: nextFindingId(),
               type: "order_mismatch",
-              severity: orderMismatchSeverity,
+              severity: "warning",
               category: eseg.category,
               expectedSegmentIds: [eseg.id],
               proxySegmentIds: matchResult.matchedProxyIds,
               alignmentIds: [align.id],
-              message: `order mismatch: expected order ${expectedOrder}, proxy order ${proxyOrder}${expected?.metadata?.prefixIncomplete ? " (prior history expected, prefix incomplete)" : ""}`,
+              message: `order mismatch: expected order ${expectedOrder}, proxy order ${proxyOrder}`,
             });
           }
 

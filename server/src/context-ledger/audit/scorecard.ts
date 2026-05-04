@@ -64,7 +64,6 @@ export function computeScorecard(
   const alignedTextDriftChars = coverage.alignedTextDriftChars;
   const falseReliableMatchCount = coverage.suspectMatchCount;
 
-  const prefixIncompleteCount = report.expected?.metadata?.prefixIncomplete ? 1 : 0;
   const sourceTextUnavailableCount = diff.entries.filter(
     (e) => e.kind === "expected_only" && !e.expectedTexts?.some((t) => t.text),
   ).length;
@@ -95,7 +94,6 @@ export function computeScorecard(
     unexplainedCoverage,
     unexplainedChars: coverage.unexplainedChars,
     falseReliableMatchCount,
-    prefixIncompleteCount,
     sourceTextUnavailableCount,
     suspectMatchChars,
     proxyChars,
@@ -111,7 +109,6 @@ export function computeScorecard(
     suspectMatchChars,
     alignedTextDriftChars,
     falseReliableMatchCount,
-    prefixIncompleteCount,
     sourceTextUnavailableCount,
     wireExactCoverage,
     canonicalExactCoverage,
@@ -138,7 +135,6 @@ function classifySingleRunVerdict(m: {
   unexplainedCoverage: number;
   unexplainedChars: number;
   falseReliableMatchCount: number;
-  prefixIncompleteCount: number;
   sourceTextUnavailableCount: number;
   suspectMatchChars: number;
   proxyChars: number;
@@ -152,7 +148,6 @@ function classifySingleRunVerdict(m: {
   if (m.falseReliableMatchCount > 0) {
     reasons.push(`suspect_match x${m.falseReliableMatchCount}`);
   }
-  if (m.prefixIncompleteCount > 0) reasons.push("prefix_incomplete");
   if (m.sourceTextUnavailableCount > 0) {
     reasons.push(`source_text_unavailable x${m.sourceTextUnavailableCount}`);
   }
@@ -168,7 +163,6 @@ function classifySingleRunVerdict(m: {
 
   const needsReview =
     exactTotal < THRESHOLDS.newQueryLowExactCoverage ||
-    m.prefixIncompleteCount > 0 ||
     m.sourceTextUnavailableCount > 0 ||
     (m.pendingRuleCoverage !== undefined && m.pendingRuleCoverage > THRESHOLDS.pendingRuleCoverageNeedsReview) ||
     m.regexOverreachRisk > THRESHOLDS.regexOverreachRiskNeedsReview;
@@ -188,7 +182,6 @@ export function classifyDelta(
   if (isNew || !previous) {
     const reasons: string[] = [];
     if (isNew) reasons.push("new_query");
-    if (current.prefixIncompleteCount > 0) reasons.push("prefix_incomplete");
     if (current.sourceTextUnavailableCount > 0) {
       reasons.push(`source_text_unavailable x${current.sourceTextUnavailableCount}`);
     }
@@ -233,7 +226,6 @@ export function classifyDelta(
       attrOnlyDelta < -THRESHOLDS.attrOnlyDropImprovementRatio);
 
   const isNeedsReview =
-    current.prefixIncompleteCount > 0 ||
     current.sourceTextUnavailableCount > 0 ||
     (exactDelta > 0 && driftDelta > THRESHOLDS.driftRiseNeedsReview) ||
     (current.pendingRuleCoverage !== undefined && current.pendingRuleCoverage > THRESHOLDS.pendingRuleCoverageNeedsReview) ||
@@ -253,7 +245,6 @@ export function classifyDelta(
   }
 
   if (isNeedsReview) {
-    if (current.prefixIncompleteCount > 0) reasons.push("prefix_incomplete");
     if (current.sourceTextUnavailableCount > 0)
       reasons.push(`source_text_unavailable x${current.sourceTextUnavailableCount}`);
     if (exactDelta > 0 && driftDelta > THRESHOLDS.driftRiseNeedsReview)

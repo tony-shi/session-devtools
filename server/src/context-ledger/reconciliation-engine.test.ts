@@ -207,7 +207,6 @@ function runFixture(caseName: string): ReconciliationReport {
     mutations: parsed.mutations,
     boundary: { queryId: `q-${caseName}`, proxyTimestamp: proxyRaw.ts, sessionId: parsed.sessionId },
     fixtureName: caseName,
-    hasPreSessionActivity: parsed.hasPreSessionActivity,
   });
   const targetRequest = buildTargetRequest({ expected, snapshot });
 

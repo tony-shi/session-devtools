@@ -111,8 +111,6 @@ export interface ReconstructInput {
   boundary: QueryBoundary;
   rules?: HarnessRuleConfig;
   fixtureName?: string;
-  /** 来自 JsonlMutationParseResult.hasPreSessionActivity：--resume 时 JSONL 里存在活动前置信号。 */
-  hasPreSessionActivity?: boolean;
 }
 
 /** 暂未实现规则的标识。结果中 metadata.unimplementedRules 会列出这些。 */
@@ -156,13 +154,11 @@ export function reconstructExpectedClaudeContext(
   const rulesApplied = collectAppliedRules(rules, surviving);
   const unimplementedRules: string[] = [...UNIMPLEMENTED_RULES];
 
-  // 6. 检测 prefix incomplete：JSONL prefix 是否缺少 prior history turn。
-  // 判断依据：parser 在第一条有时间戳的 user/assistant 行之前检测到 last-prompt，
-  // 说明这个 session 在当前查询之前就有活动（--resume 场景）。
-  // JSONL prefix 在这种情况下不包含历史 turn，对账时 prior_session_history 会无 expected 对应。
-  const prefixIncomplete = input.hasPreSessionActivity === true;
-
-  // 7. 组装 ExpectedQueryContext。
+  // 6. 组装 ExpectedQueryContext。
+  // TODO(prior-session-prefix): --resume 场景下若 JSONL prefix 缺少历史 turn，
+  // 应在 metadata.prefixIncomplete=true，reconcile 层会将 order_mismatch 降级为 info。
+  // 经全量扫描此场景从未出现，暂不传入。如未来需要，在 jsonl-mutation-parser.ts 恢复
+  // hasPreSessionActivity 检测，并在此处恢复：const prefixIncomplete = input.hasPreSessionActivity。
   const sessionId =
     input.boundary.sessionId ??
     sliced.find((m) => m.sessionId)?.sessionId ??
@@ -186,7 +182,6 @@ export function reconstructExpectedClaudeContext(
       retryDroppedMutationCount: sliced.length - afterRetry.length,
       noiseDroppedMutationCount: afterRetry.length - afterNoise.length,
       syntheticApiErrorDroppedCount: syntheticDroppedCount > 0 ? syntheticDroppedCount : undefined,
-      prefixIncomplete: prefixIncomplete || undefined,
     }),
   };
 

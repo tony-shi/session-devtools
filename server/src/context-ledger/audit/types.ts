@@ -11,7 +11,7 @@ export type AuditVerdict =
   | "ok"           // 无显著变化，各指标在阈值内
   | "improvement"  // wireExact + template 上升 / unexplainedCoverage 下降
   | "regression"   // falseReliableMatchCount>0 / wireExact + template 明显下降
-  | "needs_review" // 新 query / drift 暴露 / prefixIncomplete / proxy_without_jsonl /
+  | "needs_review" // 新 query / drift 暴露 / proxy_without_jsonl /
                    // pendingRuleCoverage>30% / regexOverreachRisk>60%
   | "unchanged"    // 与 baseline 完全一致
   | "skipped"      // proxy_without_jsonl 或缺少必要输入
@@ -40,7 +40,6 @@ export interface QueryScorecard {
   suspectMatchChars: number;
   alignedTextDriftChars: number;
   falseReliableMatchCount: number;
-  prefixIncompleteCount: number;
   sourceTextUnavailableCount: number;
   // 正交分桶覆盖率（直接来自 CoverageSummary，相加 ≈ 1.0）
   wireExactCoverage: number;

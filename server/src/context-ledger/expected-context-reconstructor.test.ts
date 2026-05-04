@@ -37,7 +37,6 @@ function reconstruct(caseName: string) {
     mutations: parsed.mutations,
     boundary: { queryId: `q-${caseName}`, proxyTimestamp: ts, sessionId: parsed.sessionId },
     fixtureName: caseName,
-    hasPreSessionActivity: parsed.hasPreSessionActivity,
   });
   return { expected, parsed, proxyTimestamp: ts };
 }
@@ -49,14 +48,12 @@ interface CaseExpect {
   totalSegments: number;
   byCategory: Partial<Record<SegmentCategory, number>>;
   retryDropped?: boolean; // 是否触发了 R7 api_error retry 对齐
-  prefixIncomplete?: boolean; // JSONL 是否缺少 prior session history
   logicalMessageGroupCount: number;
 }
 
 // ── v2.1.126 fixture（86d62994 session, 2026-05-01）──────────────────────────
 // 4 个主场景 fixture 共享同一 JSONL（promptId bd75b839，65 records）。
-// 此 session 特征：无 api_error retry（R7 不触发），有 local_command_history，
-// hasPreSessionActivity=false（promptId 边界以外无历史）。
+// 此 session 特征：无 api_error retry（R7 不触发），有 local_command_history。
 const CASES: Record<string, CaseExpect> = {
   // msgs=1：只有初始 user 输入 + skill_listing + local_command_history 前置注入
   "system-tools-overhead": {
@@ -90,7 +87,6 @@ const CASES: Record<string, CaseExpect> = {
       tool_use: 6,
       tool_result: 6,
     },
-    prefixIncomplete: false,
     logicalMessageGroupCount: 10,
   },
   // msgs=5：4 次 tool_use/tool_result 往返（7 logicalMsg groups）
@@ -205,15 +201,8 @@ for (const caseName of Object.keys(CASES)) {
       expect(ids.has("R8_filter_synthetic_api_error")).toBe(true);
     });
 
-    if (want.prefixIncomplete) {
-      test("prefixIncomplete=true（JSONL prefix 缺少 prior history turn）", () => {
-        expect(expected.metadata?.prefixIncomplete).toBe(true);
-      });
-    } else {
-      test("prefixIncomplete 未触发（JSONL prefix 完整）", () => {
-        expect(expected.metadata?.prefixIncomplete).toBeUndefined();
-      });
-    }
+    // TODO(prior-session-prefix): prefixIncomplete 断言已移除，因场景从未触发。
+    // 如未来 --resume 场景需要覆盖，在此恢复断言并补充对应 fixture。
   });
 }
 
@@ -293,7 +282,6 @@ describe("P1-5 HarnessRuleConfig gate（single-tool-call fixture）", () => {
   const base = reconstructExpectedClaudeContext({
     mutations: parsed.mutations,
     boundary,
-    hasPreSessionActivity: parsed.hasPreSessionActivity,
   });
   const baseTotal = base.segments.length;
   const baseSkillCount = base.segments.filter((s) => s.category === "skill_listing").length;
@@ -309,8 +297,7 @@ describe("P1-5 HarnessRuleConfig gate（single-tool-call fixture）", () => {
       mutations: parsed.mutations,
       boundary,
       rules: { injectSkillListing: false },
-      hasPreSessionActivity: parsed.hasPreSessionActivity,
-    });
+      });
     const skillSegs = r.segments.filter((s) => s.category === "skill_listing");
     expect(skillSegs).toHaveLength(0);
     expect(r.segments.length).toBe(baseTotal - baseSkillCount);
@@ -325,8 +312,7 @@ describe("P1-5 HarnessRuleConfig gate（single-tool-call fixture）", () => {
     const base2 = reconstructExpectedClaudeContext({
       mutations: parsed2.mutations,
       boundary: { queryId: "q", proxyTimestamp: ts2, sessionId: parsed2.sessionId },
-      hasPreSessionActivity: parsed2.hasPreSessionActivity,
-    });
+      });
     const baseLocalCount = base2.segments.filter((s) => s.category === "local_command_history").length;
     expect(baseLocalCount).toBeGreaterThan(0);
 
@@ -334,8 +320,7 @@ describe("P1-5 HarnessRuleConfig gate（single-tool-call fixture）", () => {
       mutations: parsed2.mutations,
       boundary: { queryId: "q", proxyTimestamp: ts2, sessionId: parsed2.sessionId },
       rules: { injectLocalCommand: false },
-      hasPreSessionActivity: parsed2.hasPreSessionActivity,
-    });
+      });
     const localSegs = r.segments.filter((s) => s.category === "local_command_history");
     expect(localSegs).toHaveLength(0);
     expect(r.segments.length).toBe(base2.segments.length - baseLocalCount);
@@ -346,8 +331,7 @@ describe("P1-5 HarnessRuleConfig gate（single-tool-call fixture）", () => {
       mutations: parsed.mutations,
       boundary,
       rules: { appendBaseMessages: false },
-      hasPreSessionActivity: parsed.hasPreSessionActivity,
-    });
+      });
     const userSegs = r.segments.filter((s) => s.category === "user_message");
     const asstSegs = r.segments.filter((s) => s.category === "assistant_text");
     expect(userSegs).toHaveLength(0);
@@ -360,8 +344,7 @@ describe("P1-5 HarnessRuleConfig gate（single-tool-call fixture）", () => {
       mutations: parsed.mutations,
       boundary,
       rules: { injectSkillListing: false },
-      hasPreSessionActivity: parsed.hasPreSessionActivity,
-    });
+      });
     const baseChars = base.segments.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
     const noSkillChars = r.segments.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
     // 关闭 skill_listing 后 charCount 更小

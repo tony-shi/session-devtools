@@ -22,7 +22,6 @@ function makeScorecard(overrides: Partial<QueryScorecard> = {}): QueryScorecard 
     suspectMatchChars: 100,
     alignedTextDriftChars: 50,
     falseReliableMatchCount: 0,
-    prefixIncompleteCount: 0,
     sourceTextUnavailableCount: 0,
     wireExactCoverage: 0.25,
     canonicalExactCoverage: 0,
@@ -103,13 +102,6 @@ describe("classifyDelta", () => {
     expect(verdict).toBe("unchanged");
   });
 
-  it("prefixIncomplete → needs_review", () => {
-    const prev = makeScorecard();
-    const cur = makeScorecard({ prefixIncompleteCount: 1 });
-    const { verdict, reasons } = classifyDelta(cur, prev, false);
-    expect(verdict).toBe("needs_review");
-    expect(reasons).toContain("prefix_incomplete");
-  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
