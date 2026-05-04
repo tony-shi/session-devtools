@@ -111,8 +111,8 @@ describe("rule registry contract", () => {
 
   // ── registry 基础契约 ────────────────────────────────────────────────────
 
-  test("registry 当前包含 rule（P2-1 新增 system-reminder + local-command）", () => {
-    expect(CONTEXT_LEDGER_RULES).toHaveLength(61);
+  test("registry 当前包含 rule（P3-5 删除 embedded 变体后）", () => {
+    expect(CONTEXT_LEDGER_RULES).toHaveLength(60);
   });
 
   test("ruleId 在 registry 中唯一", () => {

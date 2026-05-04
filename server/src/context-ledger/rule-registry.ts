@@ -14,7 +14,8 @@
 //
 // 字段说明：
 //   verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION → 已对照当前版本人工校对通过
-//   verifiedFor: null                          → 待人工校对（运行时仍参与 attribution，但 audit 报告会标"未验证"）
+//   verifiedFor: null                          → 待人工校对（P3-5 激进策略：命中时 confidence 强制降为 inferred，
+//                                               不得进入 evidenceBacked；仅贡献 attributionOnlyCoverage）
 //
 // 新增/修订流程：
 //   1. 在本地安装的 cli.js 里 grep 目标字段，确认当前版本的真实文本
@@ -275,85 +276,14 @@ export const CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE: ContextLedgerRule = {
 //   bullet 1（条件：!getIsNonInteractiveSession()）：固定文本，CLI 交互模式总是出现
 //   bullet 2（条件：hasAgentTool + !isForkSubagentEnabled()）：getAgentToolSection() 非 fork 分支，固定文本
 //   bullet 3（条件：hasAgentTool + areExplorePlanAgentsEnabled() + !isForkSubagentEnabled()）：
-//     含 ${searchTools} 插值——唯一的动态字段：
-//       "find/grep via the Bash tool"（ant-native build，EMBEDDED_SEARCH_TOOLS=true）
-//       "the Glob or Grep"（external CLI，standard）
+//     含 ${searchTools} 插值，external CLI（hasEmbeddedSearchTools()=false）固定为 "the Glob or Grep"
 //   bullet 4（条件：hasSkills）：固定文本
-//   bullet 5/6（fixture 旧版）：/schedule offer 和 ultrareview，2.1.123 sourcemap 已无
 //
-// 关于 embedded：
-//   hasEmbeddedSearchTools()（embeddedTools.ts:15）是 Anthropic 内部（ant-native）构建专用。
-//   ant-native build 里把 bfs/ugrep 嵌进了 bun 二进制，用 shell function 替换 find/grep，
-//   同时从 tool registry 删除了 Glob 和 Grep 工具。
-//   触发条件：build-time define EMBEDDED_SEARCH_TOOLS=true，仅 ant 内部构建设置。
-//   External CLI 用户（我们的 proxy 场景）永远不会设置这个环境变量，
-//   hasEmbeddedSearchTools() 永远返回 false → 走 "the Glob or Grep" 分支。
-//
-//   fixture 里观测到的是 ant-native 版本（searchTools="find/grep via Bash"），
-//   说明现有 fixture 是用内部构建录制的，不代表外部用户的真实请求。
-//   两条 rule 都保留：embedded 匹配现有 fixture，external 匹配真实外部用户请求。
+// ant-native 变体（searchTools="find/grep via the Bash tool"）已删除：
+//   hasEmbeddedSearchTools()=true 仅 Anthropic 内部构建设置，我们的 proxy 场景永远不会触发。
+//   fixture 已改为从真实 external CLI 会话（session-dashboard 主 worktree）录制，
+//   ant-native 变体不再有对应的 proxy 样本，保留 rule 只会干扰 attributionOnlyCoverage 统计。
 
-export const CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE: ContextLedgerRule = {
-  ruleId: "claude-code.system-prompt-session-guidance.embedded.v1",
-  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="<2.1.123"，更可疑）
-  description:
-    "Claude Code system prompt 的 # Session-specific guidance section（ant-native build 变体）。" +
-    "hasEmbeddedSearchTools()=true，searchTools='find/grep via the Bash tool'。" +
-    "此变体仅出现在 Anthropic 内部构建中（EMBEDDED_SEARCH_TOOLS=true），external 用户不会触发。" +
-    "包含旧版 /schedule offer 和 ultrareview bullet（2.1.123 sourcemap 已无）。",
-  stability: "dynamic",
-  sourcemapRef: "restored-src/src/constants/prompts.ts:352 + restored-src/src/utils/embeddedTools.ts",
-
-  attribution: {
-    // 完整文本精确匹配（含尾部 \n\n）。
-    // fixture 验证：text[11269:13759] = 2490 chars，与此一致。
-    // 动态字段：无（searchTools="find/grep via the Bash tool" 在 embedded 分支是固定字符串）。
-    // 旧版额外 bullet（/schedule offer、ultrareview）是静态文本，不含插值。
-    pattern:
-      "# Session-specific guidance\n" +
-      " - If you need the user to run a shell command themselves (e.g., an interactive login like `gcloud auth login`), suggest they type `! <command>` in the prompt — the `!` prefix runs the command in this session so its output lands directly in the conversation.\n" +
-      " - Use the Agent tool with specialized agents when the task at hand matches the agent's description. Subagents are valuable for parallelizing independent queries or for protecting the main context window from excessive results, but they should not be used excessively when not needed. Importantly, avoid duplicating work that subagents are already doing - if you delegate research to a subagent, do not also perform the same searches yourself.\n" +
-      " - For broad codebase exploration or research that'll take more than 3 queries, spawn Agent with subagent_type=Explore. Otherwise use `find` or `grep` via the Bash tool directly.\n" +
-      " - When the user types `/<skill-name>`, invoke it via Skill. Only use skills listed in the user-invocable skills section — don't guess.\n" +
-      " - When work you just finished has a natural future follow-up, end your reply with a one-line offer to `/schedule` a background agent to do it — name the concrete action and cadence (\"Want me to /schedule an agent in 2 weeks to open a cleanup PR for the flag?\"). One-time signals: a feature flag/gate/experiment/staged rollout (clean it up or ramp it), a soak window or metric to verify (query it and post results), a long-running job with an ETA (check status and report), a temp workaround/instrumentation/.skip left in (open a removal PR), a \"remove once X\" TODO. Recurring signals: a sweep/triage/report/queue-drain the user just did by hand, or anything \"weekly\"/\"again\"/\"piling up\" — offer to run it as a routine. The bar is 70%+ odds the user says yes — skip it for refactors, bug fixes with tests, docs, renames, routine dep bumps, plain feature merges, or when the user signals closure (\"nothing else to do\", \"should be fine now\"). Don't stack offers on back-to-back turns; let most tasks just be tasks.\n" +
-      " - If the user asks about \"ultrareview\" or how to run it, explain that /ultrareview launches a multi-agent cloud review of the current branch (or /ultrareview <PR#> for a GitHub PR). It is user-triggered and billed; you cannot launch it yourself, so do not attempt to via Bash or otherwise. It needs a git repository (offer to \"git init\" if not in one); the no-arg form bundles the local branch and does not need a GitHub remote.\n\n",
-    matchMode: "exact",
-    mechanism: "system_prompt_pattern",
-    category: "harness_injection",
-    location: {
-      section: "system",
-      segmentPosition: "segment_start",
-    },
-    // P2-2：exact 匹配时升 confidence 为 "exact"（替代 proxy-attribution.ts 里 EMBEDDED ruleId 特殊 case）
-    confidenceOverride: "exact",
-  },
-
-  reconstruction: {
-    preCondition:
-      "ant-native build：EMBEDDED_SEARCH_TOOLS=true（Anthropic 内部专用，external 用户不适用）。" +
-      "hasAgentTool + areExplorePlanAgentsEnabled() + !isForkSubagentEnabled()",
-    trigger: "always_per_query",
-    materialization: "exact_text",
-    emits: {
-      section: "system",
-      category: "harness_injection",
-      lifecycle: "query",
-      flags: ["injected"],
-      contentPattern: null,  // 旧版文本，由当前版 getSessionSpecificGuidanceSection() 重建时内容已变
-    },
-  },
-
-  reconciliation: {
-    comparePolicy: "raw_hash",
-    confidence: "exact",
-    exactTextExpected: true,
-  },
-};
-
-// external CLI 标准变体：searchTools="the Glob or Grep"（外部用户的真实场景）
-// hasEmbeddedSearchTools()=false，即正常 external build。
-// TODO: 需要用 external 用户的真实 proxy 请求录制 fixture 后，补充完整文本的 exact 匹配。
-// 目前现有 fixture 均为 ant-native build 录制，无法验证此变体的完整文本。
 export const CLAUDE_CODE_SESSION_GUIDANCE_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-session-guidance.v1",
   verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
@@ -2636,7 +2566,6 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE,
   CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE,
   // ── 동적 system prompt sections（main session）────────────────────────────
-  CLAUDE_CODE_SESSION_GUIDANCE_EMBEDDED_RULE,
   CLAUDE_CODE_SESSION_GUIDANCE_RULE,
   CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
   CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,

@@ -25,6 +25,7 @@
 
 import {
   CONTEXT_LEDGER_RULES,
+  SUPPORTED_CLAUDE_CODE_VERSION,
   CLAUDE_CODE_BILLING_NOISE_RULE,
   CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE,
   CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,
@@ -276,6 +277,14 @@ function applyRuleMatch(
   if (override) {
     classificationConfidence = override;
     materializationConfidence = override;
+  }
+
+  // P3-5（激进）：verifiedFor !== SUPPORTED_CLAUDE_CODE_VERSION 的 rule 命中时，
+  // 强制将 confidence 降为 inferred——未校对 rule 不得贡献 exact/estimated 层级，
+  // 只能进入 attributionOnlyCoverage，不进入 evidenceBacked。
+  if (rule.verifiedFor !== SUPPORTED_CLAUDE_CODE_VERSION) {
+    classificationConfidence = "inferred";
+    materializationConfidence = "inferred";
   }
 
   return {
