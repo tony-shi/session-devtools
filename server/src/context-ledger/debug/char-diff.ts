@@ -449,6 +449,7 @@ function computeSummary(
     switch (e.kind) {
       case "matched":
         matched++;
+        totalCharDriftAbsolute += Math.abs(e.charDelta ?? 0);
         evidenceBackedChars += pChars;
         attributionChars += pChars;
         break;

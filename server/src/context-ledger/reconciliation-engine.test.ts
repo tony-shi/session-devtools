@@ -173,7 +173,7 @@ const FIXTURE_CASES: Record<string, FixtureExpect> = {
   // v2.1.126 fixture：40 tools，984 messages，64 smoosh，11 task_reminder
   "task-reminder-smoosh": {
     proxySegmentCount: 1341,
-    expectedSegmentCount: 204,
+    expectedSegmentCount: 202, // queued_command 2개가 smoosh로 처리되어 독립 segment 미생성
     maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "server_side_attribution"],
     hasRetryFinding: false,
