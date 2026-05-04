@@ -551,7 +551,10 @@ function mutationToSegment(
       messageId: m.metadata?.messageId,
       toolUseId: m.toolUseId,
       ruleId,
-      // P1-2：保留 parentUuid 供 task_reminder post-processing 查找对应 tool_result
+      // P1-2：recordUuid = user message record 自身的 uuid（rec.uuid），供 task_reminder
+      // post-processing 通过 pending.parentUuid === seg.metadata.recordUuid 定位目标 segment。
+      // parentUuid = rec.parentUuid（assistant record 的 uuid），两者不同，不能混用。
+      recordUuid: m.metadata?.recordUuid,
       parentUuid: m.metadata?.parentUuid,
       preview:
         m.contentRef?.text && m.contentRef.text.length > 80
