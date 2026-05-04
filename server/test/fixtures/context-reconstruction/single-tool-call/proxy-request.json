@@ -9,7 +9,7 @@
   "reqHeaders": {
     "Proxy-Connection": "Keep-Alive",
     "Accept": "application/json",
-    "Authorization": "Bearer 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",
+    "Authorization": "Bearer sk-ant-REDACTED-TODO-before-release-rotate-this-token",
     "Content-Type": "application/json",
     "User-Agent": "claude-cli/2.1.126 (external, cli)",
     "X-Claude-Code-Session-Id": "86d62994-8622-4245-b7db-21c144dee7dd",
