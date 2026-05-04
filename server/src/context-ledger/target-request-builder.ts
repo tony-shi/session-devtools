@@ -1,6 +1,7 @@
 import type {
   ContextSegment,
   ExpectedQueryContext,
+  HarnessRuntimeSnapshot,
   ProxyQuerySnapshot,
   RequestLevelExact,
   SegmentSourceMap,
@@ -21,6 +22,9 @@ interface BuildTargetRequestOptions {
   snapshot: ProxyQuerySnapshot;
   /** 从 JSONL assistant 行推断的模型名。存在时优先于 proxy snapshot 的 model 字段。 */
   inferredModel?: string;
+  // 非 proxy 运行态快照。runtimeSnapshot.inferredModel 优先级高于顶层 inferredModel。
+  // proxy snapshot 中的 request scalar 仅作 fallback，且在 metadata 中显式标注。
+  runtimeSnapshot?: HarnessRuntimeSnapshot;
 }
 
 interface RequestLevelOptions {
@@ -39,18 +43,22 @@ interface TargetBuildResult {
  * 从 ExpectedQueryContext 正向构建 request-level TargetRequest。
  *
  * request 标量字段来源优先级：
- *   1. inferredModel（从 JSONL assistant 行 message.model 推断）→ model 字段
- *   2. ProxyQuerySnapshot.request → max_tokens / stream / context_management 等
- *      （JSONL 暂不暴露这些字段，需要等 harness runtime state 完整暴露后升级）
+ *   1. runtimeSnapshot.inferredModel（HarnessRuntimeSnapshot 中的 JSONL 推断值）
+ *   2. inferredModel（调用方直接传入的 JSONL 推断值，与 1 同源，取任一非空值）
+ *   3. ProxyQuerySnapshot.request → max_tokens / stream / context_management 等
+ *      （proxy_snapshot_fallback）
  *
- * metadata.requestScalarSource 标注实际来源，避免误以为已经是纯正向重建。
+ * metadata.requestScalarSource 与 proxySnapshotFallbackFields 标注实际来源，
+ * 避免 proxy fallback 字段被误认为正向重建结果。
  */
 export function buildTargetRequest(options: BuildTargetRequestOptions): TargetRequest {
   return buildTargetRequestWithBody(options).targetRequest;
 }
 
 export function buildTargetRequestWithBody(options: BuildTargetRequestOptions): TargetBuildResult {
-  const { expected, snapshot, inferredModel } = options;
+  const { expected, snapshot, runtimeSnapshot } = options;
+  // runtimeSnapshot.inferredModel 优先；顶层 inferredModel 作为兼容保留
+  const inferredModel = runtimeSnapshot?.inferredModel ?? options.inferredModel;
   const sourceMap: SegmentSourceMap = {};
 
   const sortedSegments = [...expected.segments].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -104,10 +112,16 @@ export function buildTargetRequestWithBody(options: BuildTargetRequestOptions): 
         requestScalarSourceReason: inferredModel
           ? "model_from_jsonl_assistant_message"
           : "runtime_state_not_materialized",
+        // proxy_snapshot_fallback 字段列表：标注哪些 request scalar 仍依赖 proxy，
+        // 不得参与 exact reconstruction 口径的判断。
+        proxySnapshotFallbackFields: collectProxyFallbackFields(snapshot, inferredModel),
         exactSegmentCount: [...system, ...tools, ...messages.flatMap((m) => m.content)]
           .filter((seg) => seg.materialization === "exact").length,
         placeholderSegmentCount: [...system, ...tools, ...messages.flatMap((m) => m.content)]
           .filter((seg) => seg.materialization === "placeholder").length,
+        ...(runtimeSnapshot !== undefined
+          ? { runtimeSnapshotSource: runtimeSnapshot.source }
+          : {}),
       },
     },
   };
@@ -160,7 +174,7 @@ function buildRequestScalars(snapshot: ProxyQuerySnapshot, inferredModel?: strin
   // model：JSONL 推断优先，fallback 到 proxy snapshot
   const resolvedModel = inferredModel ?? req.model;
   if (resolvedModel !== undefined) request.model = resolvedModel;
-  // 以下字段 JSONL 暂未暴露，只能从 proxy snapshot 取
+  // 以下字段 JSONL 暂未暴露，只能从 proxy snapshot 取（proxy_snapshot_fallback）
   if (req.maxTokens !== undefined) request.max_tokens = req.maxTokens;
   if (req.stream !== undefined) request.stream = req.stream;
   if (req.contextManagement !== undefined) request.context_management = req.contextManagement;
@@ -168,6 +182,27 @@ function buildRequestScalars(snapshot: ProxyQuerySnapshot, inferredModel?: strin
   if (req.thinking !== undefined) request.thinking = req.thinking;
   if (req.metadata !== undefined) request.metadata = req.metadata;
   return request;
+}
+
+// 收集实际上仍从 proxy snapshot 取值的 request scalar 字段名列表。
+// 用于在 metadata.proxySnapshotFallbackFields 中明确标注，
+// 防止 exact reconstruction 判断误把 proxy fallback 字段算作正向重建。
+function collectProxyFallbackFields(
+  snapshot: ProxyQuerySnapshot,
+  inferredModel: string | undefined,
+): string[] {
+  const req = snapshot.request ?? {};
+  const fallbacks: string[] = [];
+  // model 只有在没有 inferredModel 且 proxy 有值时才是 fallback
+  if (!inferredModel && req.model !== undefined) fallbacks.push("model");
+  // 以下字段目前均无法从 JSONL/runtime 获取，全部标为 fallback
+  if (req.maxTokens !== undefined) fallbacks.push("max_tokens");
+  if (req.stream !== undefined) fallbacks.push("stream");
+  if (req.contextManagement !== undefined) fallbacks.push("context_management");
+  if (req.outputConfig !== undefined) fallbacks.push("output_config");
+  if (req.thinking !== undefined) fallbacks.push("thinking");
+  if (req.metadata !== undefined) fallbacks.push("metadata");
+  return fallbacks;
 }
 
 function buildTargetMessages(

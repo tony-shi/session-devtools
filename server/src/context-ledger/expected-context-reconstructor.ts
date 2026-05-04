@@ -54,6 +54,8 @@ import type {
   ContextMutation,
   ContextSegment,
   ExpectedQueryContext,
+  HarnessRuntimeSnapshot,
+  PreConditionResult,
   SegmentCategory,
   SegmentRole,
   SegmentSection,
@@ -106,20 +108,14 @@ export interface QueryBoundary {
   parentAgentId?: string;
 }
 
-// 后续任务（reconstruct-03-runtime-snapshot）会引入完整 HarnessRuntimeSnapshot；
-// 此处先定义最小占位类型，供 materializeHarnessRules 的 preCondition 评估使用。
-export interface HarnessRuntimeSnapshot {
-  source: "jsonl" | "local_env" | "derived" | "unknown";
-  claudeCodeVersion?: string;
-}
-
 export interface ReconstructInput {
   mutations: ContextMutation[];
   boundary: QueryBoundary;
   rules?: HarnessRuleConfig;
-  /** 非 proxy 运行态输入，供 rule preCondition 评估（reconstruct-03 补全）。 */
-  runtimeSnapshot?: HarnessRuntimeSnapshot;
   fixtureName?: string;
+  // 非 proxy 运行态快照；作为 RulePreCondition evaluator 的输入。
+  // 省略时所有 preCondition 非 always 的 rule 均视为 unknown → skip。
+  runtimeSnapshot?: HarnessRuntimeSnapshot;
 }
 
 /** 暂未实现规则的标识。结果中 metadata.unimplementedRules 会列出这些。 */
@@ -188,6 +184,22 @@ export function reconstructExpectedClaudeContext(
 
   const syntheticDroppedCount = afterNoise.length - surviving.length;
 
+  // runtimeSnapshot 摘要（仅记录已有值的字段，不序列化完整对象）
+  const runtimeSnapshotSummary = input.runtimeSnapshot
+    ? {
+        source: input.runtimeSnapshot.source,
+        ...(input.runtimeSnapshot.inferredModel !== undefined
+          ? { inferredModel: input.runtimeSnapshot.inferredModel }
+          : {}),
+        ...(input.runtimeSnapshot.permissionMode !== undefined
+          ? { permissionMode: input.runtimeSnapshot.permissionMode }
+          : {}),
+        ...(input.runtimeSnapshot.userType !== undefined
+          ? { userType: input.runtimeSnapshot.userType }
+          : {}),
+      }
+    : undefined;
+
   const expected: ExpectedQueryContext = {
     id: `expected-${input.boundary.queryId}`,
     agentKind: "claude-code",
@@ -205,6 +217,7 @@ export function reconstructExpectedClaudeContext(
       retryDroppedMutationCount: sliced.length - afterRetry.length,
       noiseDroppedMutationCount: afterRetry.length - afterNoise.length,
       syntheticApiErrorDroppedCount: syntheticDroppedCount > 0 ? syntheticDroppedCount : undefined,
+      runtimeSnapshotSummary,
     }),
   };
 
@@ -796,7 +809,7 @@ export interface MaterializeResult {
 export function materializeHarnessRules(
   rules: ContextLedgerRule[],
   _boundary: QueryBoundary,
-  _runtimeSnapshot?: HarnessRuntimeSnapshot,
+  runtimeSnapshot?: HarnessRuntimeSnapshot,
 ): MaterializeResult {
   const segments: ContextSegment[] = [];
   const appliedRules: AppliedRule[] = [];
@@ -810,8 +823,8 @@ export function materializeHarnessRules(
     // 无 reconstruction 定义的 rule（attribution-only）直接跳过
     if (!recon) continue;
 
-    // preCondition 评估：只支持 always / 省略，其它全部保守跳过
-    const condResult = evaluatePreConditionConservative(recon.preCondition);
+    // preCondition 评估：传入 runtimeSnapshot；snapshot 为 undefined 时非 always 条件保守 skip
+    const condResult = evaluatePreConditionConservative(recon.preCondition, runtimeSnapshot);
     if (condResult === "skip") {
       unmaterializedRuleIds.push(rule.ruleId);
       continue;
@@ -879,15 +892,16 @@ export function materializeHarnessRules(
   return { segments, appliedRules, unmaterializedRuleIds };
 }
 
-// 评估 preCondition，保守策略：只放行 always / 省略；其它返回 "skip"
+// evaluatePreConditionConservative：materializer 内部使用的包装，
+// 传入 snapshot=undefined，"unknown"/"fail" 均视为 skip。
+// 当 pipeline 传入真实 runtimeSnapshot 时，改为直接调用 evaluatePreCondition。
 function evaluatePreConditionConservative(
   cond: RulePreCondition | undefined,
+  snapshot?: HarnessRuntimeSnapshot,
 ): "pass" | "skip" {
   if (!cond) return "pass";
-  if (cond.type === "always") return "pass";
-  // userType / harnessFlag / settingsField / harnessState / all
-  // 等 reconstruct-03 引入 HarnessRuntimeSnapshot 后再实现；此处保守 skip
-  return "skip";
+  const result = evaluatePreCondition(cond, snapshot);
+  return result === "pass" ? "pass" : "skip";
 }
 
 interface BuildRuleSegmentOpts {
@@ -954,4 +968,80 @@ function ruleToAppliedRule(rule: ContextLedgerRule): AppliedRule {
     // verified rule 才算 exact confidence；未 verified 降为 inferred
     confidence: isRuleVerified(rule) ? "exact" : "inferred",
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RulePreCondition evaluator
+//
+// 设计约束（来自 reconstruct.md）：
+//   - 未知值必须返回 "unknown"，不得默认 pass
+//   - "unknown" → caller 应保守 skip rule，写入 unmaterializedRules
+//   - runtimeSnapshot 为 undefined 时，非 always 条件全部返回 "unknown"
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function evaluatePreCondition(
+  cond: RulePreCondition,
+  snapshot: HarnessRuntimeSnapshot | undefined,
+): PreConditionResult {
+  switch (cond.type) {
+    case "always":
+      return "pass";
+
+    case "userType": {
+      if (!snapshot) return "unknown";
+      const ut = snapshot.userType;
+      if (ut === undefined) return "unknown";
+      if (ut === "unknown") return "unknown";
+      return ut === cond.value ? "pass" : "fail";
+    }
+
+    case "harnessFlag": {
+      if (!snapshot) return "unknown";
+      const flags = snapshot.featureFlags;
+      if (!flags) return "unknown";
+      const val = flags[cond.flag];
+      if (val === undefined) return "unknown";
+      if (val === "unknown") return "unknown";
+      return val ? "pass" : "fail";
+    }
+
+    case "settingsField": {
+      if (!snapshot) return "unknown";
+      const settings = snapshot.settings;
+      if (!settings) return "unknown";
+      const fieldVal = settings[cond.field];
+
+      switch (cond.op) {
+        case "null":
+          return fieldVal == null ? "pass" : "fail";
+        case "notNull":
+          return fieldVal != null ? "pass" : "fail";
+        case "eq":
+          if (fieldVal === undefined) return "unknown";
+          return String(fieldVal) === cond.value ? "pass" : "fail";
+        case "neq":
+          if (fieldVal === undefined) return "unknown";
+          return String(fieldVal) !== cond.value ? "pass" : "fail";
+        default:
+          return "unknown";
+      }
+    }
+
+    case "harnessState":
+      // 自由文本描述，无法机器评估——保守返回 unknown
+      return "unknown";
+
+    case "all": {
+      let anyUnknown = false;
+      for (const sub of cond.conditions) {
+        const r = evaluatePreCondition(sub, snapshot);
+        if (r === "fail") return "fail";
+        if (r === "unknown") anyUnknown = true;
+      }
+      return anyUnknown ? "unknown" : "pass";
+    }
+
+    default:
+      return "unknown";
+  }
 }

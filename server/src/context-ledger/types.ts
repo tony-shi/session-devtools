@@ -572,6 +572,84 @@ export interface TargetRequest {
   metadata?: Record<string, unknown>;
 }
 
+// HarnessRuntimeSnapshot：harness 非 proxy 运行态快照。
+// 作为 rule materializer 和 target-request-builder 的非 proxy 输入，
+// 与 ProxyQuerySnapshot 严格隔离——所有字段均来自 JSONL/本地配置/进程环境，
+// 不得从 proxy raw text 反写。
+//
+// 字段保守原则：
+//   - 能从 JSONL 直接推断的字段列为第一版（V1）
+//   - 仍需从 cli.js / local settings / env 派生的字段标注 TODO
+//   - 未知值统一用 undefined 或字面量 "unknown"，不得默认填充业务值
+export interface HarnessRuntimeSnapshot {
+  // 快照来源。第一版来自 JSONL 解析，后续可叠加 local_env / derived 来源。
+  source: "jsonl" | "local_env" | "derived" | "unknown";
+
+  // ── V1：从 JSONL 直接推断的字段 ─────────────────────────────────────────────
+
+  // 从 assistant mutation 的 message.model 字段推断（最后一条有值的 assistant mutation）。
+  // 与 ProxyQuerySnapshot.request.model 独立——两者一致可互验，不一致时以此为准。
+  inferredModel?: string;
+
+  // JSONL 文件路径，供 audit 溯源使用。
+  jsonlFile?: string;
+
+  // JSONL sessionId（从记录头部提取）。
+  sessionId?: string;
+
+  // permission-mode mutation 中记录的权限模式（如 "default" / "bypassPermissions"）。
+  // 若 JSONL 无 permission-mode 行则为 undefined。
+  permissionMode?: string;
+
+  // assistant mutation 中最早出现的时间戳，近似代表 harness 启动时间。
+  firstTimestamp?: string;
+
+  // 推断的 Claude Code 版本（目前无法从 JSONL 直接读取，预留字段）。
+  // TODO: 从 cli.js 路径解析 / 本地环境变量获取。
+  claudeCodeVersion?: string;
+
+  // ── 待后续派生的字段（第一版均为 undefined）────────────────────────────────
+
+  // harness 启动入口（cli.js 路径等）。TODO: 从进程环境派生。
+  entrypoint?: string;
+
+  // 工作目录。TODO: 从 JSONL worktree-state 行 / 环境变量获取。
+  cwd?: string;
+
+  // 用户类型（external / ant）。TODO: 从 settings 或 env 推断。
+  // 未知时显式为 "unknown"，不得默认 "external"。
+  userType?: "external" | "ant" | "unknown";
+
+  // 输出风格配置。TODO: 从 settings 读取。
+  outputStyleConfig?: "default" | "custom" | "unknown";
+
+  // 已启用的工具名列表。TODO: 从 JSONL attachment.skill_listing / cli.js 读取。
+  enabledToolNames?: string[];
+
+  // MCP 工具名列表。TODO: 从 local settings 读取。
+  mcpToolNames?: string[];
+
+  // auto memory 是否启用。TODO: 从 settings 读取。
+  autoMemoryEnabled?: boolean;
+
+  // auto memory 路径。TODO: 从 settings 读取。
+  autoMemoryPath?: string;
+
+  // harness settings 对象（来自 ~/.claude/settings.json 等）。TODO: 从本地读取。
+  settings?: Record<string, unknown>;
+
+  // feature flags（如 isAutoMemoryEnabled）。TODO: 从 harness runtime 推断。
+  // 值为 boolean 时已确认；"unknown" 表示无法判断。
+  featureFlags?: Record<string, boolean | "unknown">;
+}
+
+// PreConditionResult：RulePreCondition evaluator 的返回值。
+//   "pass"    — 条件明确成立，可激活 rule
+//   "fail"    — 条件明确不成立，跳过 rule
+//   "unknown" — 缺少足够 runtime 信息，无法判断
+//              → evaluator 必须保守 skip，不得默认 pass
+export type PreConditionResult = "pass" | "fail" | "unknown";
+
 export type RequestLevelExactLevel =
   | "raw"
   | "canonical"
