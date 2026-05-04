@@ -123,6 +123,9 @@ export function runPipeline(input: PipelineInput): PipelineResult {
   const { queryKey, queryKeyHash: hash, timestamp, proxySourceFile, trafficLine } = proxy;
 
   if (!jsonlFile || !existsSync(jsonlFile)) {
+    // TODO(P3-4): 当前无 JSONL 时直接 skip。后续可改为 attribution-only 模式：
+    //   proxy → snapshot → attribution → reconcile(expected=undefined)，
+    //   输出"哪些 proxy query 没有 JSONL 对应"的分布与原因。
     return {
       queryKey,
       queryKeyHash: hash,
@@ -190,6 +193,7 @@ export function runPipelineWithData(input: PipelineInput): {
   const { queryKey, queryKeyHash: hash, timestamp, proxySourceFile, trafficLine } = proxy;
 
   if (!jsonlFile || !existsSync(jsonlFile)) {
+    // TODO(P3-4): 同上，attribution-only 模式待实现。
     return {
       result: {
         queryKey,

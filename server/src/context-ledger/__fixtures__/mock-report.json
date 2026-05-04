@@ -865,49 +865,6 @@
       "message": "tool_use and tool_result are aligned by toolUseId."
     },
     {
-      "id": "finding-large-tool-output",
-      "type": "merge_alignment",
-      "severity": "warning",
-      "category": "tool_result",
-      "expectedSegmentIds": [
-        "eseg-tool-result"
-      ],
-      "proxySegmentIds": [
-        "pseg-tool-result"
-      ],
-      "mutationIds": [
-        "mut-tool-result"
-      ],
-      "alignmentIds": [
-        "align-tool-chain"
-      ],
-      "message": "Large tool_result is explainable but should remain visible for context bloat ranking."
-    },
-    {
-      "id": "finding-harness-merge",
-      "type": "merge_alignment",
-      "severity": "info",
-      "category": "harness_injection",
-      "expectedSegmentIds": [
-        "eseg-harness-injection",
-        "eseg-local-command-history"
-      ],
-      "proxySegmentIds": [
-        "pseg-harness-injection"
-      ],
-      "mutationIds": [
-        "mut-harness-injection",
-        "mut-local-command-history"
-      ],
-      "alignmentIds": [
-        "align-harness-merge"
-      ],
-      "attributionIds": [
-        "attr-harness-injection"
-      ],
-      "message": "System reminder and local command history may be materialized as one proxy block."
-    },
-    {
       "id": "finding-known-noise",
       "type": "server_side_attribution",
       "severity": "info",

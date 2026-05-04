@@ -12,7 +12,6 @@
 // 已实现规则（按优先级）：
 //   R1 base_append              user/assistant/tool_use/tool_result append
 //   R2 merge_assistant_tool_uses 同一 messageId 的多个 tool_use 标记为同一 logicalMessage
-//   R3 merge_user_tool_results   连续 tool_result 标记为同一 logicalMessage
 //   R4 inject_skill_listing     attachment.skill_listing 注入为 user 段
 //   R5 inject_local_command     <local-command-* / <bash-* 注入为 user 段
 //   R6 filter_known_noise       hook_event / billing_noise / type=noise 不进 expected segments
@@ -76,7 +75,6 @@ function sha256Short(text: string): string {
 export interface HarnessRuleConfig {
   appendBaseMessages?: boolean; // R1
   mergeAssistantToolUses?: boolean; // R2
-  mergeUserToolResults?: boolean; // R3
   injectSkillListing?: boolean; // R4
   injectLocalCommand?: boolean; // R5
   filterKnownNoise?: boolean; // R6
@@ -87,7 +85,6 @@ export interface HarnessRuleConfig {
 const DEFAULT_RULES: Required<HarnessRuleConfig> = {
   appendBaseMessages: true,
   mergeAssistantToolUses: true,
-  mergeUserToolResults: true,
   injectSkillListing: true,
   injectLocalCommand: true,
   filterKnownNoise: true,
@@ -348,9 +345,9 @@ function mapMutationsToSegments(
   //     的 user tool_result 也仍是同一组。原因：Claude Code 把单次 API 响应的
   //     多个 tool_use block 拆成多行 JSONL 写出，user tool_result 会被插在
   //     这些行之间，但在真实 proxy 里它们仍是一条 assistant message。
-  //   user 一侧（R3）：连续 tool_result 合并；最初的 user_message 与同一 turn 的
-  //     skill_listing / local_command_history / attachment 合并；assistant
-  //     一旦出现就强制切到新的 user 组。
+  //   user 一侧：连续 tool_result、user_message + skill_listing / local_command_history
+  //     / attachment 归同一 logicalMessage（供 target-request-builder 重组 messages array）。
+  //     assistant 一旦出现就强制切到新的 user 组。
   let lastSegmentRole: SegmentRole | null = null;
   let groupCounter = 0;
   // assistant messageId → groupId 映射（跨 user tool_result 仍能命中同一组）
@@ -423,7 +420,6 @@ function mapMutationsToSegments(
       currentUserCategory = null;
     } else {
       if (
-        rules.mergeUserToolResults &&
         lastSegmentRole === "user" &&
         currentUserGroupId &&
         canMergeUserBlock(m.category, currentUserCategory)
@@ -615,8 +611,6 @@ function ruleIdForCategory(
     return "R5_inject_local_command";
   if (category === "tool_use" && rules.mergeAssistantToolUses)
     return "R2_merge_assistant_tool_uses";
-  if (category === "tool_result" && rules.mergeUserToolResults)
-    return "R3_merge_user_tool_results";
   if (category === "user_message" || category === "assistant_text") return "R1_base_append";
   return undefined;
 }
@@ -637,8 +631,6 @@ function collectAppliedRules(
   if (rules.appendBaseMessages) push("R1_base_append", "harness_rule");
   if (rules.mergeAssistantToolUses && mutations.some((m) => m.category === "tool_use"))
     push("R2_merge_assistant_tool_uses", "harness_rule");
-  if (rules.mergeUserToolResults && mutations.some((m) => m.category === "tool_result"))
-    push("R3_merge_user_tool_results", "harness_rule");
   if (rules.injectSkillListing && mutations.some((m) => m.category === "skill_listing"))
     push("R4_inject_skill_listing", "harness_rule");
   if (rules.injectLocalCommand && mutations.some((m) => m.category === "local_command_history"))

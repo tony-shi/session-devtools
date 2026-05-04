@@ -21,10 +21,6 @@
 // known_noise 优先处理：billing_noise category 的 proxy segment 直接归入
 // server_side_attribution finding，不参与 expected 匹配流程。
 //
-// merge_alignment / one_to_many_alignment：
-//   - 多个 expected segment → 同一 proxy segment：merge_alignment（N:1）
-//   - 一个 expected segment → 多个 proxy segment：one_to_many_alignment（1:N）
-//
 // 未实现规则（U1-U5）导致的 unmatched proxy segments：
 //   - system_prompt（3 blocks per fixture）
 //   - tools_schema（34 / 40 tools per fixture）
@@ -147,37 +143,13 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
       }
     }
 
-    // 按 logicalMessageId 分组：同一组的 expected segments 一起尝试 N:1 匹配
-    const groupedExpected = groupByLogicalMessage(expectedSegs);
+    // N:1 / 1:N merge 路径已移除（历史上曾设计为 R-MERGE-N1 / R-MERGE-1N）。
+    // 经 Claude Code 2.1.x 全量本地扫描确认均不会触发：proxy parser 已将
+    // multi-block tool_result 拼接为单 segment，两侧 rawHash 一致，M1 直接命中。
+    for (const eseg of expectedSegs) {
+      if (matchedExpectedIds.has(eseg.id)) continue;
 
-    for (const group of groupedExpected) {
-      if (group.length === 0) continue;
-
-      // 尝试 N:1 merge_alignment：整组 expected → 同一 proxy segment
-      const mergeResult = tryMergeAlignment(
-        group,
-        snapshot.segments,
-        matchedProxyIds,
-        matchedExpectedIds,
-        proxyByRawHash,
-        proxyByNormHash,
-        proxyByToolUseId,
-        attrBySegId,
-      );
-
-      if (mergeResult) {
-        for (const id of mergeResult.matchedExpectedIds) matchedExpectedIds.add(id);
-        for (const id of mergeResult.matchedProxyIds) matchedProxyIds.add(id);
-        alignments.push(...mergeResult.alignments.map((a) => ({ ...a, id: nextAlignId() })));
-        findings.push(...mergeResult.findings.map((f) => ({ ...f, id: nextFindingId() })));
-        continue;
-      }
-
-      // 逐个 expected segment 匹配
-      for (const eseg of group) {
-        if (matchedExpectedIds.has(eseg.id)) continue;
-
-        const matchResult = matchOneExpected(
+      const matchResult = matchOneExpected(
           eseg,
           snapshot.segments,
           matchedProxyIds,
@@ -294,7 +266,6 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
             message: `${findingType}: ${eseg.category} via ${matchResult.alignment.basis}${findingType === "suspect_match" ? " — no content anchor, not evidence-backed" : ""}`,
           });
         }
-      }
     }
 
     // expected 侧未匹配的 segment
@@ -619,69 +590,6 @@ function matchOneExpected(
   }
 
   return null;
-}
-
-// 尝试 N:1 merge_alignment：同一 logicalMessage 的多个 expected → 同一 proxy segment
-interface MergeResult {
-  alignments: Omit<AlignmentRef, "id">[];
-  findings: Omit<ReconciliationFinding, "id">[];
-  matchedProxyIds: string[];
-  matchedExpectedIds: string[];
-}
-
-// N:1 / 1:N merge 对齐说明：
-//
-//   R-MERGE-N1（多 expected → 单 proxy）：
-//     场景：harness 把多条 mutations（user_message + local_command_history）合并成
-//     一条 string content 的 user message。经全量扫描（Claude Code 2.1.x 全部历史记录），
-//     当前 harness 始终使用 array content 格式，此路径从未触发。
-//     前提条件在逻辑上也自相矛盾：若每个 expected 能在 proxy 单独 rawHash 命中，
-//     M1 就已经直接匹配，不会走到 merge 路径。
-//
-//   R-MERGE-1N（单 expected → 多 proxy，同 toolUseId）：
-//     场景：一个 tool_result expected 对应多个 proxy segments 相同 toolUseId。
-//     toolUseId 在 Messages API 里是唯一的，同一 user message 不可能有两个
-//     相同 toolUseId 的 tool_result block，此路径同样从未触发。
-//
-//   决策：两路均不实现，直接 return null，保留函数签名和调用处作为未来扩展点。
-//   若未来 harness 版本改变 content format，在此处添加实现并补充 fixture。
-
-function tryMergeAlignment(
-  group: ContextSegment[],
-  proxySegs: ContextSegment[],
-  matchedProxyIds: Set<string>,
-  matchedExpectedIds: Set<string>,
-  proxyByRawHash: Map<string, ContextSegment[]>,
-  proxyByNormHash: Map<string, ContextSegment[]>,
-  proxyByToolUseId: Map<string, ContextSegment[]>,
-  attrBySegId: Map<string, ProxySegmentAttribution>,
-): MergeResult | null {
-  return null;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// logicalMessage 分组
-// ─────────────────────────────────────────────────────────────────────────────
-
-function groupByLogicalMessage(segs: ContextSegment[]): ContextSegment[][] {
-  const groups = new Map<string, ContextSegment[]>();
-  const noGroup: ContextSegment[] = [];
-
-  for (const seg of segs) {
-    const gid = seg.metadata?.logicalMessageId as string | undefined;
-    if (!gid) {
-      noGroup.push(seg);
-      continue;
-    }
-    const arr = groups.get(gid) ?? [];
-    arr.push(seg);
-    groups.set(gid, arr);
-  }
-
-  const result: ContextSegment[][] = [];
-  for (const arr of groups.values()) result.push(arr);
-  for (const seg of noGroup) result.push([seg]);
-  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

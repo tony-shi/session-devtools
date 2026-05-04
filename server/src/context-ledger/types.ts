@@ -130,8 +130,6 @@ export type FindingType =
   | "token_mismatch"
   | "order_mismatch"
   | "lifecycle_mismatch"
-  | "merge_alignment"
-  | "one_to_many_alignment"
   | "api_error_retry"
   | "server_side_attribution"
   // P1-1：regex rule 捕获组字符占比 > 60%，说明 pattern 过宽，大部分内容是动态字段
