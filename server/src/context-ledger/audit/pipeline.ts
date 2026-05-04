@@ -122,19 +122,65 @@ function injectProxyTexts(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function runPipeline(input: PipelineInput): PipelineResult {
-  const { proxy, jsonlFile, noR9, verifiedOnly } = input;
+  const { proxy, jsonlFile, noR9, verifiedOnly, proxyOnly } = input;
   const { queryKey, queryKeyHash: hash, timestamp, proxySourceFile, trafficLine } = proxy;
 
-  // proxy_without_jsonl → skipped
+  // proxy_without_jsonl：proxyOnly 时走 attribution-only 路径，否则 skip
   if (!jsonlFile || !existsSync(jsonlFile)) {
-    return {
-      queryKey,
-      queryKeyHash: hash,
-      status: "skipped",
-      skipReason: "proxy_without_jsonl",
-      proxySourceRef: `${proxySourceFile}:${trafficLine}`,
-      timestamp,
-    };
+    if (!proxyOnly) {
+      return {
+        queryKey,
+        queryKeyHash: hash,
+        status: "skipped",
+        skipReason: "proxy_without_jsonl",
+        proxySourceRef: `${proxySourceFile}:${trafficLine}`,
+        timestamp,
+      };
+    }
+    // proxy-only attribution-only 路径
+    try {
+      const raw = proxy.raw;
+      const reqBody = (raw["reqBody"] as Record<string, unknown>) ?? {};
+      const proxyInput: ProxyRequestInput = {
+        ts: raw["ts"] as string | undefined,
+        startedAt: raw["startedAt"] as string | undefined,
+        reqHeaders: raw["reqHeaders"] as Record<string, string> | undefined,
+        reqBody: reqBody as ProxyRequestInput["reqBody"],
+        _sse_events: raw["_sse_events"] as ProxyRequestInput["_sse_events"],
+        _traffic_jsonl_line: trafficLine,
+      };
+      const snapshot = parseClaudeProxyRequest(proxyInput, {
+        proxyFile: proxySourceFile,
+        queryId: queryKey.queryId,
+      });
+      const snapForAttr = JSON.parse(
+        JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
+      ) as typeof snapshot;
+      const allAttributions = inferClaudeProxyAttributions(snapForAttr);
+      const report = reconcileClaudeContext({ snapshot, attributions: allAttributions, expected: undefined });
+      const baseDiff = computeCharDiff(report);
+      const diff = injectProxyTexts(baseDiff, report, reqBody);
+      const scorecard = computeScorecard(queryKey, report, diff, allAttributions);
+      return {
+        queryKey,
+        queryKeyHash: hash,
+        status: "success",
+        proxySourceRef: `${proxySourceFile}:${trafficLine}`,
+        timestamp,
+        scorecard,
+        queryKind: snapshot.request?.queryKind ?? "unknown",
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        queryKey,
+        queryKeyHash: hash,
+        status: "failed",
+        error: message,
+        proxySourceRef: `${proxySourceFile}:${trafficLine}`,
+        timestamp,
+      };
+    }
   }
 
   try {

@@ -36,7 +36,8 @@ export const VALID_FIXTURE_NAMES = [
   "multi-turn-human",
   "system-tools-overhead",
   "task-reminder-smoosh",
-  // side-query-session-title：无 JSONL，需 --proxy-only 模式运行
+  // side-query-session-title 无 JSONL，进入 proxyWithoutJsonl 分支（--proxy-only 下走 attribution-only 路径）
+  "side-query-session-title",
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
