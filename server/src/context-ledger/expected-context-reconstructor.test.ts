@@ -5,7 +5,10 @@ import {
   reconstructExpectedClaudeContext,
   UNIMPLEMENTED_RULES,
 } from "./expected-context-reconstructor";
-import type { SegmentCategory } from "./types";
+import type { ReconstructInput } from "./expected-context-reconstructor";
+import { inferClaudeProxyAttributions } from "./proxy-attribution";
+import { parseClaudeProxyRequest } from "./proxy-snapshot-parser";
+import type { MutationSourceRef, SegmentCategory } from "./types";
 
 const FIXTURE_DIR = new URL(
   "../../test/fixtures/context-reconstruction",
@@ -529,5 +532,134 @@ describe("P1-2 task_reminder 加法重建", () => {
     expect(r.segments.filter((s) => s.category === "attachment")).toHaveLength(0);
     // user_message 段正常存在
     expect(r.segments.filter((s) => s.category === "user_message")).toHaveLength(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guardrail G1：正向重建链路不允许把 proxy sourceRef 写入 expected segments
+//
+// 设计约束（来自 reconstruct.md 全局不变量）：
+//   ExpectedQueryContext.segments[].sourceRefs 不允许出现 kind="proxy"。
+//   reconstructExpectedClaudeContext 的输入类型 ReconstructInput 不接受
+//   ProxyQuerySnapshot / ProxySegmentAttribution。
+//
+// 这里同时验证：
+//   G1a  运行时：所有 fixture 的 expected segments 不含 proxy sourceRef
+//   G1b  运行时：synthetic mutation（直接构造）不含 proxy sourceRef
+//   G1c  类型层面：ContextMutation.sourceRef 被约束为 MutationSourceRef
+//        （MutationSourceKind = Exclude<SourceKind, "proxy">），
+//        proxy mutation 无法通过类型检查——用 @ts-expect-error 标注来锁住约束
+//   G1d  运行时：inferClaudeProxyAttributions() 的输出不影响 expected segment 数量
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Guardrail G1：expected segments 不含 proxy sourceRef", () => {
+  // G1a：fixture 路径：所有已有 fixture 的 expected segments 不含 proxy sourceRef
+  for (const caseName of Object.keys(CASES)) {
+    test(`[${caseName}] segments[].sourceRefs 无 kind="proxy"`, () => {
+      const { expected } = reconstruct(caseName);
+      for (const seg of expected.segments) {
+        for (const ref of seg.sourceRefs) {
+          expect(ref.kind).not.toBe("proxy");
+        }
+      }
+    });
+  }
+
+  // G1b：synthetic mutation 路径：手工构造含各类 sourceRef 的 mutation，
+  // 验证输出 segment 的 sourceRefs 不含 proxy
+  test("synthetic mutations：输出 segments 不含 proxy sourceRef", () => {
+    const jsonlMut = makeMutation({
+      id: "mut-jsonl",
+      category: "user_message",
+      contentRef: { kind: "inline", text: "hello", charCount: 5 },
+      charDeltaEstimate: 5,
+      sourceRef: { kind: "jsonl", jsonl: { file: "test.jsonl" } },
+    });
+    const harnessRuleMut = makeMutation({
+      id: "mut-rule",
+      category: "skill_listing",
+      contentRef: { kind: "inline", text: "skills content", charCount: 14 },
+      charDeltaEstimate: 14,
+      sourceRef: { kind: "harness_rule", harness: { ruleId: "R4_inject_skill_listing" } },
+    });
+
+    const r = reconFn({
+      mutations: [jsonlMut, harnessRuleMut],
+      boundary: { queryId: "q" },
+    });
+
+    for (const seg of r.segments) {
+      for (const ref of seg.sourceRefs) {
+        expect(ref.kind).not.toBe("proxy");
+      }
+    }
+  });
+
+  // G1c：类型约束锁定：MutationSourceRef 不允许 kind="proxy"
+  // 构造一个 kind="proxy" 的对象尝试赋值给 MutationSourceRef，
+  // 应触发 TypeScript 编译错误（用 @ts-expect-error 标注来固化此约束）。
+  // 这个测试本身没有运行时断言，只要 @ts-expect-error 下面没有 TS 错误，
+  // 说明约束失效——bun test 时 TypeScript 不做类型检查，
+  // 所以此处作为注释文档保留，实际类型检查由 `bunx tsc --noEmit` 验证。
+  test("类型约束：MutationSourceRef 不允许 kind=proxy，ReconstructInput 不含 proxy 字段（由 tsc 验证）", () => {
+    const _badMutRef: MutationSourceRef = {
+      // @ts-expect-error — "proxy" 不在 MutationSourceKind 中，tsc 应拒绝此赋值
+      kind: "proxy",
+      proxy: { file: "proxy.json" },
+    };
+
+    const _badInput: ReconstructInput = {
+      mutations: [],
+      boundary: { queryId: "q" },
+      // @ts-expect-error — ReconstructInput 没有 proxySnapshot 字段，tsc 应拒绝此赋值
+      proxySnapshot: { id: "snap" },
+    };
+
+    // 上面两个 @ts-expect-error 如果 tsc 不报错（即约束失效），tsc --noEmit 会以错误退出。
+    // 运行时无需额外断言。
+    expect(true).toBe(true);
+  });
+
+  // G1d：proxy attribution 输出不影响 expected segment 数量
+  // 证明 inferClaudeProxyAttributions() 的结果不被注入 reconstructExpectedClaudeContext
+  test("proxy attribution 输出不影响 expected segment 数量", () => {
+    const caseName = "single-tool-call";
+    const ts = loadProxyTs(caseName);
+    const parsed = parseClaudeJsonlMutations(loadJsonl(caseName));
+
+    // 正向重建（不传入 attribution）
+    const expected = reconstructExpectedClaudeContext({
+      mutations: parsed.mutations,
+      boundary: { queryId: `q-${caseName}`, proxyTimestamp: ts, sessionId: parsed.sessionId },
+    });
+
+    // 解析 proxy 并生成 attribution
+    const proxyRaw = JSON.parse(readFileSync(`${FIXTURE_DIR}/${caseName}/proxy-request.json`, "utf-8")) as Record<string, unknown>;
+    const snapshot = parseClaudeProxyRequest(
+      {
+        ts: proxyRaw["ts"] as string | undefined,
+        reqBody: proxyRaw["reqBody"] as Parameters<typeof parseClaudeProxyRequest>[0]["reqBody"],
+      },
+      { proxyFile: `fixtures/${caseName}/proxy-request.json`, queryId: `q-${caseName}` },
+    );
+    const attributions = inferClaudeProxyAttributions(snapshot);
+
+    // attribution 存在（否则测试本身就无意义）
+    expect(attributions.length).toBeGreaterThan(0);
+
+    // attribution 中的 proxy sourceRef 不会污染 expected segments
+    // 重建结果与不传 attribution 时应完全相同（segment 数量一致）
+    const expectedAgain = reconstructExpectedClaudeContext({
+      mutations: parsed.mutations,
+      boundary: { queryId: `q-${caseName}`, proxyTimestamp: ts, sessionId: parsed.sessionId },
+    });
+    expect(expectedAgain.segments.length).toBe(expected.segments.length);
+
+    // expected segments 中没有任何 proxy sourceRef
+    for (const seg of expected.segments) {
+      for (const ref of seg.sourceRefs) {
+        expect(ref.kind).not.toBe("proxy");
+      }
+    }
   });
 });

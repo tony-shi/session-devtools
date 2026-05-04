@@ -193,3 +193,155 @@ describe("buildTargetRequestWithBody", () => {
     expect(result.level).toBe("segment-only");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guardrail G2：TargetRequest.sourceMap 不允许出现 proxy sourceRef
+//
+// 设计约束（来自 reconstruct.md 全局不变量）：
+//   TargetRequest.sourceMap[].sourceRefs 不允许出现 kind="proxy"，
+//   除非字段名明确标为 legacy/debug 且不参与 coverage。
+//
+// buildTargetRequest 的 sourceMap 由 targetSegmentFromContext 填充，
+// 其 sourceRefs 来自 ExpectedQueryContext.segments[].sourceRefs。
+// G1 已保证 expected segments 不含 proxy sourceRef，
+// G2 进一步在 TargetRequest 层验证这一传播不变量。
+//
+// G2a  正常输入：jsonl + harness_rule sourceRef 构成的 expected → sourceMap 无 proxy
+// G2b  混合 section（system/tools/messages）：每个 section 的 sourceMap entry 无 proxy
+// G2c  buildTargetRequest 不接受 proxy-only 来源的 expected（类型文档）
+// ─────────────────────────────────────────────────────────────────────────────
+
+function proxyRef(): Extract<SourceRef, { kind: "proxy" }> {
+  return { kind: "proxy", proxy: { file: "proxy.json", jsonPath: "reqBody.messages[0]" } };
+}
+
+function harnessRuleRef(ruleId: string): Extract<SourceRef, { kind: "harness_rule" }> {
+  return { kind: "harness_rule", harness: { ruleId } };
+}
+
+describe("Guardrail G2：TargetRequest.sourceMap 不含 proxy sourceRef", () => {
+  // G2a：纯 jsonl sourceRef 的 expected 生成的 sourceMap 无 proxy
+  test("jsonl sourceRef → sourceMap 无 proxy", () => {
+    const expected = makeExpected([
+      makeSegment("seg-user", "user_message", 0, "hello"),
+      makeSegment("seg-tool", "tool_use", 1, JSON.stringify({ cmd: "ls" }), {
+        toolUseId: "tu-1",
+        metadata: { logicalMessageId: "lm-tool", toolName: "Bash" },
+      }),
+    ]);
+
+    const { targetRequest } = buildTargetRequestWithBody({
+      expected,
+      snapshot: makeSnapshot(),
+    });
+
+    for (const [, entry] of Object.entries(targetRequest.sourceMap)) {
+      for (const ref of entry.sourceRefs) {
+        expect(ref.kind).not.toBe("proxy");
+      }
+    }
+  });
+
+  // G2b：system / tools / messages 三个 section 均无 proxy sourceRef
+  test("混合 section（system/tools/messages）→ sourceMap 全无 proxy", () => {
+    const systemSeg: ContextSegment = {
+      id: "seg-system",
+      section: "system",
+      category: "system_prompt",
+      label: "system",
+      role: "system",
+      order: 0,
+      sourceRefs: [harnessRuleRef("R_system_identity")],
+      contentRef: { kind: "inline", text: "You are Claude.", charCount: 15 },
+      charCount: 15,
+      metadata: { logicalMessageId: "lm-sys" },
+    };
+    const toolSeg: ContextSegment = {
+      id: "seg-tool-schema",
+      section: "tools",
+      category: "tools_schema",
+      label: "tools",
+      role: "unknown",
+      order: 1,
+      sourceRefs: [harnessRuleRef("R_tool_bash")],
+      contentRef: { kind: "inline", text: JSON.stringify({ name: "Bash", description: "run bash" }), charCount: 40 },
+      charCount: 40,
+      metadata: { logicalMessageId: "lm-tool-schema" },
+    };
+    const msgSeg = makeSegment("seg-msg", "user_message", 2, "please help");
+
+    const expected = makeExpected([systemSeg, toolSeg, msgSeg]);
+
+    const { targetRequest } = buildTargetRequestWithBody({
+      expected,
+      snapshot: makeSnapshot(),
+    });
+
+    for (const [jsonPath, entry] of Object.entries(targetRequest.sourceMap)) {
+      for (const ref of entry.sourceRefs) {
+        // 失败时 jsonPath 会出现在错误信息里，便于定位哪条 entry 违规
+        if (ref.kind === "proxy") throw new Error(`sourceMap["${jsonPath}"] 含 proxy sourceRef`);
+      }
+    }
+
+    // 三个 section 都有 entry
+    const paths = Object.keys(targetRequest.sourceMap);
+    expect(paths.some((p) => p.startsWith("reqBody.system"))).toBe(true);
+    expect(paths.some((p) => p.startsWith("reqBody.tools"))).toBe(true);
+    expect(paths.some((p) => p.startsWith("reqBody.messages"))).toBe(true);
+  });
+
+  // G2c：即使 expected segment 通过类型断言 bypass 携带了 proxy sourceRef，
+  // builder 层的防御性过滤也应确保 sourceMap 不含 proxy
+  // （双重保障：G1 从 reconstructor 侧阻止，builder 侧再过滤一次）
+  test("expected segment 含 proxy sourceRef 时，builder 过滤后 sourceMap 仍无 proxy", () => {
+    const badSeg: ContextSegment = {
+      id: "seg-bad",
+      section: "messages",
+      category: "user_message",
+      label: "bad",
+      role: "user",
+      order: 0,
+      // 故意通过类型断言 bypass，模拟类型约束被绕过的极端场景
+      sourceRefs: [proxyRef() as unknown as SourceRef],
+      contentRef: { kind: "inline", text: "bad input", charCount: 9 },
+      charCount: 9,
+      metadata: { logicalMessageId: "lm-bad" },
+    };
+
+    const expected = makeExpected([badSeg]);
+    const { targetRequest } = buildTargetRequestWithBody({
+      expected,
+      snapshot: makeSnapshot(),
+    });
+
+    // builder 层过滤 proxy ref 后，sourceMap 不应含 proxy——这是真正的 guardrail
+    const hasProxyInMap = Object.values(targetRequest.sourceMap).some((entry) =>
+      entry.sourceRefs.some((ref) => ref.kind === "proxy"),
+    );
+    expect(hasProxyInMap).toBe(false);
+  });
+
+  // G2d：inferredModel 来自 JSONL 时，request.model 不是 proxy 注入，sourceMap 无关字段检查
+  test("inferredModel 覆盖 proxy model → sourceMap 不含 proxy", () => {
+    const expected = makeExpected([makeSegment("seg-user", "user_message", 0, "test")]);
+    const { targetRequest } = buildTargetRequestWithBody({
+      expected,
+      snapshot: makeSnapshot({ request: { model: "claude-proxy-model", maxTokens: 1000 } }),
+      inferredModel: "claude-opus-4-7",
+    });
+
+    // model 来自 inferredModel，不是 proxy
+    expect(targetRequest.request.model).toBe("claude-opus-4-7");
+
+    // sourceMap 中无 proxy
+    for (const [, entry] of Object.entries(targetRequest.sourceMap)) {
+      for (const ref of entry.sourceRefs) {
+        expect(ref.kind).not.toBe("proxy");
+      }
+    }
+
+    // metadata 标注了来源
+    expect(targetRequest.metadata?.requestScalarSource).toContain("jsonl_inferred");
+  });
+});

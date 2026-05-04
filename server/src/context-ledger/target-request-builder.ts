@@ -220,10 +220,14 @@ function targetSegmentFromContext(
   const ruleId = typeof seg.metadata?.ruleId === "string" ? seg.metadata.ruleId : undefined;
   const toolName = typeof seg.metadata?.toolName === "string" ? seg.metadata.toolName : undefined;
 
+  // proxy sourceRef 不允许出现在 sourceMap（全局不变量：TargetRequest.sourceMap 不含 proxy）。
+  // expected segments 经 G1 保障通常已洁净，此处过滤作为 builder 层的防御性二次检查。
+  const nonProxyRefs = (seg.sourceRefs as SourceRef[]).filter((r) => r.kind !== "proxy");
+
   sourceMap[jsonPath] = {
     jsonPath,
     segmentIds: [seg.id],
-    sourceRefs: seg.sourceRefs as SourceRef[],
+    sourceRefs: nonProxyRefs,
     category: seg.category,
     role: seg.role,
     ...(ruleId ? { ruleIds: [ruleId] } : {}),
