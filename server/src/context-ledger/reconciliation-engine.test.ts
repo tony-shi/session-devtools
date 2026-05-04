@@ -140,16 +140,20 @@ interface FixtureExpect {
 // ── v2.1.126 fixtures（86d62994 session, 2026-05-01）────────────────────────
 // 全部 4 个主场景 fixture 已更新为 v2.1.126，旧 v2.1.119 版本废弃。
 // session JSONL 包含 247 records（promptId bd75b839），版本 2.1.126.507。
-// rule materializer 每次 reconstructExpectedClaudeContext 固定产出 7 个 segment：
-//   identity（exact_text, verified）+ billing_noise（presence）+ environment（normalized_text）+
-//   4 × static system_prompt（system-section, doing-tasks, actions-section, tone-style, text-output 等）
-// 下方所有 expectedSegmentCount 均包含这 7 个 rule-materialized segments。
-const RULE_MATERIALIZED_SEGMENT_COUNT = 7;
+// rule materializer 每次 reconstructExpectedClaudeContext 固定产出 33 个 segment：
+//   7 个 system rule segments：
+//     identity（exact_text, verified）+ billing_noise（presence）+ environment（normalized_text）+
+//     4 × static system_prompt（system-section, tone-style, text-output + doing-tasks/actions等 verifiedFor=null 跳过）
+//   26 个 tools section segments（reconstruct-05 新增）：
+//     P0 dump 中所有内置 exact_text 工具（Agent/Bash/ScheduleWakeup=shape 跳过，ToolSearch=deferred 跳过）
+//     MCP tools（11 个）因 input_schema 用户配置决定，保留 attribution_only，不生成 segment
+// 下方所有 expectedSegmentCount 均包含这 33 个 rule-materialized segments。
+const RULE_MATERIALIZED_SEGMENT_COUNT = 33; // 7 system + 26 tools
 
 const FIXTURE_CASES: Record<string, FixtureExpect> = {
   "system-tools-overhead": {
     proxySegmentCount: 59,   // 12 system + 40 tools + 1 message（仅第一条 user prompt，无 tool call）
-    expectedSegmentCount: 11, // +7 来自 rule materializer（identity/system sections/billing/environment）
+    expectedSegmentCount: 37, // 11 message/system rule segs + 26 tool segs（reconstruct-05）
     maxUnexplainedCoverage: 0.01,
     // attribution_only：proxy 已识别 category 但 expected 缺段（U1-U5 未实现规则）
     requiredFindingTypes: ["server_side_attribution", "matched", "attribution_only"],
@@ -157,21 +161,21 @@ const FIXTURE_CASES: Record<string, FixtureExpect> = {
   },
   "single-tool-call": {
     proxySegmentCount: 64,   // 12 system + 40 tools + 3 messages（user + 2×tool_use/tool_result）
-    expectedSegmentCount: 16, // +7 来自 rule materializer
+    expectedSegmentCount: 42, // 16 message/system rule segs + 26 tool segs（reconstruct-05）
     maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   "multi-turn-human": {
     proxySegmentCount: 73,   // 12 system + 40 tools + 7 messages（multi-turn, has local_command）
-    expectedSegmentCount: 25, // +7 来自 rule materializer
+    expectedSegmentCount: 51, // 25 message/system rule segs + 26 tool segs（reconstruct-05）
     maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   "large-tool-output": {
     proxySegmentCount: 68,   // 12 system + 40 tools + 5 messages（large tool result >22KB）
-    expectedSegmentCount: 20, // +7 来自 rule materializer
+    expectedSegmentCount: 46, // 20 message/system rule segs + 26 tool segs（reconstruct-05）
     maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
@@ -179,7 +183,7 @@ const FIXTURE_CASES: Record<string, FixtureExpect> = {
   // v2.1.126 fixture：40 tools，984 messages，64 smoosh，11 task_reminder
   "task-reminder-smoosh": {
     proxySegmentCount: 1341,
-    expectedSegmentCount: 209, // queued_command 2개가 smoosh로 처리되어 독립 segment 미생성；+7 来自 rule materializer
+    expectedSegmentCount: 235, // 209 message/system segs + 26 tool segs（reconstruct-05）
     maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "server_side_attribution"],
     hasRetryFinding: false,

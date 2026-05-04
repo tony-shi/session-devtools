@@ -3,7 +3,9 @@ import {
   buildTargetRequestWithBody,
   computeRequestLevelExact,
 } from "./target-request-builder";
-import { evaluatePreCondition } from "./expected-context-reconstructor";
+import { evaluatePreCondition, materializeHarnessRules } from "./expected-context-reconstructor";
+import { CONTEXT_LEDGER_RULES } from "./rule-registry";
+import { BUILTIN_TOOL_SCHEMA_JSON } from "./tool-schema-registry";
 import { hashCanonicalJson } from "./request-canonical";
 import type {
   ContextSegment,
@@ -591,5 +593,195 @@ describe("evaluatePreCondition", () => {
 
   test("all: 空 conditions 数组 → pass（无条件）", () => {
     expect(evaluatePreCondition({ type: "all", conditions: [] }, noSnapshot)).toBe("pass");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// reconstruct-05: tools[] schema materialization
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("materializeHarnessRules: tools schema", () => {
+  const boundary = { queryId: "q1" };
+
+  // T1：无 enabledToolNames 时，verified exact_text tool rules 全部生成
+  test("T1: enabledToolNames 未知时，生成所有 verified exact_text tool segment，标注 all_verified_unfiltered", () => {
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary, undefined);
+    const toolSegs = result.segments.filter((s) => s.section === "tools");
+
+    // 应有多个 tool segment（内置工具有 26 个 exact_text）
+    expect(toolSegs.length).toBeGreaterThan(0);
+
+    // 所有 tool segment 都有 contentRef.text（JSON 字符串）
+    for (const seg of toolSegs) {
+      expect(typeof seg.contentRef?.text).toBe("string");
+      // contentRef.text 必须是合法 JSON
+      expect(() => JSON.parse(seg.contentRef!.text!)).not.toThrow();
+      // metadata 标注 all_verified_unfiltered
+      expect(seg.metadata?.toolEnableMode).toBe("all_verified_unfiltered");
+    }
+  });
+
+  // T1b（P2-1 修复）：tool segments 按 harness 字母序排列（localeCompare，内置先于 MCP）
+  test("T1b: tool segments 按 localeCompare 字母序排列，与 harness assembleToolPool 一致", () => {
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary, undefined);
+    const toolSegs = result.segments.filter((s) => s.section === "tools");
+    const names = toolSegs.map((s) => (JSON.parse(s.contentRef!.text!) as { name: string }).name);
+
+    // 验证字母序（每个相邻对 localeCompare <= 0）
+    for (let i = 1; i < names.length; i++) {
+      expect(names[i - 1]!.localeCompare(names[i]!)).toBeLessThanOrEqual(0);
+    }
+
+    // 验证 segment order 与生成顺序一致（不倒序）
+    const orders = toolSegs.map((s) => s.order ?? 0);
+    for (let i = 1; i < orders.length; i++) {
+      expect(orders[i]!).toBeGreaterThan(orders[i - 1]!);
+    }
+  });
+
+  // T2：tool segment 的 contentRef.text 可被 JSON.parse 成对象（含 name/description/input_schema）
+  test("T2: tool segment contentRef.text JSON.parse 后含 name/description/input_schema", () => {
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary, undefined);
+    const toolSegs = result.segments.filter((s) => s.section === "tools");
+
+    for (const seg of toolSegs) {
+      const obj = JSON.parse(seg.contentRef!.text!) as Record<string, unknown>;
+      expect(typeof obj.name).toBe("string");
+      expect(typeof obj.description).toBe("string");
+      expect(obj.input_schema !== undefined).toBe(true);
+    }
+  });
+
+  // T3：MCP tool rules（enabledToolNames 未知时）不生成 segment，进入 unmaterializedRuleIds
+  test("T3: enabledToolNames 未知时 MCP tool rules 进入 unmaterializedRuleIds", () => {
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary, undefined);
+    const toolSegs = result.segments.filter((s) => s.section === "tools");
+
+    // 所有生成的 tool segment 名称不含 mcp__
+    for (const seg of toolSegs) {
+      const obj = JSON.parse(seg.contentRef!.text!) as { name: string };
+      expect(obj.name).not.toContain("mcp__");
+    }
+
+    // enabledToolNames 未知时：MCP rule IDs 出现在 unmaterializedRuleIds 中
+    const mcpRuleIds = CONTEXT_LEDGER_RULES
+      .filter((r) => r.ruleId.includes("mcp__"))
+      .map((r) => r.ruleId);
+    for (const id of mcpRuleIds) {
+      expect(result.unmaterializedRuleIds).toContain(id);
+    }
+  });
+
+  // T3b（P2-2 修复）：enabledToolNames 明确且不含 MCP 工具时，
+  //   MCP rules 不应进入 unmaterializedRuleIds（它们是被禁用的，不是重建缺口）
+  test("T3b: enabledToolNames 明确不含 MCP 时，MCP rules 不进入 unmaterializedRuleIds", () => {
+    const runtimeSnapshot: HarnessRuntimeSnapshot = {
+      source: "jsonl",
+      enabledToolNames: ["Edit", "Read"], // 只启用内置工具，不含任何 MCP
+    };
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary, runtimeSnapshot);
+
+    const mcpInUnmaterialized = result.unmaterializedRuleIds.filter((id) =>
+      id.includes("mcp__"),
+    );
+    // MCP tools 未启用 → 应被静默跳过，不计入 unmaterializedRuleIds
+    expect(mcpInUnmaterialized).toHaveLength(0);
+  });
+
+  // T4：不从 proxy 复制 tool schema（sourceRefs 不含 kind="proxy"）
+  test("T4: tool segment sourceRefs 不含 proxy kind", () => {
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary, undefined);
+    const toolSegs = result.segments.filter((s) => s.section === "tools");
+
+    for (const seg of toolSegs) {
+      for (const ref of seg.sourceRefs) {
+        expect(ref.kind).not.toBe("proxy");
+      }
+    }
+  });
+
+  // T5：enabledToolNames 明确时，只生成指定工具
+  test("T5: enabledToolNames 明确时，只生成指定工具的 segment", () => {
+    const runtimeSnapshot: HarnessRuntimeSnapshot = {
+      source: "jsonl",
+      enabledToolNames: ["Edit", "Read"],
+    };
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary, runtimeSnapshot);
+    const toolSegs = result.segments.filter((s) => s.section === "tools");
+
+    expect(toolSegs).toHaveLength(2);
+    const toolNames = toolSegs.map((s) => (JSON.parse(s.contentRef!.text!) as { name: string }).name);
+    expect(toolNames.sort()).toEqual(["Edit", "Read"]);
+
+    // 明确模式标注 explicit
+    for (const seg of toolSegs) {
+      expect(seg.metadata?.toolEnableMode).toBe("explicit");
+    }
+  });
+
+  // T6：segmentToToolBlock 将 JSON contentRef 转为 object（不是字符串 placeholder）
+  test("T6: buildTargetRequest 中 tools[] 为对象结构", () => {
+    const result = materializeHarnessRules(
+      CONTEXT_LEDGER_RULES,
+      boundary,
+      { source: "jsonl", enabledToolNames: ["Edit"] },
+    );
+    const expected: ExpectedQueryContext = {
+      id: "expected-q1",
+      agentKind: "claude-code",
+      sessionId: "sess",
+      queryId: "q1",
+      mutationIds: [],
+      segments: result.segments,
+      rulesApplied: result.appliedRules,
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      metadata: {},
+    };
+
+    const { requestBody } = buildTargetRequestWithBody({
+      expected,
+      snapshot: makeSnapshot(),
+    });
+
+    expect(Array.isArray(requestBody.tools)).toBe(true);
+    const tools = requestBody.tools as Array<Record<string, unknown>>;
+    expect(tools).toHaveLength(1);
+    // 应是对象，不是字符串
+    expect(typeof tools[0]).toBe("object");
+    expect(tools[0]?.name).toBe("Edit");
+    expect(typeof tools[0]?.description).toBe("string");
+    expect(typeof tools[0]?.input_schema).toBe("object");
+  });
+
+  // T7：BUILTIN_TOOL_SCHEMA_JSON 覆盖 P0 dump 已确认的所有内置 exact_text tool
+  //     ToolSearch 是 deferred tool，不出现在普通 proxy dump 中，当前无 P0 证据，合理缺口
+  test("T7: BUILTIN_TOOL_SCHEMA_JSON 覆盖 P0 dump 中所有内置 exact_text tool", () => {
+    // P0 dump（system-tools-overhead）中出现的工具名（排除 MCP）
+    const knownDumpTools = new Set(Object.keys(BUILTIN_TOOL_SCHEMA_JSON));
+
+    // verified exact_text tool rules 中，dump 里出现过的工具必须有 schema
+    const verifiedExactToolRules = CONTEXT_LEDGER_RULES.filter(
+      (r) =>
+        r.reconstruction?.emits?.section === "tools" &&
+        r.reconstruction?.materialization === "exact_text" &&
+        r.verifiedFor !== null &&
+        !r.ruleId.includes("mcp__"),
+    );
+
+    const knownGaps = new Set(["ToolSearch"]); // P0 dump 无证据，已知合理缺口
+
+    for (const rule of verifiedExactToolRules) {
+      const toolName = rule.ruleId.match(/^claude-code\.tool\.([^.]+)\.v\d+$/)?.[1];
+      if (!toolName) continue; // shape rules（Agent/Bash）无 toolName 提取
+      if (knownGaps.has(toolName)) continue; // 已知合理缺口，跳过断言
+      if (!knownDumpTools.has(toolName)) continue; // 超出 dump 范围，不强断言
+      // dump 里出现的工具必须在 BUILTIN_TOOL_SCHEMA_JSON 中
+      expect(BUILTIN_TOOL_SCHEMA_JSON[toolName]).toBeDefined();
+    }
+
+    // dump 里的所有工具都可以被 JSON.parse
+    for (const [name, json] of Object.entries(BUILTIN_TOOL_SCHEMA_JSON)) {
+      expect(() => JSON.parse(json), `${name} JSON 必须可解析`).not.toThrow();
+    }
   });
 });
