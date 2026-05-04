@@ -143,7 +143,7 @@ interface FixtureExpect {
 const FIXTURE_CASES: Record<string, FixtureExpect> = {
   "system-tools-overhead": {
     proxySegmentCount: 59,   // 12 system + 40 tools + 1 message（仅第一条 user prompt，无 tool call）
-    expectedSegmentCount: 4,
+    expectedSegmentCount: 11, // +7 来自 rule materializer（identity/system sections/billing/environment）
     maxUnexplainedCoverage: 0.01,
     // attribution_only：proxy 已识别 category 但 expected 缺段（U1-U5 未实现规则）
     requiredFindingTypes: ["server_side_attribution", "matched", "attribution_only"],
@@ -151,21 +151,21 @@ const FIXTURE_CASES: Record<string, FixtureExpect> = {
   },
   "single-tool-call": {
     proxySegmentCount: 64,   // 12 system + 40 tools + 3 messages（user + 2×tool_use/tool_result）
-    expectedSegmentCount: 9,
+    expectedSegmentCount: 16, // +7 来自 rule materializer
     maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   "multi-turn-human": {
     proxySegmentCount: 73,   // 12 system + 40 tools + 7 messages（multi-turn, has local_command）
-    expectedSegmentCount: 18,
+    expectedSegmentCount: 25, // +7 来自 rule materializer
     maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   "large-tool-output": {
     proxySegmentCount: 68,   // 12 system + 40 tools + 5 messages（large tool result >22KB）
-    expectedSegmentCount: 13,
+    expectedSegmentCount: 20, // +7 来自 rule materializer
     maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
@@ -173,7 +173,7 @@ const FIXTURE_CASES: Record<string, FixtureExpect> = {
   // v2.1.126 fixture：40 tools，984 messages，64 smoosh，11 task_reminder
   "task-reminder-smoosh": {
     proxySegmentCount: 1341,
-    expectedSegmentCount: 202, // queued_command 2개가 smoosh로 처리되어 독립 segment 미생성
+    expectedSegmentCount: 209, // queued_command 2개가 smoosh로 처리되어 독립 segment 미생성；+7 来自 rule materializer
     maxUnexplainedCoverage: 0.01,
     requiredFindingTypes: ["matched", "server_side_attribution"],
     hasRetryFinding: false,
