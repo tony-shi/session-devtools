@@ -24,10 +24,12 @@ import {
   charDiffJsonPath,
   charDiffHtmlPath,
   proxyAttributionViewPath,
+  reconcileFusionHtmlPath,
   errorPath,
 } from "./paths";
 import type { AuditMode } from "./paths";
 import { renderProxyAttributionView } from "./proxy-attribution-view";
+import { renderReconcileFusionHtml } from "./render-reconcile-fusion-html";
 import type { ProxySegmentAttribution } from "../types";
 import type {
   AuditIndexEntry,
@@ -160,6 +162,22 @@ export function writeQueryArtifacts(
       writeFileSync(join(dir, pavPath), pavHtml, "utf-8");
       updated.proxyAttributionViewPath = pavPath;
     }
+
+    // reconcile fusion view（4-col table: raw / attribution / expected / reconcile）
+    if (result.scorecard) {
+      const snap = data.report.snapshot;
+      const fusionHtml = renderReconcileFusionHtml({
+        queryId: snap.queryId,
+        sessionId: snap.sessionId,
+        timestamp: snap.timestamp,
+        report: data.report,
+        reqBody: data.reqBody ?? {},
+        scorecard: result.scorecard,
+      });
+      const fusionPath = reconcileFusionHtmlPath(hash);
+      writeFileSync(join(dir, fusionPath), fusionHtml, "utf-8");
+      updated.reconcileFusionHtmlPath = fusionPath;
+    }
   }
 
   return updated;
@@ -230,6 +248,7 @@ export function writeIndex(
       charDiffHtmlPath: r.charDiffHtmlPath,
       charDiffJsonPath: r.charDiffJsonPath,
       proxyAttributionViewPath: r.proxyAttributionViewPath,
+      reconcileFusionHtmlPath: r.reconcileFusionHtmlPath,
       errorPath: r.errorPath,
     };
     return entry;
