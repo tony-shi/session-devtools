@@ -45,15 +45,36 @@ ProxySnapshot + ProxyAttribution
 
 ---
 
-## 并行执行准备
+## 手工并行执行准备
 
-本仓库提供 `scripts/reconstruct-parallel.ts` 从本文件提取各 worktree prompt，并生成 Claude Code 非交互命令。
+不再使用 `scripts/reconstruct-parallel.ts` / `claude -p --worktree` 自动分发任务。原因：自动创建 worktree 时起点不够显式，容易从过期 `HEAD` 拉出缺少 `context-ledger` 的工作树；非交互 shell 还会绕过 zsh alias，导致 `claude-free` 等本地命令不可用。
 
-先在 develop 主 worktree 跑一次 fixture baseline，所有 worker 共享同一个 `CONTEXT_AUDIT_HOME` 和 `RECON_BASELINE_RUN_ID`：
+改为人工显式创建 worktree，并在每个终端中前台交互运行 Claude Code：
+
+```text
+主 develop worktree：固定起点、跑 baseline、创建 worktree
+各任务 worktree：进入目录、前台运行 claude-free、粘贴本文件对应 Prompt
+最终 merge：用户手动 review / commit / merge
+```
+
+### 1. 在 develop 主 worktree 固定起点
 
 ```bash
-export RECON_AUDIT_HOME="$PWD/.audit/reconstruct"
+cd /Users/shihuashen/Documents/session-dashboard
+git switch develop
+git status --short
+git log --oneline -1
+test -d server/src/context-ledger || echo "ERROR: context-ledger missing"
+```
+
+要求：`git log -1` 必须是包含 `server/src/context-ledger/`、`reconstruct.md`、`AGENTS.md` 的最新 develop。若主 worktree 有未提交的文档/脚本变更，先提交或明确不要让新 worktree 依赖它们。
+
+### 2. 跑一次共享 fixture baseline
+
+```bash
+export RECON_AUDIT_HOME="/Users/shihuashen/Documents/session-dashboard/.audit/reconstruct"
 mkdir -p "$RECON_AUDIT_HOME"
+
 export RECON_BASELINE_RUN_ID="$(
   CONTEXT_AUDIT_HOME="$RECON_AUDIT_HOME" \
   bun run context:audit:fixtures --no-update-latest \
@@ -61,38 +82,70 @@ export RECON_BASELINE_RUN_ID="$(
     | sed -n 's/^run: //p' \
     | tail -1
 )"
+
 echo "$RECON_BASELINE_RUN_ID"
 ```
 
-生成某一批次的 worker 命令：
+所有任务 worktree 跑 fixture audit 时都使用同一个 baseline：
 
 ```bash
-bun run reconstruct:commands -- --batch 1
-bun run reconstruct:commands -- --batch 2
-bun run reconstruct:commands -- --batch 3
-bun run reconstruct:commands -- --batch 4
+CONTEXT_AUDIT_HOME="$RECON_AUDIT_HOME" \
+bun run context:audit:fixtures --baseline "$RECON_BASELINE_RUN_ID" --no-update-latest
 ```
 
-每条生成的命令都只打印，不自动执行。复制到不同终端执行即可。worker 内部跑 audit 时必须带：
+### 3. 手工创建 worktree
+
+从 develop 主 worktree 执行，显式指定 `develop` 为起点：
 
 ```bash
-CONTEXT_AUDIT_HOME="$RECON_AUDIT_HOME" bun run context:audit:fixtures --baseline "$RECON_BASELINE_RUN_ID" --no-update-latest
+git worktree add ../session-dashboard-reconstruct-01-guardrails \
+  -b reconstruct-01-guardrails develop
+
+git worktree add ../session-dashboard-reconstruct-02-rule-materializer \
+  -b reconstruct-02-rule-materializer develop
+
+git worktree add ../session-dashboard-reconstruct-03-runtime-snapshot \
+  -b reconstruct-03-runtime-snapshot develop
 ```
 
-如果你平时用的是 zsh alias（例如 `alias claude-free='ANTHROPIC_BASE_URL=... claude ...'`），不要在生成命令里直接写 alias 名。非交互 `bash` 不会读取 zsh alias，也不会展开 alias。把 alias 的内容作为 shell 片段传给生成器：
+后续批次同理：
 
 ```bash
-export RECON_CLAUDE_CMD='ANTHROPIC_BASE_URL=http://internal-proxy.example:8742 claude --disallowed-tools "WebSearch(*)" --dangerously-skip-permissions'
-bun run reconstruct:commands -- --batch 1 --no-permission-flags --no-tool-flags
+git worktree add ../session-dashboard-reconstruct-04-system-rules \
+  -b reconstruct-04-system-rules develop
+
+git worktree add ../session-dashboard-reconstruct-05-tool-rules \
+  -b reconstruct-05-tool-rules develop
+
+git worktree add ../session-dashboard-reconstruct-06-request-scalars \
+  -b reconstruct-06-request-scalars develop
+
+git worktree add ../session-dashboard-reconstruct-07-audit-fixtures \
+  -b reconstruct-07-audit-fixtures develop
 ```
 
-或者把 alias 做成真实可执行文件放进 PATH，例如 `~/.local/bin/claude-free`，再用：
+如果某个旧 worktree 已存在且起点错误，先在主 worktree 人工清理：
 
 ```bash
-bun run reconstruct:commands -- --batch 1 --claude-cmd claude-free --no-permission-flags --no-tool-flags
+git worktree remove ../session-dashboard-reconstruct-01-guardrails
+git branch -D reconstruct-01-guardrails
 ```
 
-注意：`claude --worktree` 从当前 `HEAD` 创建新 worktree。若本文件或并行脚本尚未提交到 develop，新 worktree 不会自动包含这些文件；但生成命令时 prompt 已内嵌任务内容，所以 worker 不依赖新 worktree 中存在本文件。若希望 worker 也能读取本文件，请先把前置准备改动提交到 develop。
+### 4. 在每个终端前台执行
+
+打开一个新终端，进入对应 worktree：
+
+```bash
+cd /Users/shihuashen/Documents/session-dashboard-reconstruct-01-guardrails
+git log --oneline -1
+test -d server/src/context-ledger || echo "ERROR: context-ledger missing"
+export RECON_AUDIT_HOME="/Users/shihuashen/Documents/session-dashboard/.audit/reconstruct"
+export RECON_BASELINE_RUN_ID="<填入第 2 步输出的 runId>"
+type claude-free
+claude-free
+```
+
+进入 Claude Code 交互界面后，粘贴本文件对应的 `### Prompt` 代码块，例如 `Worktree 01 — guardrails` 下的 prompt。不要让 worker 自行 merge/rebase/切换任务；如果发现 worktree 起点不对，直接停止并回到主 worktree 重建。
 
 ---
 
