@@ -180,7 +180,7 @@ function buildCommand(task: ReconstructTask, args: string[]): string {
 
   const lines = [
     `CONTEXT_AUDIT_HOME="${auditHome}" \\`,
-    `claude -p \\`,
+    `claude-free -p \\`,
     `  --worktree ${shellQuote(task.id)} \\`,
     `  --name ${shellQuote(task.id)} \\`,
     `  --effort ${shellQuote(effort)} \\`,
