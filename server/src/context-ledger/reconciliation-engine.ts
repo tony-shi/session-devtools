@@ -731,15 +731,19 @@ function computeCoverage(
   let evidenceBackedProxyCharsForDrift = 0;
   for (const align of alignments) {
     // 只统计 evidence-backed（raw_hash / normalized_hash / tool_use_id / rule_id 等）
-    // category（M4 heuristic）和 attribution_only（无 expected）不参与 drift 计算
-    if (align.basis === "category" || align.basis === "attribution_only") continue;
+    // category（M4 heuristic）、attribution_only（无 expected）、server_side_attribution（billing_noise）
+    // 不参与 drift 计算——server_side_attribution 是 known overhead，不是 user-semantic char drift
+    if (align.basis === "category" || align.basis === "attribution_only" || align.basis === "server_side_attribution") continue;
     const eChars = align.expectedSegmentIds
       .map((id) => expectedById.get(id)?.charCount ?? 0)
       .reduce((a, b) => a + b, 0);
     const pChars = align.proxySegmentIds
       .map((id) => proxySegs.find((s) => s.id === id)?.charCount ?? 0)
       .reduce((a, b) => a + b, 0);
-    if (eChars > 0 && pChars > 0) {
+    // presence rule segment 的 eChars 可能为 0（无 contentText），pChars > 0；
+    // 这种情况下 drift = |0 - pChars| = pChars，应计入 evidenceBackedCharDrift，
+    // 与 char-diff.ts 的 approximate_match 统计口径保持一致。
+    if (pChars > 0) {
       evidenceBackedCharDrift += Math.abs(eChars - pChars);
       evidenceBackedProxyCharsForDrift += pChars;
     }
