@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { parseClaudeJsonlMutations, pairToolUseAndResult } from "./jsonl-mutation-parser";
+import { parseClaudeJsonlMutations, pairToolUseAndResult, buildRuntimeSnapshotFromJsonl } from "./jsonl-mutation-parser";
 import type { ContextMutation, SegmentCategory } from "./types";
 
 const FIXTURE_DIR = new URL(
@@ -385,5 +385,172 @@ describe("cross-fixture invariants", () => {
     expect(m.category).toBe("assistant_text");
     expect(m.metadata?.isApiErrorMessage).toBe(true);
     expect(m.metadata?.messageId).toBe("msg-apierr");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HarnessRuntimeSnapshot（第一版 JSONL 可填充字段）
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("HarnessRuntimeSnapshot（第一版）", () => {
+  test("fixture 解析结果包含 runtimeSnapshot，source=jsonl", () => {
+    for (const caseName of Object.keys(EXPECTED)) {
+      const r = parse(caseName);
+      expect(r.runtimeSnapshot).toBeDefined();
+      expect(r.runtimeSnapshot.source).toBe("jsonl");
+    }
+  });
+
+  test("inferredModel 从最后一条 assistant mutation 的 model 字段提取", () => {
+    const lines = [
+      JSON.stringify({
+        type: "assistant",
+        uuid: "a1",
+        message: {
+          id: "msg1",
+          role: "assistant",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "first" }],
+        },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        uuid: "a2",
+        message: {
+          id: "msg2",
+          role: "assistant",
+          model: "claude-sonnet-4-6",
+          content: [{ type: "text", text: "second" }],
+        },
+      }),
+    ];
+    const r = parseClaudeJsonlMutations(lines);
+    // 取最后一条 assistant
+    expect(r.inferredModel).toBe("claude-sonnet-4-6");
+    expect(r.runtimeSnapshot.inferredModel).toBe("claude-sonnet-4-6");
+  });
+
+  test("runtimeSnapshot 与 inferredModel 保持同步", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      uuid: "a1",
+      message: {
+        id: "msg1",
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [{ type: "text", text: "hello" }],
+      },
+    });
+    const r = parseClaudeJsonlMutations(line);
+    expect(r.runtimeSnapshot.inferredModel).toBe(r.inferredModel);
+  });
+
+  test("permission-mode 行被提取为 permissionMode 字段", () => {
+    const lines = [
+      JSON.stringify({
+        type: "permission-mode",
+        permissionMode: "bypassPermissions",
+        timestamp: "2026-05-01T00:00:00.000Z",
+      }),
+    ];
+    const r = parseClaudeJsonlMutations(lines);
+    expect(r.runtimeSnapshot.permissionMode).toBe("bypassPermissions");
+  });
+
+  test("无 permission-mode 行时 runtimeSnapshot.permissionMode 为 undefined", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      uuid: "a1",
+      message: { id: "m1", role: "assistant", content: [{ type: "text", text: "hi" }] },
+    });
+    const r = parseClaudeJsonlMutations(line);
+    expect(r.runtimeSnapshot.permissionMode).toBeUndefined();
+  });
+
+  test("firstTimestamp 取第一条有时间戳 mutation 的时间", () => {
+    const lines = [
+      JSON.stringify({
+        type: "user",
+        uuid: "u1",
+        timestamp: "2026-05-01T10:00:00.000Z",
+        message: { role: "user", content: "hello" },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        uuid: "a1",
+        timestamp: "2026-05-01T10:00:01.000Z",
+        message: {
+          id: "m1",
+          role: "assistant",
+          model: "claude-opus-4-7",
+          content: [{ type: "text", text: "hi" }],
+        },
+      }),
+    ];
+    const r = parseClaudeJsonlMutations(lines);
+    expect(r.runtimeSnapshot.firstTimestamp).toBe("2026-05-01T10:00:00.000Z");
+  });
+
+  test("无 assistant 行时 inferredModel 与 runtimeSnapshot.inferredModel 均为 undefined", () => {
+    const line = JSON.stringify({
+      type: "user",
+      uuid: "u1",
+      message: { role: "user", content: "only user" },
+    });
+    const r = parseClaudeJsonlMutations(line);
+    expect(r.inferredModel).toBeUndefined();
+    expect(r.runtimeSnapshot.inferredModel).toBeUndefined();
+  });
+
+  test("runtimeSnapshot 不含 proxy 相关字段（userType/settings 等第一版均为 undefined）", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      uuid: "a1",
+      message: {
+        id: "m1",
+        role: "assistant",
+        model: "claude-opus-4-7",
+        content: [{ type: "text", text: "hi" }],
+      },
+    });
+    const r = parseClaudeJsonlMutations(line);
+    const snap = r.runtimeSnapshot;
+    // 第一版待派生字段均为 undefined，明确断言"不猜"
+    expect(snap.userType).toBeUndefined();
+    expect(snap.settings).toBeUndefined();
+    expect(snap.featureFlags).toBeUndefined();
+    expect(snap.enabledToolNames).toBeUndefined();
+    expect(snap.autoMemoryEnabled).toBeUndefined();
+    expect(snap.claudeCodeVersion).toBeUndefined();
+    expect(snap.entrypoint).toBeUndefined();
+    expect(snap.cwd).toBeUndefined();
+  });
+
+  test("buildRuntimeSnapshotFromJsonl 直接构建 snapshot 与 parse 结果一致", () => {
+    const mutations: ContextMutation[] = [
+      {
+        id: "cmut-1",
+        agentKind: "claude-code",
+        sessionId: "sess-1",
+        type: "append",
+        category: "assistant_text",
+        source: "jsonl",
+        sourceRef: { kind: "jsonl", jsonl: { file: "f.jsonl", line: 1 } },
+        confidence: "exact",
+        timestamp: "2026-05-01T12:00:00.000Z",
+        metadata: { model: "claude-opus-4-7" },
+      },
+    ];
+    const snap = buildRuntimeSnapshotFromJsonl({
+      mutations,
+      sessionId: "sess-1",
+      inferredModel: "claude-opus-4-7",
+      jsonlFile: "f.jsonl",
+    });
+    expect(snap.source).toBe("jsonl");
+    expect(snap.inferredModel).toBe("claude-opus-4-7");
+    expect(snap.sessionId).toBe("sess-1");
+    expect(snap.jsonlFile).toBe("f.jsonl");
+    expect(snap.firstTimestamp).toBe("2026-05-01T12:00:00.000Z");
   });
 });

@@ -155,6 +155,7 @@ export function runPipeline(input: PipelineInput): PipelineResult {
         proxyTimestamp: snapshot.timestamp,
         sessionId: parsed.sessionId,
       },
+      runtimeSnapshot: parsed.runtimeSnapshot,
     });
     const report = reconcileClaudeContext({ snapshot, attributions, expected });
     const baseDiff = computeCharDiff(report);
@@ -227,10 +228,16 @@ export function runPipelineWithData(input: PipelineInput): {
         proxyTimestamp: snapshot.timestamp,
         sessionId: parsed.sessionId,
       },
+      runtimeSnapshot: parsed.runtimeSnapshot,
     });
 
-    // model 优先从 JSONL assistant 行推断，fallback 到 proxy snapshot
-    const targetRequest = buildTargetRequest({ expected, snapshot, inferredModel: parsed.inferredModel });
+    // runtimeSnapshot 传入 builder：model 优先从 snapshot 取，proxy fallback 显式标注
+    const targetRequest = buildTargetRequest({
+      expected,
+      snapshot,
+      inferredModel: parsed.inferredModel,
+      runtimeSnapshot: parsed.runtimeSnapshot,
+    });
 
     const report = reconcileClaudeContext({
       snapshot,

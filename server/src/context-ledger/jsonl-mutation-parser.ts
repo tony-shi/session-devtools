@@ -1,6 +1,7 @@
 import type {
   ContentRef,
   ContextMutation,
+  HarnessRuntimeSnapshot,
   MutationSourceRef,
   MutationType,
   SegmentCategory,
@@ -37,6 +38,9 @@ export interface JsonlMutationParseResult {
   // 只有 JSONL 包含 assistant 行时才有值；proxy snapshot 的 model 字段来自请求参数，
   // 两者一致时可互相验证；不一致时 targetRequest 优先用 JSONL 推断值。
   inferredModel?: string;
+  // 第一版 HarnessRuntimeSnapshot，由 JSONL 可提取的字段填充。
+  // proxy snapshot 不参与此快照的构建。
+  runtimeSnapshot: HarnessRuntimeSnapshot;
 }
 
 // ── Claude Code session.jsonl 形状 ────────────────────────────────────────────
@@ -364,7 +368,66 @@ export function parseClaudeJsonlMutations(
     }
   }
 
-  return { mutations, sidechainMutations, unknownLines, sessionId, inferredModel };
+  const runtimeSnapshot = buildRuntimeSnapshotFromJsonl({
+    mutations,
+    sessionId,
+    inferredModel,
+    jsonlFile: file,
+  });
+
+  return { mutations, sidechainMutations, unknownLines, sessionId, inferredModel, runtimeSnapshot };
+}
+
+// ── HarnessRuntimeSnapshot 构建 ───────────────────────────────────────────────
+
+interface RuntimeSnapshotInput {
+  mutations: ContextMutation[];
+  sessionId: string;
+  inferredModel: string | undefined;
+  jsonlFile: string;
+}
+
+// 从 JSONL 解析结果填充第一版 HarnessRuntimeSnapshot。
+// 只消费 JSONL 内可直接提取的字段；proxy snapshot 不参与此函数。
+// 未知字段显式留 undefined——调用方不得假定未填字段有业务默认值。
+export function buildRuntimeSnapshotFromJsonl(
+  input: RuntimeSnapshotInput,
+): HarnessRuntimeSnapshot {
+  const { mutations, sessionId, inferredModel, jsonlFile } = input;
+
+  // permission-mode：取最后一条（最近一次授权最具代表性）
+  let permissionMode: string | undefined;
+  for (let i = mutations.length - 1; i >= 0; i--) {
+    const m = mutations[i];
+    if (m.category === "permission" && typeof m.metadata?.permissionMode === "string") {
+      permissionMode = m.metadata.permissionMode as string;
+      break;
+    }
+  }
+
+  // firstTimestamp：取第一条有 timestamp 的 mutation
+  let firstTimestamp: string | undefined;
+  for (const m of mutations) {
+    if (m.timestamp) {
+      firstTimestamp = m.timestamp;
+      break;
+    }
+  }
+
+  const snapshot: HarnessRuntimeSnapshot = {
+    source: "jsonl",
+    ...(inferredModel !== undefined ? { inferredModel } : {}),
+    ...(jsonlFile ? { jsonlFile } : {}),
+    ...(sessionId && sessionId !== "unknown" ? { sessionId } : {}),
+    ...(permissionMode !== undefined ? { permissionMode } : {}),
+    ...(firstTimestamp !== undefined ? { firstTimestamp } : {}),
+    // 以下字段第一版无法从 JSONL 读取，留 undefined，由后续 local_env / derived 源补充
+    // claudeCodeVersion / entrypoint / cwd / userType / outputStyleConfig
+    // enabledToolNames / mcpToolNames / autoMemoryEnabled / autoMemoryPath
+    // settings / featureFlags
+  };
+
+  return snapshot;
 }
 
 // ── user 行 ─────────────────────────────────────────────────────────────────

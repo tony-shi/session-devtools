@@ -3,10 +3,12 @@ import {
   buildTargetRequestWithBody,
   computeRequestLevelExact,
 } from "./target-request-builder";
+import { evaluatePreCondition } from "./expected-context-reconstructor";
 import { hashCanonicalJson } from "./request-canonical";
 import type {
   ContextSegment,
   ExpectedQueryContext,
+  HarnessRuntimeSnapshot,
   ProxyQuerySnapshot,
   SourceRef,
 } from "./types";
@@ -343,5 +345,251 @@ describe("Guardrail G2：TargetRequest.sourceMap 不含 proxy sourceRef", () => 
 
     // metadata 标注了来源
     expect(targetRequest.metadata?.requestScalarSource).toContain("jsonl_inferred");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// proxy snapshot fallback 标注
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("proxy snapshot fallback 标注", () => {
+  test("proxy 有 max_tokens / stream 时，proxySnapshotFallbackFields 包含这两个字段", () => {
+    const expected = makeExpected([makeSegment("seg-user", "user_message", 0, "hello")]);
+    const { targetRequest } = buildTargetRequestWithBody({
+      expected,
+      snapshot: makeSnapshot({ request: { model: "claude-opus-4-7", maxTokens: 8000, stream: true } }),
+      inferredModel: "claude-opus-4-7",
+    });
+
+    const fallbacks = targetRequest.metadata?.proxySnapshotFallbackFields as string[] | undefined;
+    expect(Array.isArray(fallbacks)).toBe(true);
+    expect(fallbacks).toContain("max_tokens");
+    expect(fallbacks).toContain("stream");
+    // model 有 inferredModel 不应在 fallback 列表里
+    expect(fallbacks).not.toContain("model");
+  });
+
+  test("没有 inferredModel 且 proxy 有 model 时，model 进入 fallback 列表", () => {
+    const expected = makeExpected([makeSegment("seg-user", "user_message", 0, "hello")]);
+    const { targetRequest } = buildTargetRequestWithBody({
+      expected,
+      snapshot: makeSnapshot({ request: { model: "claude-opus-4-7", maxTokens: 8000 } }),
+      // 不传 inferredModel
+    });
+
+    const fallbacks = targetRequest.metadata?.proxySnapshotFallbackFields as string[] | undefined;
+    expect(fallbacks).toContain("model");
+    expect(fallbacks).toContain("max_tokens");
+  });
+
+  test("runtimeSnapshot.inferredModel 优先级高于顶层 inferredModel", () => {
+    const runtimeSnapshot: HarnessRuntimeSnapshot = {
+      source: "jsonl",
+      inferredModel: "claude-opus-4-7-from-snapshot",
+    };
+    const expected = makeExpected([makeSegment("seg-user", "user_message", 0, "hello")]);
+    const { targetRequest } = buildTargetRequestWithBody({
+      expected,
+      snapshot: makeSnapshot({ request: { model: "claude-proxy-model", maxTokens: 1000 } }),
+      inferredModel: "claude-other-model",  // 应被 runtimeSnapshot 覆盖
+      runtimeSnapshot,
+    });
+
+    expect(targetRequest.request.model).toBe("claude-opus-4-7-from-snapshot");
+    // runtimeSnapshot source 标注在 metadata 中
+    expect(targetRequest.metadata?.runtimeSnapshotSource).toBe("jsonl");
+  });
+
+  test("proxySnapshotFallbackFields 中的字段不得影响 exact reconstruction 判断", () => {
+    const expected = makeExpected([makeSegment("seg-user", "user_message", 0, "hello")]);
+    const built = buildTargetRequestWithBody({
+      expected,
+      snapshot: makeSnapshot({ request: { model: "claude-opus-4-7", maxTokens: 4096, stream: false } }),
+    });
+
+    const fallbacks = built.targetRequest.metadata?.proxySnapshotFallbackFields as string[];
+    // 当 fallback 字段存在时，request scalar 来源不能被描述为纯正向重建
+    expect(fallbacks.length).toBeGreaterThan(0);
+    expect(built.targetRequest.metadata?.requestScalarSource).toBe("proxy_snapshot");
+    // 即使 canonical hash 相等，也因 fallback 而不能算作 canonical exact——
+    // 这里只验证标注本身存在，不验证 computeRequestLevelExact（它不读 fallbackFields）
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RulePreCondition evaluator
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("evaluatePreCondition", () => {
+  const noSnapshot = undefined;
+
+  test("always → 无条件 pass，不需要 snapshot", () => {
+    expect(evaluatePreCondition({ type: "always" }, noSnapshot)).toBe("pass");
+  });
+
+  // ── userType ────────────────────────────────────────────────────────────────
+
+  test("userType: snapshot 缺失 → unknown", () => {
+    expect(evaluatePreCondition({ type: "userType", value: "external" }, noSnapshot)).toBe("unknown");
+  });
+
+  test("userType: snapshot.userType 未填 → unknown", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl" };
+    expect(evaluatePreCondition({ type: "userType", value: "external" }, snap)).toBe("unknown");
+  });
+
+  test("userType: snapshot.userType='unknown' → unknown（不允许默认 pass）", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl", userType: "unknown" };
+    expect(evaluatePreCondition({ type: "userType", value: "external" }, snap)).toBe("unknown");
+  });
+
+  test("userType: 值匹配 → pass", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl", userType: "external" };
+    expect(evaluatePreCondition({ type: "userType", value: "external" }, snap)).toBe("pass");
+  });
+
+  test("userType: 值不匹配 → fail", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl", userType: "ant" };
+    expect(evaluatePreCondition({ type: "userType", value: "external" }, snap)).toBe("fail");
+  });
+
+  // ── harnessFlag ─────────────────────────────────────────────────────────────
+
+  test("harnessFlag: snapshot 缺失 → unknown", () => {
+    expect(evaluatePreCondition({ type: "harnessFlag", flag: "isAutoMemoryEnabled()" }, noSnapshot)).toBe("unknown");
+  });
+
+  test("harnessFlag: featureFlags 未填 → unknown", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl" };
+    expect(evaluatePreCondition({ type: "harnessFlag", flag: "isAutoMemoryEnabled()" }, snap)).toBe("unknown");
+  });
+
+  test("harnessFlag: 对应 flag 为 'unknown' → unknown", () => {
+    const snap: HarnessRuntimeSnapshot = {
+      source: "jsonl",
+      featureFlags: { "isAutoMemoryEnabled()": "unknown" },
+    };
+    expect(evaluatePreCondition({ type: "harnessFlag", flag: "isAutoMemoryEnabled()" }, snap)).toBe("unknown");
+  });
+
+  test("harnessFlag: flag=true → pass", () => {
+    const snap: HarnessRuntimeSnapshot = {
+      source: "jsonl",
+      featureFlags: { "isAutoMemoryEnabled()": true },
+    };
+    expect(evaluatePreCondition({ type: "harnessFlag", flag: "isAutoMemoryEnabled()" }, snap)).toBe("pass");
+  });
+
+  test("harnessFlag: flag=false → fail", () => {
+    const snap: HarnessRuntimeSnapshot = {
+      source: "jsonl",
+      featureFlags: { "isAutoMemoryEnabled()": false },
+    };
+    expect(evaluatePreCondition({ type: "harnessFlag", flag: "isAutoMemoryEnabled()" }, snap)).toBe("fail");
+  });
+
+  // ── settingsField ────────────────────────────────────────────────────────────
+
+  test("settingsField: snapshot 缺失 → unknown", () => {
+    expect(evaluatePreCondition({ type: "settingsField", field: "theme", op: "eq", value: "dark" }, noSnapshot)).toBe("unknown");
+  });
+
+  test("settingsField: settings 未填 → unknown", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl" };
+    expect(evaluatePreCondition({ type: "settingsField", field: "theme", op: "eq", value: "dark" }, snap)).toBe("unknown");
+  });
+
+  test("settingsField: op=null，字段确实为 null → pass", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl", settings: { theme: null } };
+    expect(evaluatePreCondition({ type: "settingsField", field: "theme", op: "null" }, snap)).toBe("pass");
+  });
+
+  test("settingsField: op=null，字段有值 → fail", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl", settings: { theme: "dark" } };
+    expect(evaluatePreCondition({ type: "settingsField", field: "theme", op: "null" }, snap)).toBe("fail");
+  });
+
+  test("settingsField: op=notNull，字段存在 → pass", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl", settings: { theme: "dark" } };
+    expect(evaluatePreCondition({ type: "settingsField", field: "theme", op: "notNull" }, snap)).toBe("pass");
+  });
+
+  test("settingsField: op=eq，值匹配 → pass", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl", settings: { theme: "dark" } };
+    expect(evaluatePreCondition({ type: "settingsField", field: "theme", op: "eq", value: "dark" }, snap)).toBe("pass");
+  });
+
+  test("settingsField: op=eq，值不匹配 → fail", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl", settings: { theme: "light" } };
+    expect(evaluatePreCondition({ type: "settingsField", field: "theme", op: "eq", value: "dark" }, snap)).toBe("fail");
+  });
+
+  test("settingsField: op=eq，字段不存在 → unknown（不得猜默认值）", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl", settings: {} };
+    expect(evaluatePreCondition({ type: "settingsField", field: "theme", op: "eq", value: "dark" }, snap)).toBe("unknown");
+  });
+
+  test("settingsField: op=neq，值不相等 → pass", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl", settings: { theme: "light" } };
+    expect(evaluatePreCondition({ type: "settingsField", field: "theme", op: "neq", value: "dark" }, snap)).toBe("pass");
+  });
+
+  // ── harnessState ─────────────────────────────────────────────────────────────
+
+  test("harnessState: 自由文本描述无法机器评估 → 始终 unknown", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl" };
+    expect(evaluatePreCondition({ type: "harnessState", description: "anything" }, snap)).toBe("unknown");
+    expect(evaluatePreCondition({ type: "harnessState", description: "anything" }, noSnapshot)).toBe("unknown");
+  });
+
+  // ── all（复合条件）───────────────────────────────────────────────────────────
+
+  test("all: 所有子条件 pass → pass", () => {
+    const snap: HarnessRuntimeSnapshot = {
+      source: "jsonl",
+      userType: "external",
+      featureFlags: { myFlag: true },
+    };
+    const cond = {
+      type: "all" as const,
+      conditions: [
+        { type: "always" as const },
+        { type: "userType" as const, value: "external" as const },
+        { type: "harnessFlag" as const, flag: "myFlag" },
+      ],
+    };
+    expect(evaluatePreCondition(cond, snap)).toBe("pass");
+  });
+
+  test("all: 任一子条件 fail → 立即 fail（不管其它是否 unknown）", () => {
+    const snap: HarnessRuntimeSnapshot = { source: "jsonl", userType: "ant" };
+    const cond = {
+      type: "all" as const,
+      conditions: [
+        { type: "userType" as const, value: "external" as const },  // fail
+        { type: "harnessFlag" as const, flag: "unknownFlag" },       // unknown
+      ],
+    };
+    expect(evaluatePreCondition(cond, snap)).toBe("fail");
+  });
+
+  test("all: 无 fail 但有 unknown → unknown（保守 skip）", () => {
+    const snap: HarnessRuntimeSnapshot = {
+      source: "jsonl",
+      userType: "external",
+      // featureFlags 未填
+    };
+    const cond = {
+      type: "all" as const,
+      conditions: [
+        { type: "userType" as const, value: "external" as const },   // pass
+        { type: "harnessFlag" as const, flag: "missingFlag" },        // unknown
+      ],
+    };
+    expect(evaluatePreCondition(cond, snap)).toBe("unknown");
+  });
+
+  test("all: 空 conditions 数组 → pass（无条件）", () => {
+    expect(evaluatePreCondition({ type: "all", conditions: [] }, noSnapshot)).toBe("pass");
   });
 });

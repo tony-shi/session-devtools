@@ -371,6 +371,26 @@ interface HarnessRuntimeSnapshot {
 - preCondition 不可判断的 rule 进入 `unmaterializedRules`，不猜。
 - reconcile 中 rule-generated exact_text 命中应进入 template 或 exact 合理桶；presence 不进入 exact。
 
+### TODO（来自 worktree-03 codex review P2）
+
+`evaluatePreCondition`（`expected-context-reconstructor.ts`）目前对 `harnessFlag` 的处理是直接用 `cond.flag` 字符串查 `featureFlags`。`rule-registry.ts` 中存在带 `!` 前缀的否定写法，例如：
+
+- `flag: "!isForkSubagentEnabled()"`
+- `flag: "!isReplModeEnabled()"`
+
+当 worktree-04 开始向 `runtimeSnapshot.featureFlags` 写入真实 flag 值时，必须在 `evaluatePreCondition` 的 `harnessFlag` 分支补充否定前缀解析：
+
+```ts
+// 解析否定前缀
+const negate = cond.flag.startsWith("!");
+const actualFlag = negate ? cond.flag.slice(1) : cond.flag;
+const val = flags[actualFlag];
+// ...
+return negate ? !val : val  // 正确翻转逻辑
+```
+
+否则所有 `!xxx` 形式的 flag 条件都会因查不到 key 而返回 `unknown`，导致这些 rule 被保守 skip，无法 materialize。
+
 ### Prompt
 
 ```text
