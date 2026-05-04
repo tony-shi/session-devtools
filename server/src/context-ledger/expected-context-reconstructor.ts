@@ -63,6 +63,7 @@ import type {
 } from "./types";
 import { CONTEXT_LEDGER_RULES, SUPPORTED_CLAUDE_CODE_VERSION, isRuleVerified } from "./rule-registry";
 import type { ContextLedgerRule, RulePreCondition } from "./rule-registry";
+import { BUILTIN_TOOL_SCHEMA_JSON } from "./tool-schema-registry";
 
 // 与 proxy-snapshot-parser 口径一致：16位短截 SHA-256
 function sha256Short(text: string): string {
@@ -788,6 +789,17 @@ function pruneMetadata(meta: Record<string, unknown>): Record<string, unknown> |
 //   shape        → 跳过，写入 unmaterializedRuleIds（无法产出可信文本）
 //   unavailable  → 跳过，写入 unmaterializedRuleIds（无输入来源）
 //
+// tools[] 专项逻辑（reconstruct-05-tool-rules）：
+//   - section="tools" 的 exact_text rule：contentPattern 应为完整 tool JSON 字符串
+//     ({name, description, input_schema})。若 rule 的 contentPattern 为空，
+//     则从 BUILTIN_TOOL_SCHEMA_JSON 查找（key = tool name，来自 ruleId 解析）。
+//   - MCP tool rule（ruleId 含 mcp__）：input_schema 由用户 MCP server 配置决定，
+//     无法正向复现，保守 skip 写入 unmaterializedRuleIds。
+//   - enabledToolNames 未知时：生成所有已注册内置 tool segment，
+//     在 metadata 标注 enabledMode="all_verified_unfiltered"，
+//     避免生成全量工具的假象但不阻塞 materialization。
+//   - contentPattern 是 JSON 字符串但 JSON.parse 失败时：降级为 presence 并报告。
+//
 // preCondition 评估策略（保守）：
 //   { type: "always" } 或省略 → 通过
 //   其它所有条件（userType / harnessFlag / settingsField / harnessState / all）
@@ -803,6 +815,27 @@ export interface MaterializeResult {
 }
 
 /**
+ * 从 ruleId "claude-code.tool.{ToolName}.v1" 提取工具名。
+ * 仅对 section="tools" 的 rule 调用。
+ * 返回 null 表示无法提取（格式不符）。
+ */
+function extractToolNameFromRuleId(ruleId: string): string | null {
+  // 格式：claude-code.tool.{ToolName}.v{N}
+  // MCP tools：claude-code.tool.mcp__{service}__{method}.v1
+  const m = ruleId.match(/^claude-code\.tool\.([^.]+)\.v\d+$/);
+  return m ? (m[1] ?? null) : null;
+}
+
+/**
+ * 判断 tool rule 是否是 MCP tool（input_schema 用户配置决定，不可正向复现）。
+ * MCP tool 的 ruleId 里工具名含有双下划线（mcp__service__method）。
+ */
+function isMcpToolRule(ruleId: string): boolean {
+  const toolName = extractToolNameFromRuleId(ruleId);
+  return toolName !== null && toolName.startsWith("mcp__");
+}
+
+/**
  * 从 CONTEXT_LEDGER_RULES 的 reconstruction 字段正向生成 expected segments。
  * 仅读取 rule.reconstruction，不依赖 proxy 数据。
  */
@@ -814,6 +847,11 @@ export function materializeHarnessRules(
   const segments: ContextSegment[] = [];
   const appliedRules: AppliedRule[] = [];
   const unmaterializedRuleIds: string[] = [];
+
+  // enabledToolNames 是否已知：用于决定是否生成全量 tool segment
+  const enabledToolNames = runtimeSnapshot?.enabledToolNames;
+  const toolEnableMode: "explicit" | "all_verified_unfiltered" =
+    Array.isArray(enabledToolNames) ? "explicit" : "all_verified_unfiltered";
 
   // 段序号从 5000 开始，避免与 mutation 段（0 起步）冲突
   let order = 5000;
@@ -833,6 +871,61 @@ export function materializeHarnessRules(
     // materialization 路由
     switch (recon.materialization) {
       case "exact_text": {
+        // ── tools[] 专项处理（reconstruct-05）────────────────────────────
+        if (recon.emits.section === "tools") {
+          // MCP tool：input_schema 由用户 MCP server 配置决定，无法正向复现
+          if (isMcpToolRule(rule.ruleId)) {
+            unmaterializedRuleIds.push(rule.ruleId);
+            continue;
+          }
+
+          // enabledToolNames 明确指定时，过滤未启用工具
+          if (toolEnableMode === "explicit") {
+            const toolName = extractToolNameFromRuleId(rule.ruleId);
+            if (toolName && !enabledToolNames!.includes(toolName)) {
+              // 工具未启用，跳过（不进入 unmaterializedRuleIds，不是错误）
+              continue;
+            }
+          }
+
+          // 查找 contentPattern：rule 自带优先，否则从 BUILTIN_TOOL_SCHEMA_JSON 查找
+          let toolSchemaJson: string | null = recon.emits.contentPattern ?? null;
+          if (!toolSchemaJson) {
+            const toolName = extractToolNameFromRuleId(rule.ruleId);
+            toolSchemaJson = (toolName && BUILTIN_TOOL_SCHEMA_JSON[toolName]) ? BUILTIN_TOOL_SCHEMA_JSON[toolName] : null;
+          }
+
+          if (!toolSchemaJson) {
+            // tool schema 未注册（既无 contentPattern 也不在 BUILTIN_TOOL_SCHEMA_JSON）
+            unmaterializedRuleIds.push(rule.ruleId);
+            continue;
+          }
+
+          // 验证 JSON 可解析，失败时降级为 presence 并报告
+          let toolSchemaValid = true;
+          try {
+            const parsed = JSON.parse(toolSchemaJson) as unknown;
+            if (!parsed || typeof parsed !== "object") toolSchemaValid = false;
+          } catch {
+            toolSchemaValid = false;
+          }
+
+          const seg = buildRuleSegment({
+            rule,
+            order: order++,
+            materialization: toolSchemaValid ? "exact_text" : "presence",
+            contentText: toolSchemaValid ? toolSchemaJson : undefined,
+            // 透传 tool enable mode：标注到 segment metadata，供 target-request-builder 识别
+            extraMetadata: toolSchemaValid
+              ? { toolEnableMode, toolJsonParseStatus: "ok" }
+              : { toolEnableMode, toolJsonParseStatus: "parse_failed" },
+          });
+          segments.push(seg);
+          appliedRules.push(ruleToAppliedRule(rule));
+          continue;
+        }
+        // ── 非 tools section 的 exact_text（system / messages）────────────
+
         // 有 contentPattern 才能生成 exact_text segment；无则降级为 presence
         if (!recon.emits.contentPattern) {
           // contentPattern=null 但 materialization=exact_text：依赖运行时 snapshot 填充
@@ -909,10 +1002,12 @@ interface BuildRuleSegmentOpts {
   order: number;
   materialization: "exact_text" | "normalized_text" | "presence";
   contentText: string | undefined;
+  // 额外 metadata（如 toolEnableMode），合并到 segment.metadata 中
+  extraMetadata?: Record<string, unknown>;
 }
 
 function buildRuleSegment(opts: BuildRuleSegmentOpts): ContextSegment {
-  const { rule, order, materialization, contentText } = opts;
+  const { rule, order, materialization, contentText, extraMetadata } = opts;
   const recon = rule.reconstruction!;
   const emits = recon.emits;
 
@@ -946,6 +1041,8 @@ function buildRuleSegment(opts: BuildRuleSegmentOpts): ContextSegment {
       ruleVerifiedFor: rule.verifiedFor ?? undefined,
       // 触发器类型（always_per_query / from_jsonl / from_memory / from_harness_state）
       reconstructionTrigger: recon.trigger,
+      // 额外 metadata（如 toolEnableMode、toolJsonParseStatus）
+      ...extraMetadata,
     }),
   };
 
