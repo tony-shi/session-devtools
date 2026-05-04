@@ -59,8 +59,8 @@ import type {
   SegmentSection,
   SourceRef,
 } from "./types";
-import { CONTEXT_LEDGER_RULES } from "./rule-registry";
-import type { ContextLedgerRule } from "./rule-registry";
+import { CONTEXT_LEDGER_RULES, SUPPORTED_CLAUDE_CODE_VERSION, isRuleVerified } from "./rule-registry";
+import type { ContextLedgerRule, RulePreCondition } from "./rule-registry";
 
 // 与 proxy-snapshot-parser 口径一致：16位短截 SHA-256
 function sha256Short(text: string): string {
@@ -106,10 +106,19 @@ export interface QueryBoundary {
   parentAgentId?: string;
 }
 
+// 后续任务（reconstruct-03-runtime-snapshot）会引入完整 HarnessRuntimeSnapshot；
+// 此处先定义最小占位类型，供 materializeHarnessRules 的 preCondition 评估使用。
+export interface HarnessRuntimeSnapshot {
+  source: "jsonl" | "local_env" | "derived" | "unknown";
+  claudeCodeVersion?: string;
+}
+
 export interface ReconstructInput {
   mutations: ContextMutation[];
   boundary: QueryBoundary;
   rules?: HarnessRuleConfig;
+  /** 非 proxy 运行态输入，供 rule preCondition 评估（reconstruct-03 补全）。 */
+  runtimeSnapshot?: HarnessRuntimeSnapshot;
   fixtureName?: string;
 }
 
@@ -150,9 +159,22 @@ export function reconstructExpectedClaudeContext(
   //    标记同一逻辑 message 的归并组（不物理合并，给后续 reconciliation 做 N:1 对齐）。
   const segments = mapMutationsToSegments(surviving, rules);
 
+  // 4b. Rule Materializer：从 CONTEXT_LEDGER_RULES.reconstruction 正向生成 system/tools expected segments。
+  //     仅消费 rule.reconstruction，不读取 proxy 结果。
+  const materialized = materializeHarnessRules(
+    CONTEXT_LEDGER_RULES,
+    input.boundary,
+    input.runtimeSnapshot,
+  );
+  segments.push(...materialized.segments);
+
   // 5. 收集 rulesApplied / unimplementedRules。
   const rulesApplied = collectAppliedRules(rules, surviving);
+  // 把 materializer 产出的 AppliedRule 合并进来
+  rulesApplied.push(...materialized.appliedRules);
   const unimplementedRules: string[] = [...UNIMPLEMENTED_RULES];
+  // 把 materializer 跳过的 rule 记录到 unmaterializedRules
+  const unmaterializedRules: string[] = [...materialized.unmaterializedRuleIds];
 
   // 6. 组装 ExpectedQueryContext。
   // TODO(prior-session-prefix): --resume 场景下若 JSONL prefix 缺少历史 turn，
@@ -178,6 +200,7 @@ export function reconstructExpectedClaudeContext(
     metadata: pruneMetadata({
       fixtureName: input.fixtureName,
       unimplementedRules,
+      unmaterializedRules: unmaterializedRules.length > 0 ? unmaterializedRules : undefined,
       droppedMutationCount: input.mutations.length - sliced.length,
       retryDroppedMutationCount: sliced.length - afterRetry.length,
       noiseDroppedMutationCount: afterRetry.length - afterNoise.length,
@@ -735,4 +758,200 @@ function pruneMetadata(meta: Record<string, unknown>): Record<string, unknown> |
     out[k] = v;
   }
   return Object.keys(out).length ? out : undefined;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rule Materializer
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 输入：ContextLedgerRule[] + QueryBoundary + HarnessRuntimeSnapshot（占位）
+// 输出：正向生成的 ContextSegment[] + AppliedRule[] + 跳过的 ruleId[]
+//
+// 支持的 materialization 类型：
+//   exact_text   → 生成带 contentRef.text 和 rawHash 的 segment（可参与 template/raw_hash 对账）
+//   normalized_text → 生成 presence 语义 segment（contentPattern=null 时不带 text），
+//                     标注 materialization=normalized_text，target-request-builder 可识别
+//   presence     → 生成 presence 占位 segment（无 text，不伪造内容）
+//   shape        → 跳过，写入 unmaterializedRuleIds（无法产出可信文本）
+//   unavailable  → 跳过，写入 unmaterializedRuleIds（无输入来源）
+//
+// preCondition 评估策略（保守）：
+//   { type: "always" } 或省略 → 通过
+//   其它所有条件（userType / harnessFlag / settingsField / harnessState / all）
+//     → 暂时 skip，写入 unmaterializedRuleIds；等 reconstruct-03 引入完整 snapshot 后再实现
+//
+// 不从 proxy 读取任何数据；不使用 rule.attribution 字段。
+
+export interface MaterializeResult {
+  segments: ContextSegment[];
+  appliedRules: AppliedRule[];
+  /** 被跳过的 rule（preCondition 不支持 / materialization=shape|unavailable） */
+  unmaterializedRuleIds: string[];
+}
+
+/**
+ * 从 CONTEXT_LEDGER_RULES 的 reconstruction 字段正向生成 expected segments。
+ * 仅读取 rule.reconstruction，不依赖 proxy 数据。
+ */
+export function materializeHarnessRules(
+  rules: ContextLedgerRule[],
+  _boundary: QueryBoundary,
+  _runtimeSnapshot?: HarnessRuntimeSnapshot,
+): MaterializeResult {
+  const segments: ContextSegment[] = [];
+  const appliedRules: AppliedRule[] = [];
+  const unmaterializedRuleIds: string[] = [];
+
+  // 段序号从 5000 开始，避免与 mutation 段（0 起步）冲突
+  let order = 5000;
+
+  for (const rule of rules) {
+    const recon = rule.reconstruction;
+    // 无 reconstruction 定义的 rule（attribution-only）直接跳过
+    if (!recon) continue;
+
+    // preCondition 评估：只支持 always / 省略，其它全部保守跳过
+    const condResult = evaluatePreConditionConservative(recon.preCondition);
+    if (condResult === "skip") {
+      unmaterializedRuleIds.push(rule.ruleId);
+      continue;
+    }
+
+    // materialization 路由
+    switch (recon.materialization) {
+      case "exact_text": {
+        // 有 contentPattern 才能生成 exact_text segment；无则降级为 presence
+        if (!recon.emits.contentPattern) {
+          // contentPattern=null 但 materialization=exact_text：依赖运行时 snapshot 填充
+          // 保守 skip，等 reconstruct-03 提供 snapshot 后再激活
+          unmaterializedRuleIds.push(rule.ruleId);
+          continue;
+        }
+        const text = recon.emits.contentPattern;
+        const seg = buildRuleSegment({
+          rule,
+          order: order++,
+          materialization: "exact_text",
+          contentText: text,
+        });
+        segments.push(seg);
+        appliedRules.push(ruleToAppliedRule(rule));
+        break;
+      }
+
+      case "normalized_text": {
+        // contentPattern 有模板文本时，生成 presence 语义 segment（带 text 占位）；
+        // contentPattern=null 时同样生成 presence 占位（无 text）。
+        // 重要：不伪造内容——normalized_text 的动态字段需 runtime snapshot 填充，
+        // 此处只确认"此 segment 应当存在"。
+        const seg = buildRuleSegment({
+          rule,
+          order: order++,
+          materialization: "normalized_text",
+          contentText: undefined, // 不填入未经 snapshot 替换的模板文本
+        });
+        segments.push(seg);
+        appliedRules.push(ruleToAppliedRule(rule));
+        break;
+      }
+
+      case "presence": {
+        // 内容动态不可复现（如 billing header）→ 只生成存在性占位 segment，无 text
+        const seg = buildRuleSegment({
+          rule,
+          order: order++,
+          materialization: "presence",
+          contentText: undefined,
+        });
+        segments.push(seg);
+        appliedRules.push(ruleToAppliedRule(rule));
+        break;
+      }
+
+      case "shape":
+      case "unavailable":
+        // shape / unavailable 无法产出可信文本，保守跳过
+        unmaterializedRuleIds.push(rule.ruleId);
+        break;
+    }
+  }
+
+  return { segments, appliedRules, unmaterializedRuleIds };
+}
+
+// 评估 preCondition，保守策略：只放行 always / 省略；其它返回 "skip"
+function evaluatePreConditionConservative(
+  cond: RulePreCondition | undefined,
+): "pass" | "skip" {
+  if (!cond) return "pass";
+  if (cond.type === "always") return "pass";
+  // userType / harnessFlag / settingsField / harnessState / all
+  // 等 reconstruct-03 引入 HarnessRuntimeSnapshot 后再实现；此处保守 skip
+  return "skip";
+}
+
+interface BuildRuleSegmentOpts {
+  rule: ContextLedgerRule;
+  order: number;
+  materialization: "exact_text" | "normalized_text" | "presence";
+  contentText: string | undefined;
+}
+
+function buildRuleSegment(opts: BuildRuleSegmentOpts): ContextSegment {
+  const { rule, order, materialization, contentText } = opts;
+  const recon = rule.reconstruction!;
+  const emits = recon.emits;
+
+  const sourceRef: SourceRef = {
+    kind: "harness_rule",
+    harness: {
+      ruleId: rule.ruleId,
+      version: rule.verifiedFor ?? undefined,
+    },
+    label: `rule:${rule.ruleId}`,
+  };
+
+  // 是否已 verified（对照 SUPPORTED_CLAUDE_CODE_VERSION 校对通过）
+  const verified = isRuleVerified(rule);
+
+  const seg: ContextSegment = {
+    id: `rseg-${rule.ruleId}`,
+    section: emits.section,
+    category: emits.category,
+    label: `${emits.section}/${emits.category}/${rule.ruleId}`,
+    sourceRefs: [sourceRef],
+    lifecycle: emits.lifecycle,
+    flags: emits.flags ? [...emits.flags] : undefined,
+    order,
+    metadata: pruneMetadata({
+      ruleId: rule.ruleId,
+      // 标注 materialization 类型，供 target-request-builder 分桶识别
+      harness_rule_materialization: materialization,
+      // 标注是否 verified；未 verified 的 segment 不应进入 evidence-backed exact 桶
+      ruleVerified: verified,
+      ruleVerifiedFor: rule.verifiedFor ?? undefined,
+      // 触发器类型（always_per_query / from_jsonl / from_memory / from_harness_state）
+      reconstructionTrigger: recon.trigger,
+    }),
+  };
+
+  if (contentText !== undefined && contentText.length > 0) {
+    seg.contentRef = { kind: "inline", text: contentText, charCount: contentText.length };
+    seg.charCount = contentText.length;
+    seg.tokenEstimate = Math.round(contentText.length / 4);
+    // exact_text segment 计算 rawHash，供 reconciliation M1 精确匹配
+    seg.rawHash = sha256Short(contentText);
+  }
+
+  return seg;
+}
+
+function ruleToAppliedRule(rule: ContextLedgerRule): AppliedRule {
+  return {
+    ruleId: rule.ruleId,
+    source: "harness_rule",
+    version: rule.verifiedFor ?? undefined,
+    // verified rule 才算 exact confidence；未 verified 降为 inferred
+    confidence: isRuleVerified(rule) ? "exact" : "inferred",
+  };
 }

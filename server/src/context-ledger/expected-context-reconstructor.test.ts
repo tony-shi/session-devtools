@@ -3,11 +3,13 @@ import { readFileSync } from "fs";
 import { parseClaudeJsonlMutations } from "./jsonl-mutation-parser";
 import {
   reconstructExpectedClaudeContext,
+  materializeHarnessRules,
   UNIMPLEMENTED_RULES,
 } from "./expected-context-reconstructor";
 import type { ReconstructInput } from "./expected-context-reconstructor";
 import { inferClaudeProxyAttributions } from "./proxy-attribution";
 import { parseClaudeProxyRequest } from "./proxy-snapshot-parser";
+import { CONTEXT_LEDGER_RULES } from "./rule-registry";
 import type { MutationSourceRef, SegmentCategory } from "./types";
 
 const FIXTURE_DIR = new URL(
@@ -57,17 +59,34 @@ interface CaseExpect {
 // ── v2.1.126 fixture（86d62994 session, 2026-05-01）──────────────────────────
 // 4 个主场景 fixture 共享同一 JSONL（promptId bd75b839，65 records）。
 // 此 session 特征：无 api_error retry（R7 不触发），有 local_command_history。
+//
+// rule materializer（reconstruct-02）产出固定 7 个额外 segment（所有 fixture 相同）：
+//   5 × system_prompt（identity, system-section, actions-section, tone-style, text-output）
+//   1 × billing_noise（presence）
+//   1 × harness_injection（environment, normalized_text）
+// 这 7 个 segment 与 fixture 无关，每次 reconstructExpectedClaudeContext 都会产出。
+const RULE_MATERIALIZED_SEGMENT_COUNT = 7;
+// rule materializer 产出的固定 category 分布（所有 fixture 一致）
+const RULE_MATERIALIZED_BY_CATEGORY: Partial<Record<SegmentCategory, number>> = {
+  system_prompt: 5,
+  billing_noise: 1,
+  harness_injection: 1,
+};
+
 const CASES: Record<string, CaseExpect> = {
   // msgs=1：只有初始 user 输入 + skill_listing + local_command_history 前置注入
   "system-tools-overhead": {
-    totalSegments: 4,
-    byCategory: { local_command_history: 2, user_message: 1, skill_listing: 1 },
+    totalSegments: 4 + RULE_MATERIALIZED_SEGMENT_COUNT,
+    byCategory: {
+      local_command_history: 2, user_message: 1, skill_listing: 1,
+      ...RULE_MATERIALIZED_BY_CATEGORY,
+    },
     retryDropped: false,
     logicalMessageGroupCount: 1,
   },
   // msgs=3：user + 1 次 tool_use/tool_result 往返（4 logicalMsg groups）
   "single-tool-call": {
-    totalSegments: 9,
+    totalSegments: 9 + RULE_MATERIALIZED_SEGMENT_COUNT,
     byCategory: {
       local_command_history: 2,
       user_message: 1,
@@ -75,13 +94,14 @@ const CASES: Record<string, CaseExpect> = {
       assistant_text: 1,
       tool_use: 2,
       tool_result: 2,
+      ...RULE_MATERIALIZED_BY_CATEGORY,
     },
     retryDropped: false,
     logicalMessageGroupCount: 4,
   },
   // msgs=7：多轮，6 次 tool_use/tool_result 往返（10 logicalMsg groups）
   "multi-turn-human": {
-    totalSegments: 18,
+    totalSegments: 18 + RULE_MATERIALIZED_SEGMENT_COUNT,
     byCategory: {
       local_command_history: 2,
       user_message: 1,
@@ -89,12 +109,13 @@ const CASES: Record<string, CaseExpect> = {
       assistant_text: 2,
       tool_use: 6,
       tool_result: 6,
+      ...RULE_MATERIALIZED_BY_CATEGORY,
     },
     logicalMessageGroupCount: 10,
   },
   // msgs=5：4 次 tool_use/tool_result 往返（7 logicalMsg groups）
   "large-tool-output": {
-    totalSegments: 13,
+    totalSegments: 13 + RULE_MATERIALIZED_SEGMENT_COUNT,
     byCategory: {
       local_command_history: 2,
       user_message: 1,
@@ -102,6 +123,7 @@ const CASES: Record<string, CaseExpect> = {
       assistant_text: 1,
       tool_use: 4,
       tool_result: 4,
+      ...RULE_MATERIALIZED_BY_CATEGORY,
     },
     logicalMessageGroupCount: 7,
   },
@@ -146,7 +168,12 @@ for (const caseName of Object.keys(CASES)) {
 
     test("logicalMessageId 把同一逻辑 message 内的 block 归到一组", () => {
       const groups = new Set<string>();
-      for (const s of expected.segments) {
+      // rule-materialized segments（来自 materializeHarnessRules）没有 logicalMessageId，
+      // 它们不是 mutation 派生的——此处只检查 mutation-derived segments。
+      const mutationSegs = expected.segments.filter(
+        (s) => typeof s.metadata?.sourceMutationId === "string",
+      );
+      for (const s of mutationSegs) {
         const id = s.metadata?.logicalMessageId as string | undefined;
         expect(typeof id).toBe("string");
         groups.add(id ?? "?");
@@ -175,11 +202,18 @@ for (const caseName of Object.keys(CASES)) {
       });
     }
 
-    test("不含 hook_event / billing_noise / permission（R6 过滤）", () => {
+    test("不含 hook_event / permission（R6 过滤）；mutation 层不产出 billing_noise", () => {
+      // hook_event / permission 被 R6 过滤，不应出现于任何 segment。
       const cats = new Set(expected.segments.map((s) => s.category));
       expect(cats.has("hook_event")).toBe(false);
-      expect(cats.has("billing_noise")).toBe(false);
       expect(cats.has("permission")).toBe(false);
+      // billing_noise 可以出现，但只允许来自 rule materializer（presence segment），
+      // 不允许来自 mutation（R6 应当过滤掉 mutation 层的 billing_noise）。
+      const billingSegs = expected.segments.filter((s) => s.category === "billing_noise");
+      for (const s of billingSegs) {
+        const hasHarnessRule = s.sourceRefs.some((r) => r.kind === "harness_rule");
+        expect(hasHarnessRule).toBe(true);
+      }
     });
 
     test("tool_use 与 tool_result 都带 toolUseId", () => {
@@ -352,6 +386,156 @@ describe("P1-5 HarnessRuleConfig gate（single-tool-call fixture）", () => {
     const noSkillChars = r.segments.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
     // 关闭 skill_listing 后 charCount 更小
     expect(noSkillChars).toBeLessThan(baseChars);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// reconstruct-02：Rule Materializer 骨架测试
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("materializeHarnessRules", () => {
+  const boundary = { queryId: "q-test" };
+
+  const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary);
+
+  test("输出结构：包含 segments / appliedRules / unmaterializedRuleIds", () => {
+    expect(Array.isArray(result.segments)).toBe(true);
+    expect(Array.isArray(result.appliedRules)).toBe(true);
+    expect(Array.isArray(result.unmaterializedRuleIds)).toBe(true);
+  });
+
+  test("每个 segment 的 sourceRefs 只含 harness_rule（不含 proxy）", () => {
+    for (const seg of result.segments) {
+      for (const ref of seg.sourceRefs) {
+        expect(ref.kind).not.toBe("proxy");
+        expect(ref.kind).toBe("harness_rule");
+      }
+    }
+  });
+
+  test("exact_text segment 带 contentRef.text 和 rawHash", () => {
+    const exactSegs = result.segments.filter(
+      (s) => s.metadata?.harness_rule_materialization === "exact_text",
+    );
+    // 至少有 identity rule（tone-style 已 verified，system-section 等也有 contentPattern）
+    expect(exactSegs.length).toBeGreaterThan(0);
+    for (const seg of exactSegs) {
+      expect(typeof seg.contentRef?.text).toBe("string");
+      expect((seg.contentRef?.text?.length ?? 0) > 0).toBe(true);
+      expect(typeof seg.rawHash).toBe("string");
+      expect(seg.rawHash!.startsWith("sha256:")).toBe(true);
+    }
+  });
+
+  test("presence segment 不含 contentRef.text（不伪造内容）", () => {
+    const presenceSegs = result.segments.filter(
+      (s) => s.metadata?.harness_rule_materialization === "presence",
+    );
+    // billing_noise rule 产出 presence segment
+    expect(presenceSegs.length).toBeGreaterThan(0);
+    for (const seg of presenceSegs) {
+      // presence segment 不应有文本内容
+      expect(seg.contentRef?.text).toBeUndefined();
+    }
+  });
+
+  test("normalized_text segment 不含伪造的 contentRef.text", () => {
+    const normSegs = result.segments.filter(
+      (s) => s.metadata?.harness_rule_materialization === "normalized_text",
+    );
+    // environment rule 产出 normalized_text segment
+    expect(normSegs.length).toBeGreaterThan(0);
+    for (const seg of normSegs) {
+      // normalized_text 暂不填入未替换的模板，等 reconstruct-03 提供 snapshot 后激活
+      expect(seg.contentRef?.text).toBeUndefined();
+    }
+  });
+
+  test("shape / unavailable materialization 的 rule 写入 unmaterializedRuleIds", () => {
+    // session guidance rule 是 shape materialization，应被跳过
+    expect(result.unmaterializedRuleIds).toContain(
+      "claude-code.system-prompt-session-guidance.v1",
+    );
+  });
+
+  test("preCondition 非 always 的 rule 写入 unmaterializedRuleIds（保守策略）", () => {
+    // intro-standard rule 有 settingsField preCondition，应被保守跳过
+    expect(result.unmaterializedRuleIds).toContain(
+      "claude-code.system-prompt-intro.standard.v1",
+    );
+    // auto-memory rule 有 harnessFlag preCondition，应被保守跳过
+    expect(result.unmaterializedRuleIds).toContain(
+      "claude-code.system-prompt-auto-memory.v1",
+    );
+  });
+
+  test("每个 segment 携带 ruleId 和 harness_rule_materialization metadata", () => {
+    for (const seg of result.segments) {
+      expect(typeof seg.metadata?.ruleId).toBe("string");
+      expect(
+        ["exact_text", "normalized_text", "presence"].includes(
+          seg.metadata?.harness_rule_materialization as string,
+        ),
+      ).toBe(true);
+    }
+  });
+
+  test("每个 appliedRule 来自 harness_rule source", () => {
+    for (const r of result.appliedRules) {
+      expect(r.source).toBe("harness_rule");
+    }
+  });
+
+  test("verified rule 的 appliedRule confidence 为 exact；未 verified 为 inferred", () => {
+    for (const appliedRule of result.appliedRules) {
+      // 找到对应的 segment
+      const seg = result.segments.find((s) => s.metadata?.ruleId === appliedRule.ruleId);
+      if (!seg) continue;
+      if (seg.metadata?.ruleVerified === true) {
+        expect(appliedRule.confidence).toBe("exact");
+      } else {
+        expect(appliedRule.confidence).toBe("inferred");
+      }
+    }
+  });
+
+  test("segment.section 与对应 rule.reconstruction.emits.section 一致", () => {
+    for (const seg of result.segments) {
+      const ruleId = seg.metadata?.ruleId as string;
+      const rule = CONTEXT_LEDGER_RULES.find((r) => r.ruleId === ruleId);
+      expect(rule).toBeDefined();
+      expect(seg.section).toBe(rule!.reconstruction!.emits.section);
+    }
+  });
+
+  test("integrates into reconstructExpectedClaudeContext：rule-materialized segments 存在", () => {
+    const ts = loadProxyTs("system-tools-overhead");
+    const parsed = parseClaudeJsonlMutations(loadJsonl("system-tools-overhead"));
+    const ctx = reconstructExpectedClaudeContext({
+      mutations: parsed.mutations,
+      boundary: { queryId: "q", proxyTimestamp: ts, sessionId: parsed.sessionId },
+    });
+    const ruleSegs = ctx.segments.filter(
+      (s) => s.metadata?.harness_rule_materialization !== undefined,
+    );
+    expect(ruleSegs.length).toBeGreaterThan(0);
+    // rule-materialized segment 的 sourceRefs 不含 proxy
+    for (const seg of ruleSegs) {
+      expect(seg.sourceRefs.every((r) => r.kind !== "proxy")).toBe(true);
+    }
+  });
+
+  test("integrates：metadata.unmaterializedRules 记录保守跳过的 rule", () => {
+    const ts = loadProxyTs("system-tools-overhead");
+    const parsed = parseClaudeJsonlMutations(loadJsonl("system-tools-overhead"));
+    const ctx = reconstructExpectedClaudeContext({
+      mutations: parsed.mutations,
+      boundary: { queryId: "q", proxyTimestamp: ts, sessionId: parsed.sessionId },
+    });
+    const ur = ctx.metadata?.unmaterializedRules as string[] | undefined;
+    expect(Array.isArray(ur)).toBe(true);
+    // session guidance（shape）应在 unmaterializedRules
+    expect(ur).toContain("claude-code.system-prompt-session-guidance.v1");
   });
 });
 
