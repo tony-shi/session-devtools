@@ -999,10 +999,14 @@ export function evaluatePreCondition(
       if (!snapshot) return "unknown";
       const flags = snapshot.featureFlags;
       if (!flags) return "unknown";
-      const val = flags[cond.flag];
+      // 支持 "!xxx" 否定前缀（rule-registry 中用于 isForkSubagentEnabled 等取反条件）
+      const negate = cond.flag.startsWith("!");
+      const actualFlag = negate ? cond.flag.slice(1) : cond.flag;
+      const val = flags[actualFlag];
       if (val === undefined) return "unknown";
       if (val === "unknown") return "unknown";
-      return val ? "pass" : "fail";
+      const result = Boolean(val);
+      return (negate ? !result : result) ? "pass" : "fail";
     }
 
     case "settingsField": {

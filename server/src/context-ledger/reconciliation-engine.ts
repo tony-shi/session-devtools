@@ -726,6 +726,8 @@ function computeCoverage(
   }
 
   // 从 alignments 计算 evidence-backed matched 的 char drift（|expectedChars - proxyChars|）
+  // 注意：normalized_text materialization 的 expected segment 没有 contentText（charCount=0），
+  // 但 proxy 有真实内容（pChars>0），这种 drift 也应计入——与 char-diff 计算口径对齐。
   const expectedById = new Map((expected?.segments ?? []).map((s) => [s.id, s]));
   let evidenceBackedCharDrift = 0;
   let evidenceBackedProxyCharsForDrift = 0;
@@ -733,13 +735,16 @@ function computeCoverage(
     // 只统计 evidence-backed（raw_hash / normalized_hash / tool_use_id / rule_id 等）
     // category（M4 heuristic）和 attribution_only（无 expected）不参与 drift 计算
     if (align.basis === "category" || align.basis === "attribution_only") continue;
+    // server_side_attribution 没有 expected segment，不参与 drift
+    if (align.basis === "server_side_attribution") continue;
     const eChars = align.expectedSegmentIds
       .map((id) => expectedById.get(id)?.charCount ?? 0)
       .reduce((a, b) => a + b, 0);
     const pChars = align.proxySegmentIds
       .map((id) => proxySegs.find((s) => s.id === id)?.charCount ?? 0)
       .reduce((a, b) => a + b, 0);
-    if (eChars > 0 && pChars > 0) {
+    // pChars > 0 即可：eChars=0 表示 normalized_text 段无文本但 proxy 有内容，drift = pChars
+    if (pChars > 0) {
       evidenceBackedCharDrift += Math.abs(eChars - pChars);
       evidenceBackedProxyCharsForDrift += pChars;
     }
