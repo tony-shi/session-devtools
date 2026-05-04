@@ -54,6 +54,7 @@ export type {
   RuleMaterialization,
   RuleComparePolicy,
   RuleLocationConstraint,
+  RulePreCondition,
   // 过渡期兼容别名
   AttributionRule,
 } from "./rule-registry";

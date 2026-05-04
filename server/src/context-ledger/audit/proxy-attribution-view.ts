@@ -294,7 +294,7 @@ function renderAttrCell(row: SegmentRow): string {
           </div>
           ${rule.sourcemapRef ? `<div class="rule-src">src: <code>${esc(rule.sourcemapRef.slice(0, 60))}${rule.sourcemapRef.length > 60 ? "…" : ""}</code></div>` : ""}
           ${rule.reconstruction?.preCondition
-            ? `<div class="rule-precond">if: <code>${esc(rule.reconstruction.preCondition)}</code></div>`
+            ? `<div class="rule-precond">if: <code>${esc(JSON.stringify(rule.reconstruction.preCondition))}</code></div>`
             : ""}
         </div>
       </details>`

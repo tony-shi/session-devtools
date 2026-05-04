@@ -81,15 +81,39 @@ export type RuleComparePolicy =
 //     segment_start  — 必须是 segment 文本的起始（trimStart 后 startsWith）
 //     first_paragraph — 必须是第一段落
 //     anywhere       — 文本中任意位置（contains）
-//   jsonPathHint / orderHint：仅供人工审核参考，不参与运行时硬约束
+//   orderHint：仅供人工审核参考，不参与运行时硬约束
+//
+// TODO(P2-5)：引入 SourceSpan { jsonPath, charRange, blockIndex, occurrenceIndex }
+//   用精确路径替代位置 hint，attribution 与 parser 共用 segment 索引；
+//   届时 orderHint 可一并移除。
 export interface RuleLocationConstraint {
   section?: SegmentSection;
   category?: SegmentCategory;
   role?: SegmentRole;
   segmentPosition?: "segment_start" | "first_paragraph" | "anywhere";
-  jsonPathHint?: string;
   orderHint?: number;
 }
+
+// reconstruction.preCondition 结构化类型：描述 expected reconstructor 激活此 rule 的前提条件。
+// 当同一语义位置有多条互斥 rule 时（如 intro 的两个变体），reconstructor 根据
+// harness state 评估 preCondition，只激活符合条件的那条。
+// proxy attribution 侧不使用此字段——proxy 命中哪条 rule 由 rawText pattern match 决定。
+//
+// 叶节点类型：
+//   always       — 无条件激活（等同于省略 preCondition）
+//   userType     — harness USER_TYPE 约束（"external" | "ant"）
+//   harnessFlag  — harness runtime 开关（函数调用名，如 "isAutoMemoryEnabled()"）
+//   settingsField — settings 字段比较（field、op、value 均为字符串，机器可读）
+//   harnessState  — 更复杂的 harness runtime 状态判断（自由文本，人读；可细化时迁移到上述类型）
+// 复合节点：
+//   all          — 所有子条件同时成立（逻辑与）
+export type RulePreCondition =
+  | { type: "always" }
+  | { type: "userType"; value: "external" | "ant" }
+  | { type: "harnessFlag"; flag: string; note?: string }
+  | { type: "settingsField"; field: string; op: "eq" | "neq" | "null" | "notNull"; value?: string; note?: string }
+  | { type: "harnessState"; description: string }
+  | { type: "all"; conditions: RulePreCondition[] };
 
 export interface ContextLedgerRule {
   ruleId: string;
@@ -135,11 +159,9 @@ export interface ContextLedgerRule {
     // from_memory      — 从 memory_fs 读取
     // from_harness_state — 从 harness 运行时状态（env/config）派生
     trigger: "always_per_query" | "from_jsonl" | "from_memory" | "from_harness_state";
-    // preCondition：expected reconstructor 激活此 rule 的前提条件（自然语言描述）。
-    // 当同一语义位置有多条互斥 rule 时（如 intro 的两个变体），
-    // reconstructor 根据 harness state 评估 preCondition，只激活符合条件的那条。
-    // proxy attribution 侧不使用此字段——proxy 命中哪条 rule 由 rawText pattern match 决定。
-    preCondition?: string;
+    // preCondition：expected reconstructor 激活此 rule 的前提条件（结构化，机器可读）。
+    // 省略等同于 { type: "always" }。
+    preCondition?: RulePreCondition;
     materialization: RuleMaterialization;
     emits: {
       section: SegmentSection;
@@ -216,9 +238,7 @@ export const CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE: ContextLedgerRule = {
       section: "system",
       // segment_start：整个 block 就是这句话（或以这句话开头的更长文本）
       segmentPosition: "segment_start",
-      // jsonPathHint / orderHint 仅供人工审核参考
-      jsonPathHint: "reqBody.system[*]",
-      // billing header 存在时 orderHint=1，不存在时 orderHint=0；
+      // orderHint 仅供人工审核参考；billing header 存在时 =1，不存在时 =0
       // 运行时用 segmentPosition 匹配，不依赖硬索引
       orderHint: 1,
     },
@@ -307,9 +327,15 @@ export const CLAUDE_CODE_SESSION_GUIDANCE_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition:
-      "external CLI（hasEmbeddedSearchTools()=false，EMBEDDED_SEARCH_TOOLS 未设置）。" +
-      "hasAgentTool + areExplorePlanAgentsEnabled() + !isForkSubagentEnabled()",
+    preCondition: {
+      type: "all",
+      conditions: [
+        { type: "userType", value: "external" },
+        { type: "harnessFlag", flag: "hasAgentTool" },
+        { type: "harnessFlag", flag: "areExplorePlanAgentsEnabled()" },
+        { type: "harnessFlag", flag: "!isForkSubagentEnabled()" },
+      ],
+    },
     trigger: "always_per_query",
     materialization: "shape",
     emits: {
@@ -332,49 +358,49 @@ export const CLAUDE_CODE_SESSION_GUIDANCE_RULE: ContextLedgerRule = {
 //
 // computeSimpleEnvInfo(modelId) — prompts.ts:651-710
 //
-// 구조 분석（sourcemap 확인）：
+// 结构分析（sourcemap 确认）：
 //
-// 고정 header（항상 고정）:
+// 固定 header（始终固定）:
 //   "# Environment\n"
 //   "You have been invoked in the following environment: \n"
 //
-// 동적 bullet 순서（prependBullets + envItems 배열）:
+// 动态 bullet 顺序（prependBullets + envItems 数组）:
 //   " - Primary working directory: {cwd}"          ← getCwd()
-//   "  - This is a git worktree..."                 ← 조건부（getCurrentWorktreeSession() !== null）
-//   "  - Is a git repository: {isGit}"             ← getIsGit()（배열로 전달 → 두 칸 indent）
+//   "  - This is a git worktree..."                 ← 条件出现（getCurrentWorktreeSession() !== null）
+//   "  - Is a git repository: {isGit}"             ← getIsGit()（数组传入 → 两格缩进）
 //   " - Platform: {platform}"                      ← env.platform（'darwin'/'win32'/'linux'）
-//   " - Shell: {shell}"                            ← getShellInfoLine()（win32는 suffix 추가）
+//   " - Shell: {shell}"                            ← getShellInfoLine()（win32 追加 suffix）
 //   " - OS Version: {unameSR}"                     ← getUnameSR()
 //   " - You are powered by {modelDesc}"            ← getMarketingNameForModel(modelId)
-//   " - Assistant knowledge cutoff is {cutoff}."  ← getKnowledgeCutoff(modelId)（모델별 상수）
-//   " - The most recent Claude model family is {modelFamily}..."  ← CLAUDE_4_5_OR_4_6_MODEL_IDS（반고정, @[MODEL LAUNCH]）
-//   " - Claude Code is available as a CLI..."      ← 완전 고정 상수
-//   " - Fast mode for Claude Code uses {frontierModel}..."  ← FRONTIER_MODEL_NAME（반고정）
+//   " - Assistant knowledge cutoff is {cutoff}."  ← getKnowledgeCutoff(modelId)（各模型固定常量）
+//   " - The most recent Claude model family is {modelFamily}..."  ← CLAUDE_4_5_OR_4_6_MODEL_IDS（半固定, @[MODEL LAUNCH] 更新）
+//   " - Claude Code is available as a CLI..."      ← 完全固定常量
+//   " - Fast mode for Claude Code uses {frontierModel}..."  ← FRONTIER_MODEL_NAME（半固定）
 //
-// 이후 appendSystemContext(systemPrompt, systemContext) 에서 gitStatus 추가（query.ts:450）:
-//   "\nWhen working with tool results..."           ← 고정 안내문
-//   "\ngitStatus: ..."                             ← 동적（git status, branch, commits）
+// 之后 appendSystemContext(systemPrompt, systemContext) 追加 gitStatus（query.ts:450）:
+//   "\nWhen working with tool results..."           ← 固定说明文
+//   "\ngitStatus: ..."                             ← 动态（git status、branch、commits）
 //
-// attribution: regex 로 고정 구조 anchor + 동적 필드 captureGroups 추출.
-// 워크트리 bullet 조건부 출현으로 exact match 불가 → regex 가 유일한 선택.
+// attribution: 用 regex 锚定固定结构 + captureGroups 提取动态字段。
+// worktree bullet 条件出现，无法精确匹配 → regex 是唯一选择。
 //
-// fixture 검증（text[26311:27912]）: 아래 regex 완전 매칭 확인.
+// fixture 验证（text[26311:27912]）：以下 regex 完全匹配确认。
 export const CLAUDE_CODE_ENVIRONMENT_SECTION_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-environment.v1",
   verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
-    "Claude Code system prompt 의 # Environment section。" +
-    "computeSimpleEnvInfo() 무조건 주입. " +
-    "동적 필드: cwd, isGit, platform, shell, osVersion, modelDesc, cutoff, modelFamily, fastModeModel. " +
-    "고정 구조（bullet 라벨, 순서）를 regex 로 anchor 하고 captureGroups 로 각 필드 추출.",
+    "Claude Code system prompt 的 # Environment section。" +
+    "computeSimpleEnvInfo() 无条件注入。" +
+    "动态字段: cwd, isGit, platform, shell, osVersion, modelDesc, cutoff, modelFamily, fastModeModel。" +
+    "用 regex 锚定固定结构（bullet 标签、顺序），通过 captureGroups 提取各动态字段。",
   stability: "dynamic",
   sourcemapRef: "restored-src/src/constants/prompts.ts:651",
 
   attribution: {
-    // regex template：고정 라벨을 anchor로, 동적 값을 captureGroups 로 추출.
-    // 워크트리 bullet은 조건부이므로 (?:...)? 로 처리.
-    // gitStatus 이후 내용은 appendSystemContext 추가분 → pattern 범위 외.
-    // fixture 검증: re.match(pattern, text[26311:27912]) → 전체 매칭 확인.
+    // regex 模板：用固定标签作为 anchor，通过 captureGroups 提取动态值。
+    // worktree bullet 条件出现，用 (?:...)? 处理。
+    // gitStatus 及之后内容由 appendSystemContext 追加 → 超出 pattern 范围。
+    // fixture 验证: re.match(pattern, text[26311:27912]) → 全文匹配确认。
     pattern:
       "^# Environment\n" +
       "You have been invoked in the following environment: \n" +
@@ -398,15 +424,15 @@ export const CLAUDE_CODE_ENVIRONMENT_SECTION_RULE: ContextLedgerRule = {
       segmentPosition: "segment_start",
     },
     captureGroups: {
-      cwd:          "Primary working directory（getCwd() — 절대경로）",
-      isGit:        "'true' 또는 'false'（getIsGit()）",
-      platform:     "플랫폼 식별자（env.platform: 'darwin'/'win32'/'linux'）",
-      shell:        "셸 이름（getShellInfoLine()）",
-      osVersion:    "OS 버전 문자열（getUnameSR()）",
-      modelDesc:    "모델 설명（getMarketingNameForModel(modelId) + modelId）",
-      cutoff:       "knowledge cutoff 날짜（getKnowledgeCutoff() — 모델별 상수）",
-      modelFamily:  "최신 모델 패밀리 라인（CLAUDE_4_5_OR_4_6_MODEL_IDS — @[MODEL LAUNCH] 업데이트）",
-      fastModeModel:"Fast mode 모델명（FRONTIER_MODEL_NAME — @[MODEL LAUNCH] 업데이트）",
+      cwd:          "Primary working directory（getCwd() — 绝对路径）",
+      isGit:        "'true' 或 'false'（getIsGit()）",
+      platform:     "平台标识符（env.platform: 'darwin'/'win32'/'linux'）",
+      shell:        "shell 名称（getShellInfoLine()）",
+      osVersion:    "OS 版本字符串（getUnameSR()）",
+      modelDesc:    "模型描述（getMarketingNameForModel(modelId) + modelId）",
+      cutoff:       "knowledge cutoff 日期（getKnowledgeCutoff() — 各模型固定常量）",
+      modelFamily:  "最新模型系列说明行（CLAUDE_4_5_OR_4_6_MODEL_IDS — @[MODEL LAUNCH] 更新）",
+      fastModeModel:"Fast mode 模型名（FRONTIER_MODEL_NAME — @[MODEL LAUNCH] 更新）",
     },
     // P2-2：notes 模板（替代 proxy-attribution.ts 里 CLAUDE_CODE_ENVIRONMENT_SECTION_RULE ruleId 分支）
     notesTemplate: [
@@ -421,22 +447,22 @@ export const CLAUDE_CODE_ENVIRONMENT_SECTION_RULE: ContextLedgerRule = {
 
   reconstruction: {
     trigger: "always_per_query",
-    // 구조 고정（bullet 라벨, 순서）, 값 동적 → normalized_text（placeholder 치환으로 복원）
+    // 结构固定（bullet 标签、顺序），值动态 → normalized_text（通过 placeholder 替换复原）
     materialization: "normalized_text",
     emits: {
       section: "system",
       category: "harness_injection",
       lifecycle: "query",
       flags: ["injected"],
-      // template: {cwd}, {isGit}, {platform}, {shell}, {unameSR}, {modelDesc},
-      //           {cutoff}, {modelFamilyLine}, {frontierModel} 로 placeholders.
-      // gitStatus appendSystemContext 부분은 별도 처리（# Environment section 외부）.
+      // 模板：{cwd}, {isGit}, {platform}, {shell}, {unameSR}, {modelDesc},
+      //       {cutoff}, {modelFamilyLine}, {frontierModel} 为 placeholder。
+      // gitStatus 由 appendSystemContext 追加（# Environment section 范围之外）。
       contentPattern: null,
     },
   },
 
   reconciliation: {
-    // 구조 고정 + 동적 값 → normalized_hash（placeholder 치환 후 hash）
+    // 结构固定 + 值动态 → normalized_hash（placeholder 替换后 hash）
     comparePolicy: "normalized_hash",
     confidence: "inferred",
     exactTextExpected: false,
@@ -513,7 +539,11 @@ export const CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition: "isAutoMemoryEnabled()（settings.autoMemoryEnabled !== false 且未设 CLAUDE_CODE_DISABLE_AUTO_MEMORY）",
+    preCondition: {
+      type: "harnessFlag",
+      flag: "isAutoMemoryEnabled()",
+      note: "settings.autoMemoryEnabled !== false 且未设 CLAUDE_CODE_DISABLE_AUTO_MEMORY",
+    },
     trigger: "from_memory",
     // 内容主体完全静态（固定常量数组），唯一动态字段是 memoryDir（用户本地路径）。
     // template 格式：固定文本中用 {memoryDir} 占位，reconstructor 替换为实际路径。
@@ -698,7 +728,12 @@ export const CLAUDE_CODE_INTRO_STANDARD_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition: "outputStyleConfig === null（settings.outputStyle 为 'default' 或未设置）",
+    preCondition: {
+      type: "settingsField",
+      field: "outputStyleConfig",
+      op: "null",
+      note: "settings.outputStyle 为 'default' 或未设置",
+    },
     trigger: "always_per_query",
     materialization: "exact_text",
     emits: {
@@ -743,7 +778,12 @@ export const CLAUDE_CODE_INTRO_OUTPUT_STYLE_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition: "outputStyleConfig !== null（settings.outputStyle 设置为非 default 值）",
+    preCondition: {
+      type: "settingsField",
+      field: "outputStyleConfig",
+      op: "notNull",
+      note: "settings.outputStyle 设置为非 default 值",
+    },
     trigger: "always_per_query",
     // contentPattern 随 outputStyleConfig 的 name/prompt 变化，此处只能给结构
     materialization: "normalized_text",
@@ -883,7 +923,7 @@ export const CLAUDE_CODE_DOING_TASKS_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition: "USER_TYPE !== 'ant'（external 用户）— ant 分支额外追加 6 条 bullet，不适用",
+    preCondition: { type: "userType", value: "external" },
     trigger: "always_per_query",
     materialization: "exact_text",
     emits: {
@@ -952,8 +992,14 @@ export const CLAUDE_CODE_USING_YOUR_TOOLS_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition:
-      "USER_TYPE !== 'ant'（external 用户）且非 REPL 模式，taskToolName 为空（无 TaskCreate/TodoWrite）",
+    preCondition: {
+      type: "all",
+      conditions: [
+        { type: "userType", value: "external" },
+        { type: "harnessFlag", flag: "!isReplModeEnabled()" },
+        { type: "settingsField", field: "taskToolName", op: "null", note: "无 TaskCreate/TodoWrite" },
+      ],
+    },
     trigger: "always_per_query",
     materialization: "exact_text",
     emits: {
@@ -1071,7 +1117,7 @@ export const CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition: "USER_TYPE !== 'ant'（外部用户，3P provider）",
+    preCondition: { type: "userType", value: "external" },
     trigger: "always_per_query",
     materialization: "exact_text",
     emits: {
@@ -1132,7 +1178,7 @@ export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition: "无（所有用户都注入；2.1.126 起 ant 条件已失效）",
+    preCondition: { type: "always" },
     trigger: "always_per_query",
     materialization: "exact_text",
     emits: {
@@ -1199,7 +1245,7 @@ export const CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition: "无（所有用户）— 2.1.126 binary 确认 Text output section 无条件注入",
+    preCondition: { type: "always" },
     trigger: "always_per_query",
     materialization: "exact_text",
     emits: {
@@ -1322,7 +1368,6 @@ export const CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE: ContextLedgerRule = {
     location: {
       section: "system",
       segmentPosition: "segment_start",
-      jsonPathHint: "reqBody.system[3]（动态 block，index 可变）",
     },
     // P2-2：notes 模板（替代 proxy-attribution.ts 里 CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE ruleId 分支）
     // currentBranch 存在 → git repo；不存在 → 写 no_git_repo note
@@ -1367,7 +1412,7 @@ export const CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE: ContextLedgerRule = {
 //   exact   — Edit / Write / Read / Skill / ToolSearch  (description 静态，dump 即 truth)
 //   regex   — Agent / Bash / ScheduleWakeup            (description 含动态插值，头尾锚定)
 //
-// attribution 位置：section="tools"，jsonPathHint="reqBody.tools[i]"（index 不固定）
+// attribution 位置：section="tools"，index 不固定
 // reconstruction：trigger="always_per_query"（tools 数组每次请求都完整发送）
 // reconciliation：static → raw_hash；dynamic → presence_only
 
@@ -1394,7 +1439,6 @@ export const CLAUDE_CODE_TOOL_EDIT_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Edit}.description" },
   },
 
   reconstruction: {
@@ -1427,7 +1471,6 @@ export const CLAUDE_CODE_TOOL_WRITE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Write}.description" },
   },
 
   reconstruction: {
@@ -1467,7 +1510,6 @@ export const CLAUDE_CODE_TOOL_READ_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Read}.description" },
   },
 
   reconstruction: {
@@ -1507,7 +1549,6 @@ export const CLAUDE_CODE_TOOL_SKILL_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Skill}.description" },
   },
 
   reconstruction: {
@@ -1540,7 +1581,6 @@ export const CLAUDE_CODE_TOOL_TOOLSEARCH_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=ToolSearch}.description" },
   },
 
   reconstruction: {
@@ -1581,7 +1621,6 @@ export const CLAUDE_CODE_TOOL_AGENT_RULE: ContextLedgerRule = {
     captureGroups: {},
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Agent}.description" },
   },
 
   reconstruction: {
@@ -1618,7 +1657,6 @@ export const CLAUDE_CODE_TOOL_BASH_RULE: ContextLedgerRule = {
     captureGroups: {},
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Bash}.description" },
   },
 
   reconstruction: {
@@ -1652,7 +1690,6 @@ export const CLAUDE_CODE_TOOL_SCHEDULEWAKEUP_RULE: ContextLedgerRule = {
     captureGroups: {},
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=ScheduleWakeup}.description" },
   },
 
   reconstruction: {
@@ -1679,7 +1716,6 @@ export const CLAUDE_CODE_TOOL_ASKUSERQUESTION_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=AskUserQuestion}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1696,7 +1732,6 @@ export const CLAUDE_CODE_TOOL_CRONCREATE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=CronCreate}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1713,7 +1748,6 @@ export const CLAUDE_CODE_TOOL_CRONDELETE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=CronDelete}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1730,7 +1764,6 @@ export const CLAUDE_CODE_TOOL_CRONLIST_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=CronList}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1747,7 +1780,6 @@ export const CLAUDE_CODE_TOOL_ENTERPLANMODE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=EnterPlanMode}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1764,7 +1796,6 @@ export const CLAUDE_CODE_TOOL_ENTERWORKTREE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=EnterWorktree}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1781,7 +1812,6 @@ export const CLAUDE_CODE_TOOL_EXITPLANMODE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=ExitPlanMode}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1798,7 +1828,6 @@ export const CLAUDE_CODE_TOOL_EXITWORKTREE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=ExitWorktree}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1815,7 +1844,6 @@ export const CLAUDE_CODE_TOOL_MONITOR_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=Monitor}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1832,7 +1860,6 @@ export const CLAUDE_CODE_TOOL_NOTEBOOKEDIT_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=NotebookEdit}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1849,7 +1876,6 @@ export const CLAUDE_CODE_TOOL_PUSHNOTIFICATION_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=PushNotification}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1866,7 +1892,6 @@ export const CLAUDE_CODE_TOOL_REMOTETRIGGER_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=RemoteTrigger}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1883,7 +1908,6 @@ export const CLAUDE_CODE_TOOL_SENDMESSAGE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=SendMessage}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1900,7 +1924,6 @@ export const CLAUDE_CODE_TOOL_TASKCREATE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskCreate}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1917,7 +1940,6 @@ export const CLAUDE_CODE_TOOL_TASKGET_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskGet}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1934,7 +1956,6 @@ export const CLAUDE_CODE_TOOL_TASKLIST_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskList}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1951,7 +1972,6 @@ export const CLAUDE_CODE_TOOL_TASKOUTPUT_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskOutput}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1968,7 +1988,6 @@ export const CLAUDE_CODE_TOOL_TASKSTOP_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskStop}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -1985,7 +2004,6 @@ export const CLAUDE_CODE_TOOL_TASKUPDATE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TaskUpdate}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2003,7 +2021,6 @@ export const CLAUDE_CODE_TOOL_TEAMCREATE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TeamCreate}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2020,7 +2037,6 @@ export const CLAUDE_CODE_TOOL_TEAMDELETE_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=TeamDelete}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2037,7 +2053,6 @@ export const CLAUDE_CODE_TOOL_WEBFETCH_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=WebFetch}.description" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2128,7 +2143,11 @@ export const CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE: ContextLedgerRule = {
     //   解法方向：给 PipelineInput 加 parentSessionJSONL 字段，供 side query reconstructor 消费。
     //
     // 当前状态：pipeline 以 --proxy-only 模式运行，只做 attribution-only 报告。
-    preCondition: "generateSessionTitle() 调用时（新会话首条消息之后触发）",
+    preCondition: {
+      type: "harnessFlag",
+      flag: "generateSessionTitle()",
+      note: "新会话首条消息之后触发",
+    },
     trigger: "from_harness_state",
     materialization: "exact_text",
     emits: {
@@ -2179,7 +2198,6 @@ export const CLAUDE_CODE_TOOL_MCP_GMAIL_AUTH_RULE: ContextLedgerRule = {
     matchMode: "prefix",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Gmail__authenticate}" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2196,7 +2214,6 @@ export const CLAUDE_CODE_TOOL_MCP_GMAIL_COMPLETE_AUTH_RULE: ContextLedgerRule = 
     matchMode: "prefix",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Gmail__complete_authentication}" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2214,7 +2231,6 @@ export const CLAUDE_CODE_TOOL_MCP_GCAL_AUTH_RULE: ContextLedgerRule = {
     matchMode: "prefix",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Google_Calendar__authenticate}" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2231,7 +2247,6 @@ export const CLAUDE_CODE_TOOL_MCP_GCAL_COMPLETE_AUTH_RULE: ContextLedgerRule = {
     matchMode: "prefix",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Google_Calendar__complete_authentication}" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2249,7 +2264,6 @@ export const CLAUDE_CODE_TOOL_MCP_GDRIVE_AUTH_RULE: ContextLedgerRule = {
     matchMode: "prefix",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Google_Drive__authenticate}" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2266,7 +2280,6 @@ export const CLAUDE_CODE_TOOL_MCP_GDRIVE_COMPLETE_AUTH_RULE: ContextLedgerRule =
     matchMode: "prefix",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__claude_ai_Google_Drive__complete_authentication}" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2284,7 +2297,6 @@ export const CLAUDE_CODE_TOOL_MCP_TAVILY_CRAWL_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__tavily__tavily_crawl}" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2301,7 +2313,6 @@ export const CLAUDE_CODE_TOOL_MCP_TAVILY_EXTRACT_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__tavily__tavily_extract}" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2318,7 +2329,6 @@ export const CLAUDE_CODE_TOOL_MCP_TAVILY_MAP_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__tavily__tavily_map}" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2335,7 +2345,6 @@ export const CLAUDE_CODE_TOOL_MCP_TAVILY_RESEARCH_RULE: ContextLedgerRule = {
     matchMode: "exact",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__tavily__tavily_research}" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2352,7 +2361,6 @@ export const CLAUDE_CODE_TOOL_MCP_TAVILY_SEARCH_RULE: ContextLedgerRule = {
     matchMode: "prefix",
     mechanism: "tools_schema_pattern",
     category: "tools_schema",
-    location: { section: "tools", jsonPathHint: "reqBody.tools[*]{name=mcp__tavily__tavily_search}" },
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
   reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
@@ -2409,8 +2417,14 @@ export const CLAUDE_CODE_TASK_REMINDER_RULE: ContextLedgerRule = {
     // 内容从 JSONL attachment.content: Task[] 精确渲染
     trigger: "from_jsonl",
     materialization: "exact_text",
-    preCondition:
-      "isTodoV2Enabled() && turnsSinceLastTaskManagement >= 10 && turnsSinceLastReminder >= 10",
+    preCondition: {
+      type: "all",
+      conditions: [
+        { type: "harnessFlag", flag: "isTodoV2Enabled()" },
+        { type: "harnessState", description: "turnsSinceLastTaskManagement >= 10" },
+        { type: "harnessState", description: "turnsSinceLastReminder >= 10" },
+      ],
+    },
     emits: {
       section: "messages",
       category: "attachment",
@@ -2565,7 +2579,7 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE,
   CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE,
   CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE,
-  // ── 동적 system prompt sections（main session）────────────────────────────
+  // ── 动态 system prompt sections（main session）───────────────────────────
   CLAUDE_CODE_SESSION_GUIDANCE_RULE,
   CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
   CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,

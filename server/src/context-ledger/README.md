@@ -37,7 +37,7 @@ Attribution can use proxy evidence, but it is not a mutation ledger and must not
 
 `ReconciliationReport` compares `ExpectedQueryContext`, `ProxyQuerySnapshot`, and `ProxySegmentAttribution`.
 
-Unexplained proxy blocks, unmatched expected blocks, order mismatches, token mismatches, N:1 merge alignments, retry observations, and known noise all belong in `AlignmentRef` or `ReconciliationFinding`. `SegmentLink` is retained as an alias for `AlignmentRef` where older planning docs use that name.
+Unexplained proxy blocks, unmatched expected blocks, order mismatches, token mismatches, N:1 merge alignments, retry observations, and known noise all belong in `AlignmentRef` or `ReconciliationFinding`.
 
 ## Forbidden Data Flow
 
@@ -66,17 +66,34 @@ proxy diff -> ContextMutation
 
 That creates circular attribution and removes the audit value of the report.
 
-## Required Now
+## Contract Status
 
-- `AgentKind` and `AgentCapabilityMatrix` so the core is not Claude-Code-only.
-- `SourceRef` variants for JSONL lines, proxy JSON paths, memory files, harness rules, hooks, prior sessions, and unknown sources.
-- `ContextSegment.section` and `ContextSegment.category` for stable segment grouping.
-- `agentId`, `subagentId`, and `parentAgentId` on query/mutation/report objects so subagent fixtures do not require a contract break.
-- `rawHash`, `normalizedHash`, `charCount`, and `tokenEstimate` for exact, approximate, and bloat-oriented matching.
-- `toolUseId` for tool_use/tool_result alignment.
-- `AlignmentRef` supporting 1:1, 1:N, and N:1 relationships.
-- `CoverageSummary` for explained and unexplained segment, char, and token estimates.
-- `Confidence = "exact" | "estimated" | "inferred" | "unknown"` so reports can distinguish exact evidence from estimated or inferred evidence.
+### Implemented
+
+- `AgentKind` and `AgentCapabilityMatrix` — multi-agent support beyond Claude Code.
+- `SourceRef` variants — JSONL lines, proxy JSON paths, memory files, harness rules, hooks, prior sessions, unknown.
+- `ContextSegment.section` and `ContextSegment.category` — stable segment grouping.
+- `agentId`, `subagentId`, `parentAgentId` — subagent fixture support without contract break.
+- `rawHash`, `normalizedHash`, `charCount`, `tokenEstimate` — exact, approximate, bloat-oriented matching.
+- `toolUseId` — tool_use/tool_result alignment.
+- `AlignmentRef` — 1:1, 1:N, and N:1 relationships, with `comparisonGrade` replacing legacy `matchKind`.
+- `CoverageSummary` — orthogonal char buckets (wireExact / canonical / template / regex / presence / serverSide / attributionOnly / unexplained).
+- `Confidence` / `ClassificationConfidence` / `MaterializationConfidence` — distinguishes exact evidence from estimated or inferred.
+- `RuleMatchEvidence` and `RuleMatchCapture` — structured regex/template match evidence with per-capture char spans (P1-1).
+- `FindingType` — merged enum covering match quality, single-side mismatches, and governance findings.
+- `ComparisonGrade` — replaces MatchKind/DiffKind across reconcile and char-diff layers (P3-2).
+- `TargetRequest` / `TargetSegment` / `TargetMessage` / `SegmentSourceMap` — forward-reconstructed request AST (P3-1).
+- `RequestLevelExact` — raw / canonical / structural / segment-only exact levels (P3-1).
+- `RulePreCondition` — structured (machine-readable) reconstructor activation conditions (P3-6).
+- `ProxyQuerySnapshot.canonicalRequestHash` / `rawRequestBytesHash` — P0-3 wire-bytes hash fields.
+- `CoverageSummary.suspectMatchChars`, `alignedTextDriftChars` — governance metrics (P3-3).
+
+### Not Yet Implemented (pending rule)
+
+- `wireExactCoverage` populated from `rawRequestBytesHash` — depends on P0-3 proxy raw body preservation.
+- `requestLevelExact` populated in reconcile output — depends on P3-1 TargetRequest full materialization.
+- `RulePreCondition` machine evaluation in reconstructor — type is defined; evaluation logic is a future step.
+- `RuleLocationConstraint` precise span matching — `orderHint` is advisory only; full `SourceSpan` (P2-5) not yet introduced.
 
 ## Rule Registry
 

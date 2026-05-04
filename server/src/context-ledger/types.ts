@@ -412,7 +412,6 @@ export interface AlignmentRef {
   note?: string;
 }
 
-export type SegmentLink = AlignmentRef;
 
 export interface ReconciliationFinding {
   id: string;
