@@ -60,17 +60,20 @@ interface CaseExpect {
 // 4 个主场景 fixture 共享同一 JSONL（promptId bd75b839，65 records）。
 // 此 session 特征：无 api_error retry（R7 不触发），有 local_command_history。
 //
-// rule materializer（reconstruct-02）产出固定 7 个额外 segment（所有 fixture 相同）：
+// rule materializer（reconstruct-02/04/05）产出固定 33 个额外 segment（所有 fixture 相同）：
 //   5 × system_prompt（identity, system-section, actions-section, tone-style, text-output）
 //   1 × billing_noise（presence）
 //   1 × harness_injection（environment, normalized_text）
-// 这 7 个 segment 与 fixture 无关，每次 reconstructExpectedClaudeContext 都会产出。
-const RULE_MATERIALIZED_SEGMENT_COUNT = 7;
+//  26 × tools_schema（26 个内置工具 exact schema；runtimeSnapshot.enabledToolNames 未知
+//        时走 all_verified_unfiltered 模式，产出全量内置工具）
+// 这 33 个 segment 与 message fixture 无关，每次 reconstructExpectedClaudeContext 都会产出。
+const RULE_MATERIALIZED_SEGMENT_COUNT = 33;
 // rule materializer 产出的固定 category 分布（所有 fixture 一致）
 const RULE_MATERIALIZED_BY_CATEGORY: Partial<Record<SegmentCategory, number>> = {
   system_prompt: 5,
   billing_noise: 1,
   harness_injection: 1,
+  tools_schema: 26,
 };
 
 const CASES: Record<string, CaseExpect> = {
