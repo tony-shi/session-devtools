@@ -301,6 +301,25 @@ function renderAttrCol(seg: ContextSegment, attr: ProxySegmentAttribution | unde
 
 // ── Col-3: Expected segment text ──────────────────────────────────────────────
 
+// source kind → 配色映射
+const SOURCE_KIND_COLOR: Record<string, [string, string]> = {
+  harness_rule: ["#34d399", "#022c22"],
+  jsonl:        ["#60a5fa", "#0c1a30"],
+  memory_fs:    ["#a78bfa", "#1a0b2e"],
+  hook:         ["#fbbf24", "#1c1007"],
+  prior_session:["#94a3b8", "#1e293b"],
+  unknown:      ["#ef4444", "#2a0808"],
+};
+
+// materialization → 短标签
+const MAT_LABEL: Record<string, string> = {
+  exact_text:      "exact",
+  normalized_text: "norm",
+  presence:        "pres",
+  shape:           "shape",
+  unavailable:     "N/A",
+};
+
 function renderExpectedCol(segs: ContextSegment[]): string {
   if (segs.length === 0) {
     return `<div class="expected-col expected-empty" title="No expected segment aligned to this proxy segment">—</div>`;
@@ -317,6 +336,37 @@ function renderExpectedCol(segs: ContextSegment[]): string {
     const cc = catColor[eseg.category] ?? "#94a3b8";
     const ref = eseg.sourceRefs[0];
     const sourceKind = ref?.kind ?? "unknown";
+    const [skColor, skBg] = SOURCE_KIND_COLOR[sourceKind] ?? ["#94a3b8", "#1e293b"];
+
+    // harness_rule 特有的额外 metadata
+    const meta = eseg.metadata as Record<string, unknown> | undefined;
+    const ruleId = typeof meta?.["ruleId"] === "string" ? meta["ruleId"] : undefined;
+    const verifiedFor = typeof meta?.["ruleVerifiedFor"] === "string" ? meta["ruleVerifiedFor"] : undefined;
+    const ruleVerified = meta?.["ruleVerified"] === true;
+    const matRaw = typeof meta?.["harness_rule_materialization"] === "string"
+      ? (meta["harness_rule_materialization"] as string)
+      : undefined;
+    const matLabel = matRaw ? (MAT_LABEL[matRaw] ?? matRaw) : undefined;
+
+    // harness_rule sourceRef 上也有 ruleId
+    const harnessRuleId = ref?.kind === "harness_rule" ? ref.harness?.ruleId : undefined;
+    const displayRuleId = ruleId ?? harnessRuleId;
+
+    // verifiedFor 显示：有值 + ruleVerified=true → 绿；有值 + false → 橙；无值 → 灰
+    const verifiedBadge = (() => {
+      if (!displayRuleId) return "";
+      if (ruleVerified && verifiedFor) {
+        return `<span class="verified-badge verified-ok" title="verifiedFor: ${esc(verifiedFor)}">✓ ${esc(verifiedFor.slice(-6))}</span>`;
+      }
+      if (verifiedFor) {
+        return `<span class="verified-badge verified-pending" title="verifiedFor: ${esc(verifiedFor)} (not current version)">~ ${esc(verifiedFor.slice(-6))}</span>`;
+      }
+      return `<span class="verified-badge verified-none" title="verifiedFor: null — unverified rule">unverified</span>`;
+    })();
+
+    const matBadge = matLabel
+      ? `<span class="mat-badge mat-${esc(matRaw ?? "")}" title="materialization: ${esc(matRaw ?? "")}">${esc(matLabel)}</span>`
+      : "";
 
     return `
 <div class="expected-seg">
@@ -324,8 +374,15 @@ function renderExpectedCol(segs: ContextSegment[]): string {
     <code class="json-path" title="Expected segment ID">${esc(eseg.id.slice(-12))}</code>
     <span class="char-count" title="Expected char count">${fmtK(chars)}c</span>
     ${badge(eseg.category, cc, `${cc}18`, "Expected segment category")}
-    <span class="source-kind" title="Source of this expected segment (jsonl = from JSONL mutations; harness_rule = from rule registry)">${esc(sourceKind)}</span>
+    <span class="source-kind" style="color:${skColor};background:${skBg};padding:1px 5px;border-radius:3px;font-size:9px;font-weight:600"
+          title="Source of this expected segment&#10;harness_rule = from rule registry&#10;jsonl = from JSONL mutations">${esc(sourceKind)}</span>
   </div>
+  ${displayRuleId ? `
+  <div class="rule-meta-line">
+    <code class="rule-id-badge" title="Rule ID">${esc(displayRuleId)}</code>
+    ${verifiedBadge}
+    ${matBadge}
+  </div>` : ""}
   ${text
     ? `<pre class="raw-text">${esc(text.slice(0, 3000))}${text.length > 3000 ? "\n…(truncated)" : ""}</pre>`
     : `<span class="no-content" title="No inline text available — char count only">${fmtK(chars)}c (no text)</span>`
@@ -641,6 +698,18 @@ col.col-recon    { width: 24%; }
 .expected-seg { margin-bottom: 6px; }
 .expected-seg:last-child { margin-bottom: 0; }
 .source-kind { font-size: 9px; color: #475569; }
+.rule-meta-line { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 3px; }
+.rule-id-badge { font-size: 9px; color: #34d399; word-break: break-all; }
+.verified-badge { font-size: 9px; padding: 1px 4px; border-radius: 3px; font-weight: 600; }
+.verified-ok      { color: #4ade80; background: #052e16; }
+.verified-pending { color: #fbbf24; background: #1c0f00; }
+.verified-none    { color: #94a3b8; background: #1e293b; }
+.mat-badge { font-size: 9px; padding: 1px 4px; border-radius: 3px; }
+.mat-exact_text      { color: #22c55e; background: #052e16; }
+.mat-normalized_text { color: #fbbf24; background: #1c1007; }
+.mat-presence        { color: #fb923c; background: #1c0c00; }
+.mat-shape           { color: #94a3b8; background: #1e293b; }
+.mat-unavailable     { color: #ef4444; background: #2a0808; }
 
 /* ── col-4: reconcile ── */
 .recon-col { }

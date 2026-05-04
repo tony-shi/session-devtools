@@ -53,6 +53,13 @@ export interface QueryScorecard {
   // 治理指标
   regexOverreachRisk: number;
   pendingRuleCoverage?: number;   // attribution 命中但 rule.verifiedFor===null 的字符 / proxyChars
+  // rule 正向 materialize 覆盖率 = (templateChars + presenceChars) / proxyChars
+  // 反映规则驱动重建的总体进展（含 exact_text template 和 presence 两种）
+  ruleMaterializedCoverage?: number;
+  // 仍依赖 proxy snapshot fallback 的 request scalar 字段数（0 = 完全正向重建）
+  proxyScalarFallbackCount?: number;
+  // TargetRequest.unmaterializedRules 长度（无法激活的 rule 数量）
+  unmaterializedRuleCount?: number;
   alignedTextDrift: number;
   requestLevelExact?: RequestLevelExactLevel;
   // 元数据
@@ -218,6 +225,9 @@ export interface ScorecardV2Summary {
   unexplainedCoverage: number;
   regexOverreachRisk: number;
   pendingRuleCoverage?: number;
+  ruleMaterializedCoverage?: number;
+  proxyScalarFallbackCount?: number;
+  unmaterializedRuleCount?: number;
   requestLevelExact?: RequestLevelExactLevel;
   proxyChars: number;
 }

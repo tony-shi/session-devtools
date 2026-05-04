@@ -1,0 +1,38 @@
+{
+  "case": "billing-identity-materialization",
+  "proxy_request": {
+    "traffic_jsonl_line": 155,
+    "ts": "2026-05-04T12:51:40.183Z",
+    "model": "claude-haiku-4-5-20251001",
+    "status": 200,
+    "messages_count": 1,
+    "tools_defined_count": 0,
+    "system_chars": 838,
+    "req_chars": 1600,
+    "is_stream": true,
+    "source_file": "traffic.jsonl.2026-05-04T13-24-25-881Z"
+  },
+  "messages_breakdown": {
+    "tool_use_count": 0,
+    "tool_result_count": 0,
+    "tool_names_used": [],
+    "max_tool_result_chars": 0
+  },
+  "system_breakdown": {
+    "system_seg_count": 3,
+    "seg_0_kind": "billing_noise",
+    "seg_0_chars": 81,
+    "seg_1_kind": "identity",
+    "seg_1_chars": 57,
+    "seg_2_kind": "title_generation_prompt",
+    "seg_2_chars": 700
+  },
+  "session_alignment": {
+    "session_jsonl": "d9b0b79d-efa2-48b4-9134-c213c1ddc3d6.jsonl",
+    "session_dir": "-Users-shihuashen-Documents-session-dashboard-reconstruct-04-system-rules",
+    "aligned": true,
+    "alignment_method": "timestamp_window_±2min"
+  },
+  "fixture_purpose": "billing_and_identity_materialization",
+  "cli_version": "2.1.126"
+}

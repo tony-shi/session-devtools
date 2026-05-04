@@ -1,6 +1,6 @@
 // Scorecard 计算：从 ReconciliationReport + CharDiffReport 提取量化指标
 
-import type { ReconciliationReport, ProxySegmentAttribution } from "../types";
+import type { ReconciliationReport, ProxySegmentAttribution, TargetRequest } from "../types";
 import type { CharDiffReport } from "../debug/char-diff";
 import type { AuditVerdict, QueryScorecard } from "./types";
 import { queryKeyHash } from "./paths";
@@ -55,6 +55,7 @@ export function computeScorecard(
   report: ReconciliationReport,
   diff: CharDiffReport,
   attributions?: ProxySegmentAttribution[],
+  targetRequest?: TargetRequest,
 ): QueryScorecard {
   const { coverage } = report;
   const proxyChars = coverage.proxyChars;
@@ -83,6 +84,23 @@ export function computeScorecard(
   // pendingRuleCoverage 需要 attributions（rule 验证状态不在 coverage 里）
   const pendingRuleCoverage = attributions
     ? computePendingRuleCoverage(report, attributions)
+    : undefined;
+
+  // ruleMaterializedCoverage：template（exact_text rule）+ presence（presence rule）桶之和 / proxyChars
+  // 反映正向 rule materialize 的总体覆盖进展；attribution_only 不计入（rule 已识别但未物化）
+  const ruleMaterializedCoverage = proxyChars > 0
+    ? (coverage.templateChars + coverage.presenceChars) / proxyChars
+    : 0;
+
+  // proxyScalarFallbackCount：仍从 proxy snapshot 取值的 request scalar 字段数
+  const proxySnapshotFallbackFields = targetRequest?.metadata?.["proxySnapshotFallbackFields"];
+  const proxyScalarFallbackCount = Array.isArray(proxySnapshotFallbackFields)
+    ? (proxySnapshotFallbackFields as unknown[]).length
+    : undefined;
+
+  // unmaterializedRuleCount：preCondition 不满足或 materialization=shape/unavailable 而跳过的 rule 数
+  const unmaterializedRuleCount = targetRequest?.unmaterializedRules !== undefined
+    ? targetRequest.unmaterializedRules.length
     : undefined;
 
   const hash = queryKeyHash(queryKey);
@@ -120,6 +138,9 @@ export function computeScorecard(
     unexplainedCoverage,
     regexOverreachRisk,
     pendingRuleCoverage,
+    ruleMaterializedCoverage,
+    proxyScalarFallbackCount,
+    unmaterializedRuleCount,
     alignedTextDrift,
     requestLevelExact: coverage.requestLevelExact,
     verdict,

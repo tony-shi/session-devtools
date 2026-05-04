@@ -182,26 +182,28 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
   if (entriesWithV2.length > 0) {
     lines.push(`## Coverage 正交分桶`, ``);
     lines.push(`> wire = basis=raw_hash/tool_use_id  tmpl = basis=rule_id+exact_text  regex = basis=rule_id+shape`);
-    lines.push(`> pending = attribution 命中但 rule.verifiedFor===null 的字符占比`);
+    lines.push(`> ruleMat = template+presence（rule 正向 materialize 总覆盖）  pending = attribution 命中但 rule.verifiedFor===null 的字符占比`);
+    lines.push(`> scalarFB = proxy scalar fallback 字段数  unmtRule = unmaterialized rule 数`);
     lines.push(``);
-    lines.push(`| query | proxyChars | req | wire | tmpl | regex | attrOnly | unexplained | pending | regexRisk |`);
-    lines.push(`|-------|-----------|-----|------|------|-------|---------|------------|---------|----------|`);
+    lines.push(`| query | proxyChars | req | wire | tmpl | ruleMat | attrOnly | unexplained | pending | scalarFB | unmtRule |`);
+    lines.push(`|-------|-----------|-----|------|------|---------|---------|------------|---------|----------|----------|`);
     for (const e of entriesWithV2) {
       const v = e.v2!;
       const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
-      const regexRiskFlag = v.regexOverreachRisk > 0.6 ? "⚠️ " : "";
       const pendingFlag = (v.pendingRuleCoverage ?? 0) > 0.3 ? "⚠️ " : "";
+      const ruleMatFlag = (v.ruleMaterializedCoverage ?? 0) > 0.5 ? "✓ " : "";
       lines.push(
         `| ${e.sessionId.slice(0, 8)}…/${e.queryId.slice(0, 16)}`
         + ` | ${v.proxyChars}`
         + ` | ${v.requestLevelExact ?? "-"}`
         + ` | ${pct(v.wireExactCoverage)}`
         + ` | ${pct(v.templateCoverage)}`
-        + ` | ${pct(v.regexCoverage)}`
+        + ` | ${ruleMatFlag}${v.ruleMaterializedCoverage !== undefined ? pct(v.ruleMaterializedCoverage) : "-"}`
         + ` | ${pct(v.attributionOnlyCoverage)}`
         + ` | ${pct(v.unexplainedCoverage)}`
         + ` | ${pendingFlag}${v.pendingRuleCoverage !== undefined ? pct(v.pendingRuleCoverage) : "-"}`
-        + ` | ${regexRiskFlag}${pct(v.regexOverreachRisk)}`
+        + ` | ${v.proxyScalarFallbackCount ?? "-"}`
+        + ` | ${v.unmaterializedRuleCount ?? "-"}`
         + ` |`,
       );
     }
@@ -295,7 +297,7 @@ export function writeIndexHtml(runId: string, run: AuditRunRecord, entries: Audi
     return `<span style="color:#475569;font-size:10px">${esc(qk)}</span>`;
   };
 
-  // E0-5：v2 分桶 mini-bar（wireExact + template + regex + pending + serverSide + unknown）
+  // E0-5：v2 分桶 mini-bar（wireExact + template + ruleMat + pending + unmtRule）
   const v2MiniBar = (v: import("./types").ScorecardV2Summary | undefined): string => {
     if (!v) return `<span style="color:#94a3b8">-</span>`;
     const pct = (n: number) => (n * 100).toFixed(0);
@@ -303,11 +305,15 @@ export function writeIndexHtml(runId: string, run: AuditRunRecord, entries: Audi
     const tmpl = v.templateCoverage;
     const pend = v.pendingRuleCoverage ?? 0;
     const risk = v.regexOverreachRisk;
+    const ruleMatPct = v.ruleMaterializedCoverage !== undefined ? pct(v.ruleMaterializedCoverage) : "-";
     const pendFlag = pend > 0.3 ? `<span style="color:#f59e0b" title="pending ${pct(pend)}%">⚠</span>` : "";
     const riskFlag = risk > 0.6 ? `<span style="color:#ef4444" title="regex risk ${pct(risk)}%">⚠</span>` : "";
-    return `<span title="wire:${pct(wire)}% tmpl:${pct(tmpl)}% regex:${pct(v.regexCoverage)}% attrOnly:${pct(v.attributionOnlyCoverage)}% unexplained:${pct(v.unexplainedCoverage)}%">`
+    const fbStr = v.proxyScalarFallbackCount !== undefined ? ` fb:${v.proxyScalarFallbackCount}` : "";
+    const unmtStr = v.unmaterializedRuleCount !== undefined ? ` unmt:${v.unmaterializedRuleCount}` : "";
+    return `<span title="wire:${pct(wire)}% tmpl:${pct(tmpl)}% ruleMat:${ruleMatPct}% attrOnly:${pct(v.attributionOnlyCoverage)}% unexplained:${pct(v.unexplainedCoverage)}%${fbStr}${unmtStr}">`
       + `<span style="color:#22c55e">${pct(wire)}%</span>`
       + `<span style="color:#94a3b8">+${pct(tmpl)}%</span>`
+      + `<span style="color:#a78bfa" title="rule materialized (template+presence)"> mat:${ruleMatPct}%</span>`
       + `${pendFlag}${riskFlag}`
       + `</span>`;
   };

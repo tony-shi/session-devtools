@@ -36,6 +36,8 @@ export const VALID_FIXTURE_NAMES = [
   "multi-turn-human",
   "system-tools-overhead",
   "task-reminder-smoosh",
+  // billing + identity 正向 materialization 最小验证 fixture（side_query / session-title 类型）
+  "billing-identity-materialization",
   // side-query-session-title 无 JSONL，进入 proxyWithoutJsonl 分支（--proxy-only 下走 attribution-only 路径）
   "side-query-session-title",
 ];

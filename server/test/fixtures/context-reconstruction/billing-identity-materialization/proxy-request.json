@@ -1,0 +1,88 @@
+{
+  "ts": "2026-05-04T12:51:40.183Z",
+  "startedAt": "2026-05-04T12:51:40.183Z",
+  "kind": "response",
+  "sni": "internal-proxy.example",
+  "method": "POST",
+  "url": "http://internal-proxy.example:8742/v1/messages?beta=true",
+  "status": 200,
+  "reqHeaders": {
+    "Proxy-Connection": "Keep-Alive",
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "User-Agent": "claude-cli/2.1.126 (external, cli)",
+    "X-Claude-Code-Session-Id": "d9b0b79d-efa2-48b4-9134-c213c1ddc3d6",
+    "X-Stainless-Arch": "arm64",
+    "X-Stainless-Lang": "js",
+    "X-Stainless-OS": "MacOS",
+    "X-Stainless-Package-Version": "0.81.0",
+    "X-Stainless-Retry-Count": "0",
+    "X-Stainless-Runtime": "node",
+    "X-Stainless-Runtime-Version": "v24.3.0",
+    "X-Stainless-Timeout": "600",
+    "anthropic-beta": "oauth-2025-04-20,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,structured-outputs-2025-12-15",
+    "anthropic-dangerous-direct-browser-access": "true",
+    "anthropic-version": "2023-06-01",
+    "x-app": "cli",
+    "Connection": "keep-alive",
+    "Host": "internal-proxy.example:8742",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Content-Length": "1844"
+  },
+  "reqBody": {
+    "model": "claude-haiku-4-5-20251001",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "OK，如果当前的改动均符合预期。我现在要把当前的分支合并到develop。请给出具体的命令，同时，你应该关注是否有可能存在潜在的冲突。如果存在，请在当前分支优化调整。\n给出最终的git命令，并且我们希望合并后，删除本worktree和分支。"
+          }
+        ]
+      }
+    ],
+    "system": [
+      {
+        "type": "text",
+        "text": "x-anthropic-billing-header: cc_version=2.1.126.ce3; cc_entrypoint=cli; cch=659de;"
+      },
+      {
+        "type": "text",
+        "text": "You are Claude Code, Anthropic's official CLI for Claude."
+      },
+      {
+        "type": "text",
+        "text": "Generate a concise, sentence-case title (3-7 words) that captures the main topic or goal of this coding session. The title should be clear enough that the user recognizes the session in a list. Use sentence case: capitalize only the first word and proper nouns.\n\nReturn JSON with a single \"title\" field.\n\nGood examples:\n{\"title\": \"Fix login button on mobile\"}\n{\"title\": \"Add OAuth authentication\"}\n{\"title\": \"Debug failing CI tests\"}\n{\"title\": \"Refactor API client error handling\"}\n\nBad (too vague): {\"title\": \"Code changes\"}\nBad (too long): {\"title\": \"Investigate and fix the issue where the login button does not respond on mobile devices\"}\nBad (wrong case): {\"title\": \"Fix Login Button On Mobile\"}"
+      }
+    ],
+    "tools": [],
+    "metadata": {
+      "user_id": "{\"device_id\":\"01e259618d336f330261beaf925dc1d867102c17f0e542a033b960c93c2c5209\",\"account_uuid\":\"d9dab69b-7103-486b-a89a-a24c5897ac2e\",\"session_id\":\"d9b0b79d-efa2-48b4-9134-c213c1ddc3d6\"}"
+    },
+    "max_tokens": 32000,
+    "temperature": 1,
+    "output_config": {
+      "format": {
+        "type": "json_schema",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "stream": true
+  },
+  "_traffic_jsonl_line": 155,
+  "_fixtureSource": "ant-native",
+  "_cliVersion": "2.1.126",
+  "_sessionId": "d9b0b79d-efa2-48b4-9134-c213c1ddc3d6"
+}

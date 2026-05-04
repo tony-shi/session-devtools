@@ -76,3 +76,25 @@ Use `server/src/context-ledger/__fixtures__/mock-report.json` for the full repor
 - JSONL, memory files, hooks, harness rules, prior sessions, and unknown placeholders feed `ContextMutation`.
 - A proxy-only diff must become `ReconciliationFinding.type = "unmatched_proxy_segment"` until independently explained.
 - Do not add fixture-only fields to the core contract. Use `metadata` for temporary notes and promote fields only after multiple fixtures need them.
+
+## Reconstruction vs Reconcile（proxy 的角色边界）
+
+**proxy 只参与 reconcile，不参与 expected materialization。**
+
+```
+JSONL mutations + RuleRegistry + HarnessRuntimeSnapshot
+  → ExpectedQueryContext（正向重建）
+  → TargetRequest candidate
+
+ProxyQuerySnapshot + ProxySegmentAttribution
+  → reconcile / audit only（对账、归因、分桶，不写入 expected）
+```
+
+约束：
+- `ExpectedQueryContext.segments[].sourceRefs` 不允许出现 `kind: "proxy"`。
+- `reconstructExpectedClaudeContext()` 的输入不接受 `ProxyQuerySnapshot` / `ProxySegmentAttribution`。
+- proxy rawText 不得复制到 expected；`proxy_snapshot_fallback` 标注的字段只用于
+  reconcile 报告，不计入 exact reconstruction 口径。
+- `presenceCoverage` / `templateCoverage` 均来自 rule 正向 materialization；
+  `attributionOnlyCoverage` 表示 rule 已识别但 expected 缺段——这是真实缺口，
+  不应在 fixture 中包装成成功。

@@ -160,7 +160,7 @@ export function runPipeline(input: PipelineInput): PipelineResult {
     const report = reconcileClaudeContext({ snapshot, attributions, expected });
     const baseDiff = computeCharDiff(report);
     const diff = injectProxyTexts(baseDiff, report, reqBody);
-    const scorecard = computeScorecard(queryKey, report, diff, attributions);
+    const scorecard = computeScorecard(queryKey, report, diff, attributions, report.targetRequest);
     return {
       queryKey,
       queryKeyHash: hash,
@@ -249,7 +249,7 @@ export function runPipelineWithData(input: PipelineInput): {
     const baseDiff = computeCharDiff(report);
     const diff = injectProxyTexts(baseDiff, report, reqBody);
     const diffHtml = renderCharDiffHtml(diff);
-    const scorecard = computeScorecard(queryKey, report, diff, attributions);
+    const scorecard = computeScorecard(queryKey, report, diff, attributions, report.targetRequest);
 
     // queryKind 细化：side_query 中命中 session-title rule 的标注为 session_title_side_query
     const baseQueryKind = snapshot.request?.queryKind ?? "unknown";
