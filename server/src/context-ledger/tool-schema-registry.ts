@@ -1,7 +1,23 @@
 // 内置工具完整 tool schema（P0 事实：来自 system-tools-overhead proxy dump 2026-05-01）
 // name → JSON.stringify({name, description, input_schema})
-// shape 工具（Agent/Bash/ScheduleWakeup）不在此列（materialization=shape，无需 exact schema）
-// MCP 工具不在此列（input_schema 用户配置决定，attribution_only）
+//
+// ── 排除项 ──────────────────────────────────────────────────────────────────────
+// shape 工具（Agent/Bash/ScheduleWakeup）：
+//   description 含运行时动态插值，无法 exact 复现，materialization=shape。
+// MCP 工具（mcp__ 前缀）：
+//   input_schema 由用户本地 MCP server 配置决定，不可从 JSONL/harness 静态推断。
+// ToolSearch：
+//   deferred tool，不在普通主请求的 tools[] 中发送，现有 fixture 无 P0 证据。
+//
+// ── key 顺序（P0 + sourcemap 双重确认）─────────────────────────────────────────
+// 顺序与 harness assembleToolPool()（restored-src/src/tools.ts:362）一致：
+//   内置工具按 name.localeCompare() 字母序，形成 tools[] 前缀段（26 个）。
+//   MCP 工具紧随其后，同样字母序（不在本文件，见 MCP rules）。
+// materializer 必须按此顺序生成 segment，否则：
+//   (a) sourceMap 路径 reqBody.tools[i] 索引错位；
+//   (b) canonical hash 因顺序不同而不匹配；
+//   (c) reconciliation 产生虚假 order_mismatch finding。
+// 所有已录制 fixture（2026-05-01，5 个 main_session fixture）验证：tools[] 顺序完全一致。
 //
 // 验证命令：bun run context:audit:fixtures（P0 dump 对账）
 

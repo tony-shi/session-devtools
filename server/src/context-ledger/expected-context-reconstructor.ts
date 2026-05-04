@@ -853,8 +853,33 @@ export function materializeHarnessRules(
   const toolEnableMode: "explicit" | "all_verified_unfiltered" =
     Array.isArray(enabledToolNames) ? "explicit" : "all_verified_unfiltered";
 
+  // ── tools[] 两阶段处理 ──────────────────────────────────────────────────────
+  //
+  // harness assembleToolPool()（sourcemap tools.ts:362）的顺序规则：
+  //   内置工具先按 name.localeCompare() 字母序，MCP 工具紧随其后同样字母序。
+  //   两段不混排（为 prompt cache 稳定性）。
+  //
+  // 因此 tool segment 必须独立于其他 section 单独收集，再按正确顺序插入。
+  // 不能在主循环 order++ 流程中内联生成——那样顺序由 CONTEXT_LEDGER_RULES 声明顺序
+  // 决定（Edit→Write→Read→...），与 harness 字母序（AskUserQuestion→Bash→CronCreate→...）
+  // 不一致，会导致 sourceMap 路径 reqBody.tools[i] 错位及虚假 order_mismatch finding。
+  //
+  // 实现：先收集所有通过筛选的 tool rule，按 toolName localeCompare 排序，再统一分配 order。
+  interface PendingToolEntry {
+    rule: ContextLedgerRule;
+    toolName: string;          // 用于排序
+    isMcp: boolean;            // 内置工具先，MCP 工具后
+    toolSchemaJson: string | null;
+  }
+  const pendingToolEntries: PendingToolEntry[] = [];
+
   // 段序号从 5000 开始，避免与 mutation 段（0 起步）冲突
   let order = 5000;
+  // tool segment 的起始序号预留在 5000 段内，非 tool segments 从 6000 开始，
+  // 避免 tool 与 system/messages rule segments 序号交叉。
+  // （实际 tools 在 request body 中位于 system 之后、messages 之前，
+  //   赋予独立序号范围有利于 reconciliation order 对比。）
+  let nonToolOrder = 6000;
 
   for (const rule of rules) {
     const recon = rule.reconstruction;
@@ -873,26 +898,32 @@ export function materializeHarnessRules(
       case "exact_text": {
         // ── tools[] 专项处理（reconstruct-05）────────────────────────────
         if (recon.emits.section === "tools") {
-          // MCP tool：input_schema 由用户 MCP server 配置决定，无法正向复现
-          if (isMcpToolRule(rule.ruleId)) {
-            unmaterializedRuleIds.push(rule.ruleId);
-            continue;
-          }
+          const toolName = extractToolNameFromRuleId(rule.ruleId);
+          const isMcp = isMcpToolRule(rule.ruleId);
 
-          // enabledToolNames 明确指定时，过滤未启用工具
+          // P2-2 修复：先做启用过滤（对所有 tool rules 统一处理，包括 MCP）。
+          // 只有在 enabledToolNames 明确且不包含本工具时才静默跳过（不是错误）。
+          // MCP tool 的 skip 判断在启用过滤之后——这样当 enabledToolNames 明确
+          // 且不含任何 MCP 工具时，MCP rules 就不会错误地进入 unmaterializedRuleIds。
           if (toolEnableMode === "explicit") {
-            const toolName = extractToolNameFromRuleId(rule.ruleId);
-            if (toolName && !enabledToolNames!.includes(toolName)) {
-              // 工具未启用，跳过（不进入 unmaterializedRuleIds，不是错误）
+            const nameToCheck = toolName ?? rule.ruleId;
+            if (!enabledToolNames!.includes(nameToCheck)) {
+              // 工具未启用，静默跳过（不计入 unmaterializedRuleIds，不是重建缺口）
               continue;
             }
           }
 
+          // MCP tool：input_schema 由用户 MCP server 配置决定，无法正向复现。
+          // 此检查在启用过滤之后——已被过滤的 MCP tools 不会到达这里。
+          if (isMcp) {
+            unmaterializedRuleIds.push(rule.ruleId);
+            continue;
+          }
+
           // 查找 contentPattern：rule 自带优先，否则从 BUILTIN_TOOL_SCHEMA_JSON 查找
           let toolSchemaJson: string | null = recon.emits.contentPattern ?? null;
-          if (!toolSchemaJson) {
-            const toolName = extractToolNameFromRuleId(rule.ruleId);
-            toolSchemaJson = (toolName && BUILTIN_TOOL_SCHEMA_JSON[toolName]) ? BUILTIN_TOOL_SCHEMA_JSON[toolName] : null;
+          if (!toolSchemaJson && toolName) {
+            toolSchemaJson = BUILTIN_TOOL_SCHEMA_JSON[toolName] ?? null;
           }
 
           if (!toolSchemaJson) {
@@ -901,27 +932,8 @@ export function materializeHarnessRules(
             continue;
           }
 
-          // 验证 JSON 可解析，失败时降级为 presence 并报告
-          let toolSchemaValid = true;
-          try {
-            const parsed = JSON.parse(toolSchemaJson) as unknown;
-            if (!parsed || typeof parsed !== "object") toolSchemaValid = false;
-          } catch {
-            toolSchemaValid = false;
-          }
-
-          const seg = buildRuleSegment({
-            rule,
-            order: order++,
-            materialization: toolSchemaValid ? "exact_text" : "presence",
-            contentText: toolSchemaValid ? toolSchemaJson : undefined,
-            // 透传 tool enable mode：标注到 segment metadata，供 target-request-builder 识别
-            extraMetadata: toolSchemaValid
-              ? { toolEnableMode, toolJsonParseStatus: "ok" }
-              : { toolEnableMode, toolJsonParseStatus: "parse_failed" },
-          });
-          segments.push(seg);
-          appliedRules.push(ruleToAppliedRule(rule));
+          // 收集到待排序列表，排序后统一分配 order（P2-1 修复）
+          pendingToolEntries.push({ rule, toolName: toolName ?? rule.ruleId, isMcp, toolSchemaJson });
           continue;
         }
         // ── 非 tools section 的 exact_text（system / messages）────────────
@@ -936,7 +948,7 @@ export function materializeHarnessRules(
         const text = recon.emits.contentPattern;
         const seg = buildRuleSegment({
           rule,
-          order: order++,
+          order: nonToolOrder++,
           materialization: "exact_text",
           contentText: text,
         });
@@ -952,7 +964,7 @@ export function materializeHarnessRules(
         // 此处只确认"此 segment 应当存在"。
         const seg = buildRuleSegment({
           rule,
-          order: order++,
+          order: nonToolOrder++,
           materialization: "normalized_text",
           contentText: undefined, // 不填入未经 snapshot 替换的模板文本
         });
@@ -965,7 +977,7 @@ export function materializeHarnessRules(
         // 内容动态不可复现（如 billing header）→ 只生成存在性占位 segment，无 text
         const seg = buildRuleSegment({
           rule,
-          order: order++,
+          order: nonToolOrder++,
           materialization: "presence",
           contentText: undefined,
         });
@@ -980,6 +992,42 @@ export function materializeHarnessRules(
         unmaterializedRuleIds.push(rule.ruleId);
         break;
     }
+  }
+
+  // ── P2-1 修复：按 harness 字母序排序后统一分配 order ────────────────────────
+  //
+  // harness assembleToolPool()（sourcemap tools.ts:362）：
+  //   内置工具按 name.localeCompare() 字母序 → MCP 工具按字母序（两段不混排）。
+  // 此处用 localeCompare 排序，再按内置/MCP 分段，确保 segment order 与 proxy 索引一致。
+  pendingToolEntries.sort((a, b) => {
+    // 内置工具（!isMcp）在前，MCP 工具在后
+    if (a.isMcp !== b.isMcp) return a.isMcp ? 1 : -1;
+    return a.toolName.localeCompare(b.toolName);
+  });
+
+  for (const entry of pendingToolEntries) {
+    const { rule, toolSchemaJson } = entry;
+
+    // 验证 JSON 可解析，失败时降级为 presence 并报告
+    let toolSchemaValid = true;
+    try {
+      const parsed = JSON.parse(toolSchemaJson!) as unknown;
+      if (!parsed || typeof parsed !== "object") toolSchemaValid = false;
+    } catch {
+      toolSchemaValid = false;
+    }
+
+    const seg = buildRuleSegment({
+      rule,
+      order: order++,           // tools section 使用 5000 段序号，与 nonToolOrder(6000+) 分离
+      materialization: toolSchemaValid ? "exact_text" : "presence",
+      contentText: toolSchemaValid ? toolSchemaJson! : undefined,
+      extraMetadata: toolSchemaValid
+        ? { toolEnableMode, toolJsonParseStatus: "ok" }
+        : { toolEnableMode, toolJsonParseStatus: "parse_failed" },
+    });
+    segments.push(seg);
+    appliedRules.push(ruleToAppliedRule(rule));
   }
 
   return { segments, appliedRules, unmaterializedRuleIds };

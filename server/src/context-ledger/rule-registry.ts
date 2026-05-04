@@ -1407,14 +1407,49 @@ export const CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE: ContextLedgerRule = {
 //
 // 每条 tool rule 覆盖 reqBody.tools[i]（tools 数组某一项）的 description + input_schema。
 //
-// 分析依据（P0 优先级）：
-//   - dump 实测（2026-05-01 请求，8 个 tool）：description 字节数见下
+// ── tools[] 顺序规则（P0 事实，sourcemap 确认）────────────────────────────────
+//
+// 来源：restored-src/src/tools.ts:362，函数 assembleToolPool()
+//
+//   const byName = (a: Tool, b: Tool) => a.name.localeCompare(b.name)
+//   return uniqBy(
+//     [...builtInTools].sort(byName).concat(allowedMcpTools.sort(byName)),
+//     'name',
+//   )
+//
+// 规则：
+//   1. 内置工具（builtInTools）先按 name.localeCompare() 字母序排列，形成前缀段。
+//   2. MCP 工具（allowedMcpTools）紧接其后，同样按字母序排列，形成后缀段。
+//   3. 两段严格分开——不做全局混排。原因（sourcemap 注释明确）：全局混排会在 MCP
+//      工具名落在内置工具字母序之间时破坏服务端 claude_code_system_cache_policy 的
+//      cache breakpoint，使每次 MCP 工具集变化都导致内置工具段缓存失效。
+//
+// 验证：所有已录制 fixture（2026-05-01）的 tools[] 顺序完全一致，均符合上述规则。
+//   内置工具示例顺序：Agent → AskUserQuestion → Bash → CronCreate → ... → Write
+//   MCP 工具紧随其后：mcp__claude_ai_Gmail__authenticate → ... → mcp__tavily__tavily_search
+//
+// reconstruction 排序要求：
+//   materializer 生成的 tool segments 必须按同一字母序排列，否则：
+//   (a) reqBody.tools[i] 的 sourceMap 路径错位；
+//   (b) canonical hash 因顺序不同而不匹配；
+//   (c) reconciliation 产生虚假 order_mismatch finding。
+//   内置工具和 MCP 工具仍然分段：内置工具先，MCP 工具后。
+//   见 tool-schema-registry.ts：BUILTIN_TOOL_SCHEMA_JSON 的 key 顺序即字母序基准。
+//
+// ── 分析依据（P0 优先级）──────────────────────────────────────────────────────
+//   - dump 实测（2026-05-01 请求，40 个 tool）：完整 tool JSON 存入 tool-schema-registry.ts
 //   - binary 前/后缀分析：部分 description 含模板插值（如 Bash/Agent），用 regex 头尾锚定
 //   - input_schema 全部静态 JSON，dump 即事实
 //
 // 匹配策略分类：
-//   exact   — Edit / Write / Read / Skill / ToolSearch  (description 静态，dump 即 truth)
-//   regex   — Agent / Bash / ScheduleWakeup            (description 含动态插值，头尾锚定)
+//   exact   — 29 个内置工具（描述静态，dump 即 truth）；11 个 MCP 工具（description 静态）
+//   regex   — Agent / Bash / ScheduleWakeup（description 含动态插值，头尾锚定）
+//   unknown — ToolSearch（deferred tool，不出现在普通 proxy dump，无 P0 input_schema）
+//
+// reconstruction materialization 分类：
+//   exact_text  — 所有 exact 工具（完整 tool JSON 存入 tool-schema-registry.ts）
+//   shape       — Agent / Bash / ScheduleWakeup（description 动态，无法复现）
+//   attribution_only（MCP）— input_schema 由用户 MCP server 配置决定，不可正向复现
 //
 // attribution 位置：section="tools"，index 不固定
 // reconstruction：trigger="always_per_query"（tools 数组每次请求都完整发送）
@@ -2189,6 +2224,18 @@ export const CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE: ContextLedgerRule = {
 // charCount = JSON.stringify(整个 tool 对象) 长度，包含 input_schema。
 // attribution matchMode=prefix：MCP description 完全静态，用 prefix 精确命中。
 // reconciliation comparePolicy=raw_hash：整个 tool JSON 不变，hash 可精确比对。
+//
+// ── reconstruction：MCP tools 保持 attribution_only ──────────────────────────
+//
+// MCP tool 的 input_schema 由用户本地 MCP server 配置动态提供（通过 appState.mcp.tools
+// 在运行时注入，见 sourcemap tools.ts:assembleToolPool）。不同用户、不同 MCP server
+// 版本的 input_schema 可能不同，无法从 JSONL 或 harness 静态数据正向复现。
+//
+// 因此所有 MCP tool rule 的 reconstruction.emits 不携带 contentPattern，
+// materializer 检测到 mcp__ 前缀时直接 skip，写入 unmaterializedRuleIds。
+// 这是设计上的保守降级，不是 bug。
+//
+// 顺序注意：MCP tools 在内置工具之后，同样按字母序排列（见上方顺序规则）。
 
 // ── claude.ai Gmail ───────────────────────────────────────────────────────────
 export const CLAUDE_CODE_TOOL_MCP_GMAIL_AUTH_RULE: ContextLedgerRule = {

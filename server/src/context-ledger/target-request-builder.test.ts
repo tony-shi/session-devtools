@@ -621,6 +621,24 @@ describe("materializeHarnessRules: tools schema", () => {
     }
   });
 
+  // T1b（P2-1 修复）：tool segments 按 harness 字母序排列（localeCompare，内置先于 MCP）
+  test("T1b: tool segments 按 localeCompare 字母序排列，与 harness assembleToolPool 一致", () => {
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary, undefined);
+    const toolSegs = result.segments.filter((s) => s.section === "tools");
+    const names = toolSegs.map((s) => (JSON.parse(s.contentRef!.text!) as { name: string }).name);
+
+    // 验证字母序（每个相邻对 localeCompare <= 0）
+    for (let i = 1; i < names.length; i++) {
+      expect(names[i - 1]!.localeCompare(names[i]!)).toBeLessThanOrEqual(0);
+    }
+
+    // 验证 segment order 与生成顺序一致（不倒序）
+    const orders = toolSegs.map((s) => s.order ?? 0);
+    for (let i = 1; i < orders.length; i++) {
+      expect(orders[i]!).toBeGreaterThan(orders[i - 1]!);
+    }
+  });
+
   // T2：tool segment 的 contentRef.text 可被 JSON.parse 成对象（含 name/description/input_schema）
   test("T2: tool segment contentRef.text JSON.parse 后含 name/description/input_schema", () => {
     const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary, undefined);
@@ -634,8 +652,8 @@ describe("materializeHarnessRules: tools schema", () => {
     }
   });
 
-  // T3：MCP tool rules 不生成 segment，进入 unmaterializedRuleIds
-  test("T3: MCP tool rules 保留 attribution_only，进入 unmaterializedRuleIds", () => {
+  // T3：MCP tool rules（enabledToolNames 未知时）不生成 segment，进入 unmaterializedRuleIds
+  test("T3: enabledToolNames 未知时 MCP tool rules 进入 unmaterializedRuleIds", () => {
     const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary, undefined);
     const toolSegs = result.segments.filter((s) => s.section === "tools");
 
@@ -645,13 +663,29 @@ describe("materializeHarnessRules: tools schema", () => {
       expect(obj.name).not.toContain("mcp__");
     }
 
-    // MCP rule IDs 出现在 unmaterializedRuleIds 中
+    // enabledToolNames 未知时：MCP rule IDs 出现在 unmaterializedRuleIds 中
     const mcpRuleIds = CONTEXT_LEDGER_RULES
       .filter((r) => r.ruleId.includes("mcp__"))
       .map((r) => r.ruleId);
     for (const id of mcpRuleIds) {
       expect(result.unmaterializedRuleIds).toContain(id);
     }
+  });
+
+  // T3b（P2-2 修复）：enabledToolNames 明确且不含 MCP 工具时，
+  //   MCP rules 不应进入 unmaterializedRuleIds（它们是被禁用的，不是重建缺口）
+  test("T3b: enabledToolNames 明确不含 MCP 时，MCP rules 不进入 unmaterializedRuleIds", () => {
+    const runtimeSnapshot: HarnessRuntimeSnapshot = {
+      source: "jsonl",
+      enabledToolNames: ["Edit", "Read"], // 只启用内置工具，不含任何 MCP
+    };
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, boundary, runtimeSnapshot);
+
+    const mcpInUnmaterialized = result.unmaterializedRuleIds.filter((id) =>
+      id.includes("mcp__"),
+    );
+    // MCP tools 未启用 → 应被静默跳过，不计入 unmaterializedRuleIds
+    expect(mcpInUnmaterialized).toHaveLength(0);
   });
 
   // T4：不从 proxy 复制 tool schema（sourceRefs 不含 kind="proxy"）
