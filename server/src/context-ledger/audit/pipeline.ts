@@ -43,8 +43,14 @@ function filterVerifiedAttributions(
 export interface PipelineInput {
   proxy: DiscoveredProxyRecord;
   jsonlFile: string | null;  // null → proxy_without_jsonl
-  /** T0 控制变量：禁用 R9（attribution 反写 system/tools expected segments）*/
+  /**
+   * P0-1 R9 控制：R9 默认关闭（injectFromAttributions=false）。
+   * noR9=true → 明确关闭（与默认行为相同，保留兼容）。
+   * withR9=true → 显式开启（compare-modes 的 "current" 路用来对照 R9 贡献）。
+   * noR9 和 withR9 不应同时为 true。
+   */
   noR9?: boolean;
+  withR9?: boolean;
   /** T0 控制变量：verifiedFor===null 的 rule 不进入 evidenceBacked，仅 attribution-only */
   verifiedOnly?: boolean;
   /** E0-1：允许 jsonlFile=null 的 query 走 proxy-only attribution 路径（不解析 JSONL，reconcile 无 expected） */
@@ -216,7 +222,8 @@ export function runPipeline(input: PipelineInput): PipelineResult {
     const jsonlRaw = readFileSync(jsonlFile, "utf-8");
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
 
-    // 4. 重建 expected（P0-1：R9 严格正向，不再需要 proxySegmentsById）
+    // 4. 重建 expected（P0-1：R9 默认关闭，withR9=true 时显式开启）
+    const r9Enabled = input.withR9 === true && !noR9;
     const expected = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
       boundary: {
@@ -225,8 +232,8 @@ export function runPipeline(input: PipelineInput): PipelineResult {
         sessionId: parsed.sessionId,
       },
       hasPreSessionActivity: parsed.hasPreSessionActivity,
-      attributions: r9Attributions,
-      rules: noR9 ? { injectFromAttributions: false } : undefined,
+      attributions: r9Enabled ? r9Attributions : undefined,
+      rules: r9Enabled ? { injectFromAttributions: true } : { injectFromAttributions: false },
     });
 
     // 5. reconcile：始终用全量 attribution，保证归因覆盖率统计正确
@@ -370,7 +377,8 @@ export function runPipelineWithData(input: PipelineInput): {
     const jsonlRaw = readFileSync(jsonlFile, "utf-8");
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile });
 
-    // P0-1：R9 严格正向，不再需要 proxySegmentsById
+    // P0-1：R9 默认关闭，withR9=true 时显式开启
+    const r9Enabled = input.withR9 === true && !noR9;
     const expected = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
       boundary: {
@@ -379,12 +387,13 @@ export function runPipelineWithData(input: PipelineInput): {
         sessionId: parsed.sessionId,
       },
       hasPreSessionActivity: parsed.hasPreSessionActivity,
-      attributions: r9Attributions,
-      rules: noR9 ? { injectFromAttributions: false } : undefined,
+      attributions: r9Enabled ? r9Attributions : undefined,
+      rules: r9Enabled ? { injectFromAttributions: true } : { injectFromAttributions: false },
     });
 
     // P3-1：TargetRequest 只从 expected + request metadata 正向构建，不读取 proxy raw segment。
-    const targetRequest = buildTargetRequest({ expected, snapshot });
+    // P3-1：inferredModel 从 JSONL assistant 行提取，优先于 proxy snapshot model 字段
+    const targetRequest = buildTargetRequest({ expected, snapshot, inferredModel: parsed.inferredModel });
 
     // reconcile/scorecard/side-query 分类始终使用全量 attribution
     const report = reconcileClaudeContext({

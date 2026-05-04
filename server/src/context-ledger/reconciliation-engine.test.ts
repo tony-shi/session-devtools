@@ -405,12 +405,13 @@ describe("cross-fixture invariants", () => {
     const snapForAttr = JSON.parse(JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: proxyRaw.reqBody } })) as typeof snapshot;
     const attributions = inferClaudeProxyAttributions(snapForAttr);
     const parsed = parseClaudeJsonlMutations(jsonlRaw, { jsonlFile: `${FIXTURE_DIR}/${caseName}/session.jsonl` });
-    // 传 attributions 给 reconstructor，触发 R9 生成 rule_id expected segments
+    // 传 attributions 并显式开启 R9（P0-1 后默认关闭）以测试 M3.5 rule_id 对齐行为
     const expectedWithR9 = reconstructExpectedClaudeContext({
       mutations: parsed.mutations,
       boundary: { queryId: `q-${caseName}`, proxyTimestamp: proxyRaw.ts, sessionId: parsed.sessionId },
       hasPreSessionActivity: parsed.hasPreSessionActivity,
       attributions,
+      rules: { injectFromAttributions: true },
     });
     const report = reconcileClaudeContext({ snapshot, attributions, expected: expectedWithR9, fixtureName: caseName });
     const ruleIdAlignments = report.alignments.filter((a) => a.basis === "rule_id");

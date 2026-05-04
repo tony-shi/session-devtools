@@ -95,7 +95,10 @@ const DEFAULT_RULES: Required<HarnessRuleConfig> = {
   filterKnownNoise: true,
   apiErrorRetryAlignment: true,
   filterSyntheticApiError: true,
-  injectFromAttributions: true,
+  // P0-1：R9 默认关闭，避免 proxy attribution 反向注入 expected。
+  // 需要 R9 时请显式传 rules: { injectFromAttributions: true }，
+  // 或在 context-audit.ts 里使用 --with-r9 flag。
+  injectFromAttributions: false,
 };
 
 export interface QueryBoundary {

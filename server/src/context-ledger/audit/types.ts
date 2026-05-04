@@ -153,8 +153,10 @@ export interface PipelineResult {
 
 /** T0/E0 控制变量 flags，记录本次 run 启用了哪些对照开关 */
 export interface AuditControlFlags {
-  /** --no-r9：禁用 attribution 反写 system/tools expected segments */
+  /** --no-r9：明确禁用 R9（与默认行为相同，保留兼容）*/
   noR9?: boolean;
+  /** --with-r9：显式开启 R9 attribution 注入（非默认；用于对照 R9 贡献）*/
+  withR9?: boolean;
   /** --verified-only：verifiedFor===null 的 rule 不进入 evidenceBacked */
   verifiedOnly?: boolean;
   /** --proxy-only：proxy_without_jsonl 走 attribution-only 路径（不 skip） */
@@ -185,6 +187,21 @@ export interface RuleRegistrySummary {
   lastCliVerificationNote?: string;
 }
 
+/** E0 对照模式：同一 query 在三种控制变量下的 coverage 对比 */
+export interface ModeComparisonRow {
+  queryKeyHash: string;
+  queryId: string;
+  sessionId: string;
+  queryKind?: string;
+  proxyChars: number;
+  // current 模式（默认）
+  current: ScorecardV2Summary | null;
+  // no-r9 模式（injectFromAttributions=false）
+  noR9: ScorecardV2Summary | null;
+  // verified-only 模式（verifiedFor===null 的 rule 不进 expected）
+  verifiedOnly: ScorecardV2Summary | null;
+}
+
 // run.json 顶层结构
 export interface AuditRunRecord {
   runId: string;
@@ -193,6 +210,8 @@ export interface AuditRunRecord {
   mode: "fixtures" | "all-local" | "since-last";
   /** T0 控制变量开关（默认均为 false/不存在即关闭） */
   controlFlags?: AuditControlFlags;
+  /** E0 --compare-modes：同一 query 三模式 coverage 对比（仅 --compare-modes 时有值） */
+  modeComparison?: ModeComparisonRow[];
   /** T0 fixture 来源矩阵（仅 fixtures 模式下有值） */
   fixtureMatrix?: FixtureMatrixEntry[];
   /** T0 rule registry 验证摘要 */

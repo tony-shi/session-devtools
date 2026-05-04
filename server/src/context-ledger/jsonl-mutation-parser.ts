@@ -32,6 +32,10 @@ export interface JsonlMutationParseResult {
   // 之前会出现 last-prompt 条目（当前查询之前的会话活动遗留）。这类情况下
   // JSONL prefix 可能不包含完整的历史 turn，对账时应当注意 prior_session_history 缺失。
   hasPreSessionActivity: boolean;
+  // 从 assistant mutations 的 message.model 字段推断的模型名。
+  // 只有 JSONL 包含 assistant 行时才有值；proxy snapshot 的 model 字段来自请求参数，
+  // 两者一致时可互相验证；不一致时 targetRequest 优先用 JSONL 推断值。
+  inferredModel?: string;
 }
 
 // ── Claude Code session.jsonl 形状 ────────────────────────────────────────────
@@ -362,7 +366,21 @@ export function parseClaudeJsonlMutations(
     }
   }
 
-  return { mutations, sidechainMutations, unknownLines, sessionId, hasPreSessionActivity };
+  // 从 assistant mutations 的 metadata.model 推断使用的模型名。
+  // 取最后一条有 model 字段的 assistant mutation（最近的响应最能代表实际用的 model）。
+  let inferredModel: string | undefined;
+  for (let i = mutations.length - 1; i >= 0; i--) {
+    const m = mutations[i];
+    if (m.category === "assistant_text" || m.category === "tool_use") {
+      const model = m.metadata?.["model"];
+      if (typeof model === "string" && model.length > 0) {
+        inferredModel = model;
+        break;
+      }
+    }
+  }
+
+  return { mutations, sidechainMutations, unknownLines, sessionId, hasPreSessionActivity, inferredModel };
 }
 
 // ── user 行 ─────────────────────────────────────────────────────────────────

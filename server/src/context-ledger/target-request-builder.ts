@@ -19,6 +19,8 @@ type RequestBody = Record<string, unknown>;
 interface BuildTargetRequestOptions {
   expected: ExpectedQueryContext;
   snapshot: ProxyQuerySnapshot;
+  /** 从 JSONL assistant 行推断的模型名。存在时优先于 proxy snapshot 的 model 字段。 */
+  inferredModel?: string;
 }
 
 interface RequestLevelOptions {
@@ -36,17 +38,19 @@ interface TargetBuildResult {
 /**
  * 从 ExpectedQueryContext 正向构建 request-level TargetRequest。
  *
- * 注意：这里不读取 proxy raw segment，也不把 proxy 文本反写进 target。当前 request
- * 标量字段（model/max_tokens 等）来自 `ProxyQuerySnapshot.request`，因为 JSONL mutation
- * 尚未暴露完整 runtime state；这部分会在 sourceMap 之外保守处理，canonical/structural
- * 是否命中仍由完整 target body 与 proxy body 比较决定。
+ * request 标量字段来源优先级：
+ *   1. inferredModel（从 JSONL assistant 行 message.model 推断）→ model 字段
+ *   2. ProxyQuerySnapshot.request → max_tokens / stream / context_management 等
+ *      （JSONL 暂不暴露这些字段，需要等 harness runtime state 完整暴露后升级）
+ *
+ * metadata.requestScalarSource 标注实际来源，避免误以为已经是纯正向重建。
  */
 export function buildTargetRequest(options: BuildTargetRequestOptions): TargetRequest {
   return buildTargetRequestWithBody(options).targetRequest;
 }
 
 export function buildTargetRequestWithBody(options: BuildTargetRequestOptions): TargetBuildResult {
-  const { expected, snapshot } = options;
+  const { expected, snapshot, inferredModel } = options;
   const sourceMap: SegmentSourceMap = {};
 
   const sortedSegments = [...expected.segments].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -62,7 +66,8 @@ export function buildTargetRequestWithBody(options: BuildTargetRequestOptions): 
   );
   const messages = buildTargetMessages(messageSegments, sourceMap);
 
-  const request = buildRequestScalars(snapshot);
+  // model 优先从 JSONL 推断（inferredModel），fallback 到 proxy snapshot
+  const request = buildRequestScalars(snapshot, inferredModel);
   const requestBody: RequestBody = { ...request };
   if (messages.length > 0) {
     requestBody.messages = messages.map((msg) => messageToRequestBody(msg, sourceMap));
@@ -92,10 +97,13 @@ export function buildTargetRequestWithBody(options: BuildTargetRequestOptions): 
       canonicalJson: canonical,
       canonicalHash: hashCanonicalJson(requestBody),
       metadata: {
-        // 注意：P3-1 MVP 暂时无法从 JSONL/runtime state 物化 model/max_tokens 等标量。
-        // 把来源写入产物，避免后续读 report 时误以为这些字段已经是纯 expected 重建。
-        requestScalarSource: "proxy_snapshot",
-        requestScalarSourceReason: "runtime_state_not_materialized",
+        // 标注 request 标量字段的实际来源：
+        //   model → inferredModel 存在时来自 JSONL assistant 行（"jsonl_inferred"）；否则来自 proxy snapshot
+        //   max_tokens / stream 等 → JSONL 暂不暴露，来自 proxy snapshot（"proxy_snapshot_fallback"）
+        requestScalarSource: inferredModel ? "jsonl_inferred_model+proxy_snapshot_fallback" : "proxy_snapshot",
+        requestScalarSourceReason: inferredModel
+          ? "model_from_jsonl_assistant_message"
+          : "runtime_state_not_materialized",
         exactSegmentCount: [...system, ...tools, ...messages.flatMap((m) => m.content)]
           .filter((seg) => seg.materialization === "exact").length,
         placeholderSegmentCount: [...system, ...tools, ...messages.flatMap((m) => m.content)]
@@ -146,10 +154,13 @@ export function computeRequestLevelExact(options: RequestLevelOptions): RequestL
   return { rawExact, canonicalExact, structuralExact, segmentOnly, level, reasons };
 }
 
-function buildRequestScalars(snapshot: ProxyQuerySnapshot): TargetRequest["request"] {
+function buildRequestScalars(snapshot: ProxyQuerySnapshot, inferredModel?: string): TargetRequest["request"] {
   const req = snapshot.request ?? {};
   const request: TargetRequest["request"] = {};
-  if (req.model !== undefined) request.model = req.model;
+  // model：JSONL 推断优先，fallback 到 proxy snapshot
+  const resolvedModel = inferredModel ?? req.model;
+  if (resolvedModel !== undefined) request.model = resolvedModel;
+  // 以下字段 JSONL 暂未暴露，只能从 proxy snapshot 取
   if (req.maxTokens !== undefined) request.max_tokens = req.maxTokens;
   if (req.stream !== undefined) request.stream = req.stream;
   if (req.contextManagement !== undefined) request.context_management = req.contextManagement;

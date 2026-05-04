@@ -139,9 +139,13 @@ const mode: AuditRunRecord["mode"] = args.includes("--fixtures")
 
 // 控制变量 flags
 const noR9 = args.includes("--no-r9");
+// P0-1：R9 默认关闭；--with-r9 显式开启（主要用于 --compare-modes 时查看 R9 贡献）
+const withR9 = args.includes("--with-r9");
 const verifiedOnly = args.includes("--verified-only");
 // E0-1：proxy_without_jsonl 走 attribution-only 路径而非 skip
 const proxyOnly = args.includes("--proxy-only");
+// E0 --compare-modes：同一批 query 跑 current/no-r9/verified-only 三路，生成对照表
+const compareModes = args.includes("--compare-modes");
 // --session <sessionId>：只处理指定 session（聚焦调试用）
 const sessionIdx = args.indexOf("--session");
 const sessionFilter = sessionIdx !== -1 ? args[sessionIdx + 1] : undefined;
@@ -168,9 +172,11 @@ if (baselineIdx !== -1 && args[baselineIdx + 1]) {
 console.log(`\nContext Audit Runner`);
 console.log(`mode: ${mode}`);
 console.log(`baseline: ${baselineRunId ?? "(none)"}`);
-if (noR9) console.log(`[control] --no-r9: R9 attribution 反写已禁用`);
+if (noR9) console.log(`[control] --no-r9: R9 attribution 反写已禁用（与默认行为相同）`);
+if (withR9) console.log(`[control] --with-r9: R9 attribution 反写已显式开启（非默认）`);
 if (verifiedOnly) console.log(`[control] --verified-only: 未验证 rule 不进 evidenceBacked`);
 if (proxyOnly) console.log(`[control] --proxy-only: proxy_without_jsonl 走 attribution-only 路径`);
+if (compareModes) console.log(`[control] --compare-modes: 同一批 query 跑 current/no-r9/verified-only 三路对照`);
 if (sessionFilter) console.log(`[filter] --session ${sessionFilter}`);
 console.log(`Discovering...`);
 
@@ -234,7 +240,7 @@ let skippedCount = 0;
 
 // proxy_without_jsonl → --proxy-only 时走 attribution-only，否则直接 skip
 for (const proxy of discovery.proxyWithoutJsonl) {
-  const { result, data } = runPipelineWithData({ proxy, jsonlFile: null, noR9, verifiedOnly, proxyOnly });
+  const { result, data } = runPipelineWithData({ proxy, jsonlFile: null, noR9, withR9, verifiedOnly, proxyOnly });
   const written = writeQueryArtifacts(runId, result, data);
   allResults.push(written);
   if (result.status === "success") successCount++;
@@ -249,7 +255,7 @@ for (let i = 0; i < total; i++) {
   const label = `${proxy.queryKey.sessionId.slice(0, 8)}…/${proxy.queryKey.queryId.slice(0, 20)}`;
   process.stdout.write(`  [${i + 1}/${total}] ${label} `);
 
-  const { result, data } = runPipelineWithData({ proxy, jsonlFile, noR9, verifiedOnly });
+  const { result, data } = runPipelineWithData({ proxy, jsonlFile, noR9, withR9, verifiedOnly });
   const written = writeQueryArtifacts(runId, result, data);
   allResults.push(written);
 
@@ -274,6 +280,7 @@ const indexEntries = writeIndex(runId, allResults, baseline);
 // 记录本次使用的控制变量 flags
 const controlFlags = {
   ...(noR9 ? { noR9: true } : {}),
+  ...(withR9 ? { withR9: true } : {}),
   ...(verifiedOnly ? { verifiedOnly: true } : {}),
   ...(proxyOnly ? { proxyOnly: true } : {}),
 };
@@ -288,8 +295,67 @@ const ruleRegistrySummary = {
   lastCliVerificationNote: "2026-05-02：exact_text rules 40，1 unique / 5 multi / 34 missing（见 scripts/verify-rules-against-cli.ts）",
 };
 
-// T0 fixture matrix：fixture 模式下从 discovery raw 元字段提取来源信息
-import type { FixtureMatrixEntry } from "../server/src/context-ledger/audit/types";
+// E0 --compare-modes：对同一批 query 额外跑 no-r9 / verified-only 两路，生成三列对照表
+import type { FixtureMatrixEntry, ModeComparisonRow, ScorecardV2Summary } from "../server/src/context-ledger/audit/types";
+
+// 把 QueryScorecard 转成 ScorecardV2Summary（两者字段集合相同）
+function toV2Summary(sc: import("../server/src/context-ledger/audit/types").QueryScorecard | undefined): ScorecardV2Summary | null {
+  if (!sc) return null;
+  return {
+    wireExactCoverage: sc.wireExactCoverage,
+    canonicalExactCoverage: sc.canonicalExactCoverage,
+    templateCoverage: sc.templateCoverage,
+    regexCoverage: sc.regexCoverage,
+    presenceCoverage: sc.presenceCoverage,
+    serverSideCoverage: sc.serverSideCoverage,
+    attributionOnlyCoverage: sc.attributionOnlyCoverage,
+    unexplainedCoverage: sc.unexplainedCoverage,
+    regexOverreachRisk: sc.regexOverreachRisk,
+    pendingRuleCoverage: sc.pendingRuleCoverage,
+    requestLevelExact: sc.requestLevelExact,
+    proxyChars: sc.proxyChars,
+  };
+}
+
+// E0 三路对照：对同一批 matchedProxyJsonl 额外跑 no-r9 / verified-only
+let modeComparison: ModeComparisonRow[] | undefined;
+if (compareModes) {
+  console.log(`\n[compare-modes] 开始三路对照（no-r9 / verified-only）...`);
+  const currentScorecardByHash = new Map(
+    allResults.filter((r) => r.scorecard).map((r) => [r.queryKeyHash, r.scorecard!]),
+  );
+  const noR9ScorecardByHash = new Map<string, NonNullable<typeof allResults[0]["scorecard"]>>();
+  const verifiedOnlyScorecardByHash = new Map<string, NonNullable<typeof allResults[0]["scorecard"]>>();
+
+  const matchedTotal = discovery.matchedProxyJsonl.length;
+  for (let i = 0; i < matchedTotal; i++) {
+    const { proxy, jsonlFile } = discovery.matchedProxyJsonl[i];
+    process.stdout.write(`  [compare ${i + 1}/${matchedTotal}] `);
+    const { result: noR9Result } = runPipelineWithData({ proxy, jsonlFile, noR9: true, verifiedOnly: false });
+    if (noR9Result.scorecard) noR9ScorecardByHash.set(noR9Result.queryKeyHash, noR9Result.scorecard);
+    const { result: voResult } = runPipelineWithData({ proxy, jsonlFile, noR9: false, verifiedOnly: true });
+    if (voResult.scorecard) verifiedOnlyScorecardByHash.set(voResult.queryKeyHash, voResult.scorecard);
+    process.stdout.write(`✓\n`);
+  }
+
+  modeComparison = discovery.matchedProxyJsonl.map(({ proxy }) => {
+    const hash = proxy.queryKeyHash;
+    const currentSc = currentScorecardByHash.get(hash);
+    const mainResult = allResults.find((r) => r.queryKeyHash === hash);
+    return {
+      queryKeyHash: hash,
+      queryId: proxy.queryKey.queryId,
+      sessionId: proxy.queryKey.sessionId,
+      queryKind: mainResult?.queryKind,
+      proxyChars: currentSc?.proxyChars ?? noR9ScorecardByHash.get(hash)?.proxyChars ?? 0,
+      current: toV2Summary(currentSc),
+      noR9: toV2Summary(noR9ScorecardByHash.get(hash)),
+      verifiedOnly: toV2Summary(verifiedOnlyScorecardByHash.get(hash)),
+    } satisfies ModeComparisonRow;
+  });
+  console.log(`[compare-modes] 三路对照完成，${modeComparison.length} 条记录`);
+}
+
 let fixtureMatrix: FixtureMatrixEntry[] | undefined;
 if (mode === "fixtures") {
   const scorecardByHash = new Map(
@@ -316,6 +382,7 @@ const run = writeRunJson(runId, {
   controlFlags: Object.keys(controlFlags).length > 0 ? controlFlags : undefined,
   fixtureMatrix,
   ruleRegistrySummary,
+  modeComparison,
   discoveredProxyQueries: discovery.discoveredProxyQueries.length,
   matchedProxyJsonlQueries: discovery.matchedProxyJsonl.length,
   proxyWithoutJsonlQueries: discovery.proxyWithoutJsonl.length,
