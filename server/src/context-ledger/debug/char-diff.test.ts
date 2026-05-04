@@ -144,7 +144,7 @@ describe("computeCharDiff: exact match", () => {
   const eseg = makeEseg("e1", "user_message", 100, 0, { rawHash: "sha256:abc" });
   const alignment: ReconciliationReport["alignments"][0] = {
     id: "align-1",
-    matchKind: "exact",
+    comparisonGrade: "exact",
     confidence: "exact",
     expectedSegmentIds: ["e1"],
     proxySegmentIds: ["p1"],
@@ -153,9 +153,9 @@ describe("computeCharDiff: exact match", () => {
   const report = makeMinimalReport([pseg], [eseg], [alignment], []);
   const diff = computeCharDiff(report);
 
-  test("one entry, matched_exact kind", () => {
+  test("one entry, matched kind", () => {
     expect(diff.entries).toHaveLength(1);
-    expect(diff.entries[0].kind).toBe("matched_exact");
+    expect(diff.entries[0].kind).toBe("matched");
   });
 
   test("charDelta is 0", () => {
@@ -167,19 +167,19 @@ describe("computeCharDiff: exact match", () => {
     expect(diff.entries[0].proxyRange).toEqual({ start: 0, end: 100, chars: 100 });
   });
 
-  test("summary: 1 matchedExact", () => {
-    expect(diff.summary.matchedExact).toBe(1);
-    expect(diff.summary.matchedWithCharDiff).toBe(0);
+  test("summary: 1 matched", () => {
+    expect(diff.summary.matched).toBe(1);
+    expect(diff.summary.approximateMatch).toBe(0);
   });
 });
 
 describe("computeCharDiff: char diff match (evidence-backed, char count differs)", () => {
   const pseg = makePseg("p1", "user_message", 200, 0);
   const eseg = makeEseg("e1", "user_message", 100, 0);
-  // 用 raw_hash basis：有内容锚点，才应分类为 matched_char_diff
+  // 用 raw_hash basis：有内容锚点，才应分类为 approximate_match
   const alignment: ReconciliationReport["alignments"][0] = {
     id: "align-1",
-    matchKind: "normalized",
+    comparisonGrade: "normalized",
     confidence: "estimated",
     expectedSegmentIds: ["e1"],
     proxySegmentIds: ["p1"],
@@ -188,8 +188,8 @@ describe("computeCharDiff: char diff match (evidence-backed, char count differs)
   const report = makeMinimalReport([pseg], [eseg], [alignment], []);
   const diff = computeCharDiff(report);
 
-  test("entry kind is matched_char_diff", () => {
-    expect(diff.entries[0].kind).toBe("matched_char_diff");
+  test("entry kind is approximate_match", () => {
+    expect(diff.entries[0].kind).toBe("approximate_match");
   });
 
   test("charDelta = expectedChars - proxyChars = -100", () => {
@@ -200,8 +200,8 @@ describe("computeCharDiff: char diff match (evidence-backed, char count differs)
     expect(diff.entries[0].charDeltaPct).toBeCloseTo(0.5);
   });
 
-  test("summary: 1 matchedWithCharDiff, drift = 100/200", () => {
-    expect(diff.summary.matchedWithCharDiff).toBe(1);
+  test("summary: 1 approximateMatch, drift = 100/200", () => {
+    expect(diff.summary.approximateMatch).toBe(1);
     expect(diff.summary.totalCharDriftAbsolute).toBe(100);
     expect(diff.summary.charDriftPct).toBeCloseTo(0.5);
   });
@@ -213,7 +213,7 @@ describe("computeCharDiff: suspect_match (category+role heuristic only)", () => 
   // basis: "category" → suspect_match，不计入 evidence-backed
   const alignment: ReconciliationReport["alignments"][0] = {
     id: "align-1",
-    matchKind: "heuristic",
+    comparisonGrade: "presence",
     confidence: "inferred",
     expectedSegmentIds: ["e1"],
     proxySegmentIds: ["p1"],
@@ -230,9 +230,9 @@ describe("computeCharDiff: suspect_match (category+role heuristic only)", () => 
     expect(diff.entries[0].charDelta).toBe(-100);
   });
 
-  test("summary: 1 suspectMatch, 0 matchedWithCharDiff", () => {
+  test("summary: 1 suspectMatch, 0 approximateMatch", () => {
     expect(diff.summary.suspectMatch).toBe(1);
-    expect(diff.summary.matchedWithCharDiff).toBe(0);
+    expect(diff.summary.approximateMatch).toBe(0);
   });
 
   test("suspect chars counted in unexplainedProxyChars", () => {
@@ -241,20 +241,20 @@ describe("computeCharDiff: suspect_match (category+role heuristic only)", () => 
   });
 });
 
-describe("computeCharDiff: known_noise", () => {
+describe("computeCharDiff: server_side_attribution", () => {
   const pseg = makePseg("p-noise", "billing_noise", 50, 0);
   const alignment: ReconciliationReport["alignments"][0] = {
     id: "align-noise",
-    matchKind: "inferred",
+    comparisonGrade: "presence",
     confidence: "exact",
     expectedSegmentIds: [],
     proxySegmentIds: ["p-noise"],
-    basis: "harness_rule",
+    basis: "server_side_attribution",
     note: "billing_noise: known harness overhead",
   };
   const finding: ReconciliationReport["findings"][0] = {
     id: "f-noise",
-    type: "known_noise",
+    type: "server_side_attribution",
     severity: "info",
     message: "known noise",
     proxySegmentIds: ["p-noise"],
@@ -263,13 +263,13 @@ describe("computeCharDiff: known_noise", () => {
   const report = makeMinimalReport([pseg], [], [alignment], [finding]);
   const diff = computeCharDiff(report);
 
-  test("entry kind is known_noise", () => {
+  test("entry kind is server_side_attribution", () => {
     expect(diff.entries).toHaveLength(1);
-    expect(diff.entries[0].kind).toBe("known_noise");
+    expect(diff.entries[0].kind).toBe("server_side_attribution");
   });
 
-  test("summary: 1 knownNoise", () => {
-    expect(diff.summary.knownNoise).toBe(1);
+  test("summary: 1 serverSideAttribution", () => {
+    expect(diff.summary.serverSideAttribution).toBe(1);
   });
 });
 
@@ -315,11 +315,11 @@ describe("computeCharDiff: attribution_only", () => {
   const pseg = makePseg("p-attr", "system_prompt", 1800, 0);
   const alignment: ReconciliationReport["alignments"][0] = {
     id: "align-attr",
-    matchKind: "inferred",
+    comparisonGrade: "presence",
     confidence: "estimated",
     expectedSegmentIds: [],
     proxySegmentIds: ["p-attr"],
-    basis: "harness_rule",
+    basis: "attribution_only",
     note: "attribution-only: system_prompt_pattern",
   };
   const report = makeMinimalReport([pseg], [], [alignment], []);
@@ -376,13 +376,13 @@ describe("computeCharDiff: mock report", () => {
   test("summary totals are consistent", () => {
     const s = diff.summary;
     const kindSum =
-      s.matchedExact +
-      s.matchedWithCharDiff +
+      s.matched +
+      s.approximateMatch +
       s.suspectMatch +
       s.expectedOnly +
       s.proxyOnly +
       s.attributionOnly +
-      s.knownNoise;
+      s.serverSideAttribution;
     expect(kindSum).toBe(s.totalEntries);
   });
 
@@ -406,7 +406,7 @@ describe("computeCharDiff: mock report", () => {
     expect(s.attributionOnlyGap).toBeCloseTo(s.attributionCoverage - s.evidenceBackedCoverage, 4);
   });
 
-  test("unexplainedProxyChars 仅含 proxy_only + suspect_match（不含 attribution_only/known_noise）", () => {
+  test("unexplainedProxyChars 仅含 proxy_only + suspect_match（不含 attribution_only/server_side_attribution）", () => {
     const s = diff.summary;
     const manualUnattributed = diff.entries
       .filter((e) => e.kind === "proxy_only" || e.kind === "suspect_match")
@@ -445,8 +445,8 @@ describe("computeCharDiff: live reconciliation on mock", () => {
     }
   });
 
-  test("known_noise entries exist (billing_noise in mock)", () => {
-    expect(diff.entries.some((e) => e.kind === "known_noise")).toBe(true);
+  test("server_side_attribution entries exist (billing_noise in mock)", () => {
+    expect(diff.entries.some((e) => e.kind === "server_side_attribution")).toBe(true);
   });
 });
 

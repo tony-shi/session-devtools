@@ -6,21 +6,23 @@
 import type { CharDiffReport, CharDiffSummary, SegmentDiffEntry, SegmentText } from "./char-diff";
 
 const KIND_COLORS: Record<string, { bg: string; border: string; text: string; badge: string }> = {
-  matched_exact:      { bg: "#f0fdf4", border: "#86efac", text: "#166534", badge: "#22c55e" },
-  matched_char_diff:  { bg: "#fffbeb", border: "#fcd34d", text: "#92400e", badge: "#f59e0b" },
-  expected_only:      { bg: "#eff6ff", border: "#93c5fd", text: "#1e40af", badge: "#3b82f6" },
-  proxy_only:         { bg: "#fef2f2", border: "#fca5a5", text: "#991b1b", badge: "#ef4444" },
-  attribution_only:   { bg: "#fdf4ff", border: "#d8b4fe", text: "#6b21a8", badge: "#a855f7" },
-  known_noise:        { bg: "#f9fafb", border: "#d1d5db", text: "#6b7280", badge: "#9ca3af" },
+  matched:                 { bg: "#f0fdf4", border: "#86efac", text: "#166534", badge: "#22c55e" },
+  approximate_match:       { bg: "#fffbeb", border: "#fcd34d", text: "#92400e", badge: "#f59e0b" },
+  suspect_match:           { bg: "#fff7ed", border: "#fdba74", text: "#9a3412", badge: "#f97316" },
+  expected_only:           { bg: "#eff6ff", border: "#93c5fd", text: "#1e40af", badge: "#3b82f6" },
+  proxy_only:              { bg: "#fef2f2", border: "#fca5a5", text: "#991b1b", badge: "#ef4444" },
+  attribution_only:        { bg: "#fdf4ff", border: "#d8b4fe", text: "#6b21a8", badge: "#a855f7" },
+  server_side_attribution: { bg: "#f9fafb", border: "#d1d5db", text: "#6b7280", badge: "#9ca3af" },
 };
 
 const KIND_LABELS: Record<string, string> = {
-  matched_exact:     "matched exact",
-  matched_char_diff: "matched (char diff)",
-  expected_only:     "expected only",
-  proxy_only:        "proxy only (unattributed)",
-  attribution_only:  "server-side attribution",
-  known_noise:       "known non-user-semantic",
+  matched:                 "matched",
+  approximate_match:       "approximate match (char diff)",
+  suspect_match:           "suspect match (no anchor)",
+  expected_only:           "expected only",
+  proxy_only:              "proxy only (unattributed)",
+  attribution_only:        "attribution only (no expected)",
+  server_side_attribution: "server-side attribution",
 };
 
 export function renderCharDiffHtml(report: CharDiffReport): string {
@@ -112,19 +114,19 @@ function renderSummaryCards(s: CharDiffSummary): string {
     { label: "Proxy Chars", value: s.totalProxyChars.toLocaleString(), sub: "denominator (proxy ground truth)" },
     { label: "Expected Chars", value: s.totalExpectedChars.toLocaleString(), sub: "reconstructed from JSONL/rules" },
     // evidenceBackedCoverage：内容锚点覆盖比例（不含纯归因）
-    { label: "Evidence-Backed", value: `${(s.evidenceBackedCoverage * 100).toFixed(1)}%`, sub: `of proxy chars (matched_exact + char_diff)` },
+    { label: "Evidence-Backed", value: `${(s.evidenceBackedCoverage * 100).toFixed(1)}%`, sub: `of proxy chars (matched + approximate)` },
     // attributionCoverage：server-side attribution 覆盖比例（含 evidence-backed）
     { label: "Attribution Cov.", value: `${(s.attributionCoverage * 100).toFixed(1)}%`, sub: `incl. server-side attribution` },
     // attributionOnlyGap：归因知晓但无内容锚点的 gap
     { label: "Attribution Gap", value: `${(s.attributionOnlyGap * 100).toFixed(1)}%`, sub: `attribution - evidence-backed` },
-    // unexplainedProxyChars：unattributed proxy（proxy_only + suspect_match），不含 attribution_only/known_noise
+    // unexplainedProxyChars：unattributed proxy（proxy_only + suspect_match），不含 attribution_only/server_side_attribution
     { label: "Unattributed", value: s.unexplainedProxyChars.toLocaleString(), sub: `${pct(s.unexplainedProxyChars, s.totalProxyChars)}% of proxy (proxy_only + suspect)` },
     { label: "Suspect Match", value: s.suspectMatch, sub: `${s.suspectMatchChars.toLocaleString()} chars (no content anchor)` },
     // alignedTextDrift：已对齐段的字符漂移，=0 仅表示 aligned 无漂移，不代表 proxy==expected
     { label: "Aligned Drift", value: `${(s.alignedTextDrift * 100).toFixed(2)}%`, sub: `of proxy chars (aligned segments only)` },
     { label: "Total Entries", value: s.totalEntries, sub: "" },
-    { label: "Matched Exact", value: s.matchedExact, sub: `${pct(s.matchedExact, s.totalEntries)}%` },
-    { label: "Known Non-User-Semantic", value: s.knownNoise, sub: "server-side billing/infra (not unexplained)" },
+    { label: "Matched Exact", value: s.matched, sub: `${pct(s.matched, s.totalEntries)}%` },
+    { label: "Server-Side Attribution", value: s.serverSideAttribution, sub: "billing/infra (not unexplained)" },
   ];
   return `<div class="summary-grid">${cards.map((c) => `
     <div class="stat-card">
@@ -182,12 +184,12 @@ function renderEntries(entries: SegmentDiffEntry[]): string {
   }
 
   const kindOrder: string[] = [
-    "matched_char_diff",
+    "approximate_match",
     "proxy_only",
     "expected_only",
     "attribution_only",
-    "matched_exact",
-    "known_noise",
+    "matched",
+    "server_side_attribution",
   ];
 
   const sections: string[] = [];
@@ -212,7 +214,7 @@ function renderEntries(entries: SegmentDiffEntry[]): string {
 }
 
 function renderEntry(e: SegmentDiffEntry): string {
-  const c = KIND_COLORS[e.kind] ?? KIND_COLORS["known_noise"];
+  const c = KIND_COLORS[e.kind] ?? KIND_COLORS["server_side_attribution"];
   const badgeLabel = KIND_LABELS[e.kind] ?? e.kind;
 
   const rangesHtml = renderRanges(e);
@@ -222,18 +224,14 @@ function renderEntry(e: SegmentDiffEntry): string {
     : "";
   const idsHtml = renderIds(e);
   const expandHtml = renderExpandable(e);
+  const detailRows = [rangesHtml, deltaHtml, notesHtml, idsHtml, expandHtml].filter(Boolean);
 
   return `<div class="entry" style="background:${c.bg};border-color:${c.border}">
   <div class="entry-header">
     <span class="badge" style="background:${c.badge}">${esc(badgeLabel)}</span>
     <span class="entry-label" style="color:${c.text}">${esc(e.label)}</span>
     <span class="entry-category">${esc(e.category)}</span>
-  </div>
-  ${rangesHtml}
-  ${deltaHtml}
-  ${notesHtml}
-  ${idsHtml}
-  ${expandHtml}
+  </div>${detailRows.length > 0 ? `\n  ${detailRows.join("\n  ")}` : ""}
 </div>`;
 }
 

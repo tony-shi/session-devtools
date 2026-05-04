@@ -57,14 +57,28 @@ export type MutationType =
   | "clear"
   | "noise";
 
-export type MatchKind =
+// P3-2：ComparisonGrade 取代 MatchKind，描述对账"复现确信"的层级
+//   exact      → wire-bytes / canonical / tool_use_id 命中（M1/M2/M3）
+//   normalized → normalized_hash 命中（M2 fallback）
+//   template   → rule_id 命中且 materialization=exact_text（contentPattern 字面）
+//   regex      → rule_id 命中且 materialization=normalized_text/shape（regex pattern）
+//   presence   → 仅靠 category/role 等非内容锚点对齐（M4 / harness_rule）
+//   none       → 未对齐 / unmatched
+export type ComparisonGrade =
   | "exact"
   | "normalized"
-  | "heuristic"
-  | "inferred"
-  | "unmatched";
+  | "template"
+  | "regex"
+  | "presence"
+  | "none";
 
 export type Confidence = "exact" | "estimated" | "inferred" | "unknown";
+
+// P3-2：从 P2-6 拆分 confidence 的两个独立维度，仅作用于 ProxySegmentAttribution
+// classificationConfidence：这段属于该 category/rule 的识别确信（regex 命中即可达 exact）
+// materializationConfidence：能否原样复现该 segment 的内容（regex 命中通常封顶 estimated）
+export type ClassificationConfidence = Confidence;
+export type MaterializationConfidence = Confidence;
 
 export type CacheHint = "read" | "write" | "none" | "unknown";
 
@@ -99,21 +113,27 @@ export type AlignmentBasis =
   | "attribution_only"         // P1-3 修正：attribution 已识别但无 expected segment（U1-U5 缺口），与 presence 桶分离
   | "manual_fixture";
 
+// P3-2：FindingType 与 char-diff 的 DiffKind 合并为单一枚举。
+//   matched / approximate_match / suspect_match：匹配质量（替代 matched_exact / matched_char_diff / suspect_match）
+//   expected_only / proxy_only：单边未匹配（替代 unmatched_expected_segment / unmatched_proxy_segment）
+//   attribution_only：proxy 已识别 category 但 expected 缺段（U1-U5 缺口）
+//   server_side_attribution：billing_noise 等 server-side overhead（替代 known_noise）
 export type FindingType =
   | "matched"
   | "approximate_match"
   // 无强证据（无 rawHash/normalizedHash/toolUseId/ruleId）时的 category+role heuristic 匹配，
   // 置信度低，不计入 wireExact / canonicalExact / template 桶（落入 unexplainedChars）
   | "suspect_match"
-  | "unmatched_proxy_segment"
-  | "unmatched_expected_segment"
+  | "expected_only"
+  | "proxy_only"
+  | "attribution_only"
   | "token_mismatch"
   | "order_mismatch"
   | "lifecycle_mismatch"
   | "merge_alignment"
   | "one_to_many_alignment"
   | "api_error_retry"
-  | "known_noise"
+  | "server_side_attribution"
   // P1-1：regex rule 捕获组字符占比 > 60%，说明 pattern 过宽，大部分内容是动态字段
   | "regex_too_loose";
 
@@ -313,7 +333,9 @@ export interface ProxySegmentAttribution {
     | "task_reminder_smoosh"
     | "manual_fixture"
     | "unknown";
-  confidence: Confidence;
+  // P3-2：confidence 拆分为 classification + materialization 两个独立维度
+  classificationConfidence: ClassificationConfidence;
+  materializationConfidence: MaterializationConfidence;
   ruleId?: string;
   charCount?: number;
   tokenEstimate?: number;
@@ -372,7 +394,8 @@ export interface ExpectedQueryContext {
 
 export interface AlignmentRef {
   id: string;
-  matchKind: MatchKind;
+  // P3-2：comparisonGrade 取代 matchKind，按 basis 推导（见 ComparisonGrade 注释）
+  comparisonGrade: ComparisonGrade;
   confidence: Confidence;
   expectedSegmentIds: string[];
   proxySegmentIds: string[];

@@ -114,14 +114,15 @@ function extractRawOriginal(
 
 // 对齐状态：一个 proxy segment 对应的 reconciliation 结果
 interface AlignmentState {
-  kind: "matched" | "attribution_only" | "known_noise" | "unknown";
+  // P3-2：known_noise → server_side_attribution
+  kind: "matched" | "attribution_only" | "server_side_attribution" | "unknown";
   alignment: AlignmentRef | undefined;
   // 对应的 expected segments（matched 时存在）
   expectedSegs: ContextSegment[];
-  // alignment basis / confidence
+  // alignment basis / confidence / comparisonGrade
   basis?: AlignmentRef["basis"];
   confidence?: AlignmentRef["confidence"];
-  matchKind?: AlignmentRef["matchKind"];
+  comparisonGrade?: AlignmentRef["comparisonGrade"];
   note?: string;
 }
 
@@ -138,9 +139,9 @@ function buildAlignmentIndex(
     // 判断 kind
     let kind: AlignmentState["kind"] = "matched";
     if (align.expectedSegmentIds.length === 0) {
-      // 无 expected 对应：看 note 判断是 attribution_only 还是 known_noise
+      // 无 expected 对应：看 note 判断是 attribution_only 还是 server_side_attribution
       if (align.note?.startsWith("billing_noise")) {
-        kind = "known_noise";
+        kind = "server_side_attribution";
       } else {
         kind = "attribution_only";
       }
@@ -156,7 +157,7 @@ function buildAlignmentIndex(
       expectedSegs,
       basis: align.basis,
       confidence: align.confidence,
-      matchKind: align.matchKind,
+      comparisonGrade: align.comparisonGrade,
       note: align.note,
     };
 
@@ -309,7 +310,7 @@ function renderAttrCell(row: SegmentRow): string {
       </div>
       <div class="attr-meta">
         <code class="mechanism">${esc(attr.mechanism)}</code>
-        ${confidenceBadge(attr.confidence)}
+        <span class="conf-pair">cls=${confidenceBadge(attr.classificationConfidence)}/mat=${confidenceBadge(attr.materializationConfidence)}</span>
       </div>
       ${ruleDetail}
       ${attr.notes?.length ? `
@@ -324,10 +325,10 @@ function renderAttrCell(row: SegmentRow): string {
 
 // alignment kind → 颜色 / badge 文案
 const ALIGN_KIND_STYLE: Record<string, { color: string; label: string }> = {
-  matched:          { color: "#10b981", label: "matched" },
-  attribution_only: { color: "#8b5cf6", label: "attribution only" },
-  known_noise:      { color: "#6b7280", label: "known noise" },
-  unknown:          { color: "#ef4444", label: "no alignment" },
+  matched:                 { color: "#10b981", label: "matched" },
+  attribution_only:        { color: "#8b5cf6", label: "attribution only" },
+  server_side_attribution: { color: "#6b7280", label: "server-side attribution" },
+  unknown:                 { color: "#ef4444", label: "no alignment" },
 };
 
 function renderExpectedCell(row: SegmentRow): string {
@@ -341,12 +342,12 @@ function renderExpectedCell(row: SegmentRow): string {
   const style = ALIGN_KIND_STYLE[alignState.kind] ?? ALIGN_KIND_STYLE["unknown"];
   const kindBadge = badge(style.label, style.color);
 
-  // alignment basis / confidence badges
+  // alignment basis / confidence / comparisonGrade badges
   const basisBadge = alignState.basis ? badge(alignState.basis, "#334155") : "";
   const confBadge = alignState.confidence ? confidenceBadge(alignState.confidence) : "";
-  const matchKindBadge = alignState.matchKind ? badge(alignState.matchKind, "#475569") : "";
+  const gradeBadge = alignState.comparisonGrade ? badge(alignState.comparisonGrade, "#475569") : "";
 
-  // attribution_only / known_noise：无 expected segments
+  // attribution_only / server_side_attribution：无 expected segments
   if (alignState.expectedSegs.length === 0) {
     const noteHtml = alignState.note
       ? `<div class="expected-note">${esc(truncate(alignState.note, 120))}</div>`
@@ -392,7 +393,7 @@ function renderExpectedCell(row: SegmentRow): string {
   return `
     <div class="expected-cell">
       <div class="expected-kind">${kindBadge}</div>
-      <div class="expected-meta">${basisBadge}${confBadge}${matchKindBadge}</div>
+      <div class="expected-meta">${basisBadge}${confBadge}${gradeBadge}</div>
       ${esegHtml}
       ${deltaHtml}
     </div>`;
@@ -530,11 +531,11 @@ export function renderProxyAttributionView(input: ProxyAttributionViewInput): st
     const attrOnly = reconciliationReport.alignments.filter(
       (a) => a.expectedSegmentIds.length === 0 && !a.note?.startsWith("billing_noise"),
     ).length;
-    const knownNoise = reconciliationReport.alignments.filter(
+    const serverSide = reconciliationReport.alignments.filter(
       (a) => a.note?.startsWith("billing_noise"),
     ).length;
     return `<span class="stat" style="margin-left:12px;padding-left:12px;border-left:1px solid #334155">
-      reconcile: <b>${matched}</b> matched · <b>${attrOnly}</b> attr-only · <b>${knownNoise}</b> noise · <b>${expectedOnlySegs.length}</b> expected-only
+      reconcile: <b>${matched}</b> matched · <b>${attrOnly}</b> attr-only · <b>${serverSide}</b> server-side · <b>${expectedOnlySegs.length}</b> expected-only
     </span>`;
   })() : "";
 

@@ -32,11 +32,11 @@ describe("mock report: schema sanity", () => {
     expect(mock.alignments.length).toBeGreaterThan(3);
   });
 
-  test("findings 包含 matched / known_noise / unmatched_proxy_segment", () => {
+  test("findings 包含 matched / server_side_attribution / proxy_only", () => {
     const types = new Set(mock.findings.map((f) => f.type));
     expect(types.has("matched")).toBe(true);
-    expect(types.has("known_noise")).toBe(true);
-    expect(types.has("unmatched_proxy_segment")).toBe(true);
+    expect(types.has("server_side_attribution")).toBe(true);
+    expect(types.has("proxy_only")).toBe(true);
   });
 
   test("coverage 字段完整", () => {
@@ -69,14 +69,14 @@ describe("reconcileClaudeContext: mock input", () => {
     expect(report.findings.length).toBeGreaterThan(0);
   });
 
-  test("known_noise finding 存在", () => {
-    expect(report.findings.some((f) => f.type === "known_noise")).toBe(true);
+  test("server_side_attribution finding 存在", () => {
+    expect(report.findings.some((f) => f.type === "server_side_attribution")).toBe(true);
   });
 
-  test("unmatched_proxy_segment finding 存在（mock 有 pseg-unknown）", () => {
-    // mock 里 pseg-unknown category=unknown，attribution confidence=unknown
-    // 应产生 unmatched_proxy_segment
-    const unmatched = report.findings.filter((f) => f.type === "unmatched_proxy_segment");
+  test("proxy_only finding 存在（mock 有 pseg-unknown）", () => {
+    // mock 里 pseg-unknown category=unknown，attribution materializationConfidence=unknown
+    // 应产生 proxy_only finding
+    const unmatched = report.findings.filter((f) => f.type === "proxy_only");
     expect(unmatched.length).toBeGreaterThan(0);
   });
 
@@ -113,10 +113,10 @@ describe("reconcileClaudeContext: mock input", () => {
     }
   });
 
-  test("每条 alignment 都有 id、matchKind、basis", () => {
+  test("每条 alignment 都有 id、comparisonGrade、basis", () => {
     for (const a of report.alignments) {
       expect(typeof a.id).toBe("string");
-      expect(typeof a.matchKind).toBe("string");
+      expect(typeof a.comparisonGrade).toBe("string");
       expect(typeof a.basis).toBe("string");
     }
   });
@@ -143,28 +143,29 @@ const FIXTURE_CASES: Record<string, FixtureExpect> = {
     proxySegmentCount: 59,   // 12 system + 40 tools + 1 message（仅第一条 user prompt，无 tool call）
     expectedSegmentCount: 4,
     maxUnexplainedCoverage: 0.01,
-    requiredFindingTypes: ["known_noise", "matched", "unmatched_expected_segment"],
+    // attribution_only：proxy 已识别 category 但 expected 缺段（U1-U5 未实现规则）
+    requiredFindingTypes: ["server_side_attribution", "matched", "attribution_only"],
     hasRetryFinding: false,
   },
   "single-tool-call": {
     proxySegmentCount: 64,   // 12 system + 40 tools + 3 messages（user + 2×tool_use/tool_result）
     expectedSegmentCount: 9,
     maxUnexplainedCoverage: 0.01,
-    requiredFindingTypes: ["matched", "known_noise", "unmatched_expected_segment"],
+    requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   "multi-turn-human": {
     proxySegmentCount: 73,   // 12 system + 40 tools + 7 messages（multi-turn, has local_command）
     expectedSegmentCount: 18,
     maxUnexplainedCoverage: 0.01,
-    requiredFindingTypes: ["matched", "known_noise", "unmatched_expected_segment"],
+    requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   "large-tool-output": {
     proxySegmentCount: 68,   // 12 system + 40 tools + 5 messages（large tool result >22KB）
     expectedSegmentCount: 13,
     maxUnexplainedCoverage: 0.01,
-    requiredFindingTypes: ["matched", "known_noise", "unmatched_expected_segment"],
+    requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   // v2.1.126 fixture：40 tools，984 messages，64 smoosh，11 task_reminder
@@ -172,7 +173,7 @@ const FIXTURE_CASES: Record<string, FixtureExpect> = {
     proxySegmentCount: 1341,
     expectedSegmentCount: 204,
     maxUnexplainedCoverage: 0.01,
-    requiredFindingTypes: ["matched", "known_noise"],
+    requiredFindingTypes: ["matched", "server_side_attribution"],
     hasRetryFinding: false,
   },
 };
@@ -245,12 +246,12 @@ for (const caseName of Object.keys(FIXTURE_CASES)) {
       expect(hasRetry).toBe(want.hasRetryFinding);
     });
 
-    test("unknown segment 不被吞掉（unknown category 产生 unmatched_proxy_segment）", () => {
+    test("unknown segment 不被吞掉（unknown category 产生 proxy_only finding）", () => {
       const unknownSegs = report.snapshot.segments.filter((s) => s.category === "unknown");
       if (unknownSegs.length > 0) {
         const unmatchedFindings = report.findings.filter(
           (f) =>
-            f.type === "unmatched_proxy_segment" &&
+            f.type === "proxy_only" &&
             f.proxySegmentIds?.some((id) => unknownSegs.some((s) => s.id === id)),
         );
         expect(unmatchedFindings.length).toBeGreaterThan(0);
@@ -278,7 +279,7 @@ for (const caseName of Object.keys(FIXTURE_CASES)) {
           // expected-match: 应有 proxySegmentIds
           expect(a.proxySegmentIds.length).toBeGreaterThan(0);
         } else {
-          // attribution-only or known_noise: expectedSegmentIds 为空
+          // attribution-only or server_side_attribution: expectedSegmentIds 为空
           expect(a.expectedSegmentIds.length).toBe(0);
         }
       }
@@ -307,20 +308,20 @@ describe("cross-fixture invariants", () => {
     // 无 expected 时：wire/template=0，但 serverSide 或 attrOnly 应有值
     const c = report.coverage;
     expect(c.serverSideCoverage + c.attributionOnlyCoverage + c.unexplainedCoverage).toBeGreaterThan(0);
-    // 没有 expected → 没有 unmatched_expected_segment
+    // 没有 expected → 没有 expected_only finding
     const unmatchedExpected = report.findings.filter(
-      (f) => f.type === "unmatched_expected_segment" && !f.proxySegmentIds?.length,
+      (f) => f.type === "expected_only" && !f.proxySegmentIds?.length,
     );
     expect(unmatchedExpected.length).toBe(0);
   });
 
-  test("tool_use_id match 产生 exact confidence alignment", () => {
+  test("tool_use_id match 产生 exact comparisonGrade alignment", () => {
     const report = runFixture("single-tool-call");
     const toolUseAlignments = report.alignments.filter((a) => a.basis === "tool_use_id");
     expect(toolUseAlignments.length).toBeGreaterThan(0);
     for (const a of toolUseAlignments) {
       expect(a.confidence).toBe("exact");
-      expect(a.matchKind).toBe("exact");
+      expect(a.comparisonGrade).toBe("exact");
     }
   });
 
@@ -379,10 +380,10 @@ describe("cross-fixture invariants", () => {
     }
   });
 
-  // ── P2-3：comparePolicy 驱动 M3.5 matchKind（fixture 驱动） ─────────────────
+  // ── P2-3：comparePolicy 驱动 M3.5 comparisonGrade（fixture 驱动） ─────────────────
   // task-reminder-smoosh (v2.1.126) 覆盖 4 种 comparePolicy 分支
   // 注：需传 attributions 给 reconstructor 才能触发 R9 → rule_id alignments
-  test("P2-3: M3.5 rule_id match 产出正确的 matchKind/confidence（fixture 驱动）", () => {
+  test("P2-3: M3.5 rule_id match 产出正确的 comparisonGrade/confidence（fixture 驱动）", () => {
     const caseName = "task-reminder-smoosh";
     const proxyRaw = JSON.parse(readFileSync(`${FIXTURE_DIR}/${caseName}/proxy-request.json`, "utf8"));
     const jsonlRaw = readFileSync(`${FIXTURE_DIR}/${caseName}/session.jsonl`, "utf8");
@@ -408,18 +409,18 @@ describe("cross-fixture invariants", () => {
       expect(policy).toBeDefined();
 
       if (policy === "raw_hash") {
-        // raw_hash policy：exact_text rule，M3.5 命中说明 M1 未命中（hash 不等），降为 heuristic
-        expect(a.matchKind).toBe("heuristic");
+        // raw_hash policy：exact_text rule，M3.5 命中说明 M1 未命中（hash 不等），降为 presence
+        expect(a.comparisonGrade).toBe("presence");
       } else if (policy === "normalized_hash") {
-        // normalized_hash：M2 未命中时降为 heuristic
-        expect(a.matchKind).toBe("heuristic");
+        // normalized_hash：M2 未命中时降为 presence
+        expect(a.comparisonGrade).toBe("presence");
       } else if (policy === "presence_only" || policy === "structural") {
         // presence/structural：只验存在性
-        expect(a.matchKind).toBe("heuristic");
+        expect(a.comparisonGrade).toBe("presence");
         expect(a.confidence).toBe("inferred");
       } else if (policy === "char_diff") {
-        // char_diff + exact_text → exact
-        expect(["exact", "heuristic"]).toContain(a.matchKind);
+        // char_diff + exact_text → template；其他材质 → regex
+        expect(["template", "regex"]).toContain(a.comparisonGrade);
       }
     }
 

@@ -118,7 +118,8 @@ function findMatchingRule(
 interface RuleMatchResult {
   category: SegmentCategory;
   mechanism: ProxySegmentAttribution["mechanism"];
-  confidence: ProxySegmentAttribution["confidence"];
+  classificationConfidence: ProxySegmentAttribution["classificationConfidence"];
+  materializationConfidence: ProxySegmentAttribution["materializationConfidence"];
   attributedSource: MutationSourceKind;
   lifecycle: SegmentLifecycle | undefined;
   ruleId: string;
@@ -210,19 +211,38 @@ function applyRuleMatch(
   // mechanism：从 rule.attribution.mechanism
   const mechanism = attr.mechanism;
 
-  // P2-6（局部）：confidence 语义修正
-  //   exact matchMode → exact（字面精确匹配，识别与复现都确信）
-  //   regex + allGroupsFilled → estimated（识别确信，但 regex 本质上不能精确复现内容）
-  //   regex + partial groups  → inferred
-  //   regex + no groups       → inferred（无捕获组的 regex 也是模式匹配，不能精确复现）
-  //   其他（prefix/structural）→ rule.reconciliation.confidence
+  // P3-2 / P2-6：confidence 拆分为 classification + materialization 两个维度
+  //
+  //   classificationConfidence（识别确信：这是哪一段）
+  //     exact matchMode             → exact（字面精确匹配 → 识别确信）
+  //     regex + allGroupsFilled     → exact（regex 命中 + 全部捕获组有值 → 识别确信）
+  //     regex + partial groups      → estimated
+  //     regex + no groups           → estimated
+  //     prefix/structural           → rule.reconciliation.confidence
+  //
+  //   materializationConfidence（复现确信：能否原样重建内容）
+  //     exact matchMode             → exact（contentPattern 字面 → 完整复现）
+  //     regex + allGroupsFilled     → estimated（动态字段已捕获，但仍是模式匹配）
+  //     regex + partial groups      → inferred
+  //     regex + no groups           → inferred
+  //     prefix/structural           → rule.reconciliation.confidence
   const hasGroups = groups && Object.keys(groups).length > 0;
   const allGroupsFilled = hasGroups && Object.values(groups!).every((v) => v !== undefined && v !== "");
   const baseConfidence = rule.reconciliation?.confidence ?? "inferred";
-  const confidence: ProxySegmentAttribution["confidence"] =
-    attr.matchMode === "exact" ? "exact"
-    : attr.matchMode === "regex" ? (allGroupsFilled ? "estimated" : "inferred")  // regex 无论有无 groups 都不能精确复现
-    : baseConfidence;
+
+  let classificationConfidence: ProxySegmentAttribution["classificationConfidence"];
+  let materializationConfidence: ProxySegmentAttribution["materializationConfidence"];
+
+  if (attr.matchMode === "exact") {
+    classificationConfidence = "exact";
+    materializationConfidence = "exact";
+  } else if (attr.matchMode === "regex") {
+    classificationConfidence = allGroupsFilled ? "exact" : "estimated";
+    materializationConfidence = allGroupsFilled ? "estimated" : "inferred";
+  } else {
+    classificationConfidence = baseConfidence;
+    materializationConfidence = baseConfidence;
+  }
 
   // attributedSource：tool_use/tool_result 由 wire schema 决定，其余由 rule 决定
   const attributedSource: MutationSourceKind =
@@ -251,13 +271,28 @@ function applyRuleMatch(
   // P1-1：生成结构化 evidence（regex/template 命中时）
   const evidence = buildEvidence(rule, rawText, matchData);
 
-  // P2-2：confidenceOverride 覆盖 confidence（替代 ruleId 特殊 case）
-  const finalConfidence = rule.attribution?.confidenceOverride ?? confidence;
+  // P2-2：confidenceOverride 同时覆盖 classification + materialization（替代 ruleId 特殊 case）
+  const override = rule.attribution?.confidenceOverride;
+  if (override) {
+    classificationConfidence = override;
+    materializationConfidence = override;
+  }
 
-  return { category, mechanism, confidence: finalConfidence, attributedSource, lifecycle, ruleId: rule.ruleId, flags, notes, evidence };
+  return {
+    category,
+    mechanism,
+    classificationConfidence,
+    materializationConfidence,
+    attributedSource,
+    lifecycle,
+    ruleId: rule.ruleId,
+    flags,
+    notes,
+    evidence,
+  };
 }
 
-// ── text 検出工具（wire schema 感知）─────────────────────────────────────────
+// ── 文本检测工具（wire schema 感知）─────────────────────────────────────────
 
 // ── jsonPath 解析 ─────────────────────────────────────────────────────────────
 
@@ -308,7 +343,8 @@ export function inferClaudeProxyAttributions(
 
     let category: SegmentCategory = seg.category;
     let mechanism: ProxySegmentAttribution["mechanism"] = "unknown";
-    let confidence: ProxySegmentAttribution["confidence"] = "inferred";
+    let classificationConfidence: ProxySegmentAttribution["classificationConfidence"] = "inferred";
+    let materializationConfidence: ProxySegmentAttribution["materializationConfidence"] = "inferred";
     let attributedSource: MutationSourceKind = "unknown";
     let lifecycle: SegmentLifecycle | undefined;
     let ruleId: string | undefined;
@@ -323,7 +359,8 @@ export function inferClaudeProxyAttributions(
       const applied = applyRuleMatch(ruleMatch.rule, rawText, ruleMatch.matchData);
       category = applied.category;
       mechanism = applied.mechanism;
-      confidence = applied.confidence;
+      classificationConfidence = applied.classificationConfidence;
+      materializationConfidence = applied.materializationConfidence;
       attributedSource = applied.attributedSource;
       lifecycle = applied.lifecycle;
       ruleId = applied.ruleId;
@@ -337,7 +374,8 @@ export function inferClaudeProxyAttributions(
       // regex rule 未命中直接落 unknown + rule_gap（让 audit 显式暴露格式异常）。
       category = "unknown";
       mechanism = "unknown";
-      confidence = "unknown";
+      classificationConfidence = "unknown";
+      materializationConfidence = "unknown";
       attributedSource = "unknown";
       lifecycle = "unknown";
       flags.push("unexplained");
@@ -354,7 +392,9 @@ export function inferClaudeProxyAttributions(
       // category/section 由 parser wire schema 确定（exact），只是具体 tool 无对应 rule。
       category = "tools_schema";
       mechanism = "tools_schema_pattern";
-      confidence = "exact"; // wire schema 确定，parser 已验证 blk.type
+      // wire schema 确定（parser 已验证 blk.type），但具体 tool 文本无 rule 复现
+      classificationConfidence = "exact";
+      materializationConfidence = "inferred";
       attributedSource = "harness_rule";
       lifecycle = "session";
       // 从 jsonPath 提取 tool name 做 rule_gap 提示（有助于发现新 tool 需要补 rule）
@@ -363,9 +403,10 @@ export function inferClaudeProxyAttributions(
 
     } else if (seg.section === "messages") {
       if (seg.category === "tool_use") {
-        // wire schema：category 由 parser 直接确定，无文本 pattern 可写
+        // wire schema：category 由 parser 直接确定，tool_use 文本来自 jsonl 可精确复现
         mechanism = "tool_use_id_match";
-        confidence = "exact";
+        classificationConfidence = "exact";
+        materializationConfidence = "exact";
         attributedSource = "jsonl";
         lifecycle = "query";
       } else if (seg.category === "tool_result") {
@@ -373,7 +414,8 @@ export function inferClaudeProxyAttributions(
         const tid = seg.toolUseId;
         const idMatched = !!tid && knownToolUseIds.has(tid);
         mechanism = idMatched ? "tool_use_id_match" : "unknown";
-        confidence = idMatched ? "exact" : "inferred";
+        classificationConfidence = idMatched ? "exact" : "inferred";
+        materializationConfidence = idMatched ? "exact" : "inferred";
         attributedSource = "jsonl";
         lifecycle = "query";
         if (!idMatched) {
@@ -391,15 +433,17 @@ export function inferClaudeProxyAttributions(
           ruleId = CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE.ruleId;
         }
       } else if (seg.category === "user_message" || seg.category === "assistant_text") {
-        // wire schema 确定类型，attribution 只补充 mechanism
+        // wire schema 确定类型（识别确信），但内容来自 jsonl 拼接，复现需 reconcile 验证
         mechanism = "unknown";
-        confidence = "inferred";
+        classificationConfidence = "exact";
+        materializationConfidence = "inferred";
         attributedSource = "jsonl";
         lifecycle = "query";
       } else {
         category = "unknown";
         mechanism = "unknown";
-        confidence = "unknown";
+        classificationConfidence = "unknown";
+        materializationConfidence = "unknown";
         attributedSource = "unknown";
         lifecycle = "unknown";
         flags.push("unexplained");
@@ -409,7 +453,8 @@ export function inferClaudeProxyAttributions(
     } else {
       // 未知 section
       mechanism = "unknown";
-      confidence = "unknown";
+      classificationConfidence = "unknown";
+      materializationConfidence = "unknown";
       attributedSource = "unknown";
       notes = [`unknown section: ${seg.section}`];
     }
@@ -424,7 +469,8 @@ export function inferClaudeProxyAttributions(
       attributedSource,
       sourceRefs: seg.sourceRefs,
       mechanism,
-      confidence,
+      classificationConfidence,
+      materializationConfidence,
       charCount: chars,
       tokenEstimate: seg.tokenEstimate ?? Math.round(chars / 4),
       ...(notes ? { notes } : {}),
@@ -485,7 +531,8 @@ export function buildAttributionBreakdown(
     existing.count += 1;
     existing.totalChars += attr.charCount ?? 0;
     existing.mechanisms.add(attr.mechanism);
-    existing.confidences.add(attr.confidence);
+    // P3-2：breakdown 用 materializationConfidence 表示"复现确信"，与 evidence-backed 口径一致
+    existing.confidences.add(attr.materializationConfidence);
     catMap.set(attr.category, existing);
   }
 

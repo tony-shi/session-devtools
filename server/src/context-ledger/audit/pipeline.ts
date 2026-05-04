@@ -260,7 +260,7 @@ export function runPipelineWithData(input: PipelineInput): {
         JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
       ) as typeof snapshot;
       const allAttributions = inferClaudeProxyAttributions(snapForAttr);
-      // reconcile 无 expected：仅产出 known_noise + attribution-only 覆盖率
+      // reconcile 无 expected：仅产出 server_side_attribution + attribution-only 覆盖率
       const report = reconcileClaudeContext({ snapshot, attributions: allAttributions, expected: undefined });
       const baseDiff = computeCharDiff(report);
       const diff = injectProxyTexts(baseDiff, report, reqBody);

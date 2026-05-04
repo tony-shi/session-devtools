@@ -1,6 +1,5 @@
 // char-diff.ts — Gate 3.5 Alignment Precision Audit
 //
-// Bypass / debug-only tool. NOT imported by any production path.
 // Computes char-level diff between ExpectedQueryContext segments and
 // ProxyQuerySnapshot segments as aligned by a ReconciliationReport.
 //
@@ -13,6 +12,7 @@ import type {
   AlignmentRef,
   ContextSegment,
   ExpectedQueryContext,
+  FindingType,
   ProxyQuerySnapshot,
   ReconciliationFinding,
   ReconciliationReport,
@@ -23,14 +23,23 @@ import type {
 // Public output types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type DiffKind =
-  | "matched_exact"        // rawHash / tool_use_id 精确匹配，chars 完全相同
-  | "matched_char_diff"    // 有内容锚点匹配，但 char count 有差异（evidence-backed）
-  | "suspect_match"        // 仅 category+role heuristic，无内容锚点，不计入 evidence-backed
-  | "expected_only"        // expected segment 无对应 proxy
-  | "proxy_only"           // proxy segment 未被任何 alignment 覆盖（unattributed）
-  | "attribution_only"     // proxy segment 有 server-side attribution，无对应 expected（非 user-semantic）
-  | "known_noise";         // 已知非用户语义的 server-side attribution（billing_noise 等）
+// P3-2：DiffKind 与 FindingType 合并为单一枚举。
+//   matched / approximate_match    → rawHash / tool_use_id / normalized 命中（evidence-backed）
+//   suspect_match                  → 仅 category+role heuristic，无内容锚点，不计入 evidence-backed
+//   expected_only                  → expected segment 无对应 proxy
+//   proxy_only                     → proxy segment 未被任何 alignment 覆盖（unattributed）
+//   attribution_only               → proxy 有 server-side attribution，但无对应 expected（非 user-semantic）
+//   server_side_attribution        → 已知非用户语义的 server-side attribution（billing_noise 等）
+export type DiffKind = Extract<
+  FindingType,
+  | "matched"
+  | "approximate_match"
+  | "suspect_match"
+  | "expected_only"
+  | "proxy_only"
+  | "attribution_only"
+  | "server_side_attribution"
+>;
 
 export interface CharRange {
   start: number;  // inclusive char offset in the concatenated flat text
@@ -53,7 +62,7 @@ export interface SegmentDiffEntry {
   kind: DiffKind;
   category: SegmentCategory;
   label: string;
-  /** char range in the "expected flat text" (undefined for proxy_only / attribution_only / known_noise) */
+  /** char range in the "expected flat text" (undefined for proxy_only / attribution_only / server_side_attribution) */
   expectedRange?: CharRange;
   /** char range in the "proxy flat text" (undefined for expected_only) */
   proxyRange?: CharRange;
@@ -85,8 +94,9 @@ export interface CharDiffReport {
 
 export interface CharDiffSummary {
   totalEntries: number;
-  matchedExact: number;
-  matchedWithCharDiff: number;
+  // P3-2：字段命名跟随 FindingType
+  matched: number;            // 原 matchedExact（matched_exact → matched）
+  approximateMatch: number;   // 原 matchedWithCharDiff（matched_char_diff → approximate_match）
   // suspect_match：category+role heuristic，无内容锚点，不计入 evidence-backed
   suspectMatch: number;
   expectedOnly: number;
@@ -94,14 +104,14 @@ export interface CharDiffSummary {
   proxyOnly: number;
   // attribution_only：server-side attribution 已识别（非 user-semantic），但无对应 expected
   attributionOnly: number;
-  // known_noise：已知非用户语义的 server-side overhead（billing_noise 等），不宣称 token 节约
-  knownNoise: number;
+  // server_side_attribution：已知非用户语义的 server-side overhead（billing_noise 等），不宣称 token 节约
+  serverSideAttribution: number;
   totalExpectedChars: number;
   totalProxyChars: number;
   // unexplainedProxyChars：仅表示 unattributed proxy（proxy_only + suspect_match），
-  // attribution_only 和 known_noise 不在此列
+  // attribution_only 和 server_side_attribution 不在此列
   unexplainedProxyChars: number;
-  /** sum of |charDelta| across matched_char_diff entries */
+  /** sum of |charDelta| across approximate_match entries */
   totalCharDriftAbsolute: number;
   /** totalCharDriftAbsolute / totalProxyChars (0..1)；仅表示 aligned 部分的 drift，=0 不代表 proxy==expected */
   charDriftPct: number;
@@ -109,7 +119,7 @@ export interface CharDiffSummary {
   // ── 细化覆盖率拆分 ──────────────────────────────────────────────────────────
   /** proxy chars 中有 server-side attribution（含 evidence-backed），占 totalProxyChars 的比例 (0..1) */
   attributionCoverage: number;
-  /** proxy chars 中有内容锚点证明（matched_exact + matched_char_diff），占 totalProxyChars 的比例 (0..1) */
+  /** proxy chars 中有内容锚点证明（matched + approximate_match），占 totalProxyChars 的比例 (0..1) */
   evidenceBackedCoverage: number;
   /** attributionCoverage - evidenceBackedCoverage：归因知晓但无 JSONL/ruleId 锚点的 gap (0..1) */
   attributionOnlyGap: number;
@@ -307,16 +317,16 @@ function classifyAlignmentKind(
   findings: ReconciliationFinding[],
   attrByProxyId: Map<string, { category: SegmentCategory; notes?: string[] }>,
 ): DiffKind {
-  // known_noise: attribution 层识别的 billing_noise（parser 保守分类为 system_prompt）
+  // server_side_attribution: attribution 层识别的 billing_noise（parser 保守分类为 system_prompt）
   if (pSegs.length > 0 && pSegs.every((s) => {
     const effectiveCat = attrByProxyId.get(s.id)?.category ?? s.category;
     return effectiveCat === "billing_noise";
   })) {
-    return "known_noise";
+    return "server_side_attribution";
   }
   const alignFindings = findings.filter((f) => f.alignmentIds?.includes(align.id));
-  if (alignFindings.some((f) => f.type === "known_noise")) {
-    return "known_noise";
+  if (alignFindings.some((f) => f.type === "server_side_attribution")) {
+    return "server_side_attribution";
   }
 
   // attribution_only: proxy segment has attribution but no expected counterpart
@@ -334,16 +344,16 @@ function classifyAlignmentKind(
     return "suspect_match";
   }
 
-  // Both sides present with content anchor — check char diff
+  // 两侧都有内容锚点时，继续检查字符数差异。
   const expectedChars = eSegs.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
   const proxyChars = pSegs.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
   const delta = Math.abs(expectedChars - proxyChars);
   const pct = proxyChars > 0 ? delta / proxyChars : 0;
 
   if (pct > 0.01 || delta > 10) {
-    return "matched_char_diff";
+    return "approximate_match";
   }
-  return "matched_exact";
+  return "matched";
 }
 
 function buildLabel(
@@ -367,9 +377,9 @@ function buildNotes(
 ): string[] {
   const notes: string[] = [];
   if (align.note) notes.push(align.note);
-  notes.push(`basis:${align.basis} confidence:${align.confidence} matchKind:${align.matchKind}`);
+  notes.push(`basis:${align.basis} confidence:${align.confidence} grade:${align.comparisonGrade}`);
   for (const f of relatedFindings) {
-    if (f.type !== "matched" && f.type !== "known_noise") {
+    if (f.type !== "matched" && f.type !== "server_side_attribution") {
       notes.push(`[${f.type}] ${f.message}`);
     }
   }
@@ -418,18 +428,18 @@ function computeSummary(
   snapshot: ProxyQuerySnapshot,
   expected: ExpectedQueryContext | undefined,
 ): CharDiffSummary {
-  let matchedExact = 0;
-  let matchedWithCharDiff = 0;
+  let matched = 0;
+  let approximateMatch = 0;
   let suspectMatch = 0;
   let expectedOnly = 0;
   let proxyOnly = 0;
   let attributionOnly = 0;
-  let knownNoise = 0;
+  let serverSideAttribution = 0;
   let totalCharDriftAbsolute = 0;
 
   // 用于细化覆盖率的字符累计
-  let evidenceBackedChars = 0;   // matched_exact + matched_char_diff 的 proxy chars
-  let attributionChars = 0;      // attribution_only + known_noise + evidence-backed 的 proxy chars
+  let evidenceBackedChars = 0;   // matched + approximate_match 的 proxy chars
+  let attributionChars = 0;      // attribution_only + server_side_attribution + evidence-backed 的 proxy chars
   let suspectMatchChars = 0;     // suspect_match 的 proxy chars
 
   for (const e of entries) {
@@ -437,13 +447,13 @@ function computeSummary(
     // 用 proxyTexts 逐段求和才是真实的 proxy chars
     const pChars = (e.proxyTexts ?? []).reduce((s, t) => s + t.chars, 0);
     switch (e.kind) {
-      case "matched_exact":
-        matchedExact++;
+      case "matched":
+        matched++;
         evidenceBackedChars += pChars;
         attributionChars += pChars;
         break;
-      case "matched_char_diff":
-        matchedWithCharDiff++;
+      case "approximate_match":
+        approximateMatch++;
         totalCharDriftAbsolute += Math.abs(e.charDelta ?? 0);
         evidenceBackedChars += pChars;
         attributionChars += pChars;
@@ -460,9 +470,9 @@ function computeSummary(
         attributionOnly++;
         attributionChars += pChars;
         break;
-      case "known_noise":
+      case "server_side_attribution":
         // 已知非用户语义的 server-side overhead，不宣称 token 节约
-        knownNoise++;
+        serverSideAttribution++;
         attributionChars += pChars;
         break;
     }
@@ -472,7 +482,7 @@ function computeSummary(
   const totalProxyChars = snapshot.segments.reduce((s, seg) => s + (seg.charCount ?? 0), 0);
 
   // unexplainedProxyChars：仅 unattributed proxy（proxy_only + suspect_match）
-  // attribution_only / known_noise 已有 server-side attribution，不算 unexplained
+  // attribution_only / server_side_attribution 已有 server-side attribution，不算 unexplained
   const unexplainedProxyChars = entries
     .filter((e) => e.kind === "proxy_only" || e.kind === "suspect_match")
     .reduce((s, e) => s + (e.proxyTexts ?? []).reduce((t, seg) => t + seg.chars, 0), 0);
@@ -489,13 +499,13 @@ function computeSummary(
 
   return {
     totalEntries: entries.length,
-    matchedExact,
-    matchedWithCharDiff,
+    matched,
+    approximateMatch,
     suspectMatch,
     expectedOnly,
     proxyOnly,
     attributionOnly,
-    knownNoise,
+    serverSideAttribution,
     totalExpectedChars,
     totalProxyChars,
     unexplainedProxyChars,

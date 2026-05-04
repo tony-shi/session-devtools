@@ -36,7 +36,8 @@ function fixtureTests(fixtureName: string) {
       for (const attr of attributions) {
         expect(attr.category).toBeDefined();
         expect(attr.mechanism).toBeDefined();
-        expect(attr.confidence).toBeDefined();
+        expect(attr.classificationConfidence).toBeDefined();
+        expect(attr.materializationConfidence).toBeDefined();
         const hasProxyRef = attr.sourceRefs.some((r) => r.kind === "proxy");
         expect(hasProxyRef).toBe(true);
       }
@@ -56,15 +57,16 @@ function fixtureTests(fixtureName: string) {
       const unknowns = attributions.filter((a) => a.category === "unknown");
       for (const u of unknowns) {
         expect(u.notes?.length ?? 0).toBeGreaterThan(0);
-        expect(u.confidence).toBe("unknown");
+        expect(u.classificationConfidence).toBe("unknown");
+        expect(u.materializationConfidence).toBe("unknown");
       }
     });
 
-    test("confidence 不全为 exact（至少有一条 inferred 或 unknown）", async () => {
+    test("materializationConfidence 不全为 exact（至少有一条 inferred 或 unknown）", async () => {
       const snapshot = await loadSnapshot(fixtureName);
       const attributions = inferClaudeProxyAttributions(snapshot);
       if (fixtureName !== "system-tools-overhead") {
-        const nonExact = attributions.filter((a) => a.confidence !== "exact");
+        const nonExact = attributions.filter((a) => a.materializationConfidence !== "exact");
         expect(nonExact.length).toBeGreaterThan(0);
       }
     });
@@ -131,10 +133,10 @@ describe("cross-fixture: system-tools-overhead 的 tools 被识别为 tools_sche
     expect(toolsAttr).toBeDefined();
     if (!toolsAttr) return; // 类型 narrow，下面可放心访问字段
     expect(toolsAttr.mechanism).toBe("tools_schema_pattern");
+    // P3-2：拆分后 classificationConfidence 反映"这是 tools_schema"的识别确信
     // exact = tool rule 精确命中（Edit/Write/Read 等静态 rule）
-    // inferred = regex rule 头尾锚定（Agent/Bash 等动态 rule）
-    // 两者都是合法结果，取决于具体 tool
-    expect(["exact", "inferred"]).toContain(toolsAttr.confidence);
+    // estimated/inferred = regex rule 头尾锚定（Agent/Bash 等动态 rule）
+    expect(["exact", "estimated", "inferred"]).toContain(toolsAttr.classificationConfidence);
     expect(toolsAttr.charCount ?? 0).toBeGreaterThan(0);
   });
 });
@@ -186,7 +188,7 @@ describe("P2-4 prior_session_guess 已删除", () => {
 });
 
 describe("tool_result 的 tool_use_id 不在本次请求时降级为 inferred", () => {
-  test("篡改 segment.toolUseId 使其不匹配，confidence 降级为 inferred", async () => {
+  test("篡改 segment.toolUseId 使其不匹配，materializationConfidence 降级为 inferred", async () => {
     const snapshot = await loadSnapshot("single-tool-call");
     // 找到 tool_result segment，篡改其 toolUseId
     const toolResultSeg = snapshot.segments.find((s) => s.category === "tool_result");
@@ -196,7 +198,7 @@ describe("tool_result 的 tool_use_id 不在本次请求时降级为 inferred", 
 
     const attributions = inferClaudeProxyAttributions(snapshot);
     const degraded = attributions.find(
-      (a) => a.category === "tool_result" && a.confidence === "inferred",
+      (a) => a.category === "tool_result" && a.materializationConfidence === "inferred",
     );
     expect(degraded).toBeDefined();
     expect(degraded?.mechanism).toBe("unknown");
@@ -246,9 +248,10 @@ describe("rule registry 集成：identity rule 驱动 attribution", () => {
     );
     expect(envAttr).toBeDefined();
     expect(envAttr!.category).toBe("harness_injection");
-    // P2-6 修正：regex allGroupsFilled → estimated（识别确信，复现仍 estimated）
-    expect(["exact", "estimated", "inferred"]).toContain(envAttr!.confidence);
-    // cwd, platform 등 동적 필드가 notes 에 추출됐는지 확인
+    // P3-2 / P2-6：regex allGroupsFilled → classification=exact, materialization=estimated
+    expect(["exact", "estimated", "inferred"]).toContain(envAttr!.classificationConfidence);
+    expect(["exact", "estimated", "inferred"]).toContain(envAttr!.materializationConfidence);
+    // 确认 cwd、platform 等动态字段已提取到 notes。
     expect(envAttr!.notes?.some(n => n.startsWith("cwd="))).toBe(true);
   });
 

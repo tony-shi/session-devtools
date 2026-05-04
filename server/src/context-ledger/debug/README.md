@@ -1,6 +1,8 @@
 # Context Char Diff Audit — Gate 3.5
 
-**旁路 / 仅供调试。** 本目录下的所有文件均不被生产代码引用。
+**审计辅助工具。** char-diff 现在被 audit pipeline 复用，定位是把
+`ReconciliationReport` 渲染成人可读的字符级对账视图；它不修改任何
+reconciliation 结果，也不反写 proxy 内容。
 
 ## 用途
 
@@ -71,12 +73,13 @@ bun run scripts/context-char-diff.ts /path/to/report.json
 
 | 类型 | 含义 |
 |---|---|
-| `matched_exact` | 已对齐，字符数一致（偏差 ≤1%） |
-| `matched_char_diff` | 已对齐，但字符数存在差异（偏差 >1%） |
+| `matched` | 已对齐，字符数一致（偏差 ≤1%） |
+| `approximate_match` | 已对齐，但字符数存在差异（偏差 >1%） |
+| `suspect_match` | 仅由 category / role 启发式对齐，无内容锚点 |
 | `expected_only` | expected segment 在 proxy 中没有对应项 |
 | `proxy_only` | proxy segment 未被任何 alignment 覆盖 |
 | `attribution_only` | proxy segment 仅由 attribution 解释，无对应 expected segment（未实现规则） |
-| `known_noise` | `billing_noise` 或其他已知 harness 开销 |
+| `server_side_attribution` | `billing_noise` 或其他已知 server-side 开销 |
 
 ## CharRange 格式
 
@@ -91,6 +94,6 @@ proxy 平铺：   [0…90)  user_message  [90…280)  tool_use  [280…7880) too
 
 ## 约束
 
-- **不修改** `types.ts`、`routes.ts` 或任何 client 代码。
+- **不修改** `routes.ts` 或任何 client 代码。
 - **不将** proxy diff 反写回 `ContextMutation`（合同禁止）。
 - 性能不敏感：O(n²) 索引构建对审计场景可接受。

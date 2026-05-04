@@ -252,12 +252,12 @@ function printSummary(queryId: string, s: CharDiffReport["summary"], outPath: st
   console.log(`
 Context Char Diff — ${queryId}
   entries:         ${s.totalEntries}
-  matched exact:   ${s.matchedExact}
-  char diff:       ${s.matchedWithCharDiff}  (drift ${(s.charDriftPct * 100).toFixed(2)}%)
+  matched:         ${s.matched}
+  approximate:     ${s.approximateMatch}  (drift ${(s.charDriftPct * 100).toFixed(2)}%)
   expected only:   ${s.expectedOnly}
   proxy only:      ${s.proxyOnly}
   attribution only:${s.attributionOnly}
-  known noise:     ${s.knownNoise}
+  server-side:     ${s.serverSideAttribution}
   proxy chars:     ${s.totalProxyChars.toLocaleString()}
   unexplained:     ${s.unexplainedProxyChars.toLocaleString()} chars
 

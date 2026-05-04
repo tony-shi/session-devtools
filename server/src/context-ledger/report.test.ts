@@ -68,9 +68,9 @@ describe("context-ledger mock report contract", () => {
 
     expect(findingTypes).toContain("matched");
     expect(findingTypes).toContain("merge_alignment");
-    expect(findingTypes).toContain("known_noise");
+    expect(findingTypes).toContain("server_side_attribution");
     expect(findingTypes).toContain("api_error_retry");
-    expect(findingTypes).toContain("unmatched_proxy_segment");
+    expect(findingTypes).toContain("proxy_only");
 
     expect(fixturePressures).toEqual([
       "system-tools-overhead",

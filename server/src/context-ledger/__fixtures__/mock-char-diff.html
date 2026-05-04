@@ -56,7 +56,7 @@ h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
 <body>
 <div class="page">
   <h1>Context Char Diff — query-0002</h1>
-  <div class="meta">session: mock-session-context-ledger · generated: 2026-04-29T08:34:57.095Z · expected flat: 16,670 chars · proxy flat: 16,970 chars</div>
+  <div class="meta">session: mock-session-context-ledger · generated: 2026-05-04T04:36:31.319Z · expected flat: 16,670 chars · proxy flat: 16,970 chars</div>
 
   <div class="summary-grid">
     <div class="stat-card">
@@ -71,12 +71,12 @@ h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
     </div>
     <div class="stat-card">
       <div class="stat-label">Evidence-Backed</div>
-      <div class="stat-value">92.4%</div>
-      <div class="stat-sub">of proxy chars (matched_exact + char_diff)</div>
+      <div class="stat-value">97.7%</div>
+      <div class="stat-sub">of proxy chars (matched + approximate)</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Attribution Cov.</div>
-      <div class="stat-value">92.9%</div>
+      <div class="stat-value">98.2%</div>
       <div class="stat-sub">incl. server-side attribution</div>
     </div>
     <div class="stat-card">
@@ -86,33 +86,33 @@ h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
     </div>
     <div class="stat-card">
       <div class="stat-label">Unattributed</div>
-      <div class="stat-value">1,200</div>
-      <div class="stat-sub">7% of proxy (proxy_only + suspect)</div>
+      <div class="stat-value">300</div>
+      <div class="stat-sub">2% of proxy (proxy_only + suspect)</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Suspect Match</div>
-      <div class="stat-value">1</div>
-      <div class="stat-sub">900 chars (no content anchor)</div>
+      <div class="stat-value">0</div>
+      <div class="stat-sub">0 chars (no content anchor)</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Aligned Drift</div>
-      <div class="stat-value">0.00%</div>
+      <div class="stat-value">2.12%</div>
       <div class="stat-sub">of proxy chars (aligned segments only)</div>
     </div>
     <div class="stat-card">
       <div class="stat-label">Total Entries</div>
-      <div class="stat-value">8</div>
+      <div class="stat-value">11</div>
       
     </div>
     <div class="stat-card">
       <div class="stat-label">Matched Exact</div>
-      <div class="stat-value">5</div>
-      <div class="stat-sub">63%</div>
+      <div class="stat-value">6</div>
+      <div class="stat-sub">55%</div>
     </div>
     <div class="stat-card">
-      <div class="stat-label">Known Non-User-Semantic</div>
+      <div class="stat-label">Server-Side Attribution</div>
       <div class="stat-value">1</div>
-      <div class="stat-sub">server-side billing/infra (not unexplained)</div>
+      <div class="stat-sub">billing/infra (not unexplained)</div>
     </div>
   </div>
   
@@ -123,24 +123,28 @@ h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
       char diff = 0 仅表示 aligned 段无漂移，不代表 proxy == expected
     </div>
     <div class="bar-wrap" style="height:12px;position:relative;">
-      <div class="bar-fill" style="width:92.40%;background:#22c55e;position:absolute;left:0;top:0;height:100%;"></div>
-      <div class="bar-fill" style="width:0.53%;background:#a855f7;position:absolute;left:92.40%;top:0;height:100%;"></div>
-      <div class="bar-fill" style="width:7.07%;background:#ef4444;position:absolute;left:92.93%;top:0;height:100%;"></div>
+      <div class="bar-fill" style="width:97.70%;background:#22c55e;position:absolute;left:0;top:0;height:100%;"></div>
+      <div class="bar-fill" style="width:0.53%;background:#a855f7;position:absolute;left:97.70%;top:0;height:100%;"></div>
+      <div class="bar-fill" style="width:1.77%;background:#ef4444;position:absolute;left:98.23%;top:0;height:100%;"></div>
     </div>
     <div class="bar-label" style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;">
-      <span style="color:#22c55e">■ evidence-backed 92.4%</span>
+      <span style="color:#22c55e">■ evidence-backed 97.7%</span>
       <span style="color:#a855f7">■ attribution-only gap 0.5%</span>
-      <span style="color:#ef4444">■ unattributed 7.1% (1,200 chars)</span>
+      <span style="color:#ef4444">■ unattributed 1.8% (300 chars)</span>
     </div>
   </div>
   <div class="legend">
     <div class="legend-item">
       <div class="legend-dot" style="background:#22c55e"></div>
-      <span>matched exact</span>
+      <span>matched</span>
     </div>
     <div class="legend-item">
       <div class="legend-dot" style="background:#f59e0b"></div>
-      <span>matched (char diff)</span>
+      <span>approximate match (char diff)</span>
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#f97316"></div>
+      <span>suspect match (no anchor)</span>
     </div>
     <div class="legend-item">
       <div class="legend-dot" style="background:#3b82f6"></div>
@@ -152,14 +156,36 @@ h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
     </div>
     <div class="legend-item">
       <div class="legend-dot" style="background:#a855f7"></div>
-      <span>server-side attribution</span>
+      <span>attribution only (no expected)</span>
     </div>
     <div class="legend-item">
       <div class="legend-dot" style="background:#9ca3af"></div>
-      <span>known non-user-semantic</span>
+      <span>server-side attribution</span>
     </div>
   </div>
   
+    <div class="section-header">approximate match (char diff) (1)</div>
+    <div class="entry" style="background:#fffbeb;border-color:#fcd34d">
+  <div class="entry-header">
+    <span class="badge" style="background:#f59e0b">approximate match (char diff)</span>
+    <span class="entry-label" style="color:#92400e">Expected system reminder injection</span>
+    <span class="entry-category">harness_injection</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[15800…16220) 420 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[15800…16580) 780 chars</span></span></div>
+  <div class="char-delta negative">charDelta: -360 (46.2%)</div>
+  <ul class="notes"><li>basis:normalized_hash confidence:estimated grade:normalized</li><li>[token_mismatch] char mismatch: expected 420, proxy 780 (46.2% diff)</li><li>One proxy block represents two expected sources.</li></ul>
+  <div class="ids">align:align-8 · eseg:[eseg-harness-injection] · pseg:[pseg-harness-injection] · findings:[finding-8,finding-9]</div>
+  <div class="expand-row"><div class="expand-col">
+  <div class="expand-col-label">expected</div>
+  <div class="expand-toggle"><span class="arrow">▶</span> show 420 chars · no text</div>
+  <div class="expand-body"><div class="expand-no-text">Expected system reminder injection — 420 chars (no inline text)</div></div>
+</div><div class="expand-col">
+  <div class="expand-col-label">proxy</div>
+  <div class="expand-toggle"><span class="arrow">▶</span> show 780 chars · no text</div>
+  <div class="expand-body"><div class="expand-no-text">System reminder plus local command injection — 780 chars (no inline text)</div></div>
+</div></div>
+</div>
+
     <div class="section-header">proxy only (unattributed) (1)</div>
     <div class="entry" style="background:#fef2f2;border-color:#fca5a5">
   <div class="entry-header">
@@ -170,7 +196,7 @@ h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
   <div class="ranges"><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[16670…16970) 300 chars</span></span></div>
   <div class="char-delta positive">charDelta: +300</div>
   <ul class="notes"><li>proxy segment not covered by any alignment (300 chars)</li></ul>
-  <div class="ids">pseg:[pseg-unknown] · findings:[finding-unmatched-proxy]</div>
+  <div class="ids">pseg:[pseg-unknown] · findings:[finding-12]</div>
   <div class="expand-row"><div class="expand-col">
   <div class="expand-col-label">proxy</div>
   <div class="expand-toggle"><span class="arrow">▶</span> show 300 chars · no text</div>
@@ -178,17 +204,51 @@ h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
 </div></div>
 </div>
 
-    <div class="section-header">matched exact (5)</div>
+    <div class="section-header">expected only (2)</div>
+    <div class="entry" style="background:#eff6ff;border-color:#93c5fd">
+  <div class="entry-header">
+    <span class="badge" style="background:#3b82f6">expected only</span>
+    <span class="entry-label" style="color:#1e40af">Expected local command history injection</span>
+    <span class="entry-category">local_command_history</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[16220…16580) 360 chars</span></span></div>
+  <div class="char-delta negative">charDelta: -360</div>
+  <ul class="notes"><li>expected segment not matched in proxy (360 chars)</li></ul>
+  <div class="ids">eseg:[eseg-local-command-history] · findings:[finding-10]</div>
+  <div class="expand-row"><div class="expand-col">
+  <div class="expand-col-label">expected</div>
+  <div class="expand-toggle"><span class="arrow">▶</span> show 360 chars · no text</div>
+  <div class="expand-body"><div class="expand-no-text">Expected local command history injection — 360 chars (no inline text)</div></div>
+</div></div>
+</div>
+<div class="entry" style="background:#eff6ff;border-color:#93c5fd">
+  <div class="entry-header">
+    <span class="badge" style="background:#3b82f6">expected only</span>
+    <span class="entry-label" style="color:#1e40af">Expected known billing noise</span>
+    <span class="entry-category">billing_noise</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[16580…16670) 90 chars</span></span></div>
+  <div class="char-delta negative">charDelta: -90</div>
+  <ul class="notes"><li>expected segment not matched in proxy (90 chars)</li></ul>
+  <div class="ids">eseg:[eseg-billing-noise] · findings:[finding-11]</div>
+  <div class="expand-row"><div class="expand-col">
+  <div class="expand-col-label">expected</div>
+  <div class="expand-toggle"><span class="arrow">▶</span> show 90 chars · no text</div>
+  <div class="expand-body"><div class="expand-no-text">Expected known billing noise — 90 chars (no inline text)</div></div>
+</div></div>
+</div>
+
+    <div class="section-header">matched (6)</div>
     <div class="entry" style="background:#f0fdf4;border-color:#86efac">
   <div class="entry-header">
-    <span class="badge" style="background:#22c55e">matched exact</span>
+    <span class="badge" style="background:#22c55e">matched</span>
     <span class="entry-label" style="color:#166534">Expected system prompt from harness rule</span>
     <span class="entry-category">system_prompt</span>
   </div>
   <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[0…1800) 1,800 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[0…1800) 1,800 chars</span></span></div>
   <div class="char-delta zero">charDelta: 0 (0.0%)</div>
-  <ul class="notes"><li>basis:raw_hash confidence:exact matchKind:exact</li></ul>
-  <div class="ids">align:align-system-prompt · eseg:[eseg-system-prompt] · pseg:[pseg-system-prompt] · findings:[finding-system-tools-overhead]</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact grade:exact</li></ul>
+  <div class="ids">align:align-2 · eseg:[eseg-system-prompt] · pseg:[pseg-system-prompt] · findings:[finding-2]</div>
   <div class="expand-row"><div class="expand-col">
   <div class="expand-col-label">expected</div>
   <div class="expand-toggle"><span class="arrow">▶</span> show 1,800 chars · no text</div>
@@ -201,14 +261,14 @@ h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
 </div>
 <div class="entry" style="background:#f0fdf4;border-color:#86efac">
   <div class="entry-header">
-    <span class="badge" style="background:#22c55e">matched exact</span>
+    <span class="badge" style="background:#22c55e">matched</span>
     <span class="entry-label" style="color:#166534">Expected tool schemas from harness rule</span>
     <span class="entry-category">tools_schema</span>
   </div>
   <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[1800…7000) 5,200 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[1800…7000) 5,200 chars</span></span></div>
   <div class="char-delta zero">charDelta: 0 (0.0%)</div>
-  <ul class="notes"><li>basis:raw_hash confidence:exact matchKind:exact</li></ul>
-  <div class="ids">align:align-tools-schema · eseg:[eseg-tools-schema] · pseg:[pseg-tools-schema] · findings:[finding-system-tools-overhead]</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact grade:exact</li></ul>
+  <div class="ids">align:align-3 · eseg:[eseg-tools-schema] · pseg:[pseg-tools-schema] · findings:[finding-3]</div>
   <div class="expand-row"><div class="expand-col">
   <div class="expand-col-label">expected</div>
   <div class="expand-toggle"><span class="arrow">▶</span> show 5,200 chars · no text</div>
@@ -221,14 +281,34 @@ h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
 </div>
 <div class="entry" style="background:#f0fdf4;border-color:#86efac">
   <div class="entry-header">
-    <span class="badge" style="background:#22c55e">matched exact</span>
+    <span class="badge" style="background:#22c55e">matched</span>
+    <span class="entry-label" style="color:#166534">Expected prior session history</span>
+    <span class="entry-category">prior_session_history</span>
+  </div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[7000…7900) 900 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[7000…7900) 900 chars</span></span></div>
+  <div class="char-delta zero">charDelta: 0 (0.0%)</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact grade:exact</li></ul>
+  <div class="ids">align:align-4 · eseg:[eseg-prior-session-history] · pseg:[pseg-prior-session-history] · findings:[finding-4]</div>
+  <div class="expand-row"><div class="expand-col">
+  <div class="expand-col-label">expected</div>
+  <div class="expand-toggle"><span class="arrow">▶</span> show 900 chars · no text</div>
+  <div class="expand-body"><div class="expand-no-text">Expected prior session history — 900 chars (no inline text)</div></div>
+</div><div class="expand-col">
+  <div class="expand-col-label">proxy</div>
+  <div class="expand-toggle"><span class="arrow">▶</span> show 900 chars · no text</div>
+  <div class="expand-body"><div class="expand-no-text">Prior human turns carried into the request — 900 chars (no inline text)</div></div>
+</div></div>
+</div>
+<div class="entry" style="background:#f0fdf4;border-color:#86efac">
+  <div class="entry-header">
+    <span class="badge" style="background:#22c55e">matched</span>
     <span class="entry-label" style="color:#166534">Expected current user message</span>
     <span class="entry-category">user_message</span>
   </div>
   <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[7900…8020) 120 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[7900…8020) 120 chars</span></span></div>
   <div class="char-delta zero">charDelta: 0 (0.0%)</div>
-  <ul class="notes"><li>basis:raw_hash confidence:exact matchKind:exact</li></ul>
-  <div class="ids">align:align-user-message · eseg:[eseg-user-message] · pseg:[pseg-user-message]</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact grade:exact</li></ul>
+  <div class="ids">align:align-5 · eseg:[eseg-user-message] · pseg:[pseg-user-message] · findings:[finding-5]</div>
   <div class="expand-row"><div class="expand-col">
   <div class="expand-col-label">expected</div>
   <div class="expand-toggle"><span class="arrow">▶</span> show 120 chars · no text</div>
@@ -241,86 +321,59 @@ h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
 </div>
 <div class="entry" style="background:#f0fdf4;border-color:#86efac">
   <div class="entry-header">
-    <span class="badge" style="background:#22c55e">matched exact</span>
-    <span class="entry-label" style="color:#166534">Expected assistant tool_use [2E:2P]</span>
-    <span class="entry-category">tool_use</span>
+    <span class="badge" style="background:#22c55e">matched</span>
+    <span class="entry-label" style="color:#166534">Expected assistant tool_use</span>
+    <span class="entry-category">tool_result</span>
   </div>
-  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[8020…15800) 7,780 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[8020…15800) 7,780 chars</span></span></div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[8020…8200) 180 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[8020…8200) 180 chars</span></span></div>
   <div class="char-delta zero">charDelta: 0 (0.0%)</div>
-  <ul class="notes"><li>basis:tool_use_id confidence:exact matchKind:exact</li><li>[merge_alignment] Large tool_result is explainable but should remain visible for context bloat ranking.</li></ul>
-  <div class="ids">align:align-tool-chain · eseg:[eseg-tool-use,eseg-tool-result] · pseg:[pseg-tool-use,pseg-tool-result] · findings:[finding-tool-use-result-chain,finding-large-tool-output]</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact grade:exact</li></ul>
+  <div class="ids">align:align-6 · eseg:[eseg-tool-use] · pseg:[pseg-tool-use] · findings:[finding-6]</div>
   <div class="expand-row"><div class="expand-col">
   <div class="expand-col-label">expected</div>
-  <div class="expand-toggle"><span class="arrow">▶</span> show 7,780 chars · no text</div>
-  <div class="expand-body"><div class="expand-no-text">Expected assistant tool_use — 180 chars (no inline text)</div><div class="expand-no-text">Expected large tool_result — 7,600 chars (no inline text)</div></div>
+  <div class="expand-toggle"><span class="arrow">▶</span> show 180 chars · no text</div>
+  <div class="expand-body"><div class="expand-no-text">Expected assistant tool_use — 180 chars (no inline text)</div></div>
 </div><div class="expand-col">
   <div class="expand-col-label">proxy</div>
-  <div class="expand-toggle"><span class="arrow">▶</span> show 7,780 chars · no text</div>
-  <div class="expand-body"><div class="expand-no-text">Assistant tool_use block — 180 chars (no inline text)</div><div class="expand-no-text">Large tool_result block — 7,600 chars (no inline text)</div></div>
+  <div class="expand-toggle"><span class="arrow">▶</span> show 180 chars · no text</div>
+  <div class="expand-body"><div class="expand-no-text">Assistant tool_use block — 180 chars (no inline text)</div></div>
 </div></div>
 </div>
 <div class="entry" style="background:#f0fdf4;border-color:#86efac">
   <div class="entry-header">
-    <span class="badge" style="background:#22c55e">matched exact</span>
-    <span class="entry-label" style="color:#166534">Expected system reminder injection [2E:1P]</span>
-    <span class="entry-category">harness_injection</span>
+    <span class="badge" style="background:#22c55e">matched</span>
+    <span class="entry-label" style="color:#166534">Expected large tool_result</span>
+    <span class="entry-category">tool_result</span>
   </div>
-  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[15800…16580) 780 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[15800…16580) 780 chars</span></span></div>
+  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[8200…15800) 7,600 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[8200…15800) 7,600 chars</span></span></div>
   <div class="char-delta zero">charDelta: 0 (0.0%)</div>
-  <ul class="notes"><li>Represents N:1 alignment from multiple expected injections into one proxy block.</li><li>basis:harness_rule confidence:inferred matchKind:heuristic</li><li>[merge_alignment] System reminder and local command history may be materialized as one proxy block.</li></ul>
-  <div class="ids">align:align-harness-merge · eseg:[eseg-harness-injection,eseg-local-command-history] · pseg:[pseg-harness-injection] · findings:[finding-harness-merge]</div>
+  <ul class="notes"><li>basis:raw_hash confidence:exact grade:exact</li></ul>
+  <div class="ids">align:align-7 · eseg:[eseg-tool-result] · pseg:[pseg-tool-result] · findings:[finding-7]</div>
   <div class="expand-row"><div class="expand-col">
   <div class="expand-col-label">expected</div>
-  <div class="expand-toggle"><span class="arrow">▶</span> show 780 chars · no text</div>
-  <div class="expand-body"><div class="expand-no-text">Expected system reminder injection — 420 chars (no inline text)</div><div class="expand-no-text">Expected local command history injection — 360 chars (no inline text)</div></div>
+  <div class="expand-toggle"><span class="arrow">▶</span> show 7,600 chars · no text</div>
+  <div class="expand-body"><div class="expand-no-text">Expected large tool_result — 7,600 chars (no inline text)</div></div>
 </div><div class="expand-col">
   <div class="expand-col-label">proxy</div>
-  <div class="expand-toggle"><span class="arrow">▶</span> show 780 chars · no text</div>
-  <div class="expand-body"><div class="expand-no-text">System reminder plus local command injection — 780 chars (no inline text)</div></div>
+  <div class="expand-toggle"><span class="arrow">▶</span> show 7,600 chars · no text</div>
+  <div class="expand-body"><div class="expand-no-text">Large tool_result block — 7,600 chars (no inline text)</div></div>
 </div></div>
 </div>
 
-    <div class="section-header">known non-user-semantic (1)</div>
+    <div class="section-header">server-side attribution (1)</div>
     <div class="entry" style="background:#f9fafb;border-color:#d1d5db">
   <div class="entry-header">
-    <span class="badge" style="background:#9ca3af">known non-user-semantic</span>
-    <span class="entry-label" style="color:#6b7280">Expected known billing noise</span>
+    <span class="badge" style="background:#9ca3af">server-side attribution</span>
+    <span class="entry-label" style="color:#6b7280">Known billing header noise</span>
     <span class="entry-category">billing_noise</span>
   </div>
-  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[16580…16670) 90 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[16580…16670) 90 chars</span></span></div>
-  <div class="char-delta zero">charDelta: 0 (0.0%)</div>
-  <ul class="notes"><li>basis:harness_rule confidence:inferred matchKind:inferred</li></ul>
-  <div class="ids">align:align-billing-noise · eseg:[eseg-billing-noise] · pseg:[pseg-billing-noise] · findings:[finding-known-noise]</div>
+  <div class="ranges"><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[16580…16670) 90 chars</span></span></div>
+  <ul class="notes"><li>billing_noise: known server-side overhead, excluded from evidence-backed coverage</li><li>basis:server_side_attribution confidence:exact grade:presence</li></ul>
+  <div class="ids">align:align-1 · pseg:[pseg-billing-noise] · findings:[finding-1]</div>
   <div class="expand-row"><div class="expand-col">
-  <div class="expand-col-label">expected</div>
-  <div class="expand-toggle"><span class="arrow">▶</span> show 90 chars · no text</div>
-  <div class="expand-body"><div class="expand-no-text">Expected known billing noise — 90 chars (no inline text)</div></div>
-</div><div class="expand-col">
   <div class="expand-col-label">proxy</div>
   <div class="expand-toggle"><span class="arrow">▶</span> show 90 chars · no text</div>
   <div class="expand-body"><div class="expand-no-text">Known billing header noise — 90 chars (no inline text)</div></div>
-</div></div>
-</div>
-
-    <div class="section-header">suspect_match (1)</div>
-    <div class="entry" style="background:#f9fafb;border-color:#d1d5db">
-  <div class="entry-header">
-    <span class="badge" style="background:#9ca3af">suspect_match</span>
-    <span class="entry-label" style="color:#6b7280">Expected prior session history</span>
-    <span class="entry-category">prior_session_history</span>
-  </div>
-  <div class="ranges"><span class="range-block"><span class="range-label">expected:</span><span class="range-value">[7000…7900) 900 chars</span></span><span class="range-block"><span class="range-label">proxy:</span><span class="range-value">[7000…7900) 900 chars</span></span></div>
-  <div class="char-delta zero">charDelta: 0 (0.0%)</div>
-  <ul class="notes"><li>basis:category confidence:inferred matchKind:heuristic</li></ul>
-  <div class="ids">align:align-prior-session · eseg:[eseg-prior-session-history] · pseg:[pseg-prior-session-history]</div>
-  <div class="expand-row"><div class="expand-col">
-  <div class="expand-col-label">expected</div>
-  <div class="expand-toggle"><span class="arrow">▶</span> show 900 chars · no text</div>
-  <div class="expand-body"><div class="expand-no-text">Expected prior session history — 900 chars (no inline text)</div></div>
-</div><div class="expand-col">
-  <div class="expand-col-label">proxy</div>
-  <div class="expand-toggle"><span class="arrow">▶</span> show 900 chars · no text</div>
-  <div class="expand-body"><div class="expand-no-text">Prior human turns carried into the request — 900 chars (no inline text)</div></div>
 </div></div>
 </div>
 </div>

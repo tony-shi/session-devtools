@@ -4,7 +4,7 @@
 //
 // 设计原则（docs/draft/context/context-core-background.md §核心数据原则）：
 //   - proxy 是 ground truth；不用 proxy diff 生成 ContextMutation。
-//   - 无法解释的 proxy segment 进入 unmatched_proxy_segment finding，不静默吞掉。
+//   - 无法解释的 proxy segment 进入 proxy_only finding，不静默吞掉。
 //   - attribution-only 和 expected-match 区别：
 //       * attribution-only：proxy-first 反向归因已识别类别/机制，但没有对应 expected segment。
 //         典型情况：system_prompt / tools_schema / system_reminder（U1-U3 规则未实现）。
@@ -18,8 +18,8 @@
 //   M4 category + role + order heuristic（same category、same role、order 差 ≤ 2）
 //   M5 attribution-only fallback（proxy segment 有 attribution 但无 expected 对应）
 //
-// known_noise 优先处理：billing_noise category 的 proxy segment 直接归入 known_noise
-// finding，不参与 expected 匹配流程。
+// known_noise 优先处理：billing_noise category 的 proxy segment 直接归入
+// server_side_attribution finding，不参与 expected 匹配流程。
 //
 // merge_alignment / one_to_many_alignment：
 //   - 多个 expected segment → 同一 proxy segment：merge_alignment（N:1）
@@ -30,7 +30,7 @@
 //   - tools_schema（34 / 40 tools per fixture）
 //   - harness_injection / system_reminder（每个 user turn 头部）
 //   - prior_session_history（multi-turn-human 首条 user message）
-// 这些会产生 attribution-only finding，severity=warning，不计入 unexplained（因为
+// 这些会产生 attribution_only finding，severity=warning，不计入 unexplained（因为
 // attribution 层已识别类别）。真正 unknown（attribution.category === "unknown"）才计
 // 入 unexplained，severity=critical。
 
@@ -38,11 +38,11 @@ import type {
   AgentKind,
   AlignmentBasis,
   AlignmentRef,
+  ComparisonGrade,
   CoverageByCategory,
   CoverageSummary,
   ContextSegment,
   ExpectedQueryContext,
-  FindingSeverity,
   FindingType,
   ProxyQuerySnapshot,
   ProxySegmentAttribution,
@@ -86,7 +86,7 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
   const matchedProxyIds = new Set<string>();
   const matchedExpectedIds = new Set<string>();
 
-  // ── 第一步：known_noise 直接处理 ─────────────────────────────────────────
+  // ── 第一步：server_side_attribution 直接处理 ─────────────────────────────
   // P1-3：attribution.category 为唯一权威，无 attribution 时落 unknown（不 fallback 到 parser）。
   // parser category 是 wire schema 的保守分类，不参与 reconcile 决策。
   for (const pseg of snapshot.segments) {
@@ -95,7 +95,8 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
     matchedProxyIds.add(pseg.id);
     const align: AlignmentRef = {
       id: nextAlignId(),
-      matchKind: "inferred",
+      // P3-2：server_side_attribution 不构成内容对账，复现层级标 presence
+      comparisonGrade: "presence",
       confidence: "exact",
       expectedSegmentIds: [],
       proxySegmentIds: [pseg.id],
@@ -106,7 +107,8 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
     alignments.push(align);
     findings.push({
       id: nextFindingId(),
-      type: "known_noise",
+      // P3-2：known_noise 重命名为 server_side_attribution
+      type: "server_side_attribution",
       severity: "info",
       category: "billing_noise",
       proxySegmentIds: [pseg.id],
@@ -269,8 +271,8 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
           const findingType: FindingType =
             matchResult.alignment.basis === "category"
               ? "suspect_match"
-              : matchResult.alignment.matchKind === "exact" ||
-                  matchResult.alignment.matchKind === "normalized"
+              : matchResult.alignment.comparisonGrade === "exact" ||
+                  matchResult.alignment.comparisonGrade === "normalized"
                 ? "matched"
                 : "approximate_match";
 
@@ -291,12 +293,13 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
       }
     }
 
-    // unmatched expected segments
+    // expected 侧未匹配的 segment
     for (const eseg of expectedSegs) {
       if (matchedExpectedIds.has(eseg.id)) continue;
       findings.push({
         id: nextFindingId(),
-        type: "unmatched_expected_segment",
+        // P3-2：unmatched_expected_segment 重命名为 expected_only
+        type: "expected_only",
         severity: "warning",
         category: eseg.category,
         expectedSegmentIds: [eseg.id],
@@ -323,8 +326,10 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
       const effectiveCat = attr.category;
       const align: AlignmentRef = {
         id: nextAlignId(),
-        matchKind: "inferred",
-        confidence: attr.confidence,
+        // P3-2：attribution_only 无 expected 内容锚点，复现层级标 presence
+        comparisonGrade: "presence",
+        // alignment confidence 沿用 attribution 的 materializationConfidence（能否复现）
+        confidence: attr.materializationConfidence,
         expectedSegmentIds: [],
         proxySegmentIds: [pseg.id],
         // 用独立 basis 与 presence 预留路径分离，确保 coverage 桶正交
@@ -334,8 +339,9 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
       alignments.push(align);
       findings.push({
         id: nextFindingId(),
-        type: "unmatched_expected_segment" as FindingType,
-        severity: "warning" as FindingSeverity,
+        // P3-2：attribution-only 缺口用专属 finding type，不再借用 expected_only
+        type: "attribution_only",
+        severity: "warning",
         category: effectiveCat,
         proxySegmentIds: [pseg.id],
         attributionIds: [attr.id],
@@ -348,7 +354,8 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
       // 完全无法解释（无 attribution，parser category 仅作 draft，finding category 用 "unknown"）
       findings.push({
         id: nextFindingId(),
-        type: "unmatched_proxy_segment",
+        // P3-2：unmatched_proxy_segment 重命名为 proxy_only
+        type: "proxy_only",
         severity: "critical",
         category: "unknown",
         proxySegmentIds: [pseg.id],
@@ -442,7 +449,7 @@ function matchOneExpected(
       const pseg = candidates[0];
       return {
         alignment: {
-          matchKind: "exact",
+          comparisonGrade: "exact",
           confidence: "exact",
           expectedSegmentIds: [eseg.id],
           proxySegmentIds: [pseg.id],
@@ -464,7 +471,7 @@ function matchOneExpected(
       const pseg = candidates[0];
       return {
         alignment: {
-          matchKind: "normalized",
+          comparisonGrade: "normalized",
           confidence: "estimated",
           expectedSegmentIds: [eseg.id],
           proxySegmentIds: [pseg.id],
@@ -486,7 +493,7 @@ function matchOneExpected(
       const pseg = candidates[0];
       return {
         alignment: {
-          matchKind: "exact",
+          comparisonGrade: "exact",
           confidence: "exact",
           expectedSegmentIds: [eseg.id],
           proxySegmentIds: [pseg.id],
@@ -503,7 +510,7 @@ function matchOneExpected(
   }
 
   // M3.5: ruleId match（R9 attribution-generated segments 专用）
-  // P2-3：命中后根据 rule.reconciliation.comparePolicy 决定 matchKind/confidence。
+  // P2-3：命中后根据 rule.reconciliation.comparePolicy 决定 comparisonGrade/confidence。
   const esegRuleId = eseg.metadata?.ruleId as string | undefined;
   if (esegRuleId) {
     const candidates = proxySegs.filter((s) => {
@@ -522,31 +529,31 @@ function matchOneExpected(
       const policy = rule?.reconciliation?.comparePolicy ?? "char_diff";
       const mat = rule?.reconstruction?.materialization;
 
-      // P2-3：comparePolicy 决定 M3.5 命中后的 matchKind/confidence（不影响是否匹配）
-      // ruleId match 是独立对齐机制；comparePolicy 只影响对齐的"质量"标注和 finding 生成。
-      // presence_only/structural → heuristic/inferred（只验存在）
-      // raw_hash/normalized_hash → 理论上精确，但 M1/M2 会先命中，走到这里说明 hash 已不同 → heuristic
-      // char_diff + exact_text   → exact/exact（已通过 contentPattern 精确重建）
-      // char_diff + 其他材质      → heuristic/inferred
-      let matchKind: AlignmentRef["matchKind"] = "heuristic";
-      let alignConfidence: AlignmentRef["confidence"] = "inferred";
+      // P2-3 / P3-2：comparePolicy + materialization 决定 comparisonGrade
+      //   policy=presence_only/structural → presence（仅验存在）
+      //   policy=raw_hash/normalized_hash → presence（M1/M2 已先命中精确 hash，走到这里说明 hash 不等）
+      //   policy=char_diff + materialization=exact_text → template（contentPattern 字面）
+      //   policy=char_diff + 其他材质 → regex（normalized_text/shape，不能字面复现）
+      let comparisonGrade: ComparisonGrade;
+      let alignConfidence: AlignmentRef["confidence"];
 
       if (policy === "presence_only" || policy === "structural") {
-        matchKind = "heuristic";
+        comparisonGrade = "presence";
         alignConfidence = "inferred";
       } else if (policy === "raw_hash" || policy === "normalized_hash") {
-        // M1/M2 先命中精确 hash → 走到 M3.5 说明 hash 不等，降为 heuristic
-        matchKind = "heuristic";
+        comparisonGrade = "presence";
         alignConfidence = "inferred";
+      } else if (mat === "exact_text") {
+        comparisonGrade = "template";
+        alignConfidence = "exact";
       } else {
-        // char_diff（及 known_noise，但 known_noise 已在 step 1 处理）
-        matchKind = mat === "exact_text" ? "exact" : "heuristic";
-        alignConfidence = mat === "exact_text" ? "exact" : "inferred";
+        comparisonGrade = "regex";
+        alignConfidence = "inferred";
       }
 
       return {
         alignment: {
-          matchKind,
+          comparisonGrade,
           confidence: alignConfidence,
           expectedSegmentIds: [eseg.id],
           proxySegmentIds: [pseg.id],
@@ -581,7 +588,8 @@ function matchOneExpected(
     const pseg = heuristicCandidates[0];
     return {
       alignment: {
-        matchKind: "heuristic",
+        // P3-2：M4 仅靠 category+role 启发式，无内容锚点，复现层级标 presence
+        comparisonGrade: "presence",
         confidence: "inferred",
         expectedSegmentIds: [eseg.id],
         proxySegmentIds: [pseg.id],
@@ -694,7 +702,11 @@ function buildAttrBySegId(
 
   const set = (segId: string, attr: ProxySegmentAttribution) => {
     const existing = m.get(segId);
-    if (!existing || confidenceRank(attr.confidence) > confidenceRank(existing.confidence)) {
+    // P3-2：用 materializationConfidence 排名（"能否复现"是 reconcile 关心的维度）
+    if (
+      !existing ||
+      confidenceRank(attr.materializationConfidence) > confidenceRank(existing.materializationConfidence)
+    ) {
       m.set(segId, attr);
     }
   };
