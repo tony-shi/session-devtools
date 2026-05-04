@@ -224,7 +224,8 @@ export interface ContextLedgerRule {
 //   - exactTextExpected = true：内容静态，proxy 与 expected 应完全一致
 export const CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-identity.v1",
-  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
+  // fixture single-tool-call (_cliVersion=2.1.126) 验证：system[1].text === contentPattern（57 chars）
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
   description:
     "Claude Code system prompt 的固定身份标识行（57 chars）。" +
     "仅用于 attribution 识别锚点与 reconstruction 注入，不归因整段 system prompt 内容来源。",
