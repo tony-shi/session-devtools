@@ -983,6 +983,9 @@
     "unexplainedCoverage": 0.0707,
     "regexOverreachRisk": 0,
     "alignedTextDrift": 0,
+    "suspectMatchChars": 900,
+    "suspectMatchCount": 1,
+    "alignedTextDriftChars": 0,
     "byCategory": [
       {
         "category": "system_prompt",

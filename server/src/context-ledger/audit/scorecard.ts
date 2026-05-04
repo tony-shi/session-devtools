@@ -59,10 +59,10 @@ export function computeScorecard(
   const { coverage } = report;
   const proxyChars = coverage.proxyChars;
 
-  // suspect match chars 从 char diff summary 取
-  const suspectMatchChars = diff.summary.suspectMatchChars;
-  const alignedTextDriftChars = diff.summary.totalCharDriftAbsolute;
-  const falseReliableMatchCount = diff.summary.suspectMatch;
+  // P3-3：suspect / drift 指标均从 reconcile 权威读，不再从 char-diff 倒推
+  const suspectMatchChars = coverage.suspectMatchChars;
+  const alignedTextDriftChars = coverage.alignedTextDriftChars;
+  const falseReliableMatchCount = coverage.suspectMatchCount;
 
   const prefixIncompleteCount = report.expected?.metadata?.prefixIncomplete ? 1 : 0;
   const sourceTextUnavailableCount = diff.entries.filter(

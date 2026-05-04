@@ -844,6 +844,8 @@ function computeCoverage(
   let unexplainedProxyChars = 0;
   let serverSideChars = 0;       // billing_noise，basis=server_side_attribution
   let attributionOnlyChars = 0;  // 有归因但无 expected（U1-U5 缺口）
+  // P3-3：suspect_match 字符数（category+role heuristic，无内容锚点），reconcile 层权威
+  let suspectMatchChars = 0;
 
   const catMap = new Map<
     SegmentCategory,
@@ -888,6 +890,8 @@ function computeCoverage(
       entry.matchedTokens += tokens;
     } else {
       unexplainedProxyChars += chars;
+      // P3-3：suspect_match 是 unexplained 的子集（category heuristic，无内容锚点）
+      if (isSuspect) suspectMatchChars += chars;
     }
   }
 
@@ -995,6 +999,11 @@ function computeCoverage(
     serverSideChars,
     attributionOnlyChars,
     unexplainedChars: unexplainedProxyChars,
+    // P3-3：suspect_match 是 unexplainedChars 的子集（category heuristic，无内容锚点）
+    suspectMatchChars,
+    suspectMatchCount: suspectProxyIds.size,
+    // P3-3：evidence-backed drift 绝对字符数，供 scorecard 直接使用
+    alignedTextDriftChars: evidenceBackedCharDrift,
     // 覆盖率比例
     wireExactCoverage: safeRatio(wireExactChars),
     canonicalExactCoverage: safeRatio(canonicalExactChars),

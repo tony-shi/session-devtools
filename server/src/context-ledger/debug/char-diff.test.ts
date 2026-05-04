@@ -115,6 +115,7 @@ function makeMinimalReport(
       regexCoverage: 0, presenceCoverage: 0, serverSideCoverage: 0,
       attributionOnlyCoverage: 0, unexplainedCoverage: 1,
       regexOverreachRisk: 0, alignedTextDrift: 0,
+      suspectMatchChars: 0, suspectMatchCount: 0, alignedTextDriftChars: 0,
     },
     generatedAt: "2026-01-01T00:00:00Z",
   };

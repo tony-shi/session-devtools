@@ -7,6 +7,7 @@ import { parseClaudeJsonlMutations } from "./jsonl-mutation-parser";
 import { reconstructExpectedClaudeContext } from "./expected-context-reconstructor";
 import { buildTargetRequest } from "./target-request-builder";
 import { MOCK_RECONCILIATION_REPORT } from "./report";
+import { computeCharDiff } from "./debug/char-diff";
 import type { ReconciliationReport } from "./types";
 
 const FIXTURE_DIR = new URL(
@@ -452,6 +453,62 @@ describe("cross-fixture invariants", () => {
     expect(policyCounts["presence_only"] ?? 0).toBeGreaterThan(0);
     expect(policyCounts["normalized_hash"] ?? 0).toBeGreaterThan(0);
     expect(policyCounts["structural"] ?? 0).toBeGreaterThan(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P3-3：char-diff 与 reconciliation 指标合一（fixture 驱动验证）
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("P3-3: reconcile coverage 与 char-diff 指标一致性（fixture 驱动）", () => {
+  // suspectMatchChars：reconcile.coverage 应与 char-diff.summary 的手动计算值一致
+  test("suspectMatchChars：reconcile 权威值与 char-diff 手动聚合值一致（所有 fixture）", () => {
+    for (const caseName of Object.keys(FIXTURE_CASES)) {
+      const report = runFixture(caseName);
+      const diff = computeCharDiff(report);
+
+      // char-diff 侧手动聚合（P3-3 前的旧路径：从 diff.entries 聚合）
+      const charDiffSuspectChars = diff.entries
+        .filter((e) => e.kind === "suspect_match")
+        .reduce((acc, e) => acc + (e.proxyTexts ?? []).reduce((s, t) => s + t.chars, 0), 0);
+
+      // reconcile 权威（P3-3 新路径）
+      const reconcileSuspectChars = report.coverage.suspectMatchChars;
+
+      expect(reconcileSuspectChars).toBe(charDiffSuspectChars);
+    }
+  });
+
+  test("suspectMatchCount：reconcile 权威值与 char-diff suspectMatch 条目数一致（所有 fixture）", () => {
+    for (const caseName of Object.keys(FIXTURE_CASES)) {
+      const report = runFixture(caseName);
+      const diff = computeCharDiff(report);
+      expect(report.coverage.suspectMatchCount).toBe(diff.summary.suspectMatch);
+    }
+  });
+
+  test("alignedTextDriftChars：reconcile 权威值与 char-diff totalCharDriftAbsolute 一致（所有 fixture）", () => {
+    for (const caseName of Object.keys(FIXTURE_CASES)) {
+      const report = runFixture(caseName);
+      const diff = computeCharDiff(report);
+      // 两者应相等（reconcile 按 alignments 逐段聚合，char-diff 按 entries 逐段聚合）
+      expect(report.coverage.alignedTextDriftChars).toBe(diff.summary.totalCharDriftAbsolute);
+    }
+  });
+
+  test("suspectMatchChars 是 unexplainedChars 的子集（≤ unexplainedChars）", () => {
+    for (const caseName of Object.keys(FIXTURE_CASES)) {
+      const report = runFixture(caseName);
+      expect(report.coverage.suspectMatchChars).toBeLessThanOrEqual(report.coverage.unexplainedChars);
+    }
+  });
+
+  // mock report 也覆盖：prior_session_guess 是 suspect_match（basis=category），应计入 suspectMatchChars
+  test("mock report: suspectMatchChars > 0（prior_session_guess 是 suspect_match）", () => {
+    const report = MOCK_RECONCILIATION_REPORT;
+    // mock report coverage 已手动初始化 suspectMatchChars=900，验证不为 0
+    expect(report.coverage.suspectMatchChars).toBeGreaterThan(0);
+    expect(report.coverage.suspectMatchCount).toBeGreaterThan(0);
   });
 });
 

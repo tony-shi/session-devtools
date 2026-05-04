@@ -470,6 +470,13 @@ export interface CoverageSummary {
   attributionOnlyChars: number;
   // 无归因也无 expected（unknown / suspect_match）
   unexplainedChars: number;
+  // P3-3：suspect_match（category+role heuristic，无内容锚点）字符数和 alignment 数
+  // reconcile 层权威计算，scorecard 不再从 char-diff 读
+  suspectMatchChars: number;
+  suspectMatchCount: number;
+  // P3-3：evidence-backed matched 中 |expectedChars - proxyChars| 之和（绝对字符数）
+  // alignedTextDrift = alignedTextDriftChars / evidenceBackedProxyCharsForDrift
+  alignedTextDriftChars: number;
 
   // 覆盖率比例（对应桶的 chars / proxyChars）
   wireExactCoverage: number;

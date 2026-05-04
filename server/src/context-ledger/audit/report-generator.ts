@@ -218,7 +218,7 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
   lines.push(`| **R9 虚高**：R9 把 proxy 反写 system/tools expected，导致 evidenceBacked 大幅虚高 | ✅ P0-1 已修复（wireExact 从 ~95% 降到真实的 15-40%，template 45-60%，regex 13-20%） | — |`);
   lines.push(`| **raw body 丢失**：discovery.ts 用解析后对象覆盖了原始 reqBody 字符串，wire bytes 信息在此处丢失 | ⚠️ 已确认（P0-3 阻塞点） | P0-3 保留三层 body |`);
   lines.push(`| **rule 漂移**：exact_text rule 与本地 CLI 2.1.126 严重漂移（40 exact rules：1 unique / 5 multi / 34 missing） | ⚠️ 已确认（verify-rules-against-cli.ts） | P3-5 verifiedFor 降级 |`);
-  lines.push(`| **char-diff vs reconcile 双源**：scorecard alignedTextDriftChars 从 diff.summary 取，与 reconcile 口径不同 | ⚠️ 已确认 | P3-3 reconcile 为权威 |`);
+  lines.push(`| **char-diff vs reconcile 双源**：scorecard suspectMatchChars/Count/alignedTextDriftChars 均从 reconcile 读，char-diff 仅作渲染层 | ✅ P3-3 已修复 | — |`);
   lines.push(`| **baseline 跨 mode 比较** | ✅ E0 已修复（latest/baseline 按 mode 分域） | — |`);
   lines.push(``);
   lines.push(`> wireExact + template 是当前最可信的 exact coverage；regex + attrOnly 反映正向重建尚未覆盖的段。`);

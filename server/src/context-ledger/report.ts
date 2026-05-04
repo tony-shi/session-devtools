@@ -742,6 +742,10 @@ export const MOCK_RECONCILIATION_REPORT = {
     unexplainedCoverage: 0.0707,     // 1200/16970
     regexOverreachRisk: 0,
     alignedTextDrift: 0,
+    // P3-3：prior_session(900) は suspect_match，unexplainedChars 的子集
+    suspectMatchChars: 900,
+    suspectMatchCount: 1,
+    alignedTextDriftChars: 0,
     byCategory: [
       {
         category: "system_prompt",
