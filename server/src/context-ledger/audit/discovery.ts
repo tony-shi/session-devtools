@@ -369,8 +369,10 @@ export function discoverFixtures(fixtureNames?: string[]): DiscoveryResult {
     if (!existsSync(proxyFile)) continue;
 
     let raw: Record<string, unknown>;
+    let proxyFileText: string;
     try {
-      raw = JSON.parse(readFileSync(proxyFile, "utf-8")) as Record<string, unknown>;
+      proxyFileText = readFileSync(proxyFile, "utf-8");
+      raw = JSON.parse(proxyFileText) as Record<string, unknown>;
     } catch {
       continue;
     }
@@ -383,6 +385,15 @@ export function discoverFixtures(fixtureNames?: string[]): DiscoveryResult {
     const hash = queryKeyHash(key);
 
     const fixtureSource = detectFixtureSource(raw);
+
+    // P0-3：fixture 的 reqBody 内嵌在 proxy-request.json 的 "reqBody" 字段中。
+    // 真实流量中 _rawReqBodyText 是 proxy 落盘的原始 UTF-8 字符串；fixture 场景下
+    // 最接近的等价是把 reqBody 字段重新序列化，保证 rawRequestBytesHash 非 null。
+    const fixtureReqBody = raw["reqBody"];
+    const fixtureRawReqBodyText = fixtureReqBody !== undefined
+      ? JSON.stringify(fixtureReqBody)
+      : undefined;
+
     const proxy: DiscoveredProxyRecord = {
       queryKey: key,
       queryKeyHash: hash,
@@ -392,7 +403,8 @@ export function discoverFixtures(fixtureNames?: string[]): DiscoveryResult {
       sessionId,
       agentKind: "claude-code",
       // _fixtureSource 元字段（不影响 pipeline，仅供 audit 报告的 fixture matrix 使用）
-      raw: { ...raw, _fixtureName: name, _fixtureSource: fixtureSource },
+      // _rawReqBodyText 用于 proxy-snapshot-parser 计算 rawRequestBytesHash（P0-3）
+      raw: { ...raw, _fixtureName: name, _fixtureSource: fixtureSource, _rawReqBodyText: fixtureRawReqBodyText },
     };
 
     if (existsSync(jsonlFile)) {

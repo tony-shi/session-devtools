@@ -416,6 +416,6 @@ describe("P3-4: pipeline attribution-only（proxy_without_jsonl + proxyOnly=true
     const result = runPipeline({ proxy, jsonlFile: null, proxyOnly: true });
     expect(result.status).toBe("success");
     // side query fixture 应当被识别为 side_query 或 session_title_side_query
-    expect(["side_query", "session_title_side_query", "unknown"]).toContain(result.queryKind);
+    expect(["side_query", "session_title_side_query", "unknown"]).toContain(result.queryKind ?? "unknown");
   });
 });

@@ -913,14 +913,16 @@ function computeCoverage(
     raw_hash: 6, normalized_hash: 5, tool_use_id: 4, rule_id: 3,
     server_side_attribution: 2, harness_rule: 1, attribution_only: 1, category: 0,
   };
-  const proxyBestBasis = new Map<string, { basis: string; ruleId?: string }>();
+  const proxyBestBasis = new Map<string, { basis: string; ruleId?: string; comparisonGrade?: string }>();
   for (const align of alignments) {
     const rank = BASIS_RANK[align.basis] ?? 0;
     for (const pid of align.proxySegmentIds) {
       const cur = proxyBestBasis.get(pid);
       if (!cur || (BASIS_RANK[cur.basis] ?? 0) < rank) {
         const ruleId = align.note?.match(/^ruleId match: ([^\s]+)/)?.[1];
-        proxyBestBasis.set(pid, { basis: align.basis, ruleId });
+        // P2-3：保存 comparisonGrade，让 rule_id 分支能正确分桶
+        // raw_hash/normalized_hash policy 失败后走 M3.5 时 comparisonGrade=presence，不应计入 template
+        proxyBestBasis.set(pid, { basis: align.basis, ruleId, comparisonGrade: align.comparisonGrade });
       }
     }
   }
@@ -945,11 +947,17 @@ function computeCoverage(
         canonicalExactChars += chars;
         break;
       case "rule_id": {
-        const rule = m.ruleId ? getContextLedgerRuleById(m.ruleId) : undefined;
-        if (rule?.reconstruction?.materialization === "exact_text") {
-          templateChars += chars;
+        // P2-3：comparisonGrade=presence 表示 raw_hash/normalized_hash policy 失败后的降级
+        // （M1/M2 hash 不等，M3.5 只靠 ruleId 识别存在），不应计入 template/regex 覆盖
+        if (m.comparisonGrade === "presence") {
+          presenceChars += chars;
         } else {
-          regexChars += chars;
+          const rule = m.ruleId ? getContextLedgerRuleById(m.ruleId) : undefined;
+          if (rule?.reconstruction?.materialization === "exact_text") {
+            templateChars += chars;
+          } else {
+            regexChars += chars;
+          }
         }
         break;
       }

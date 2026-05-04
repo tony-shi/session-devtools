@@ -220,7 +220,8 @@ export function writeIndex(
       proxySourceRef: r.proxySourceRef,
       jsonlSourceRef: r.jsonlSourceRef,
       verdict: delta?.verdict ?? (r.status === "skipped" ? "skipped" : r.status === "failed" ? "failed" : "ok"),
-      changeClass: delta?.changeClass ?? (isNew ? "new" : r.status === "skipped" ? "skipped" : "failed"),
+      // skipped/failed 状态优先于 isNew，避免 proxy_without_jsonl 被误标为 "new"
+      changeClass: delta?.changeClass ?? (r.status === "skipped" ? "skipped" : r.status === "failed" ? "failed" : isNew ? "new" : "unchanged"),
       reasons: delta?.reasons ?? (r.skipReason ? [r.skipReason] : r.error ? ["pipeline_error"] : []),
       queryKind: r.queryKind,
       v2,

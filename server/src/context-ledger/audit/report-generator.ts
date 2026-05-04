@@ -211,17 +211,36 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
     lines.push(``);
   }
 
-  // T0 已知限制 section
-  lines.push(`## 已知限制与已确认风险（T0 状态）`, ``);
-  lines.push(`| 问题 | 状态 | 计划 |`);
-  lines.push(`|------|------|------|`);
-  lines.push(`| **R9 虚高**：R9 把 proxy 反写 system/tools expected，导致 evidenceBacked 大幅虚高 | ✅ P0-1 已修复（wireExact 从 ~95% 降到真实的 15-40%，template 45-60%，regex 13-20%） | — |`);
-  lines.push(`| **raw body 保真**：discovery.ts 同时保留 rawReqBodyText / rawRequestBytesHash / parsedReqBody 三层 | ✅ P0-3 已实现（rawRequestBytesHash 落 snapshot，wireExactCoverage 可用此字段） | — |`);
-  lines.push(`| **rule 漂移**：exact_text rule 与本地 CLI 2.1.126 严重漂移（40 exact rules：1 unique / 5 multi / 34 missing） | ⚠️ 已确认（verify-rules-against-cli.ts） | P3-5 verifiedFor 降级 |`);
-  lines.push(`| **char-diff vs reconcile 双源**：scorecard suspectMatchChars/Count/alignedTextDriftChars 均从 reconcile 读，char-diff 仅作渲染层 | ✅ P3-3 已修复 | — |`);
-  lines.push(`| **baseline 跨 mode 比较** | ✅ E0 已修复（latest/baseline 按 mode 分域） | — |`);
+  // T0 审计说明 section（动态生成，不硬编码"已修复"状态）
+  lines.push(`## 覆盖率口径说明`, ``);
+  const isNoR9 = run.controlFlags?.noR9 === true;
+  const isVerifiedOnly = run.controlFlags?.verifiedOnly === true;
+  const isProxyOnly = run.controlFlags?.proxyOnly === true;
+  lines.push(`本次 run 控制变量：`);
+  lines.push(`- R9 attribution 注入：${isNoR9 ? "**已关闭**（--no-r9）" : "开启（injectFromAttributions=true）"}`);
+  lines.push(`- verifiedOnly：${isVerifiedOnly ? "**已开启**（仅 verifiedFor 匹配的 rule 进入 expected）" : "关闭（全量 rule）"}`);
+  lines.push(`- proxyOnly：${isProxyOnly ? "**已开启**（attribution-only 路径）" : "关闭"}`);
   lines.push(``);
-  lines.push(`> wireExact + template 是当前最可信的 exact coverage；regex + attrOnly 反映正向重建尚未覆盖的段。`);
+  if (run.ruleRegistrySummary) {
+    const rs = run.ruleRegistrySummary;
+    lines.push(`rule registry 状态：`);
+    lines.push(`- 支持版本：\`${rs.supportedVersion}\``);
+    lines.push(`- 总规则数：${rs.totalRules}，已验证：${rs.verifiedRules}，未验证：${rs.unverifiedRules}`);
+    if (rs.unverifiedRules > 0) {
+      lines.push(`- ⚠️ ${rs.unverifiedRules} 条规则 verifiedFor=null，template/regex 覆盖率可能来自未经验证的规则`);
+    }
+    if (rs.lastCliVerificationNote) {
+      lines.push(`- CLI 对账备注：${rs.lastCliVerificationNote}`);
+    }
+    lines.push(``);
+  }
+  lines.push(`覆盖率桶含义：`);
+  lines.push(`- **wireExact**：raw_hash 精确匹配（basis=raw_hash/tool_use_id），最可信`);
+  lines.push(`- **template**：rule contentPattern 正向重建后 ruleId 对齐（basis=rule_id + exact_text materialization）`);
+  lines.push(`- **regex**：normalized_text/shape rule 的 ruleId 对齐`);
+  lines.push(`- **presence**：仅验证段存在（raw_hash/normalized_hash policy 失败后的降级，或 shape/presence rule）`);
+  lines.push(`- **attrOnly**：有归因但无 expected（P0-1 修复后，R9 关闭时此桶大幅增加）`);
+  lines.push(`- **unexplained**：无归因无 expected`);
   lines.push(``);
 
   // Next actions
