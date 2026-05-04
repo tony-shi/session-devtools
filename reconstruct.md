@@ -79,6 +79,19 @@ bun run reconstruct:commands -- --batch 4
 CONTEXT_AUDIT_HOME="$RECON_AUDIT_HOME" bun run context:audit:fixtures --baseline "$RECON_BASELINE_RUN_ID" --no-update-latest
 ```
 
+如果你平时用的是 zsh alias（例如 `alias claude-free='ANTHROPIC_BASE_URL=... claude ...'`），不要在生成命令里直接写 alias 名。非交互 `bash` 不会读取 zsh alias，也不会展开 alias。把 alias 的内容作为 shell 片段传给生成器：
+
+```bash
+export RECON_CLAUDE_CMD='ANTHROPIC_BASE_URL=http://internal-proxy.example:8742 claude --disallowed-tools "WebSearch(*)" --dangerously-skip-permissions'
+bun run reconstruct:commands -- --batch 1 --no-permission-flags --no-tool-flags
+```
+
+或者把 alias 做成真实可执行文件放进 PATH，例如 `~/.local/bin/claude-free`，再用：
+
+```bash
+bun run reconstruct:commands -- --batch 1 --claude-cmd claude-free --no-permission-flags --no-tool-flags
+```
+
 注意：`claude --worktree` 从当前 `HEAD` 创建新 worktree。若本文件或并行脚本尚未提交到 develop，新 worktree 不会自动包含这些文件；但生成命令时 prompt 已内嵌任务内容，所以 worker 不依赖新 worktree 中存在本文件。若希望 worker 也能读取本文件，请先把前置准备改动提交到 develop。
 
 ---

@@ -23,6 +23,7 @@ const VALUE_FLAGS = new Set([
   "--model",
   "--effort",
   "--permission-mode",
+  "--claude-cmd",
 ]);
 
 const BATCHES: Record<string, string[]> = {
@@ -48,10 +49,12 @@ function usage(exitCode = 0): never {
 常用：
   export RECON_AUDIT_HOME="$PWD/.audit/reconstruct"
   export RECON_BASELINE_RUN_ID="<baselineRunId>"
+  export RECON_CLAUDE_CMD='ANTHROPIC_BASE_URL=http://internal-proxy.example:8742 claude --disallowed-tools "WebSearch(*)" --dangerously-skip-permissions'
   bun run scripts/reconstruct-parallel.ts commands --batch 2
 
 说明：
   - command/commands 只打印命令，不执行。
+  - RECON_CLAUDE_CMD / --claude-cmd 接收 shell 片段，不是 alias 名；非交互 bash 不展开 zsh alias。
   - worker 命令会设置 CONTEXT_AUDIT_HOME="$RECON_AUDIT_HOME"。
   - worker prompt 会要求 fixture audit 使用 --baseline "$RECON_BASELINE_RUN_ID" --no-update-latest。
 `;
@@ -160,7 +163,10 @@ function buildCommand(task: ReconstructTask, args: string[]): string {
   const budget = getOption(args, "--budget") ?? "8";
   const effort = getOption(args, "--effort") ?? "high";
   const model = getOption(args, "--model");
+  const claudeCmd = getOption(args, "--claude-cmd") ?? process.env.RECON_CLAUDE_CMD ?? "claude";
   const bypass = hasFlag(args, "--bypass");
+  const includePermissionFlags = !hasFlag(args, "--no-permission-flags");
+  const includeToolFlags = !hasFlag(args, "--no-tool-flags");
   const permissionMode = getOption(args, "--permission-mode") ?? (bypass ? "bypassPermissions" : "acceptEdits");
   const allowedTools = [
     "Read",
@@ -180,17 +186,19 @@ function buildCommand(task: ReconstructTask, args: string[]): string {
 
   const lines = [
     `CONTEXT_AUDIT_HOME="${auditHome}" \\`,
-    `claude-free -p \\`,
+    `${claudeCmd} -p \\`,
     `  --worktree ${shellQuote(task.id)} \\`,
     `  --name ${shellQuote(task.id)} \\`,
     `  --effort ${shellQuote(effort)} \\`,
     `  --max-budget-usd ${shellQuote(budget)} \\`,
-    `  --permission-mode ${shellQuote(permissionMode)} \\`,
   ];
+  if (includePermissionFlags) {
+    lines.push(`  --permission-mode ${shellQuote(permissionMode)} \\`);
+  }
   if (model) {
     lines.push(`  --model ${shellQuote(model)} \\`);
   }
-  if (!bypass) {
+  if (includeToolFlags && !bypass) {
     lines.push(`  --allowedTools ${shellQuote(allowedTools)} \\`);
   }
   lines.push(
@@ -245,4 +253,3 @@ function main(): void {
 }
 
 main();
-
