@@ -540,6 +540,95 @@ describe("materializeHarnessRules", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// reconstruct-04：system rule materialization — identity & billing
+//
+// 验收标准（来自 reconstruct.md Worktree 04）：
+//   - system[1] identity 由 claude-code.system-prompt-identity.v1 正向 exact materialize，
+//     不再是 attribution_only，sourceRef.kind 必须是 harness_rule。
+//   - identity segment 携带正确的 contentRef.text（57 chars，完全匹配 proxy system[1]）。
+//   - billing rule 生成 presence segment，不含 contentRef.text，不能计入 exact。
+//   - verifiedFor = SUPPORTED_CLAUDE_CODE_VERSION 的 identity rule 产出 confidence=exact。
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { SUPPORTED_CLAUDE_CODE_VERSION } from "./rule-registry";
+
+describe("reconstruct-04：system identity rule materialized（not attribution_only）", () => {
+  const IDENTITY_RULE_ID = "claude-code.system-prompt-identity.v1";
+  const IDENTITY_TEXT = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+  // identity rule verifiedFor 必须是 SUPPORTED_CLAUDE_CODE_VERSION
+  test("identity rule verifiedFor === SUPPORTED_CLAUDE_CODE_VERSION", () => {
+    const rule = CONTEXT_LEDGER_RULES.find((r) => r.ruleId === IDENTITY_RULE_ID);
+    expect(rule).toBeDefined();
+    expect(rule!.verifiedFor).toBe(SUPPORTED_CLAUDE_CODE_VERSION);
+  });
+
+  // materializeHarnessRules 产出 identity exact_text segment
+  test("identity rule 产出 exact_text segment，sourceRef.kind=harness_rule", () => {
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, { queryId: "q" });
+    const identitySeg = result.segments.find((s) => s.metadata?.ruleId === IDENTITY_RULE_ID);
+    expect(identitySeg).toBeDefined();
+    expect(identitySeg!.metadata?.harness_rule_materialization).toBe("exact_text");
+    expect(identitySeg!.sourceRefs.every((r) => r.kind === "harness_rule")).toBe(true);
+    expect(identitySeg!.sourceRefs.some((r) => r.kind === "proxy")).toBe(false);
+  });
+
+  // identity segment 携带正确 contentRef.text（57 chars）
+  test("identity segment contentRef.text 与 proxy system[1] 文本一致（57 chars）", () => {
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, { queryId: "q" });
+    const identitySeg = result.segments.find((s) => s.metadata?.ruleId === IDENTITY_RULE_ID);
+    expect(identitySeg!.contentRef?.text).toBe(IDENTITY_TEXT);
+    expect(identitySeg!.contentRef?.charCount).toBe(IDENTITY_TEXT.length);
+    expect(identitySeg!.rawHash?.startsWith("sha256:")).toBe(true);
+  });
+
+  // identity rule 已 verified → appliedRule confidence = exact
+  test("identity appliedRule confidence=exact（verified rule）", () => {
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, { queryId: "q" });
+    const applied = result.appliedRules.find((r) => r.ruleId === IDENTITY_RULE_ID);
+    expect(applied).toBeDefined();
+    expect(applied!.confidence).toBe("exact");
+    expect(applied!.source).toBe("harness_rule");
+  });
+
+  // billing rule 产出 presence segment，不含 contentRef.text
+  test("billing rule 产出 presence segment，不含 contentRef.text", () => {
+    const BILLING_RULE_ID = "claude-code.billing-noise.v1";
+    const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, { queryId: "q" });
+    const billingSeg = result.segments.find((s) => s.metadata?.ruleId === BILLING_RULE_ID);
+    expect(billingSeg).toBeDefined();
+    expect(billingSeg!.metadata?.harness_rule_materialization).toBe("presence");
+    // presence segment 不伪造 text
+    expect(billingSeg!.contentRef?.text).toBeUndefined();
+    // billing_noise 不应有 rawHash（无 text 则无 hash）
+    expect(billingSeg!.rawHash).toBeUndefined();
+    // billing section 和 category 正确
+    expect(billingSeg!.section).toBe("system");
+    expect(billingSeg!.category).toBe("billing_noise");
+  });
+
+  // reconstructExpectedClaudeContext 集成：identity 段存在于输出 segments
+  test("reconstructExpectedClaudeContext 包含 identity rule-materialized segment", () => {
+    const ts = loadProxyTs("single-tool-call");
+    const parsed = parseClaudeJsonlMutations(loadJsonl("single-tool-call"), {
+      jsonlFile: "server/test/fixtures/context-reconstruction/single-tool-call/session.jsonl",
+    });
+    const ctx = reconstructExpectedClaudeContext({
+      mutations: parsed.mutations,
+      boundary: { queryId: "q-identity", proxyTimestamp: ts, sessionId: parsed.sessionId },
+    });
+    const identitySeg = ctx.segments.find((s) => s.metadata?.ruleId === IDENTITY_RULE_ID);
+    expect(identitySeg).toBeDefined();
+    // sourceRef 必须是 harness_rule，不含 proxy
+    expect(identitySeg!.sourceRefs.every((r) => r.kind === "harness_rule")).toBe(true);
+    expect(identitySeg!.metadata?.harness_rule_materialization).toBe("exact_text");
+    expect(identitySeg!.contentRef?.text).toBe(IDENTITY_TEXT);
+    // ruleVerified=true，因为 verifiedFor = SUPPORTED_CLAUDE_CODE_VERSION
+    expect(identitySeg!.metadata?.ruleVerified).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // P1-2：task_reminder smoosh 加法重建
 // ─────────────────────────────────────────────────────────────────────────────
 

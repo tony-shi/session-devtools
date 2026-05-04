@@ -726,6 +726,8 @@ function computeCoverage(
   }
 
   // 从 alignments 计算 evidence-backed matched 的 char drift（|expectedChars - proxyChars|）
+  // 注意：normalized_text materialization 的 expected segment 没有 contentText（charCount=0），
+  // 但 proxy 有真实内容（pChars>0），这种 drift 也应计入——与 char-diff 计算口径对齐。
   const expectedById = new Map((expected?.segments ?? []).map((s) => [s.id, s]));
   let evidenceBackedCharDrift = 0;
   let evidenceBackedProxyCharsForDrift = 0;

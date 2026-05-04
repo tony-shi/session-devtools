@@ -140,6 +140,12 @@ interface FixtureExpect {
 // ── v2.1.126 fixtures（86d62994 session, 2026-05-01）────────────────────────
 // 全部 4 个主场景 fixture 已更新为 v2.1.126，旧 v2.1.119 版本废弃。
 // session JSONL 包含 247 records（promptId bd75b839），版本 2.1.126.507。
+// rule materializer 每次 reconstructExpectedClaudeContext 固定产出 7 个 segment：
+//   identity（exact_text, verified）+ billing_noise（presence）+ environment（normalized_text）+
+//   4 × static system_prompt（system-section, doing-tasks, actions-section, tone-style, text-output 等）
+// 下方所有 expectedSegmentCount 均包含这 7 个 rule-materialized segments。
+const RULE_MATERIALIZED_SEGMENT_COUNT = 7;
+
 const FIXTURE_CASES: Record<string, FixtureExpect> = {
   "system-tools-overhead": {
     proxySegmentCount: 59,   // 12 system + 40 tools + 1 message（仅第一条 user prompt，无 tool call）
@@ -390,6 +396,64 @@ describe("cross-fixture invariants", () => {
       for (const a of attrOnly) {
         expect(a.basis).toBe("attribution_only");
       }
+    }
+  });
+
+  // ── reconstruct-04：identity rule materialized，system[1] 不再是 attribution_only ──
+  //
+  // 验收标准：proxy system[1]（"You are Claude Code..."）在 reconcile 后应通过
+  //   rule_id match（basis="rule_id"，comparisonGrade="template"）命中 identity expected segment，
+  //   而不是落入 attribution_only finding。
+  test("reconstruct-04: system[1] identity 通过 rule_id match，不再是 attribution_only（single-tool-call）", () => {
+    const report = runFixture("single-tool-call");
+    const IDENTITY_RULE_ID = "claude-code.system-prompt-identity.v1";
+
+    // identity expected segment 存在
+    const identityExpSeg = report.expected?.segments.find(
+      (s) => s.metadata?.ruleId === IDENTITY_RULE_ID,
+    );
+    expect(identityExpSeg).toBeDefined();
+    // sourceRefs 只有 harness_rule，没有 proxy
+    expect(identityExpSeg!.sourceRefs.every((r) => r.kind === "harness_rule")).toBe(true);
+    // ruleVerified=true（verifiedFor = SUPPORTED_CLAUDE_CODE_VERSION）
+    expect(identityExpSeg!.metadata?.ruleVerified).toBe(true);
+
+    // identity segment 应当被 alignment 命中（raw_hash M1 精确命中，或退而 rule_id M3.5）
+    // raw_hash 比 rule_id 更强：contentPattern 与 proxy 完全一致时直接 M1 命中
+    const identityAlignment = report.alignments.find(
+      (a) => a.expectedSegmentIds.includes(identityExpSeg!.id),
+    );
+    expect(identityAlignment).toBeDefined();
+    expect(["raw_hash", "rule_id"]).toContain(identityAlignment!.basis);
+
+    // identity segment 不应出现在 attribution_only finding 中
+    const attrOnlyForIdentity = report.findings.filter(
+      (f) =>
+        f.type === "attribution_only" &&
+        (f.proxySegmentIds ?? []).some((pid) =>
+          identityAlignment?.proxySegmentIds.includes(pid),
+        ),
+    );
+    expect(attrOnlyForIdentity.length).toBe(0);
+  });
+
+  // billing presence segment 不计入 exact/template 桶
+  test("reconstruct-04: billing presence segment 计入 serverSideChars，不计入 templateChars", () => {
+    const report = runFixture("single-tool-call");
+    // billing_noise proxy segment 应进入 serverSideChars，不进入 templateChars
+    expect(report.coverage.serverSideChars).toBeGreaterThan(0);
+    // templateChars 可以有（来自 identity 和其他 exact_text rule 命中），但不包含 billing
+    const billingProxySegs = report.snapshot.segments.filter(
+      (s) => {
+        const attr = report.proxyAttributions.find((a) => a.proxySegmentIds.includes(s.id));
+        return attr?.category === "billing_noise";
+      }
+    );
+    expect(billingProxySegs.length).toBeGreaterThan(0);
+    // billing proxy segment 的 alignment 必须是 server_side_attribution，不是 rule_id
+    for (const pseg of billingProxySegs) {
+      const align = report.alignments.find((a) => a.proxySegmentIds.includes(pseg.id));
+      expect(align?.basis).toBe("server_side_attribution");
     }
   });
 
