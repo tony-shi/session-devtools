@@ -598,18 +598,17 @@ function mutationToSegment(
   if (tokenEstimate > 0) seg.tokenEstimate = tokenEstimate;
   if (m.toolUseId) seg.toolUseId = m.toolUseId;
 
-  // rawHash：用 contentRef.text 与 proxy-snapshot-parser 同口径的 sha256 短截，
-  // 供 reconciliation engine M1 精确匹配（避免 M4 heuristic 跨 turn 错配）。
-  // tool_use 的文本是 JSON.stringify(input)，tool_result 是原始结果字符串，
-  // 与 proxy-snapshot-parser parseMessageSegments 里的 rawText 构造方式一致。
+  // rawHash / charCount：用 proxyWrapTextForCategory 把 JSONL mutation 的纯内容
+  // 包装成与 proxy rawText 一致的格式，再算 rawHash 和 charCount。
+  // 这样 M1 精确匹配命中后，reconcile 的 alignedTextDrift 也为 0（两侧字符数一致）。
+  // tool_use / tool_result / user_message 无需包装，直接使用原始文本。
   if (m.contentRef?.text) {
-    // TODO(skill-listing-hash-方案A): 当前用 proxyWrapText() 把 JSONL mutation 的纯内容
-    // 包装成与 proxy 一致的格式再算 rawHash，从而命中 M1 精确匹配。
-    // 更彻底的方案B：在 proxy-attribution 层对 <system-reminder> 开头的 messages segment
-    // 进一步区分 skill_listing / prependUserContext / date_change 等子类型，
-    // 并设 ruleId，让 M3.5 ruleId 匹配直接对齐，attribution category 也更精细。
-    // 方案B 的优点：attribution 语义正确，M3.5 比 M1 hash 更鲁棒（内容变化时仍能匹配）。
-    seg.rawHash = sha256Short(proxyWrapTextForCategory(m.category, m.contentRef.text));
+    const wrappedText = proxyWrapTextForCategory(m.category, m.contentRef.text);
+    seg.rawHash = sha256Short(wrappedText);
+    // 包装后字符数与 proxy rawText.length 一致，覆盖 JSONL 原始长度
+    if (wrappedText.length !== m.contentRef.text.length) {
+      seg.charCount = wrappedText.length;
+    }
   }
 
   // lifecycle：与 proxy-attribution 同口径
@@ -866,7 +865,15 @@ function proxyWrapTextForCategory(category: SegmentCategory, text: string): stri
     const header = "The following skills are available for use with the Skill tool:\n\n";
     return `<system-reminder>\n${header}${text}\n</system-reminder>\n`;
   }
-  // local_command_history / tool_use / tool_result / user_message 等：原始文本，无需包装
+  if (category === "local_command_history") {
+    // Claude Code 把每条 local-command string content 放入 array content text block 时，
+    // 会在末尾追加 \n（proxy-snapshot-parser 按 blk.text 原样存为 rawText）。
+    // JSONL mutation 里的 content 是未追加 \n 的原始字符串，需在此补齐。
+    // 实证：所有 fixture 的 proxy text block 均以 \n 结尾，JSONL content 均无尾部 \n。
+    // 参考 sourcemap: messages.ts createSyntheticUserCaveatMessage / formatCommandInputTags
+    return text.endsWith("\n") ? text : text + "\n";
+  }
+  // tool_use / tool_result / user_message 等：原始文本，无需包装
   return text;
 }
 

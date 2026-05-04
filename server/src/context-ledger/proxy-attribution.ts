@@ -27,7 +27,6 @@ import {
   CONTEXT_LEDGER_RULES,
   SUPPORTED_CLAUDE_CODE_VERSION,
   CLAUDE_CODE_BILLING_NOISE_RULE,
-  CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE,
   CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,
 } from "./rule-registry";
 import type { ContextLedgerRule } from "./rule-registry";
@@ -250,23 +249,21 @@ function applyRuleMatch(
     category === "tool_use" || category === "tool_result" ? "jsonl" : "harness_rule";
 
   // P2-2：从 rule.attribution.notesTemplate 渲染 notes，不再用 ruleId 硬编码。
-  // notesTemplate 中 {groupName} 被捕获组值替换；requireGroup 指定的组必须命中才生成此 note。
+  // requireGroup：组必须命中才生成此 note；absentGroup：组缺失时才生成（否定条件）。
   let notes: string[] | undefined;
   const tpl = rule.attribution?.notesTemplate;
-  if (tpl && tpl.length > 0 && groups) {
+  if (tpl && tpl.length > 0) {
     const rendered = tpl
-      .map(({ format, requireGroup }) => {
-        // requireGroup 指定的组缺失时跳过此 note
-        if (requireGroup && !groups[requireGroup]) return null;
-        // 替换 {key} 占位符
-        return format.replace(/\{(\w+)\}/g, (_, k) => groups[k] ?? "?");
+      .map(({ format, requireGroup, absentGroup }) => {
+        // requireGroup 指定的组缺失时跳过
+        if (requireGroup && (!groups || !groups[requireGroup])) return null;
+        // absentGroup 指定的组存在时跳过（"组不存在"才生成）
+        if (absentGroup && groups && groups[absentGroup]) return null;
+        // 替换 {key} 占位符（absentGroup 类 note 通常是固定字符串，无需替换）
+        return format.replace(/\{(\w+)\}/g, (_, k) => (groups && groups[k]) ? groups[k] : "?");
       })
       .filter((n): n is string => n !== null && !n.endsWith("?"));
     if (rendered.length > 0) notes = rendered;
-  }
-  // context-management 特殊处理：无 git repo 时补充说明性 note
-  if (rule.ruleId === CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE.ruleId && groups && !groups["currentBranch"]) {
-    notes = ["no_git_repo: gitStatus block absent"];
   }
 
   // P1-1：生成结构化 evidence（regex/template 命中时）

@@ -143,10 +143,13 @@ export interface ContextLedgerRule {
     // 纯文档性字段，attribution 代码通过 exec() 提取对应字段后存入 metadata。
     captureGroups?: Record<string, string>;
     // P2-2：notes 模板，attribution 主流程根据此字段渲染 notes，不再用 ruleId 硬编码。
-    // format 中 {groupName} 会被捕获组值替换；requireGroup 指定必须命中的组才生成此 note。
+    // format 中 {groupName} 会被捕获组值替换；
+    // requireGroup：指定的组必须命中才生成此 note（"组存在"）。
+    // absentGroup：指定的组缺失时才生成此 note（"组不存在"，用于 no_git_repo 等否定条件）。
     notesTemplate?: Array<{
       format: string;
       requireGroup?: string;
+      absentGroup?: string;
     }>;
     // P2-2：覆盖 confidence 计算（用于 SESSION_GUIDANCE_EMBEDDED 等特殊 rule）。
     confidenceOverride?: Confidence;
@@ -1370,11 +1373,12 @@ export const CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE: ContextLedgerRule = {
       segmentPosition: "segment_start",
     },
     // P2-2：notes 模板（替代 proxy-attribution.ts 里 CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE ruleId 分支）
-    // currentBranch 存在 → git repo；不存在 → 写 no_git_repo note
+    // currentBranch 存在 → git repo；不存在 → absentGroup 触发 no_git_repo note
     notesTemplate: [
       { format: "currentBranch={currentBranch}", requireGroup: "currentBranch" },
       { format: "mainBranch={mainBranch}", requireGroup: "mainBranch" },
       { format: "gitUser={gitUser}", requireGroup: "gitUser" },
+      { format: "no_git_repo: gitStatus block absent", absentGroup: "currentBranch" },
     ],
   },
 
