@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { splitProxyBlockSections } from "./proxy-block-splitter";
+import { hashCanonicalJson, hashSha256Full } from "./request-canonical";
 import type {
   CacheHint,
   ContextSegment,
@@ -23,6 +24,7 @@ export interface ProxyRequestInput {
     max_tokens?: number;
     context_management?: unknown;
     output_config?: unknown;
+    thinking?: unknown;
     metadata?: { user_id?: string | Record<string, unknown> };
     system?: Array<{ type: string; text: string; cache_control?: { type: string; ttl?: string } }>;
     tools?: Array<{ name: string; description?: string; input_schema?: unknown }>;
@@ -478,11 +480,12 @@ export function parseClaudeProxyRequest(
 
   // rawRequestHash：对整个 reqBody JSON.stringify 做哈希（旧口径，保留向后兼容）
   const rawRequestHash = sha256Full(JSON.stringify(body));
+  const canonicalRequestHash = hashCanonicalJson(body);
 
   // P0-3：rawRequestBytesHash：用原始 wire 字符串计算 hash（比 JSON.stringify 更忠实于 proxy 落盘内容）
   // 若未提供 _rawReqBodyText，则退化为 rawRequestHash（无法区分 canonical vs wire）
   const rawRequestBytesHash = input._rawReqBodyText
-    ? sha256Full(input._rawReqBodyText)
+    ? hashSha256Full(input._rawReqBodyText)
     : undefined;
 
   // request metadata
@@ -510,6 +513,9 @@ export function parseClaudeProxyRequest(
     stream: body.stream,
     maxTokens: body.max_tokens,
     contextManagement: body.context_management,
+    outputConfig: body.output_config,
+    thinking: body.thinking,
+    metadata: body.metadata,
     betaHeaders: betaHeaders.length ? betaHeaders : undefined,
     queryKind,
     ...(outputFormat ? { outputFormat } : {}),
@@ -557,6 +563,7 @@ export function parseClaudeProxyRequest(
     },
     segments,
     rawRequestHash,
+    canonicalRequestHash,
     request,
     ...(rawRequestBytesHash ? { rawRequestBytesHash } : {}),
   };

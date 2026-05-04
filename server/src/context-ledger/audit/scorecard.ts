@@ -124,6 +124,7 @@ export function computeScorecard(
     regexOverreachRisk,
     pendingRuleCoverage,
     alignedTextDrift,
+    requestLevelExact: coverage.requestLevelExact,
     verdict,
     reasons,
     generatedAt: new Date().toISOString(),

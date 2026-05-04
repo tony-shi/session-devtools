@@ -5,6 +5,7 @@ import { inferClaudeProxyAttributions } from "./proxy-attribution";
 import { parseClaudeProxyRequest } from "./proxy-snapshot-parser";
 import { parseClaudeJsonlMutations } from "./jsonl-mutation-parser";
 import { reconstructExpectedClaudeContext } from "./expected-context-reconstructor";
+import { buildTargetRequest } from "./target-request-builder";
 import { MOCK_RECONCILIATION_REPORT } from "./report";
 import type { ReconciliationReport } from "./types";
 
@@ -207,12 +208,15 @@ function runFixture(caseName: string): ReconciliationReport {
     fixtureName: caseName,
     hasPreSessionActivity: parsed.hasPreSessionActivity,
   });
+  const targetRequest = buildTargetRequest({ expected, snapshot });
 
   return reconcileClaudeContext({
     snapshot,          // 原始 parser snapshot，segments 未被 attribution 污染
     attributions,
     expected,
     fixtureName: caseName,
+    targetRequest,
+    proxyRequestBody: proxyRaw.reqBody,
   });
 }
 
@@ -283,6 +287,15 @@ for (const caseName of Object.keys(FIXTURE_CASES)) {
           expect(a.expectedSegmentIds.length).toBe(0);
         }
       }
+    });
+
+    test("request-level exact 档位写入 report 与 coverage", () => {
+      expect(report.targetRequest).toBeDefined();
+      expect(report.requestLevelExact).toBeDefined();
+      expect(report.coverage.requestLevelExact).toBe(report.requestLevelExact!.level);
+      expect(["raw", "canonical", "structural", "segment-only", "none"]).toContain(
+        report.requestLevelExact!.level,
+      );
     });
   });
 }

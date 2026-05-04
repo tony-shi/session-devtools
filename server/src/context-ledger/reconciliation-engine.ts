@@ -50,8 +50,10 @@ import type {
   ReconciliationReport,
   SegmentCategory,
   SourceRef,
+  TargetRequest,
 } from "./types";
 import { getContextLedgerRule as getContextLedgerRuleById } from "./rule-registry";
+import { computeRequestLevelExact } from "./target-request-builder";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 输入 / 输出
@@ -62,6 +64,8 @@ export interface ReconcileInput {
   attributions: ProxySegmentAttribution[];
   expected?: ExpectedQueryContext;
   fixtureName?: string;
+  targetRequest?: TargetRequest;
+  proxyRequestBody?: Record<string, unknown>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,7 +73,7 @@ export interface ReconcileInput {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function reconcileClaudeContext(input: ReconcileInput): ReconciliationReport {
-  const { snapshot, attributions, expected, fixtureName } = input;
+  const { snapshot, attributions, expected, fixtureName, targetRequest, proxyRequestBody } = input;
 
   const alignments: AlignmentRef[] = [];
   const findings: ReconciliationFinding[] = [];
@@ -370,6 +374,16 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
 
   // ── 第四步：coverage 计算 ────────────────────────────────────────────────
   const coverage = computeCoverage(snapshot, attributions, matchedProxyIds, matchedExpectedIds, expected, findings, alignments);
+  const requestLevelExact = targetRequest
+    ? computeRequestLevelExact({
+        snapshot,
+        targetRequest,
+        proxyRequestBody,
+        hasSegmentEvidence:
+          coverage.wireExactChars + coverage.canonicalExactChars + coverage.templateChars > 0,
+      })
+    : undefined;
+  if (requestLevelExact) coverage.requestLevelExact = requestLevelExact.level;
 
   // ── 第五步：P1-1 regex_too_loose finding（placeholderRatio > 60%）────────
   // 对每条 attribution，若 evidence.placeholderRatio > 0.6，说明该 rule pattern 过宽。
@@ -416,6 +430,8 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
   if (snapshot.subagentId) report.subagentId = snapshot.subagentId;
   if (snapshot.parentAgentId) report.parentAgentId = snapshot.parentAgentId;
   if (fixtureName) report.fixtureName = fixtureName;
+  if (targetRequest) report.targetRequest = targetRequest;
+  if (requestLevelExact) report.requestLevelExact = requestLevelExact;
 
   return report;
 }

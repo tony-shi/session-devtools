@@ -187,8 +187,8 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
     lines.push(`> wire = basis=raw_hash/tool_use_id  tmpl = basis=rule_id+exact_text  regex = basis=rule_id+shape`);
     lines.push(`> pending = attribution 命中但 rule.verifiedFor===null 的字符占比`);
     lines.push(``);
-    lines.push(`| query | proxyChars | wire | tmpl | regex | attrOnly | unexplained | pending | regexRisk |`);
-    lines.push(`|-------|-----------|------|------|-------|---------|------------|---------|----------|`);
+    lines.push(`| query | proxyChars | req | wire | tmpl | regex | attrOnly | unexplained | pending | regexRisk |`);
+    lines.push(`|-------|-----------|-----|------|------|-------|---------|------------|---------|----------|`);
     for (const e of entriesWithV2) {
       const v = e.v2!;
       const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
@@ -197,6 +197,7 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
       lines.push(
         `| ${e.sessionId.slice(0, 8)}…/${e.queryId.slice(0, 16)}`
         + ` | ${v.proxyChars}`
+        + ` | ${v.requestLevelExact ?? "-"}`
         + ` | ${pct(v.wireExactCoverage)}`
         + ` | ${pct(v.templateCoverage)}`
         + ` | ${pct(v.regexCoverage)}`

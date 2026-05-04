@@ -268,6 +268,8 @@ export interface ProxyQuerySnapshot {
   segments: ContextSegment[];
   /** JSON.stringify(parsedBody) 的 hash（旧口径，用于向后兼容） */
   rawRequestHash: string;
+  /** canonicalJson(parsedBody) 的 hash，用作 request-level canonical exact 的 proxy 事实口径。 */
+  canonicalRequestHash?: string;
   /** P0-3：proxy 落盘的原始 UTF-8 字节的 sha256（真实 wire bytes hash）。
    *  P0-3 完成前可能为 undefined；完成后 wireExactCoverage 将使用此字段。 */
   rawRequestBytesHash?: string;
@@ -280,6 +282,9 @@ export interface ProxyQuerySnapshot {
     stream?: boolean;
     maxTokens?: number;
     contextManagement?: unknown;
+    outputConfig?: unknown;
+    thinking?: unknown;
+    metadata?: unknown;
     betaHeaders?: string[];
     // parser 从 reqBody 结构推断的 query 类型
     // "main_session"  : 主对话（tools>0，多条 message）
@@ -482,6 +487,8 @@ export interface CoverageSummary {
 
   // 总对齐文本漂移（evidence-backed matched 中 |expectedChars - proxyChars| 之和 / proxyChars）
   alignedTextDrift: number;
+  /** P3-1：request-level 对账最强档位；缺少 TargetRequest 时为 undefined。 */
+  requestLevelExact?: RequestLevelExactLevel;
 }
 
 export interface AgentCapabilityMatrix {
@@ -497,6 +504,84 @@ export interface AgentCapabilityMatrix {
   hasSubagents: boolean;
   supportedSections: SegmentSection[];
   notes?: string[];
+}
+
+export type TargetMaterialization =
+  | "exact"
+  | "placeholder"
+  | "shape"
+  | "unavailable";
+
+export interface TargetSourceMapEntry {
+  jsonPath: string;
+  segmentIds: string[];
+  sourceRefs: SourceRef[];
+  category?: SegmentCategory;
+  role?: SegmentRole;
+  ruleIds?: string[];
+  materialization: TargetMaterialization;
+}
+
+export type SegmentSourceMap = Record<string, TargetSourceMapEntry>;
+
+export interface TargetSegment {
+  id: string;
+  jsonPath: string;
+  section: SegmentSection;
+  category: SegmentCategory;
+  role?: SegmentRole;
+  text?: string;
+  placeholder?: string;
+  rawHash?: string;
+  charCount?: number;
+  toolUseId?: string;
+  toolName?: string;
+  sourceSegmentIds: string[];
+  materialization: TargetMaterialization;
+}
+
+export interface TargetMessage {
+  role: "user" | "assistant";
+  jsonPath: string;
+  content: TargetSegment[];
+  sourceSegmentIds: string[];
+}
+
+export interface TargetRequest {
+  request: {
+    model?: string;
+    max_tokens?: number;
+    stream?: boolean;
+    context_management?: unknown;
+    output_config?: unknown;
+    thinking?: unknown;
+    metadata?: unknown;
+  };
+  system: TargetSegment[];
+  tools: TargetSegment[];
+  messages: TargetMessage[];
+  sourceMap: SegmentSourceMap;
+  rulesApplied: AppliedRule[];
+  unmaterializedRules: string[];
+  canonicalJson: string;
+  canonicalHash: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type RequestLevelExactLevel =
+  | "raw"
+  | "canonical"
+  | "structural"
+  | "segment-only"
+  | "none";
+
+export interface RequestLevelExact {
+  rawExact: boolean;
+  canonicalExact: boolean;
+  structuralExact: boolean;
+  segmentOnly: boolean;
+  level: RequestLevelExactLevel;
+  reasons: string[];
 }
 
 export interface ReconciliationReport {
@@ -516,6 +601,8 @@ export interface ReconciliationReport {
   parentAgentId?: string;
   fixtureName?: string;
   expected?: ExpectedQueryContext;
+  targetRequest?: TargetRequest;
+  requestLevelExact?: RequestLevelExact;
   capability?: AgentCapabilityMatrix;
   metadata?: Record<string, unknown>;
 }

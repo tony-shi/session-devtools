@@ -1,7 +1,7 @@
 // Audit Runner 类型定义
 // 不修改 context-ledger/types.ts；仅在此处扩展 audit 专属类型
 
-import type { AgentKind } from "../types";
+import type { AgentKind, RequestLevelExactLevel } from "../types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Verdict
@@ -55,6 +55,7 @@ export interface QueryScorecard {
   regexOverreachRisk: number;
   pendingRuleCoverage?: number;   // attribution 命中但 rule.verifiedFor===null 的字符 / proxyChars
   alignedTextDrift: number;
+  requestLevelExact?: RequestLevelExactLevel;
   // 元数据
   verdict: AuditVerdict;
   reasons: string[];
@@ -229,6 +230,7 @@ export interface ScorecardV2Summary {
   unexplainedCoverage: number;
   regexOverreachRisk: number;
   pendingRuleCoverage?: number;
+  requestLevelExact?: RequestLevelExactLevel;
   proxyChars: number;
 }
 

@@ -21,6 +21,8 @@ export type {
 } from "./expected-context-reconstructor";
 export { reconcileClaudeContext } from "./reconciliation-engine";
 export type { ReconcileInput } from "./reconciliation-engine";
+export { buildTargetRequest, buildTargetRequestWithBody, computeRequestLevelExact } from "./target-request-builder";
+export { canonicalJson, canonicalizeJson, hashCanonicalJson, hashSha256Full } from "./request-canonical";
 export {
   CONTEXT_LEDGER_RULES,
   CONTEXT_LEDGER_RULE_BY_ID,

@@ -206,6 +206,7 @@ export function writeIndex(
       unexplainedCoverage: r.scorecard.unexplainedCoverage,
       regexOverreachRisk: r.scorecard.regexOverreachRisk,
       pendingRuleCoverage: r.scorecard.pendingRuleCoverage,
+      requestLevelExact: r.scorecard.requestLevelExact,
       proxyChars: r.scorecard.proxyChars,
     } : undefined;
 

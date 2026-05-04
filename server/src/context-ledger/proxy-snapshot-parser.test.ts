@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { parseClaudeProxyRequest } from "./proxy-snapshot-parser";
+import { hashCanonicalJson, hashSha256Full } from "./request-canonical";
 import type { ProxyRequestInput } from "./proxy-snapshot-parser";
 
 const FIXTURE_DIR = new URL(
@@ -92,8 +93,28 @@ describe("system-tools-overhead", () => {
     expect(snapshot.rawRequestHash).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 
+  test("canonicalRequestHash 使用稳定 canonical JSON 口径", () => {
+    expect(snapshot.canonicalRequestHash).toBe(hashCanonicalJson(input.reqBody ?? {}));
+  });
+
   test("总 segment 数 = 13（system）+ 40（tools）+ 6（messages）= 59", () => {
     expect(snapshot.segments.length).toBe(59);
+  });
+});
+
+describe("request body hash facts", () => {
+  test("rawRequestBytesHash 来自原始 reqBody 字符串，不等同于 canonical hash", () => {
+    const reqBody = { stream: true, model: "claude-opus-4-7", messages: [] };
+    const rawText = JSON.stringify({ messages: [], model: "claude-opus-4-7", stream: true }, null, 2);
+    const snapshot = parseClaudeProxyRequest({
+      reqHeaders: { "X-Claude-Code-Session-Id": "sess" },
+      reqBody,
+      _rawReqBodyText: rawText,
+    });
+
+    expect(snapshot.rawRequestBytesHash).toBe(hashSha256Full(rawText));
+    expect(snapshot.canonicalRequestHash).toBe(hashCanonicalJson(reqBody));
+    expect(snapshot.rawRequestBytesHash).not.toBe(snapshot.canonicalRequestHash);
   });
 });
 

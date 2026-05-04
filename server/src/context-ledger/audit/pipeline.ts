@@ -14,6 +14,7 @@ import { inferClaudeProxyAttributions } from "../proxy-attribution";
 import { parseClaudeJsonlMutations } from "../jsonl-mutation-parser";
 import { reconstructExpectedClaudeContext } from "../expected-context-reconstructor";
 import { reconcileClaudeContext } from "../reconciliation-engine";
+import { buildTargetRequest } from "../target-request-builder";
 import { computeCharDiff } from "../debug/char-diff";
 import { renderCharDiffHtml } from "../debug/render-char-diff-html";
 import type { ReconciliationReport } from "../types";
@@ -336,8 +337,17 @@ export function runPipelineWithData(input: PipelineInput): {
       rules: noR9 ? { injectFromAttributions: false } : undefined,
     });
 
+    // P3-1：TargetRequest 只从 expected + request metadata 正向构建，不读取 proxy raw segment。
+    const targetRequest = buildTargetRequest({ expected, snapshot });
+
     // reconcile/scorecard/side-query 分类始终使用全量 attribution
-    const report = reconcileClaudeContext({ snapshot, attributions: allAttributions, expected });
+    const report = reconcileClaudeContext({
+      snapshot,
+      attributions: allAttributions,
+      expected,
+      targetRequest,
+      proxyRequestBody: reqBody,
+    });
     const baseDiff = computeCharDiff(report);
     const diff = injectProxyTexts(baseDiff, report, reqBody);
     const diffHtml = renderCharDiffHtml(diff);

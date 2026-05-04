@@ -19,6 +19,7 @@ import { parseClaudeProxyRequest } from "../server/src/context-ledger/proxy-snap
 import { inferClaudeProxyAttributions } from "../server/src/context-ledger/proxy-attribution";
 import { parseClaudeJsonlMutations } from "../server/src/context-ledger/jsonl-mutation-parser";
 import { reconstructExpectedClaudeContext } from "../server/src/context-ledger/expected-context-reconstructor";
+import { buildTargetRequest } from "../server/src/context-ledger/target-request-builder";
 import type { ContextSegment, ReconciliationReport } from "../server/src/context-ledger/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -184,7 +185,15 @@ if (args[0] === "--fixture") {
     fixtureName: caseName,
   });
 
-  report = reconcileClaudeContext({ snapshot, attributions, expected, fixtureName: caseName });
+  const targetRequest = buildTargetRequest({ expected, snapshot });
+  report = reconcileClaudeContext({
+    snapshot,
+    attributions,
+    expected,
+    fixtureName: caseName,
+    targetRequest,
+    proxyRequestBody: proxyRaw.reqBody ?? {},
+  });
   outPath = explicitOut ?? resolve(`/tmp/context-char-diff-${caseName}.html`);
 
   // char diff HTML
