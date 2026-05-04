@@ -73,6 +73,8 @@ interface JsonlMessage {
 interface JsonlAttachment {
   type?: string;
   content?: unknown;
+  // queued_command 的消息文本在 prompt 字段（不是 content），参考 binary T27 函数
+  prompt?: string | Array<{ type?: string; text?: string }>;
   skillCount?: number;
   itemCount?: number;
   isInitial?: boolean;
@@ -540,20 +542,28 @@ function handleAttachment(
 ): void {
   const att = rec.attachment ?? {};
   const at = att.type ?? "";
+
+  // queued_command 的消息文本在 att.prompt（string 或 text-block array），其余类型用 att.content。
+  const rawContent = at === "queued_command" ? att.prompt : att.content;
   const text =
-    typeof att.content === "string"
-      ? att.content
-      : Array.isArray(att.content)
-        ? JSON.stringify(att.content)
-        : att.content == null
+    typeof rawContent === "string"
+      ? rawContent
+      : Array.isArray(rawContent)
+        ? (rawContent as Array<{ type?: string; text?: string }>)
+            .filter((b) => b?.type === "text" && typeof b.text === "string")
+            .map((b) => b.text ?? "")
+            .join("\n") || JSON.stringify(rawContent)
+        : rawContent == null
           ? ""
-          : JSON.stringify(att.content);
+          : JSON.stringify(rawContent);
 
   let category: SegmentCategory;
   let confidence: ContextMutation["confidence"] = "exact";
   if (at === "skill_listing") {
     category = "skill_listing";
   } else if (at === "task_reminder") {
+    category = "attachment";
+  } else if (at === "queued_command") {
     category = "attachment";
   } else {
     category = "attachment";

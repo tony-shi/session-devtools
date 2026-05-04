@@ -355,14 +355,17 @@ function mapMutationsToSegments(
     return `lm-${groupCounter}-${label}`;
   };
 
-  // P1-2：收集 task_reminder mutations（不生成独立 segment，在主循环后追加到对应 tool_result）
-  // key: parentUuid（task_reminder 要 smoosh 进的 tool_result 所在 JSONL 记录的 uuid）
-  interface PendingTaskReminder {
+  // P1-2：收集需要 smoosh 进 tool_result 的 mutations（不生成独立 segment，主循环后追加）
+  // task_reminder：content = Task[]，渲染为固定前缀 + task list
+  // queued_command：content = prompt string，渲染为 pd7("human") 格式的 mid-turn 消息
+  // 两者的 parentUuid 均指向对应 tool_result 所在的 user message JSONL record 的 uuid。
+  interface PendingSmoosh {
     mutationId: string;
-    content: unknown;        // Task[]
+    kind: "task_reminder" | "queued_command";
+    content: unknown;        // task_reminder: Task[]；queued_command: prompt string
     parentUuid: string;
   }
-  const pendingTaskReminders: PendingTaskReminder[] = [];
+  const pendingSmooshes: PendingSmoosh[] = [];
 
   // sourceMutationId → segment 索引（用于找到 tool_result expected segment）
   const segByMutationId = new Map<string, number>();
@@ -370,19 +373,22 @@ function mapMutationsToSegments(
   for (let i = 0; i < mutations.length; i++) {
     const m = mutations[i];
 
-    // P1-2：task_reminder 不生成独立 segment，收集后 post-process
-    if (m.category === "attachment" && m.metadata?.attachmentType === "task_reminder") {
-      const parentUuid = typeof m.metadata?.parentUuid === "string" ? m.metadata.parentUuid : null;
-      if (parentUuid) {
-        pendingTaskReminders.push({
-          mutationId: m.id,
-          content: m.contentRef?.text !== undefined
-            ? (() => { try { return JSON.parse(m.contentRef!.text!); } catch { return []; } })()
-            : [],
-          parentUuid,
-        });
+    // P1-2：task_reminder / queued_command 不生成独立 segment，收集后 post-process smoosh
+    if (m.category === "attachment") {
+      const attType = m.metadata?.attachmentType as string | undefined;
+      if (attType === "task_reminder" || attType === "queued_command") {
+        const parentUuid = typeof m.metadata?.parentUuid === "string" ? m.metadata.parentUuid : null;
+        if (parentUuid) {
+          const content =
+            attType === "task_reminder"
+              ? (m.contentRef?.text !== undefined
+                  ? (() => { try { return JSON.parse(m.contentRef!.text!); } catch { return []; } })()
+                  : [])
+              : (m.contentRef?.text ?? "");
+          pendingSmooshes.push({ mutationId: m.id, kind: attType, content, parentUuid });
+        }
+        continue;
       }
-      continue;
     }
 
     const map = roleAndSectionFor(m.category);
@@ -433,17 +439,12 @@ function mapMutationsToSegments(
     segments.push(seg);
   }
 
-  // P1-2 post-processing：把 task_reminder 渲染文本追加到对应 tool_result segment 尾部
-  if (pendingTaskReminders.length > 0) {
-    // 建立 parentUuid → 最后一个 tool_result segment 的映射
-    // parentUuid 指向 JSONL 里的 user message record，该 record 可能对应多个 tool_result mutation。
-    // sourceMutationId 在 metadata 里，用于定位 expected segment。
-    // 策略：找 metadata.parentUuid 等于 task_reminder.parentUuid 的 tool_result segment，
-    // 取最后一个（与 proxy smoosh 到最后一个 tool_result 的行为一致）。
-    for (const pending of pendingTaskReminders) {
-      // 找对应的 tool_result segment（通过 metadata.recordUuid 匹配）
-      // task_reminder.parentUuid = 那条 user message JSONL record 的 uuid
-      // tool_result mutation.metadata.recordUuid = 同一条 user message JSONL record 的 uuid
+  // P1-2 post-processing：把 task_reminder / queued_command 渲染文本追加到对应 tool_result segment 尾部
+  // smoosh 规则（与 harness smooshSystemReminderSiblings 一致）：
+  //   - 找 recordUuid === pending.parentUuid 的 tool_result segment，取最后一个
+  //   - 将渲染文本以 "\n\n" 为分隔符追加到 contentRef.text 末尾，重新计算 rawHash
+  if (pendingSmooshes.length > 0) {
+    for (const pending of pendingSmooshes) {
       let targetIdx = -1;
       for (let si = segments.length - 1; si >= 0; si--) {
         const seg = segments[si];
@@ -458,7 +459,7 @@ function mapMutationsToSegments(
       }
 
       if (targetIdx < 0) {
-        // fallback：取 segments 里最后一个 tool_result（兼容 parentUuid 未传入的情况）
+        // fallback：取最后一个 tool_result（parentUuid 未传时的保守兜底）
         for (let si = segments.length - 1; si >= 0; si--) {
           if (segments[si].category === "tool_result") {
             targetIdx = si;
@@ -470,11 +471,13 @@ function mapMutationsToSegments(
       if (targetIdx < 0) continue;
 
       const target = segments[targetIdx];
-      const smooshText = renderTaskReminderSmoosh(pending.content);
+      const smooshText =
+        pending.kind === "task_reminder"
+          ? renderTaskReminderSmoosh(pending.content)
+          : renderQueuedCommandSmoosh(pending.content);
       const originalText = target.contentRef?.text ?? "";
-      const combinedText = originalText + smooshText;
+      const combinedText = originalText + "\n\n" + smooshText;
 
-      // 更新 contentRef.text 并重新计算 rawHash
       segments[targetIdx] = {
         ...target,
         contentRef: { kind: "inline", text: combinedText, charCount: combinedText.length },
@@ -685,6 +688,21 @@ function renderTaskReminderSmoosh(content: unknown): string {
     .join("\n");
 
   return `<system-reminder>\n${BASE}\n\n\nHere are the existing tasks:\n\n${taskLines}\n</system-reminder>`;
+}
+
+// renderQueuedCommandSmoosh：把 queued_command attachment 的 prompt 渲染为 proxy 格式。
+//
+// harness 处理路径（binary 逆向 pd7() 函数，case "human"）：
+//   pd7(prompt, undefined) →
+//     `The user sent a new message while you were working:\n${prompt}\n\nIMPORTANT: After completing your current task, you MUST address the user's message above. Do not ignore it.`
+//   wrapMessagesInSystemReminder() →
+//     `<system-reminder>\n${text}\n</system-reminder>`
+//
+// smoosh 前缀 "\n\n" 由调用处（pendingSmooshes post-processing）统一追加。
+function renderQueuedCommandSmoosh(content: unknown): string {
+  const prompt = typeof content === "string" ? content : String(content ?? "");
+  const inner = `The user sent a new message while you were working:\n${prompt}\n\nIMPORTANT: After completing your current task, you MUST address the user's message above. Do not ignore it.`;
+  return `<system-reminder>\n${inner}\n</system-reminder>`;
 }
 
 function proxyWrapTextForCategory(category: SegmentCategory, text: string): string {
