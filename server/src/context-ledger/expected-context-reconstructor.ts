@@ -1011,6 +1011,12 @@ export function materializeHarnessRules(
   const enabledToolNames = runtimeSnapshot?.enabledToolNames;
   const toolEnableMode: "explicit" | "all_verified_unfiltered" =
     Array.isArray(enabledToolNames) ? "explicit" : "all_verified_unfiltered";
+  // TODO(over-materialization): enabledToolNames 当前永远为 undefined（jsonl-mutation-parser.ts
+  // buildRuntimeSnapshotFromJsonl 尚未填充此字段），导致所有注册 rule 均走 all_verified_unfiltered
+  // 模式无条件生成 segment——包括用户实际已禁用（deny rule）或未开启的 tool。
+  // 正确做法：从 proxy reqBody.tools[*].name 提取 name 列表（仅名称，不含 schema，不构成反向事实）
+  // 填入 runtimeSnapshot.enabledToolNames，让 explicit 模式过滤掉未启用的 tool rule。
+  // 在此之前，expected 侧 tool segment 存在系统性过度渲染，reconcile 层会产生虚假 unmatched expected。
 
   // ── tools[] 两阶段处理 ──────────────────────────────────────────────────────
   //
