@@ -422,15 +422,15 @@ export const CLAUDE_CODE_ENVIRONMENT_SECTION_RULE: ContextLedgerRule = {
       segmentPosition: "segment_start",
     },
     captureGroups: {
-      cwd:          "Primary working directory（getCwd() — 绝对路径）",
-      isGit:        "'true' 或 'false'（getIsGit()）",
-      platform:     "平台标识符（env.platform: 'darwin'/'win32'/'linux'）",
-      shell:        "shell 名称（getShellInfoLine()）",
-      osVersion:    "OS 版本字符串（getUnameSR()）",
-      modelDesc:    "模型描述（getMarketingNameForModel(modelId) + modelId）",
-      cutoff:       "knowledge cutoff 日期（getKnowledgeCutoff() — 各模型固定常量）",
-      modelFamily:  "最新模型系列说明行（CLAUDE_4_5_OR_4_6_MODEL_IDS — @[MODEL LAUNCH] 更新）",
-      fastModeModel:"Fast mode 模型名（FRONTIER_MODEL_NAME — @[MODEL LAUNCH] 更新）",
+      cwd: "Primary working directory（getCwd() — 绝对路径）",
+      isGit: "'true' 或 'false'（getIsGit()）",
+      platform: "平台标识符（env.platform: 'darwin'/'win32'/'linux'）",
+      shell: "shell 名称（getShellInfoLine()）",
+      osVersion: "OS 版本字符串（getUnameSR()）",
+      modelDesc: "模型描述（getMarketingNameForModel(modelId) + modelId）",
+      cutoff: "knowledge cutoff 日期（getKnowledgeCutoff() — 各模型固定常量）",
+      modelFamily: "最新模型系列说明行（CLAUDE_4_5_OR_4_6_MODEL_IDS — @[MODEL LAUNCH] 更新）",
+      fastModeModel: "Fast mode 模型名（FRONTIER_MODEL_NAME — @[MODEL LAUNCH] 更新）",
     },
     // P2-2：notes 模板（替代 proxy-attribution.ts 里 CLAUDE_CODE_ENVIRONMENT_SECTION_RULE ruleId 分支）
     notesTemplate: [
@@ -644,10 +644,10 @@ export const CLAUDE_CODE_BILLING_NOISE_RULE: ContextLedgerRule = {
       segmentPosition: "segment_start",
     },
     captureGroups: {
-      version:    "cc_version 完整值（semver.hex_fingerprint），fingerprint 每次不同",
+      version: "cc_version 完整值（semver.hex_fingerprint），fingerprint 每次不同",
       entrypoint: "cc_entrypoint 值，如 'cli'（进程级固定）",
-      cch:        "attestation token（hex），NATIVE_CLIENT_ATTESTATION 开启时才出现",
-      workload:   "cc_workload tag，cron 等特殊场景才出现",
+      cch: "attestation token（hex），NATIVE_CLIENT_ATTESTATION 开启时才出现",
+      workload: "cc_workload tag，cron 等特殊场景才出现",
     },
     // P2-2：notes 模板（替代 proxy-attribution.ts 里的硬编码 category === "billing_noise" 分支）
     notesTemplate: [
@@ -1343,20 +1343,20 @@ export const CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE: ContextLedgerRule = {
       "^# Context management\\n" +
       "When working with tool results, write down any important information you might need later in your response, as the original tool result may be cleared later\\." +
       "(?:\\n\\n(?<gitStatusPreamble>gitStatus: This is the git status at the start of the conversation\\. Note that this status is a snapshot in time, and will not update during the conversation\\.)" +
-        "\\n\\nCurrent branch: (?<currentBranch>[^\\n]+)" +
-        "\\n\\nMain branch \\(you will usually use this for PRs\\): (?<mainBranch>[^\\n]+)" +
-        "(?:\\n\\nGit user: (?<gitUser>[^\\n]+))?" +
-        "\\n\\nStatus:\\n(?<status>[\\s\\S]*?)" +
-        "\\n\\nRecent commits:\\n(?<recentCommits>[\\s\\S]+)" +
+      "\\n\\nCurrent branch: (?<currentBranch>[^\\n]+)" +
+      "\\n\\nMain branch \\(you will usually use this for PRs\\): (?<mainBranch>[^\\n]+)" +
+      "(?:\\n\\nGit user: (?<gitUser>[^\\n]+))?" +
+      "\\n\\nStatus:\\n(?<status>[\\s\\S]*?)" +
+      "\\n\\nRecent commits:\\n(?<recentCommits>[\\s\\S]+)" +
       ")?$",
     matchMode: "regex",
     captureGroups: {
       gitStatusPreamble: "git 状态前言（存在时表示当前工作目录是 git 仓库）",
-      currentBranch:     "当前 git 分支名（git branch --show-current）",
-      mainBranch:        "PR base 分支名（origin/main 或 origin/master 等探测结果）",
-      gitUser:           "git config user.name（可选，未配置时缺失）",
-      status:            "git status --short 输出（空表示 clean，>2000 chars 时截断附提示）",
-      recentCommits:     "git log --oneline -n 5 输出（最近 5 条提交）",
+      currentBranch: "当前 git 分支名（git branch --show-current）",
+      mainBranch: "PR base 分支名（origin/main 或 origin/master 等探测结果）",
+      gitUser: "git config user.name（可选，未配置时缺失）",
+      status: "git status --short 输出（空表示 clean，>2000 chars 时截断附提示）",
+      recentCommits: "git log --oneline -n 5 输出（最近 5 条提交）",
     },
     mechanism: "system_prompt_pattern",
     category: "harness_injection",
@@ -2486,6 +2486,87 @@ export const CLAUDE_CODE_TASK_REMINDER_RULE: ContextLedgerRule = {
   },
 };
 
+// ── userContext injection rule ────────────────────────────────────────────────
+//
+// sourcemap: context.ts:155 getUserContext()
+//   返回 { claudeMd?, userEmail?, currentDate }
+//   claudeMd = getClaudeMds(filterInjectedMemoryFiles(memoryFiles))
+//     → 拼接 "Contents of {path} (project instructions, ...):\n\n{content}"
+//     → 可包含 CLAUDE.md 层级（Project / Local / Global），不包含 AGENTS.md
+//   userEmail = "The user's email address is {emailAddress}."（仅非 ANTHROPIC_UNIX_SOCKET 时注入）
+//   currentDate = "Today's date is {localISODate()}."（每次都注入）
+//
+// sourcemap: utils/api.ts:449 prependUserContext()
+//   插入 messages[0]（isMeta=true）：
+//     `<system-reminder>\n
+//      As you answer the user's questions, you can use the following context:\n
+//      {Object.entries(context).map(([k,v]) => '# '+k+'\n'+v).join('\n')}
+//      \n\n      IMPORTANT: this context may or may not be relevant to your tasks.
+//      You should not respond to this context unless it is highly relevant to your task.\n
+//      </system-reminder>\n`
+//
+// key 顺序（binary 2.1.128 确认）：claudeMd → userEmail → currentDate
+// 因此 head anchor = 固定前缀 + "# claudeMd\n"
+// tail anchor = "# currentDate\n" + 一行日期 + "\n\n      IMPORTANT: ..." + 固定尾
+//
+// reconstruction：内容完全动态（CLAUDE.md 随项目变化，email/date 随用户/时间变化），
+// 使用 normalized_text + contentPattern=null。
+// reconciliation：presence_only（无法事先知道文本内容）。
+export const CLAUDE_CODE_USER_CONTEXT_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.user-context.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "Claude Code 在每次请求首条 user message 注入的 userContext block：" +
+    "内容 = CLAUDE.md 层级（claudeMd）+ userEmail + currentDate，" +
+    "以固定前缀 + # key 格式拼接，包裹于 <system-reminder>。" +
+    "sourcemap: context.ts:155 getUserContext + utils/api.ts:449 prependUserContext。",
+  stability: "dynamic",
+  sourcemapRef:
+    "restored-src/src/context.ts:155 (getUserContext) + " +
+    "restored-src/src/utils/api.ts:449 (prependUserContext)",
+
+  attribution: {
+    // head：固定前缀 + "# claudeMd\n"——仅当 claudeMd 存在时才有此 key（sourcemap context.ts:185）
+    // tail：固定尾部（binary 2.1.128 确认，含 6 个前导空格的 IMPORTANT 行）
+    // [\s\S]+ 容纳 CLAUDE.md 全文 + userEmail + currentDate 三段动态内容
+    pattern:
+      "^<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n" +
+      "# claudeMd\\n" +
+      "[\\s\\S]+" +
+      "\\n\\n      IMPORTANT: this context may or may not be relevant to your tasks\\. " +
+      "You should not respond to this context unless it is highly relevant to your task\\.\\n" +
+      "</system-reminder>\\n+$",
+    matchMode: "regex",
+    captureGroups: {},
+    mechanism: "system_reminder_pattern",
+    category: "harness_injection",
+    location: {
+      section: "messages",
+      segmentPosition: "segment_start",
+    },
+  },
+
+  reconstruction: {
+    // 内容完全动态（CLAUDE.md 随项目变化，userEmail/currentDate 随运行时决定），
+    // 无法从 JSONL 还原，标记为 normalized_text 让 target-request-builder 识别占位。
+    trigger: "always_per_query",
+    materialization: "normalized_text",
+    emits: {
+      section: "messages",
+      category: "harness_injection",
+      lifecycle: "one_shot",
+      flags: ["injected"],
+      contentPattern: null,
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "presence_only",
+    confidence: "inferred",
+    exactTextExpected: false,
+  },
+};
+
 // ── P2-1：messages 层 harness injection rules ─────────────────────────────────
 //
 // 这两条 rule 把 proxy-attribution.ts 里的硬编码 isSystemReminder / isLocalCommand
@@ -2746,6 +2827,7 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_TOOL_MCP_TAVILY_RESEARCH_RULE,
   CLAUDE_CODE_TOOL_MCP_TAVILY_SEARCH_RULE,
   // ── messages 层注入 rules ─────────────────────────────────────────────────
+  CLAUDE_CODE_USER_CONTEXT_RULE,
   CLAUDE_CODE_SYSTEM_REMINDER_RULE,
   CLAUDE_CODE_LOCAL_COMMAND_RULE,
   CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,

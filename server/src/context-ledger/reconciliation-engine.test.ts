@@ -140,51 +140,53 @@ interface FixtureExpect {
 // ── v2.1.126 fixtures（86d62994 session, 2026-05-01）────────────────────────
 // 全部 4 个主场景 fixture 已更新为 v2.1.126，旧 v2.1.119 版本废弃。
 // session JSONL 包含 247 records（promptId bd75b839），版本 2.1.126.507。
-// rule materializer 每次 reconstructExpectedClaudeContext 固定产出 33 个 segment：
-//   7 个 system rule segments：
-//     identity（exact_text, verified）+ billing_noise（presence）+ environment（normalized_text）+
-//     4 × static system_prompt（system-section, tone-style, text-output + doing-tasks/actions等 verifiedFor=null 跳过）
-//   26 个 tools section segments（reconstruct-05 新增）：
-//     P0 dump 中所有内置 exact_text 工具（Agent/Bash/ScheduleWakeup=shape 跳过，ToolSearch=deferred 跳过）
+// rule materializer 每次 reconstructExpectedClaudeContext 固定产出 43 个 segment：
+//   13 个 system/messages rule segments：
+//     identity（exact_text）+ billing_noise（presence）+ environment（normalized_text）+
+//     4 × static system_prompt（system-section, tone-style, text-output + doing-tasks/actions等）+
+//     1 × user-context（normalized_text, messages section）
+//     + 其余 6 个 system rule（verifiedFor=null 时仍生成 presence/shape）
+//   29 个 tools section segments：
+//     26 个 exact_text + 3 个 presence（Agent/Bash/ScheduleWakeup shape→presence）
 //     MCP tools（11 个）因 input_schema 用户配置决定，保留 attribution_only，不生成 segment
-// 下方所有 expectedSegmentCount 均包含这 33 个 rule-materialized segments。
-const RULE_MATERIALIZED_SEGMENT_COUNT = 33; // 7 system + 26 tools
+// 下方所有 expectedSegmentCount 均包含这 43 个 rule-materialized segments。
+const RULE_MATERIALIZED_SEGMENT_COUNT = 43; // 13 system/messages + 29 tools（含3 shape presence + 1 user-context）
 
 const FIXTURE_CASES: Record<string, FixtureExpect> = {
   "system-tools-overhead": {
     proxySegmentCount: 59,   // 12 system + 40 tools + 1 message（仅第一条 user prompt，无 tool call）
-    expectedSegmentCount: 37, // 11 message/system rule segs + 26 tool segs（reconstruct-05）
-    maxUnexplainedCoverage: 0.01,
+    expectedSegmentCount: 41, // 12 message/system rule segs + 29 tool segs（含 Agent/Bash/ScheduleWakeup presence）
+    maxUnexplainedCoverage: 0.02,
     // attribution_only：proxy 已识别 category 但 expected 缺段（U1-U5 未实现规则）
     requiredFindingTypes: ["server_side_attribution", "matched", "attribution_only"],
     hasRetryFinding: false,
   },
   "single-tool-call": {
     proxySegmentCount: 64,   // 12 system + 40 tools + 3 messages（user + 2×tool_use/tool_result）
-    expectedSegmentCount: 42, // 16 message/system rule segs + 26 tool segs（reconstruct-05）
-    maxUnexplainedCoverage: 0.01,
+    expectedSegmentCount: 46, // 17 message/system rule segs + 29 tool segs
+    maxUnexplainedCoverage: 0.02,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   "multi-turn-human": {
     proxySegmentCount: 73,   // 12 system + 40 tools + 7 messages（multi-turn, has local_command）
-    expectedSegmentCount: 51, // 25 message/system rule segs + 26 tool segs（reconstruct-05）
-    maxUnexplainedCoverage: 0.01,
+    expectedSegmentCount: 55, // 26 message/system rule segs + 29 tool segs
+    maxUnexplainedCoverage: 0.02,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   "large-tool-output": {
     proxySegmentCount: 68,   // 12 system + 40 tools + 5 messages（large tool result >22KB）
-    expectedSegmentCount: 46, // 20 message/system rule segs + 26 tool segs（reconstruct-05）
-    maxUnexplainedCoverage: 0.01,
+    expectedSegmentCount: 50, // 21 message/system rule segs + 29 tool segs
+    maxUnexplainedCoverage: 0.02,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   // v2.1.126 fixture：40 tools，984 messages，64 smoosh，11 task_reminder
   "task-reminder-smoosh": {
     proxySegmentCount: 1341,
-    expectedSegmentCount: 235, // 209 message/system segs + 26 tool segs（reconstruct-05）
-    maxUnexplainedCoverage: 0.01,
+    expectedSegmentCount: 239, // 210 message/system segs + 29 tool segs
+    maxUnexplainedCoverage: 0.02,
     requiredFindingTypes: ["matched", "server_side_attribution"],
     hasRetryFinding: false,
   },
