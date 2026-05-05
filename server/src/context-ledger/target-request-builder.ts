@@ -246,8 +246,13 @@ function targetSegmentFromContext(
 ): TargetSegment {
   const text = seg.contentRef?.text;
   const hasText = typeof text === "string";
+  const ruleMaterialization = typeof seg.metadata?.harness_rule_materialization === "string"
+    ? seg.metadata.harness_rule_materialization
+    : undefined;
   const materialization: TargetMaterialization = hasText
     ? "exact"
+    : ruleMaterialization === "shape"
+      ? "shape"
     : (seg.charCount ?? 0) > 0
       ? "placeholder"
       : "unavailable";

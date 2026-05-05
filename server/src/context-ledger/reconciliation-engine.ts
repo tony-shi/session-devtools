@@ -90,15 +90,22 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
   // P1-3：attribution.category 为唯一权威，无 attribution 时落 unknown（不 fallback 到 parser）。
   // parser category 是 wire schema 的保守分类，不参与 reconcile 决策。
   for (const pseg of snapshot.segments) {
-    const effectiveCategory = attrBySegId.get(pseg.id)?.category ?? "unknown";
+    const attr = attrBySegId.get(pseg.id);
+    const effectiveCategory = attr?.category ?? "unknown";
     if (effectiveCategory !== "billing_noise") continue;
     matchedProxyIds.add(pseg.id);
+    const expectedBilling = expectedSegs.find((eseg) =>
+      !matchedExpectedIds.has(eseg.id) &&
+      eseg.category === "billing_noise" &&
+      (attr?.ruleId === undefined || eseg.metadata?.ruleId === attr.ruleId)
+    );
+    if (expectedBilling) matchedExpectedIds.add(expectedBilling.id);
     const align: AlignmentRef = {
       id: nextAlignId(),
       // P3-2：server_side_attribution 不构成内容对账，复现层级标 presence
       comparisonGrade: "presence",
       confidence: "exact",
-      expectedSegmentIds: [],
+      expectedSegmentIds: expectedBilling ? [expectedBilling.id] : [],
       proxySegmentIds: [pseg.id],
       // P0-2：billing_noise 用 server_side_attribution basis，明确与 evidence-backed 分离
       basis: "server_side_attribution",
@@ -609,13 +616,18 @@ function buildAttrBySegId(
 ): Map<string, ProxySegmentAttribution> {
   const m = new Map<string, ProxySegmentAttribution>();
 
-  // 建立 jsonPath → parser segment ID 的反向索引
-  const parserByJsonPath = new Map<string, string>();
+  // 建立 jsonPath → parser segment IDs 的反向索引。
+  // 注意：system[2] 会被 parser 按 h1 拆成多个 section，但 source jsonPath 都是
+  // reqBody.system[2]。这种一对多路径不能用于精确反查，否则多个 attribution
+  // 会全部坍缩到最后一个 parser segment，破坏 rule_id 对齐。
+  const parserByJsonPath = new Map<string, string[]>();
   if (parserSegments) {
     for (const seg of parserSegments) {
       for (const ref of seg.sourceRefs) {
         if (ref.kind === "proxy" && ref.proxy.jsonPath) {
-          parserByJsonPath.set(ref.proxy.jsonPath, seg.id);
+          const ids = parserByJsonPath.get(ref.proxy.jsonPath) ?? [];
+          ids.push(seg.id);
+          parserByJsonPath.set(ref.proxy.jsonPath, ids);
         }
       }
     }
@@ -647,9 +659,9 @@ function buildAttrBySegId(
       if (ref.kind === "proxy" && ref.proxy.jsonPath) {
         const attrPath = ref.proxy.jsonPath;
         // (a) 精确匹配
-        const parserId = parserByJsonPath.get(attrPath);
-        if (parserId) {
-          set(parserId, attr);
+        const parserIds = parserByJsonPath.get(attrPath);
+        if (parserIds?.length === 1) {
+          set(parserIds[0]!, attr);
           continue;
         }
         // (b) 粒度不一致的两种已知情况：

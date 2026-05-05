@@ -347,6 +347,12 @@ function renderExpectedCol(segs: ContextSegment[]): string {
       ? (meta["harness_rule_materialization"] as string)
       : undefined;
     const matLabel = matRaw ? (MAT_LABEL[matRaw] ?? matRaw) : undefined;
+    const expectedPattern = typeof meta?.["expectedPattern"] === "string"
+      ? meta["expectedPattern"] as string
+      : undefined;
+    const expectedPatternMode = typeof meta?.["expectedPatternMode"] === "string"
+      ? meta["expectedPatternMode"] as string
+      : undefined;
 
     // harness_rule sourceRef 上也有 ruleId
     const harnessRuleId = ref?.kind === "harness_rule" ? ref.harness?.ruleId : undefined;
@@ -385,7 +391,9 @@ function renderExpectedCol(segs: ContextSegment[]): string {
   </div>` : ""}
   ${text
     ? `<pre class="raw-text">${esc(text.slice(0, 3000))}${text.length > 3000 ? "\n…(truncated)" : ""}</pre>`
-    : `<span class="no-content" title="No inline text available — char count only">${fmtK(chars)}c (no text)</span>`
+    : expectedPattern
+      ? `<pre class="raw-text" title="Rule pattern used as expected prior (${esc(expectedPatternMode ?? "pattern")})">[${esc(expectedPatternMode ?? "pattern")}]\n${esc(expectedPattern.slice(0, 3000))}${expectedPattern.length > 3000 ? "\n…(truncated)" : ""}</pre>`
+      : `<span class="no-content" title="No inline text available — char count only">${fmtK(chars)}c (no text)</span>`
   }
 </div>`;
   });

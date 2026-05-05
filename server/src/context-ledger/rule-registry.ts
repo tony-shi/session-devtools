@@ -331,15 +331,9 @@ export const CLAUDE_CODE_SESSION_GUIDANCE_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition: {
-      type: "all",
-      conditions: [
-        { type: "userType", value: "external" },
-        { type: "harnessFlag", flag: "hasAgentTool" },
-        { type: "harnessFlag", flag: "areExplorePlanAgentsEnabled()" },
-        { type: "harnessFlag", flag: "!isForkSubagentEnabled()" },
-      ],
-    },
+    // 2.1.126 真实 dump 中 external main-session 均有该 section；更细的 hasAgentTool /
+    // skills 分支目前不能从 JSONL 稳定恢复，先以 external 用户作为 shape 级存在性先验。
+    preCondition: { type: "userType", value: "external" },
     trigger: "always_per_query",
     materialization: "shape",
     emits: {
@@ -619,7 +613,9 @@ export const CLAUDE_CODE_SYSTEM_PROMPT_DYNAMIC_SECTION_RULE = CLAUDE_CODE_ENVIRO
 //   - exactTextExpected = false（动态字段）
 export const CLAUDE_CODE_BILLING_NOISE_RULE: ContextLedgerRule = {
   ruleId: "claude-code.billing-noise.v1",
-  verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
+  // fixture task-reminder-smoosh / billing-identity-materialization 均验证：
+  // system[0] 符合下方 regex，动态字段仅限 version fingerprint / cch。
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
   description:
     "Claude Code 每次请求在 system[0] 主动注入的 attribution header。" +
     "含动态字段 cc_version（fingerprint）和 cch（attestation），内容不可复现。" +
@@ -996,14 +992,9 @@ export const CLAUDE_CODE_USING_YOUR_TOOLS_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    preCondition: {
-      type: "all",
-      conditions: [
-        { type: "userType", value: "external" },
-        { type: "harnessFlag", flag: "!isReplModeEnabled()" },
-        { type: "settingsField", field: "taskToolName", op: "null", note: "无 TaskCreate/TodoWrite" },
-      ],
-    },
+    // 2.1.126 external CLI 标准文本固定包含 TaskCreate 规划 bullet。
+    // 旧 taskToolName 条件来自过时 sourcemap，会把真实 dump 错误跳过。
+    preCondition: { type: "userType", value: "external" },
     trigger: "always_per_query",
     materialization: "exact_text",
     emits: {
@@ -2619,8 +2610,8 @@ export const CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE: ContextLedgerRule = {
 
 export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   // ── identity / noise ──────────────────────────────────────────────────────
-  CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE,
   CLAUDE_CODE_BILLING_NOISE_RULE,
+  CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE,
   // ── 静态 system prompt body（main session）────────────────────────────────
   CLAUDE_CODE_INTRO_STANDARD_RULE,
   CLAUDE_CODE_INTRO_OUTPUT_STYLE_RULE,
@@ -2633,8 +2624,8 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE,
   // ── 动态 system prompt sections（main session）───────────────────────────
   CLAUDE_CODE_SESSION_GUIDANCE_RULE,
-  CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
   CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,
+  CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
   // ── 动态 context 注入（session 级）────────────────────────────────────────
   CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE,
   // ── tool schema rules ─────────────────────────────────────────────────────

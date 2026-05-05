@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import type {
   ContentRef,
   ContextMutation,
@@ -125,6 +128,14 @@ interface JsonlRecord {
   durationMs?: number;
   messageCount?: number;
   content?: string;
+  // Claude Code 2.x 在多类 JSONL 行顶层重复写入的运行态事实。
+  // 这些字段不是 conversation message 内容，但可作为 system prompt rule
+  // preCondition 的事实输入；优先级高于旧 sourcemap 推断。
+  userType?: "external" | "ant" | "unknown";
+  entrypoint?: string;
+  cwd?: string;
+  version?: string;
+  gitBranch?: string;
 }
 
 function extractMessageText(content: unknown): string {
@@ -202,6 +213,7 @@ export function parseClaudeJsonlMutations(
   const unknownLines: UnknownJsonlLine[] = [];
   let sessionId = opts.sessionId ?? "unknown";
   let counter = 0;
+  const runtimeFacts: Partial<HarnessRuntimeSnapshot> = {};
 
   // 当前正在处理的行：sidechain / agentId 决定 mutation 路由与 subagentId。
   let currentIsSidechain = false;
@@ -271,6 +283,7 @@ export function parseClaudeJsonlMutations(
     }
 
     if (rec.sessionId && sessionId === "unknown") sessionId = rec.sessionId;
+    absorbRuntimeFacts(rec, runtimeFacts);
 
     const t = rec.type ?? "";
     const ts = rec.timestamp;
@@ -373,9 +386,53 @@ export function parseClaudeJsonlMutations(
     sessionId,
     inferredModel,
     jsonlFile: file,
+    runtimeFacts,
   });
 
   return { mutations, sidechainMutations, unknownLines, sessionId, inferredModel, runtimeSnapshot };
+}
+
+function absorbRuntimeFacts(
+  rec: JsonlRecord,
+  facts: Partial<HarnessRuntimeSnapshot>,
+): void {
+  if (
+    rec.userType === "external" ||
+    rec.userType === "ant" ||
+    rec.userType === "unknown"
+  ) {
+    facts.userType = rec.userType;
+  }
+  if (typeof rec.entrypoint === "string" && rec.entrypoint.length > 0) {
+    facts.entrypoint = rec.entrypoint;
+  }
+  if (typeof rec.cwd === "string" && rec.cwd.length > 0) {
+    facts.cwd = rec.cwd;
+    facts.autoMemoryPath = defaultAutoMemoryPath(rec.cwd);
+    facts.featureFlags = {
+      ...(facts.featureFlags ?? {}),
+      // 2.1.126 external CLI 默认启用 auto memory；若未来 JSONL 暴露显式禁用信号，
+      // 应在这里覆盖为 false，避免 materializer 继续生成该 section。
+      "isAutoMemoryEnabled()": true,
+    };
+  }
+  if (typeof rec.version === "string" && rec.version.length > 0) {
+    facts.claudeCodeVersion = rec.version;
+  }
+
+  // 注意：Claude Code 2.1.126 的 JSONL 不显式记录默认 output style。
+  // 对外部 CLI 来说，缺省即 standard intro；若未来 JSONL 出现自定义
+  // output style 字段，应在这里覆盖为非 null，而不是让 rule evaluator 猜测。
+  const settings = (facts.settings ?? {}) as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(settings, "outputStyleConfig")) {
+    settings.outputStyleConfig = null;
+  }
+  facts.settings = settings;
+}
+
+function defaultAutoMemoryPath(cwd: string): string {
+  const sanitizedCwd = cwd.replace(/\//g, "-");
+  return join(homedir(), ".claude", "projects", sanitizedCwd, "memory") + "/";
 }
 
 // ── HarnessRuntimeSnapshot 构建 ───────────────────────────────────────────────
@@ -385,6 +442,7 @@ interface RuntimeSnapshotInput {
   sessionId: string;
   inferredModel: string | undefined;
   jsonlFile: string;
+  runtimeFacts?: Partial<HarnessRuntimeSnapshot>;
 }
 
 // 从 JSONL 解析结果填充第一版 HarnessRuntimeSnapshot。
@@ -393,7 +451,7 @@ interface RuntimeSnapshotInput {
 export function buildRuntimeSnapshotFromJsonl(
   input: RuntimeSnapshotInput,
 ): HarnessRuntimeSnapshot {
-  const { mutations, sessionId, inferredModel, jsonlFile } = input;
+  const { mutations, sessionId, inferredModel, jsonlFile, runtimeFacts } = input;
 
   // permission-mode：取最后一条（最近一次授权最具代表性）
   let permissionMode: string | undefined;
@@ -421,10 +479,19 @@ export function buildRuntimeSnapshotFromJsonl(
     ...(sessionId && sessionId !== "unknown" ? { sessionId } : {}),
     ...(permissionMode !== undefined ? { permissionMode } : {}),
     ...(firstTimestamp !== undefined ? { firstTimestamp } : {}),
-    // 以下字段第一版无法从 JSONL 读取，留 undefined，由后续 local_env / derived 源补充
-    // claudeCodeVersion / entrypoint / cwd / userType / outputStyleConfig
-    // enabledToolNames / mcpToolNames / autoMemoryEnabled / autoMemoryPath
-    // settings / featureFlags
+    ...(runtimeFacts?.claudeCodeVersion !== undefined
+      ? { claudeCodeVersion: runtimeFacts.claudeCodeVersion }
+      : {}),
+    ...(runtimeFacts?.entrypoint !== undefined ? { entrypoint: runtimeFacts.entrypoint } : {}),
+    ...(runtimeFacts?.cwd !== undefined ? { cwd: runtimeFacts.cwd } : {}),
+    ...(runtimeFacts?.userType !== undefined ? { userType: runtimeFacts.userType } : {}),
+    ...(runtimeFacts?.autoMemoryPath !== undefined
+      ? { autoMemoryPath: runtimeFacts.autoMemoryPath }
+      : {}),
+    ...(runtimeFacts?.settings !== undefined ? { settings: runtimeFacts.settings } : {}),
+    ...(runtimeFacts?.featureFlags !== undefined ? { featureFlags: runtimeFacts.featureFlags } : {}),
+    // 以下字段第一版仍无法从 JSONL 读取，留 undefined，由后续 local_env / derived 源补充：
+    // enabledToolNames / mcpToolNames / autoMemoryEnabled / autoMemoryPath / featureFlags
   };
 
   return snapshot;

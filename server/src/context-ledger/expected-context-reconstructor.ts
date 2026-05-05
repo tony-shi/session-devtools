@@ -793,7 +793,7 @@ function pruneMetadata(meta: Record<string, unknown>): Record<string, unknown> |
 //   normalized_text → 生成 presence 语义 segment（contentPattern=null 时不带 text），
 //                     标注 materialization=normalized_text，target-request-builder 可识别
 //   presence     → 生成 presence 占位 segment（无 text，不伪造内容）
-//   shape        → 跳过，写入 unmaterializedRuleIds（无法产出可信文本）
+//   shape        → system 段生成 shape 占位 segment（无 text），其他 section 暂时跳过
 //   unavailable  → 跳过，写入 unmaterializedRuleIds（无输入来源）
 //
 // tools[] 专项逻辑（reconstruct-05-tool-rules）：
@@ -812,7 +812,9 @@ function pruneMetadata(meta: Record<string, unknown>): Record<string, unknown> |
 //   其它所有条件（userType / harnessFlag / settingsField / harnessState / all）
 //     → 暂时 skip，写入 unmaterializedRuleIds；等 reconstruct-03 引入完整 snapshot 后再实现
 //
-// 不从 proxy 读取任何数据；不使用 rule.attribution 字段。
+// 不从 proxy 读取任何数据。exact_text rule 若未重复填写 reconstruction.contentPattern，
+// 可复用同一条 registry rule 的 attribution exact pattern 作为静态模板；这不是
+// proxy attribution 反写，而是 rule registry 内部单源化。
 
 export interface MaterializeResult {
   segments: ContextSegment[];
@@ -877,6 +879,7 @@ export function materializeHarnessRules(
     toolName: string;          // 用于排序
     isMcp: boolean;            // 内置工具先，MCP 工具后
     toolSchemaJson: string | null;
+    isDynamicShape?: boolean;  // Agent/Bash/ScheduleWakeup 等动态 schema，无法 exact
   }
   const pendingToolEntries: PendingToolEntry[] = [];
 
@@ -943,19 +946,19 @@ export function materializeHarnessRules(
         }
         // ── 非 tools section 的 exact_text（system / messages）────────────
 
-        // 有 contentPattern 才能生成 exact_text segment；无则降级为 presence
-        if (!recon.emits.contentPattern) {
-          // contentPattern=null 但 materialization=exact_text：依赖运行时 snapshot 填充
-          // 保守 skip，等 reconstruct-03 提供 snapshot 后再激活
+        const exactText = recon.emits.contentPattern ?? exactTextFromAttributionPattern(rule);
+        // 有 contentPattern 或 exact attribution pattern 才能生成 exact_text segment。
+        if (!exactText) {
+          // contentPattern=null 且 attribution 不是 exact：依赖运行时 snapshot 或源码函数填充，
+          // 保守 skip，避免用 prefix/regex 伪造完整文本。
           unmaterializedRuleIds.push(rule.ruleId);
           continue;
         }
-        const text = recon.emits.contentPattern;
         const seg = buildRuleSegment({
           rule,
           order: nonToolOrder++,
           materialization: "exact_text",
-          contentText: text,
+          contentText: exactText,
         });
         segments.push(seg);
         appliedRules.push(ruleToAppliedRule(rule));
@@ -966,12 +969,15 @@ export function materializeHarnessRules(
         // contentPattern 有模板文本时，生成 presence 语义 segment（带 text 占位）；
         // contentPattern=null 时同样生成 presence 占位（无 text）。
         // 重要：不伪造内容——normalized_text 的动态字段需 runtime snapshot 填充，
-        // 此处只确认"此 segment 应当存在"。
+        // 占位符未全部解析时只确认"此 segment 应当存在"。
+        const rendered = recon.emits.contentPattern
+          ? renderRuleTemplate(recon.emits.contentPattern, runtimeSnapshot)
+          : null;
         const seg = buildRuleSegment({
           rule,
           order: nonToolOrder++,
           materialization: "normalized_text",
-          contentText: undefined, // 不填入未经 snapshot 替换的模板文本
+          contentText: rendered ?? undefined,
         });
         segments.push(seg);
         appliedRules.push(ruleToAppliedRule(rule));
@@ -991,9 +997,48 @@ export function materializeHarnessRules(
         break;
       }
 
-      case "shape":
+      case "shape": {
+        // system section 的 shape rule 进入 expected 作为"应存在"先验，不填 text。
+        // tools section 的 shape rule（Agent/Bash/ScheduleWakeup）也必须进入
+        // pendingToolEntries，否则 reqBody.tools[i] sourceMap 索引漂移。
+        // messages section 的 shape 仍跳过（per-turn 注入，无法先验确定）。
+        if (recon.emits.section === "tools") {
+          const toolName = extractToolNameFromRuleId(rule.ruleId);
+          const isMcp = isMcpToolRule(rule.ruleId);
+          // 启用过滤：动态 tool 同样受 enabledToolNames 控制
+          if (toolEnableMode === "explicit") {
+            const nameToCheck = toolName ?? rule.ruleId;
+            if (!enabledToolNames!.includes(nameToCheck)) {
+              continue;
+            }
+          }
+          // shape tool 以 toolSchemaJson=null + isDynamicShape=true 进入排序列表，
+          // 最终 materialize 为 presence 占位 segment，保住 tools[] 索引正确。
+          pendingToolEntries.push({
+            rule,
+            toolName: toolName ?? rule.ruleId,
+            isMcp,
+            toolSchemaJson: null,
+            isDynamicShape: true,
+          });
+          continue;
+        }
+        if (recon.emits.section !== "system" || !runtimeSnapshot) {
+          unmaterializedRuleIds.push(rule.ruleId);
+          break;
+        }
+        const seg = buildRuleSegment({
+          rule,
+          order: nonToolOrder++,
+          materialization: "shape",
+          contentText: undefined,
+        });
+        segments.push(seg);
+        appliedRules.push(ruleToAppliedRule(rule));
+        break;
+      }
       case "unavailable":
-        // shape / unavailable 无法产出可信文本，保守跳过
+        // unavailable 无法产出可信文本，保守跳过
         unmaterializedRuleIds.push(rule.ruleId);
         break;
     }
@@ -1011,31 +1056,68 @@ export function materializeHarnessRules(
   });
 
   for (const entry of pendingToolEntries) {
-    const { rule, toolSchemaJson } = entry;
+    const { rule, toolSchemaJson, isDynamicShape } = entry;
 
-    // 验证 JSON 可解析，失败时降级为 presence 并报告
-    let toolSchemaValid = true;
-    try {
-      const parsed = JSON.parse(toolSchemaJson!) as unknown;
-      if (!parsed || typeof parsed !== "object") toolSchemaValid = false;
-    } catch {
-      toolSchemaValid = false;
+    // isDynamicShape=true：Agent/Bash/ScheduleWakeup 等动态 schema tool，直接 presence 占位。
+    // toolSchemaJson=null（非 dynamic）：schema 未注册，视为 parse_failed，同样 presence 降级。
+    // 两种 presence 用不同 toolJsonParseStatus 区分，避免误导排查。
+    let toolSchemaValid = !isDynamicShape && toolSchemaJson !== null;
+    if (toolSchemaValid) {
+      try {
+        const parsed = JSON.parse(toolSchemaJson!) as unknown;
+        if (!parsed || typeof parsed !== "object") toolSchemaValid = false;
+      } catch {
+        toolSchemaValid = false;
+      }
     }
+
+    const parseStatus = isDynamicShape
+      ? "dynamic_schema"     // 已知动态，无法 exact，comparePolicy=presence_only
+      : toolSchemaValid
+        ? "ok"
+        : "parse_failed";
 
     const seg = buildRuleSegment({
       rule,
       order: order++,           // tools section 使用 5000 段序号，与 nonToolOrder(6000+) 分离
       materialization: toolSchemaValid ? "exact_text" : "presence",
       contentText: toolSchemaValid ? toolSchemaJson! : undefined,
-      extraMetadata: toolSchemaValid
-        ? { toolEnableMode, toolJsonParseStatus: "ok" }
-        : { toolEnableMode, toolJsonParseStatus: "parse_failed" },
+      extraMetadata: { toolEnableMode, toolJsonParseStatus: parseStatus },
     });
     segments.push(seg);
     appliedRules.push(ruleToAppliedRule(rule));
   }
 
   return { segments, appliedRules, unmaterializedRuleIds };
+}
+
+function exactTextFromAttributionPattern(rule: ContextLedgerRule): string | null {
+  const attr = rule.attribution;
+  if (!attr || attr.matchMode !== "exact") return null;
+  if (!attr.pattern) return null;
+  return attr.pattern;
+}
+
+function renderRuleTemplate(
+  pattern: string,
+  runtimeSnapshot?: HarnessRuntimeSnapshot,
+): string | null {
+  const values: Record<string, string | undefined> = {
+    memoryDir: runtimeSnapshot?.autoMemoryPath,
+    cwd: runtimeSnapshot?.cwd,
+  };
+
+  let missing = false;
+  const rendered = pattern.replace(/\{([A-Za-z0-9_]+)\}/g, (placeholder, key) => {
+    const value = values[key];
+    if (value === undefined) {
+      missing = true;
+      return placeholder;
+    }
+    return value;
+  });
+
+  return missing ? null : rendered;
 }
 
 // evaluatePreConditionConservative：materializer 内部使用的包装，
@@ -1053,7 +1135,7 @@ function evaluatePreConditionConservative(
 interface BuildRuleSegmentOpts {
   rule: ContextLedgerRule;
   order: number;
-  materialization: "exact_text" | "normalized_text" | "presence";
+  materialization: "exact_text" | "normalized_text" | "presence" | "shape";
   contentText: string | undefined;
   // 额外 metadata（如 toolEnableMode），合并到 segment.metadata 中
   extraMetadata?: Record<string, unknown>;
@@ -1095,6 +1177,12 @@ function buildRuleSegment(opts: BuildRuleSegmentOpts): ContextSegment {
       // 触发器类型（always_per_query / from_jsonl / from_memory / from_harness_state）
       reconstructionTrigger: recon.trigger,
       // 额外 metadata（如 toolEnableMode、toolJsonParseStatus）
+      ...(contentText === undefined && rule.attribution?.pattern
+        ? {
+            expectedPattern: rule.attribution.pattern,
+            expectedPatternMode: rule.attribution.matchMode,
+          }
+        : {}),
       ...extraMetadata,
     }),
   };
