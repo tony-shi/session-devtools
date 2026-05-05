@@ -38,9 +38,10 @@ function countUnknownReasons(unknowns: ReturnType<typeof parse>["unknownLines"])
 // 系统特征：无 permission mutation（此 session 无权限请求），有 local_command_history
 const SHARED_V126 = {
   sessionId: "86d62994-8622-4245-b7db-21c144dee7dd",
-  totalMutations: 224,
+  // system/local_command subtype이 이제 local_command_history mutation으로 emit됨 (+1)
+  totalMutations: 225,
   byCategory: {
-    local_command_history: 2,
+    local_command_history: 3,  // 기존 user 타입 2개 + system/local_command 1개
     user_message: 1,
     skill_listing: 1,
     assistant_text: 31,
@@ -52,7 +53,7 @@ const SHARED_V126 = {
   } as Partial<Record<SegmentCategory, number>>,
   pairs: 64,
   unknownReasons: {
-    "system_subtype_local_command": 1,
+    // system_subtype_local_command 제거됨 (이제 mutation으로 처리)
     "harness_state_file-history-snapshot": 5,
     "harness_state_last-prompt": 17,
   },

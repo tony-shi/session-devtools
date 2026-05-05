@@ -809,6 +809,27 @@ function handleSystem(
     return;
   }
 
+  if (st === "local_command") {
+    // sourcemap: utils/messages.ts:4516 createCommandInputMessage → type:'system', subtype:'local_command'
+    // processSlashCommand.tsx:709 경로：
+    //   mod.call() 반환값 { type:'text', value } → [userMessage, createCommandInputMessage(`<local-command-stdout>${value}</local-command-stdout>`)]
+    // content 는 command input（<command-name>...）또는 stdout（<local-command-stdout>...）어느 쪽이든
+    // 모두 LOCAL_COMMAND_HEAD_RE로 local_command_history category가 된다.
+    // proxy에서는 isMeta=true user message block으로 발송되므로, 동일 category로 emit한다.
+    const content = rec.content ?? "";
+    push("inject", "local_command_history", ref, {
+      timestamp: ts,
+      contentRef: inlineRef(content),
+      charDeltaEstimate: content.length,
+      confidence: "exact",
+      metadata: {
+        systemSubtype: st,
+        parentUuid: rec.parentUuid ?? undefined,
+      },
+    });
+    return;
+  }
+
   if (st === "turn_duration" || st === "away_summary") {
     const summary = JSON.stringify({
       subtype: st,

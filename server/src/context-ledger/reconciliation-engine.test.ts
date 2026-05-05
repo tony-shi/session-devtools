@@ -155,7 +155,7 @@ const RULE_MATERIALIZED_SEGMENT_COUNT = 43; // 13 system/messages + 29 tools（�
 const FIXTURE_CASES: Record<string, FixtureExpect> = {
   "system-tools-overhead": {
     proxySegmentCount: 59,   // 12 system + 40 tools + 1 message（仅第一条 user prompt，无 tool call）
-    expectedSegmentCount: 41, // 12 message/system rule segs + 29 tool segs（含 Agent/Bash/ScheduleWakeup presence）
+    expectedSegmentCount: 42, // 13 message/system rule segs + 29 tool segs（system/local_command +1）
     maxUnexplainedCoverage: 0.02,
     // attribution_only：proxy 已识别 category 但 expected 缺段（U1-U5 未实现规则）
     requiredFindingTypes: ["server_side_attribution", "matched", "attribution_only"],
@@ -163,21 +163,21 @@ const FIXTURE_CASES: Record<string, FixtureExpect> = {
   },
   "single-tool-call": {
     proxySegmentCount: 64,   // 12 system + 40 tools + 3 messages（user + 2×tool_use/tool_result）
-    expectedSegmentCount: 46, // 17 message/system rule segs + 29 tool segs
+    expectedSegmentCount: 47, // 18 message/system rule segs + 29 tool segs
     maxUnexplainedCoverage: 0.02,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   "multi-turn-human": {
     proxySegmentCount: 73,   // 12 system + 40 tools + 7 messages（multi-turn, has local_command）
-    expectedSegmentCount: 55, // 26 message/system rule segs + 29 tool segs
+    expectedSegmentCount: 56, // 27 message/system rule segs + 29 tool segs
     maxUnexplainedCoverage: 0.02,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,
   },
   "large-tool-output": {
     proxySegmentCount: 68,   // 12 system + 40 tools + 5 messages（large tool result >22KB）
-    expectedSegmentCount: 50, // 21 message/system rule segs + 29 tool segs
+    expectedSegmentCount: 51, // 22 message/system rule segs + 29 tool segs
     maxUnexplainedCoverage: 0.02,
     requiredFindingTypes: ["matched", "server_side_attribution", "attribution_only"],
     hasRetryFinding: false,

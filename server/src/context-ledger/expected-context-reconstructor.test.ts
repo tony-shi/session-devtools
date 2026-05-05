@@ -77,10 +77,11 @@ const RULE_MATERIALIZED_BY_CATEGORY: Partial<Record<SegmentCategory, number>> = 
 
 const CASES: Record<string, CaseExpect> = {
   // msgs=1：只有初始 user 输入 + skill_listing + local_command_history 前置注入
+  // local_command_history: 2(user타입) + 1(system/local_command 타입) = 3
   "system-tools-overhead": {
-    totalSegments: 4 + RULE_MATERIALIZED_SEGMENT_COUNT,
+    totalSegments: 5 + RULE_MATERIALIZED_SEGMENT_COUNT,
     byCategory: {
-      local_command_history: 2, user_message: 1, skill_listing: 1,
+      local_command_history: 3, user_message: 1, skill_listing: 1,
       ...RULE_MATERIALIZED_BY_CATEGORY,
     },
     retryDropped: false,
@@ -88,9 +89,9 @@ const CASES: Record<string, CaseExpect> = {
   },
   // msgs=3：user + 1 次 tool_use/tool_result 往返（4 logicalMsg groups）
   "single-tool-call": {
-    totalSegments: 9 + RULE_MATERIALIZED_SEGMENT_COUNT,
+    totalSegments: 10 + RULE_MATERIALIZED_SEGMENT_COUNT,
     byCategory: {
-      local_command_history: 2,
+      local_command_history: 3,
       user_message: 1,
       skill_listing: 1,
       assistant_text: 1,
@@ -103,9 +104,9 @@ const CASES: Record<string, CaseExpect> = {
   },
   // msgs=7：多轮，6 次 tool_use/tool_result 往返（10 logicalMsg groups）
   "multi-turn-human": {
-    totalSegments: 18 + RULE_MATERIALIZED_SEGMENT_COUNT,
+    totalSegments: 19 + RULE_MATERIALIZED_SEGMENT_COUNT,
     byCategory: {
-      local_command_history: 2,
+      local_command_history: 3,
       user_message: 1,
       skill_listing: 1,
       assistant_text: 2,
@@ -117,9 +118,9 @@ const CASES: Record<string, CaseExpect> = {
   },
   // msgs=5：4 次 tool_use/tool_result 往返（7 logicalMsg groups）
   "large-tool-output": {
-    totalSegments: 13 + RULE_MATERIALIZED_SEGMENT_COUNT,
+    totalSegments: 14 + RULE_MATERIALIZED_SEGMENT_COUNT,
     byCategory: {
-      local_command_history: 2,
+      local_command_history: 3,
       user_message: 1,
       skill_listing: 1,
       assistant_text: 1,
