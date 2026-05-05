@@ -18,18 +18,19 @@
 //   R7 api_error_retry_alignment 失败 attempt 的 user 输入组合在 retry 成功后被丢弃
 //   R8 filter_synthetic_api_error harness 合成的 isApiErrorMessage assistant 行（proxy 里没有）
 //
+// 已通过 rule materializer 实现（P4/P5，不再是 unimplemented）：
+//   system[] billing presence + identity exact → materializeHarnessRules()
+//   tools[]  verified built-in tool exact schema → materializeHarnessRules()
+//
 // 暂未实现（会在 metadata.unimplementedRules 显式标记）：
-//   U1 system_prompt_injection      system[] 来自 harness identity / CLAUDE.md / memory_fs
-//   U2 tools_schema_injection       tools[] 来自 harness 可用工具集合
 //   U3 system_reminder_per_turn     每个 user turn 头部的 <system-reminder>
 //   U4 prior_session_history        --resume / continue 时携带的历史会话片段
 //   U5 compaction_replacement       compact 摘要替换早期 mutation 的语义
 //
-// 这些 U* 缺失意味着真实 proxy 中以下 segment 会成为 unmatched proxy segment：
-//   - system[0..2] 全部 system_prompt / billing_noise
-//   - tools[*] 全部 tools_schema
+// 这些 U* 缺失意味着真实 proxy 中以下 segment 会成为 attribution_only：
 //   - messages[].content[*] 中的 <system-reminder> / prior_session_history 字符串
 //   - compact 摘要替换前的旧 user/assistant 内容（在 boundary 之前的）
+//   - 未 verified 或 preCondition 未知的 system/tool rule（→ unmaterializedRules）
 //
 // ── 已知 TODO（codex review 2026-04-28，暂不阻塞，等 reconciliation engine 拿到
 //    第一份 coverage 报告后统筹修复） ────────────────────────────────────────────
@@ -69,6 +70,13 @@ import { BUILTIN_TOOL_SCHEMA_JSON } from "./tool-schema-registry";
 function sha256Short(text: string): string {
   return "sha256:" + createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
+
+// materializeHarnessRules 内部 order 段基址。
+// tools section 段：5000+，与 mutation segment（0 起步，上限约数百）不冲突。
+// system/messages rule 段：6000+，与 tools 段分离便于 reconciliation order 对比。
+// buildTargetRequest 侧按 section 分组后按 order 重新索引，不依赖这里的绝对值。
+const RULE_ORDER_TOOL_BASE = 5000;
+const RULE_ORDER_NON_TOOL_BASE = 6000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 输入 / 输出 / 配置
@@ -119,13 +127,12 @@ export interface ReconstructInput {
   runtimeSnapshot?: HarnessRuntimeSnapshot;
 }
 
+// U3/U4/U5 对应的架构层缺口（system/tools 的 rule materializer 已在 P4/P5 实现）
 /** 暂未实现规则的标识。结果中 metadata.unimplementedRules 会列出这些。 */
 export const UNIMPLEMENTED_RULES = [
   "system_reminder_per_turn",
   "prior_session_history",
   "compaction_replacement",
-  "system_prompt_injection",
-  "tools_schema_injection",
 ] as const;
 
 export type UnimplementedRuleId = (typeof UNIMPLEMENTED_RULES)[number];
@@ -699,8 +706,8 @@ function collectAppliedRules(
 //   有 tasks：
 //     <system-reminder>\n{BASE_TEXT}\n\n\nHere are the existing tasks:\n\n#N. [{status}] {subject}\n...</system-reminder>
 //
-// BASE_TEXT 来自 rule-registry TASK_REMINDER_PREFIX 去掉 "<system-reminder>\n" 前缀：
-//   "The task tools haven't been used recently. ..."
+// BASE_TEXT 是完整固定句（来自 sourcemap attachments.ts:3375），
+// rule-registry 的 TASK_REMINDER_PREFIX 只是其前缀（用于 attribution pattern），两者粒度不同。
 //
 // attachment.content 是 Task[] 数组，每项含 { id, subject, status } 字段。
 function renderTaskReminderSmoosh(content: unknown): string {
@@ -873,13 +880,11 @@ export function materializeHarnessRules(
   }
   const pendingToolEntries: PendingToolEntry[] = [];
 
-  // 段序号从 5000 开始，避免与 mutation 段（0 起步）冲突
-  let order = 5000;
-  // tool segment 的起始序号预留在 5000 段内，非 tool segments 从 6000 开始，
-  // 避免 tool 与 system/messages rule segments 序号交叉。
-  // （实际 tools 在 request body 中位于 system 之后、messages 之前，
-  //   赋予独立序号范围有利于 reconciliation order 对比。）
-  let nonToolOrder = 6000;
+  // tool segment order 从 RULE_ORDER_TOOL_BASE 起，与 mutation segment（0 起步，上限约数百）不冲突。
+  // system/messages rule segment 从 RULE_ORDER_NON_TOOL_BASE 起，与 tools 段分离便于 reconciliation order 对比。
+  // 两个范围均仅在 materializeHarnessRules 内部使用；buildTargetRequest 侧按 section 分组后重新索引。
+  let order = RULE_ORDER_TOOL_BASE;
+  let nonToolOrder = RULE_ORDER_NON_TOOL_BASE;
 
   for (const rule of rules) {
     const recon = rule.reconstruction;

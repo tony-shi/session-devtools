@@ -151,19 +151,18 @@ claude-free
 
 ## 总 TODO
 
-- [ ] 增加 guardrail tests：expected / target 不得含 proxy sourceRef。
-- [ ] 增加 regression tests：proxy attribution 命中 identity/billing 时，不会自动生成 expected，除非对应 reconstruction rule 被 materializer 正向激活。
-- [ ] 在 `expected-context-reconstructor.ts` 中增加 rule materializer 阶段。
-- [ ] 为 generated-by-rule 的 segment 增加统一 metadata：`ruleId`、`ruleVerified`、`materialization`、`preConditionStatus`。
-- [ ] 引入 `HarnessRuntimeSnapshot` 类型，并从 JSONL、进程环境、本地配置、memory path 等非 proxy 来源填充第一版。
-- [ ] 实现 `RulePreCondition` evaluator；不能判断时默认 skip，并记录 `unmaterializedRules`。
-- [ ] system[]：先 materialize `billing_noise` presence 与 identity exact，再逐步扩展静态 system prompt body。
-- [ ] tools[]：只 materialize verified exact tool schema；未知 MCP/plugin tool 继续 attribution_only。
-- [ ] TargetRequest：从 segment metadata 识别 `exact / template / shape / presence / unavailable`，不要只用 `contentRef.text` 推断。
-- [ ] request scalar：把 `model`、`max_tokens`、`stream`、`context_management` 等字段的来源拆清楚。
-- [ ] reconciliation：确保 rule materialized segment 的 coverage 分桶正确，presence 不进入 exact/template。
-- [ ] audit report：展示每条 rule 的 verified 状态、materialization 状态和 fallback 来源。
-- [ ] fixture：至少覆盖 main session、side query、tool schema、billing、identity、runtime state 缺失降级。
+- [x] 增加 guardrail tests：expected / target 不得含 proxy sourceRef。（P1）
+- [x] 增加 regression tests：proxy attribution 命中 identity/billing 时，不会自动生成 expected，除非对应 reconstruction rule 被 materializer 正向激活。（P1）
+- [x] 在 `expected-context-reconstructor.ts` 中增加 rule materializer 阶段。（P2）
+- [x] 为 generated-by-rule 的 segment 增加统一 metadata：`ruleId`、`ruleVerified`、`materialization`、`preConditionStatus`。（P2/P4）
+- [x] 引入 `HarnessRuntimeSnapshot` 类型，并从 JSONL、进程环境、本地配置、memory path 等非 proxy 来源填充第一版。（P3）
+- [x] 实现 `RulePreCondition` evaluator；不能判断时默认 skip，并记录 `unmaterializedRules`。含 `!xxx` 否定前缀。（P3/P4）
+- [x] system[]：先 materialize `billing_noise` presence 与 identity exact，再逐步扩展静态 system prompt body。（P4）
+- [x] tools[]：只 materialize verified exact tool schema；未知 MCP/plugin tool 继续 attribution_only。（P5）
+- [x] request scalar：把 `model`、`max_tokens`、`stream`、`context_management` 等字段的来源拆清楚。（P6）
+- [ ] TargetRequest：从 segment metadata 识别 `exact / template / shape / presence / unavailable` 分桶，reconciliation coverage 正交性持续验证。
+- [ ] audit report：展示每条 rule 的 verified 状态、materialization 状态和 fallback 来源。（P7 范围，部分实现）
+- [ ] fixture：至少覆盖 main session、side query、tool schema、billing、identity、runtime state 缺失降级。（P7 范围）
 
 ---
 
