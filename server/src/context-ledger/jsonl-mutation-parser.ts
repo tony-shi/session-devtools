@@ -707,9 +707,11 @@ function handleAttachment(
     //   (3) 若 truncated：createUserMessage(truncation note) → wrapMessagesInSystemReminder
     // reconstructor 需要这三段的原始文件内容，不能用 JSON.stringify(att.content)。
     // 此处把 filename / 文件原文 / truncated 标记存入 metadata，contentRef.text 存文件原文。
-    const fileContent = att.content as { type?: string; file?: { content?: string; numLines?: number } } | undefined;
+    const fileContent = att.content as { type?: string; file?: { content?: string; numLines?: number; startLine?: number } } | undefined;
     const fileText = fileContent?.file?.content ?? "";
     const numLines = fileContent?.file?.numLines ?? 0;
+    // startLine：FileReadTool 输出行号从此值开始（通常为 1，offset 读取时可能不同）
+    const startLine = fileContent?.file?.startLine ?? 1;
     const truncated = att.truncated === true;
     category = "attachment";
     push("inject", category, makeJsonlRef(file, lineNum, uuid, "attachment"), {
@@ -721,6 +723,7 @@ function handleAttachment(
         attachmentType: at,
         fileAttachmentFilename: att.filename as string | undefined,
         fileAttachmentNumLines: numLines,
+        fileAttachmentStartLine: startLine,
         fileAttachmentTruncated: truncated || undefined,
         parentUuid: rec.parentUuid ?? undefined,
       },

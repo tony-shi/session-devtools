@@ -804,12 +804,18 @@ function renderFileReadCallWrapper(filename: string): string {
   return `<system-reminder>\n${inner}\n</system-reminder>`;
 }
 
-function renderFileReadResultWrapper(fileText: string): string {
+function renderFileReadResultWrapper(fileText: string, startLine: number): string {
   // messages.ts:4313 createToolResultMessage + wrapMessagesInSystemReminder。
   // FileReadTool 把结果格式化为 `Result of calling the Read tool:\n{行号内容}`。
-  // 行号内容格式（FileReadTool.ts:652）：每行 `{lineNum}\t{lineText}\n`，从 startLine=1 开始。
-  // JSONL 里存的 att.content.file.content 已经是带行号的格式化文本（FileReadTool 的输出）。
-  const inner = `Result of calling the ${FILE_READ_TOOL_NAME} tool:\n${fileText}`;
+  //
+  // JSONL 里 att.content.file.content 是纯文本（无行号），需在此添加行号前缀。
+  // 行号格式（FileReadTool.ts:652）：每行输出为 `{lineNum}\t{lineText}`，
+  // 整体通过 Array.join("\n") 拼接，因此行与行之间只有 \n，最后一行无尾部 \n。
+  // createToolResultMessage（messages.ts:4313）把这段文本作为 string content 直接传入，
+  // 不再额外处理，最终进入 wrapMessagesInSystemReminder。
+  const lines = fileText.split("\n");
+  const numbered = lines.map((line, i) => `${startLine + i}\t${line}`).join("\n");
+  const inner = `Result of calling the ${FILE_READ_TOOL_NAME} tool:\n${numbered}`;
   return `<system-reminder>\n${inner}\n</system-reminder>`;
 }
 
@@ -831,12 +837,13 @@ function buildFileAttachmentSegments(
   const filename = m.metadata?.fileAttachmentFilename as string | undefined;
   const truncated = m.metadata?.fileAttachmentTruncated === true;
   const fileText = m.contentRef?.text ?? "";
+  const startLine = (m.metadata?.fileAttachmentStartLine as number | undefined) ?? 1;
 
   if (!filename) return []; // filename 缺失时无法渲染 call wrapper，保守跳过
 
   // 三段文本
   const callText    = renderFileReadCallWrapper(filename);
-  const resultText  = renderFileReadResultWrapper(fileText);
+  const resultText  = renderFileReadResultWrapper(fileText, startLine);
   const truncNote   = truncated ? renderFileTruncationNote(filename) : null;
 
   // 所有 segment 归同一 logicalMessage 组（与原 skill_listing/attachment 的 canMergeUserBlock 逻辑一致）

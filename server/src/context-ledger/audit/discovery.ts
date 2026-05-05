@@ -40,6 +40,8 @@ export const VALID_FIXTURE_NAMES = [
   "billing-identity-materialization",
   // side-query-session-title 无 JSONL，进入 proxyWithoutJsonl 分支（--proxy-only 下走 attribution-only 路径）
   "side-query-session-title",
+  // @file 首次 mention：session 首轮，attachment.type=file，验证 file-attachment rule 重建
+  "file-attachment-first-mention",
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
