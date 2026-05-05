@@ -2608,6 +2608,79 @@ export const CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE: ContextLedgerRule = {
   },
 };
 
+// ── @file attachment 注入 rule ───────────────────────────────────────────────
+//
+// sourcemap: attachments.ts generateFileAttachment（3020）→ case 'file'（messages.ts:3545）
+//
+// 用户 @-mention 一个文件时，Claude Code 生成 attachment.type=file 记录到 JSONL，
+// normalizeAttachmentForAPI 将其展开为 2-3 条 synthetic messages（均被 wrapMessagesInSystemReminder 包裹）：
+//
+//   segment[0] — Read call wrapper（messages.ts:4330 createToolUseMessage）：
+//     "<system-reminder>\nCalled the Read tool with the following input: {\"file_path\":\"...\"}\n</system-reminder>"
+//
+//   segment[1] — Read result wrapper（messages.ts:4313 createToolResultMessage）：
+//     "<system-reminder>\nResult of calling the Read tool:\n1\t{line1}\n2\t{line2}\n...\n</system-reminder>"
+//
+//   segment[2] — truncation note（messages.ts:3565，仅当 attachment.truncated=true）：
+//     "<system-reminder>\nNote: The file {filename} was too large and has been truncated to the first 2000 lines. ...\n</system-reminder>"
+//
+// 行号格式（FileReadTool.ts:652）："{lineNum}\t{lineText}\n"，从 startLine（通常为 1）开始。
+//
+// already_read_file（attachments.ts:3099）：文件已在 context 中时，normalizeAttachmentForAPI
+// 对 already_read_file 直接 return []，不向 API 发送任何内容。因此 already_read_file
+// 出现时 expected 侧不应生成任何 segment——reconstructor 检测 attachmentType 来区分。
+//
+// reconstruction 的具体渲染逻辑在 expected-context-reconstructor.ts
+// handleFileAttachmentMutation()，rule 只声明激活条件与对账策略。
+export const CLAUDE_CODE_FILE_ATTACHMENT_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.file-attachment.v1",
+  verifiedFor: null,
+  description:
+    "@file attachment 注入：用户 @-mention 文件时，JSONL attachment.type=file 携带文件全文，" +
+    "normalizeAttachmentForAPI 将其展开为 Read call + Read result 两条 system-reminder 包裹的 synthetic messages。" +
+    "行号格式：{n}\\t{line}（FileReadTool.ts）。truncated 时附带第三条截断提示。",
+  stability: "semi-static",
+  sourcemapRef:
+    "restored-src/src/utils/attachments.ts:3020 (generateFileAttachment) + " +
+    "restored-src/src/utils/messages.ts:3545 (case 'file') + " +
+    "restored-src/src/tools/FileReadTool/FileReadTool.ts:652 (行号格式) + " +
+    "restored-src/src/tools/FileReadTool/prompt.ts:10 (MAX_LINES_TO_READ=2000)",
+
+  attribution: {
+    // segment[0]：Read call wrapper，前缀固定。
+    // "Called the Read tool with the following input: " 来自 messages.ts:4330 createToolUseMessage。
+    // system-reminder wrapper 来自 wrapMessagesInSystemReminder（messages.ts:3101）。
+    pattern: "^<system-reminder>\\nCalled the Read tool with the following input: ",
+    matchMode: "regex",
+    captureGroups: {},
+    mechanism: "system_reminder_pattern",
+    category: "attachment",
+    location: {
+      section: "messages",
+      segmentPosition: "segment_start",
+    },
+  },
+
+  reconstruction: {
+    // 从 JSONL attachment.type=file mutation 派生，渲染逻辑见 reconstructor handleFileAttachmentMutation。
+    trigger: "from_jsonl",
+    materialization: "exact_text",
+    emits: {
+      section: "messages",
+      category: "attachment",
+      lifecycle: "session",   // @file 注入在 session 存续期间持续存在于 context
+      flags: ["injected"],
+      contentPattern: null,   // 内容动态（由文件实际内容决定），reconstructor 从 mutation 渲染
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "raw_hash",
+    confidence: "exact",
+    exactTextExpected: true,
+  },
+};
+
 export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   // ── identity / noise ──────────────────────────────────────────────────────
   CLAUDE_CODE_BILLING_NOISE_RULE,
@@ -2676,6 +2749,7 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_SYSTEM_REMINDER_RULE,
   CLAUDE_CODE_LOCAL_COMMAND_RULE,
   CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,
+  CLAUDE_CODE_FILE_ATTACHMENT_RULE,
   // ── side query rules ──────────────────────────────────────────────────────
   CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE,
 ];

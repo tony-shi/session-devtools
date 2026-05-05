@@ -433,6 +433,25 @@ function mapMutationsToSegments(
         }
         continue;
       }
+
+      // file attachment：attachment.type=file 渲染为 2-3 个独立 segment。
+      // sourcemap: messages.ts:3545 case 'file' → normalizeAttachmentForAPI。
+      // already_read_file 在 normalizeAttachmentForAPI 直接 return []，此处不出现（parser 不会产生
+      // attachmentType=file 的 mutation 来自 already_read_file；两者是不同的 attachment.type）。
+      if (attType === "file") {
+        const fileSegs = buildFileAttachmentSegments(m, order, lastSegmentRole, currentUserGroupId, startNewGroup);
+        for (const fseg of fileSegs) {
+          segByMutationId.set(m.id, segments.length);
+          segments.push(fseg);
+          order++;
+        }
+        if (fileSegs.length > 0) {
+          lastSegmentRole = "user";
+          currentUserGroupId = fileSegs[fileSegs.length - 1].metadata?.["logicalMessageId"] as string ?? currentUserGroupId;
+          currentUserCategory = "attachment";
+        }
+        continue;
+      }
     }
 
     const map = roleAndSectionFor(m.category);
@@ -747,6 +766,130 @@ function renderQueuedCommandSmoosh(content: unknown): string {
   const prompt = typeof content === "string" ? content : String(content ?? "");
   const inner = `The user sent a new message while you were working:\n${prompt}\n\nIMPORTANT: After completing your current task, you MUST address the user's message above. Do not ignore it.`;
   return `<system-reminder>\n${inner}\n</system-reminder>`;
+}
+
+// ── file attachment segment 渲染 ─────────────────────────────────────────────
+//
+// sourcemap 还原路径：
+//   attachments.ts:3020 generateFileAttachment → case 'file'（messages.ts:3545）
+//   → wrapMessagesInSystemReminder([
+//       createToolUseMessage("Read", {file_path}),   // messages.ts:4330
+//       createToolResultMessage(FileReadTool, content), // messages.ts:4313
+//       (truncated ? createUserMessage(truncation note) : []),  // messages.ts:3565
+//     ])
+//
+// createToolUseMessage（messages.ts:4330）：
+//   `Called the ${toolName} tool with the following input: ${jsonStringify(input)}`
+//   → 外层 wrapMessagesInSystemReminder → `<system-reminder>\n{text}\n</system-reminder>`
+//
+// createToolResultMessage（messages.ts:4313）：
+//   `Result of calling the ${tool.name} tool:\n${contentStr}`
+//   contentStr = file text（string content 不经 jsonStringify，直接拼接）
+//   行号格式来自 FileReadTool mapToolResultToToolResultBlockParam（FileReadTool.ts:652）：
+//     `${lineNum}\t${lineText}`，整体拼接后每行以 \n 结尾。
+//   → 外层 wrapMessagesInSystemReminder → `<system-reminder>\n{text}\n</system-reminder>`
+//
+// truncation note（messages.ts:3565，仅当 attachment.truncated=true）：
+//   `Note: The file ${filename} was too large and has been truncated to the first 2000 lines. ...`
+//   → 外层 wrapMessagesInSystemReminder → `<system-reminder>\n{text}\n</system-reminder>`
+//
+// MAX_LINES_TO_READ = 2000（FileReadTool/prompt.ts:10）
+const FILE_READ_TOOL_NAME = "Read";
+const MAX_LINES_TO_READ = 2000;
+
+function renderFileReadCallWrapper(filename: string): string {
+  // messages.ts:4330 createToolUseMessage + wrapMessagesInSystemReminder
+  const inputJson = JSON.stringify({ file_path: filename });
+  const inner = `Called the ${FILE_READ_TOOL_NAME} tool with the following input: ${inputJson}`;
+  return `<system-reminder>\n${inner}\n</system-reminder>`;
+}
+
+function renderFileReadResultWrapper(fileText: string): string {
+  // messages.ts:4313 createToolResultMessage + wrapMessagesInSystemReminder。
+  // FileReadTool 把结果格式化为 `Result of calling the Read tool:\n{行号内容}`。
+  // 行号内容格式（FileReadTool.ts:652）：每行 `{lineNum}\t{lineText}\n`，从 startLine=1 开始。
+  // JSONL 里存的 att.content.file.content 已经是带行号的格式化文本（FileReadTool 的输出）。
+  const inner = `Result of calling the ${FILE_READ_TOOL_NAME} tool:\n${fileText}`;
+  return `<system-reminder>\n${inner}\n</system-reminder>`;
+}
+
+function renderFileTruncationNote(filename: string): string {
+  // messages.ts:3565，仅当 attachment.truncated=true 时附加
+  const inner = `Note: The file ${filename} was too large and has been truncated to the first ${MAX_LINES_TO_READ} lines. Don't tell the user about this truncation. Use ${FILE_READ_TOOL_NAME} to read more of the file if you need.`;
+  return `<system-reminder>\n${inner}\n</system-reminder>`;
+}
+
+// buildFileAttachmentSegments：把一条 attachmentType=file 的 mutation 展开为 2-3 个 expected segment。
+// rule 门控由调用方（mapMutationsToSegments）完成，此函数只做渲染。
+function buildFileAttachmentSegments(
+  m: ContextMutation,
+  orderBase: number,
+  lastSegmentRole: SegmentRole | null,
+  currentUserGroupId: string | null,
+  startNewGroup: (label: string) => string,
+): ContextSegment[] {
+  const filename = m.metadata?.fileAttachmentFilename as string | undefined;
+  const truncated = m.metadata?.fileAttachmentTruncated === true;
+  const fileText = m.contentRef?.text ?? "";
+
+  if (!filename) return []; // filename 缺失时无法渲染 call wrapper，保守跳过
+
+  // 三段文本
+  const callText    = renderFileReadCallWrapper(filename);
+  const resultText  = renderFileReadResultWrapper(fileText);
+  const truncNote   = truncated ? renderFileTruncationNote(filename) : null;
+
+  // 所有 segment 归同一 logicalMessage 组（与原 skill_listing/attachment 的 canMergeUserBlock 逻辑一致）
+  const groupId =
+    lastSegmentRole === "user" && currentUserGroupId
+      ? currentUserGroupId
+      : startNewGroup("user");
+
+  const ruleSourceRef: SourceRef = {
+    kind: "harness_rule",
+    harness: { ruleId: "claude-code.messages.file-attachment.v1" },
+    label: "rule:claude-code.messages.file-attachment.v1",
+  };
+
+  const makeFileSeg = (
+    suffix: string,
+    text: string,
+    order: number,
+  ): ContextSegment => {
+    const seg: ContextSegment = {
+      id: `eseg-${m.id}-${suffix}`,
+      section: "messages",
+      category: "attachment",
+      label: `user/attachment/file-${suffix}`,
+      sourceRefs: [m.sourceRef, ruleSourceRef],
+      role: "user",
+      order,
+      lifecycle: "session",
+      flags: ["injected"],
+      metadata: pruneMetadata({
+        sourceMutationId: m.id,
+        logicalMessageId: groupId,
+        ruleId: "claude-code.messages.file-attachment.v1",
+        fileAttachmentFilename: filename,
+        fileAttachmentSegment: suffix,
+        preview: text.slice(0, 80),
+      }),
+    };
+    seg.contentRef = { kind: "inline", text, charCount: text.length };
+    seg.charCount = text.length;
+    seg.tokenEstimate = Math.round(text.length / 4);
+    seg.rawHash = sha256Short(text);
+    return seg;
+  };
+
+  const result: ContextSegment[] = [
+    makeFileSeg("call", callText, orderBase),
+    makeFileSeg("result", resultText, orderBase + 1),
+  ];
+  if (truncNote) {
+    result.push(makeFileSeg("trunc", truncNote, orderBase + 2));
+  }
+  return result;
 }
 
 function proxyWrapTextForCategory(category: SegmentCategory, text: string): string {

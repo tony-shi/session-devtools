@@ -85,6 +85,10 @@ interface JsonlAttachment {
   skillCount?: number;
   itemCount?: number;
   isInitial?: boolean;
+  // type=file / already_read_file：文件绝对路径（attachments.ts AlreadyReadFileAttachment / FileAttachment）
+  filename?: string;
+  // type=file：文件内容超过 MAX_LINES_TO_READ(2000) 时为 true（attachments.ts:3163）
+  truncated?: boolean;
 }
 
 interface JsonlRecord {
@@ -695,6 +699,33 @@ function handleAttachment(
     category = "attachment";
   } else if (at === "queued_command") {
     category = "attachment";
+  } else if (at === "file") {
+    // sourcemap: attachments.ts generateFileAttachment → case 'file'（messages.ts:3545）
+    // normalizeAttachmentForAPI 对 type=file 生成：
+    //   (1) createToolUseMessage("Read", {file_path})  → wrapMessagesInSystemReminder
+    //   (2) createToolResultMessage(FileReadTool, content) → wrapMessagesInSystemReminder
+    //   (3) 若 truncated：createUserMessage(truncation note) → wrapMessagesInSystemReminder
+    // reconstructor 需要这三段的原始文件内容，不能用 JSON.stringify(att.content)。
+    // 此处把 filename / 文件原文 / truncated 标记存入 metadata，contentRef.text 存文件原文。
+    const fileContent = att.content as { type?: string; file?: { content?: string; numLines?: number } } | undefined;
+    const fileText = fileContent?.file?.content ?? "";
+    const numLines = fileContent?.file?.numLines ?? 0;
+    const truncated = att.truncated === true;
+    category = "attachment";
+    push("inject", category, makeJsonlRef(file, lineNum, uuid, "attachment"), {
+      timestamp: ts,
+      contentRef: inlineRef(fileText),
+      charDeltaEstimate: fileText.length,
+      confidence: "exact",
+      metadata: {
+        attachmentType: at,
+        fileAttachmentFilename: att.filename as string | undefined,
+        fileAttachmentNumLines: numLines,
+        fileAttachmentTruncated: truncated || undefined,
+        parentUuid: rec.parentUuid ?? undefined,
+      },
+    });
+    return; // 已经 push，避免走到下方通用 push
   } else {
     category = "attachment";
     confidence = "estimated";
