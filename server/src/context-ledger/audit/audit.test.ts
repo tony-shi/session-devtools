@@ -349,9 +349,12 @@ function makeSideQueryProxyRecord() {
     timestamp: ts,
     sessionId,
     agentKind: "claude-code" as const,
-    raw: { ...raw, _fixtureName: "side-query-session-title", _fixtureSource: "ant-native" },
+    raw: { ...raw, _fixtureName: "side-query-session-title", _fixtureSource: "ant-native" } as Record<string, unknown>,
   };
 }
+
+import { parseClaudeProxyRequest } from "../proxy-snapshot-parser";
+import { inferClaudeProxyAttributions } from "../proxy-attribution";
 
 describe("proxy_without_jsonl：无 JSONL 时 pipeline 返回 skipped", () => {
   it("side-query-session-title fixture 在 discoverFixtures 结果中出现在 proxyWithoutJsonl", () => {
@@ -379,5 +382,60 @@ describe("proxy_without_jsonl：无 JSONL 时 pipeline 返回 skipped", () => {
     const { result, data } = runPipelineWithData({ proxy, jsonlFile: null });
     expect(result.status).toBe("skipped");
     expect(data).toBeUndefined();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// side query attribution：验证 parser + attribution 对 side-query-session-title 的识别
+// side query 无 JSONL，expected 不可重建；但 attribution 应独立正确工作。
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("side query attribution：session-title rule 命中验证", () => {
+  it("parser 将 side-query-session-title 识别为 queryKind=side_query", () => {
+    const proxy = makeSideQueryProxyRecord();
+    const reqBody = proxy.raw["reqBody"] as Record<string, unknown>;
+    const snapshot = parseClaudeProxyRequest(
+      {
+        ts: proxy.timestamp,
+        startedAt: proxy.timestamp,
+        reqHeaders: proxy.raw["reqHeaders"] as Record<string, string>,
+        reqBody: reqBody as Parameters<typeof parseClaudeProxyRequest>[0]["reqBody"],
+        _traffic_jsonl_line: 0,
+      },
+      { proxyFile: proxy.proxySourceFile, queryId: proxy.queryKey.queryId },
+    );
+    // side query 特征：tools=0, messages=1 → queryKind=side_query
+    expect(snapshot.request?.queryKind).toBe("side_query");
+    // model 为 Haiku（小型快速模型）
+    expect(snapshot.request?.model).toContain("haiku");
+    // structured output 存在
+    expect(snapshot.request?.outputFormat).toBe("json_schema");
+  });
+
+  it("attribution 命中 session-title rule（system[2] = SESSION_TITLE_PROMPT）", () => {
+    const proxy = makeSideQueryProxyRecord();
+    const reqBody = proxy.raw["reqBody"] as Record<string, unknown>;
+    const snapshot = parseClaudeProxyRequest(
+      {
+        ts: proxy.timestamp,
+        startedAt: proxy.timestamp,
+        reqHeaders: proxy.raw["reqHeaders"] as Record<string, string>,
+        reqBody: reqBody as Parameters<typeof parseClaudeProxyRequest>[0]["reqBody"],
+        _traffic_jsonl_line: 0,
+      },
+      { proxyFile: proxy.proxySourceFile, queryId: proxy.queryKey.queryId },
+    );
+    const snapForAttr = JSON.parse(
+      JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
+    ) as typeof snapshot;
+    const attributions = inferClaudeProxyAttributions(snapForAttr);
+
+    // 必须有命中 session-title rule 的 attribution
+    const sessionTitleAttr = attributions.find(
+      (a) => a.ruleId === "claude-code.side-query.session-title.v1",
+    );
+    expect(sessionTitleAttr).toBeDefined();
+    expect(sessionTitleAttr?.category).toBe("system_prompt");
+    expect(sessionTitleAttr?.mechanism).toBe("system_prompt_pattern");
   });
 });

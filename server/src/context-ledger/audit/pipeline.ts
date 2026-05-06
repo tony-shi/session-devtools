@@ -212,6 +212,7 @@ export function runPipelineWithData(input: PipelineInput): {
       proxyFile: proxySourceFile,
       queryId: queryKey.queryId,
     });
+
     const snapForAttr = JSON.parse(
       JSON.stringify({ ...snapshot, metadata: { ...snapshot.metadata, rawBody: reqBody } }),
     ) as typeof snapshot;

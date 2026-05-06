@@ -2094,9 +2094,17 @@ export const CLAUDE_CODE_TOOL_WEBFETCH_RULE: ContextLedgerRule = {
 // queryHaiku()（claude.ts:3241）发出的内部 side query。
 // 特征（sourcemap 确认）：
 //   - tools: []（硬编码，claude.ts:3274）
-//   - messages: [1条]（只有 userPrompt）
+//   - messages: [1条]（只有 userPrompt，即主 session 第一条用户消息文本）
 //   - model: getSmallFastModel() = claude-haiku-4-5-20251001
 //   - output_config.format.type = "json_schema"（structured output）
+//   - system: [billing_header, cli_identity, SESSION_TITLE_PROMPT]（3 块）
+//
+// side query 与主 query 的根本区别：
+//   - 不写 session storage（sideQuery.ts 不调用 sessionStorage，无 promptId）
+//   - 无对应 JSONL 条目——因此 pipeline 无法用标准 mutation 路径重建 expected
+//   - expected 理论上可从"触发时刻主 session 的第一条 user_message"派生，
+//     但 pipeline 当前无 parentSessionJSONL 上下文，故 expected 不可得
+//   - 正确的 audit 模式：attribution-only（验证我们能识别这条请求是什么，而非验证内容精确）
 //
 // queryScope: "side_query"——parser 推断的 queryKind === "side_query" 时才命中。
 // 主请求（tools>0）永远不会命中 side_query rule，强约束防止误匹配。
@@ -2104,11 +2112,9 @@ export const CLAUDE_CODE_TOOL_WEBFETCH_RULE: ContextLedgerRule = {
 // FIXTURE STATUS：
 //   proxy-request.json 已录制（server/test/fixtures/context-reconstruction/side-query-session-title/）。
 //   版本：cc_version=2.1.122.d93（traffic.jsonl.2026-05-01T05-59-26-948Z:1995）。
-//   无对应 session.jsonl——side query 不属于任何主 session JSONL，
-//   因此无法通过标准 mutation pipeline 重建 expected。
-//   当前从 VALID_FIXTURE_NAMES 排除，等待 P3-4（--proxy-only attribution-only 模式）支持。
-//   2.1.126 版本的 session-title side query 暂未在本地 traffic 中采样到；
-//   规则本身语义正确，fixture 已就绪，只缺 pipeline 路径。
+//   无对应 session.jsonl——side query 不属于任何主 session JSONL，进入 proxyWithoutJsonl 分支。
+//   pipeline 以 --proxy-only 模式处理：attribution 识别 + 无 expected 重建 + 无 reconciliation。
+//   reconciliation.comparePolicy = "presence_only"：只验证 attribution 命中，不做 hash/text 比对。
 
 // ── session title generation ───────────────────────────────────────────────────
 // generateSessionTitle() — sessionTitle.ts:79
@@ -2119,17 +2125,32 @@ export const CLAUDE_CODE_TOOL_WEBFETCH_RULE: ContextLedgerRule = {
 //   1. queryScope = "side_query"（tools=0, messages=1）← 防止主请求误命中
 //   2. system[2] 完整文本精确 regex 匹配 ← 防止其他 side query 误命中
 //   3. output_config.format.type = "json_schema" ← parser 已存入 snapshot.request.outputFormat
+//
+// attribution 视角（proxy → 识别）：
+//   system[2] 的 rawText 匹配 SESSION_TITLE_PROMPT → category=system_prompt, mechanism=system_prompt_pattern
+//   attribution 可正常工作，不受 JSONL 缺失影响。
+//
+// reconstruction 视角（expected 构建）：
+//   side query 无 JSONL，expected 不可正向重建。
+//   理论路径（未实现）：PipelineInput.parentSessionJSONL → 取主 session 第一条 user_message
+//   → 作为 expected messages[0]；system 由 billing + identity + contentPattern 组合。
+//   当前阻塞：pipeline 无 parentSessionJSONL 字段，trigger=from_harness_state 仅作规范记录。
+//
+// reconciliation 视角（对账）：
+//   comparePolicy = "presence_only"：无 expected，只验证 attribution 命中；不做 hash/char 比对。
+//   exactTextExpected = false：side query expected 不可得，不强制精确对账。
 
 export const CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE: ContextLedgerRule = {
   ruleId: "claude-code.side-query.session-title.v1",
   verifiedFor: null, // 待人工校对至 SUPPORTED_CLAUDE_CODE_VERSION（原 ruleVersion="2.1.123"）
   description:
     "Claude Code 自动生成会话标题的 side query（generateSessionTitle）。" +
-    "通过 queryHaiku() 发送给 Haiku 模型，tools=0，messages=1，" +
-    "output_config=json_schema({title})。" +
+    "通过 queryHaiku() 发送给 Haiku 模型，tools=0，messages=1（主 session 第一条用户消息），" +
+    "output_config=json_schema({title})，system=[billing, identity, SESSION_TITLE_PROMPT]。" +
+    "无 JSONL——不写 sessionStorage，pipeline 以 attribution-only 模式处理。" +
     "queryScope=side_query 严格约束，主请求不会命中。",
   stability: "static",
-  sourcemapRef: "restored-src/src/utils/sessionTitle.ts:56 + restored-src/src/services/api/claude.ts:3241",
+  sourcemapRef: "restored-src/src/utils/sessionTitle.ts:56 + restored-src/src/services/api/claude.ts:3241 + restored-src/src/bridge/initReplBridge.ts:336",
   queryScope: "side_query",
 
   attribution: {
@@ -2157,27 +2178,18 @@ export const CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE: ContextLedgerRule = {
   },
 
   reconstruction: {
-    // TODO(side-query-expected): side query 的 expected 应从主 session JSONL 正向构建，
-    // 而非 attribution 反推。正确的建模路径：
+    // side query 无 JSONL，expected 不可正向重建。
+    // trigger=from_harness_state 记录理论路径：generateSessionTitle() 由主 session
+    // onUserMessage 回调（initReplBridge.ts:349-377）fire-and-forget 触发，
+    // 输入为主 session extractConversationText() 结果（sessionTitle.ts:33-54）。
     //
-    //   generateSessionTitle() 由主 session onUserMessage 回调触发
-    //   （initReplBridge.ts:304-336），输入 = 主 session 第一条用户消息文本
-    //   （sessionTitle.ts extractConversationText）。
-    //
-    //   因此 expected 重建需要：
-    //   1. 从"触发时刻"的主 session JSONL 找到第一条 user_message mutation
-    //   2. 取其内容作为 expected messages[0]（side query 的 user prompt）
-    //   3. 用本 rule 的 contentPattern（SESSION_TITLE_PROMPT）作为 expected system[2]
-    //
-    //   这是正向路径：主 session JSONL emit → 触发 side query → expected 由主 session 数据推导。
-    //   当前阻塞：pipeline 处理 side query 时没有主 session 的 JSONL 上下文。
-    //   解法方向：给 PipelineInput 加 parentSessionJSONL 字段，供 side query reconstructor 消费。
-    //
-    // 当前状态：pipeline 以 --proxy-only 模式运行，只做 attribution-only 报告。
+    // 未来实现路径：PipelineInput 加 parentSessionJSONL 字段 →
+    //   expected.messages[0] = 主 session 第一条 user_message 内容
+    //   expected.system = [billing_header, cli_identity, contentPattern]
     preCondition: {
       type: "harnessFlag",
       flag: "generateSessionTitle()",
-      note: "新会话首条消息之后触发",
+      note: "新会话首条消息之后 fire-and-forget 触发（initReplBridge.ts:336）",
     },
     trigger: "from_harness_state",
     materialization: "exact_text",
@@ -2202,9 +2214,10 @@ export const CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE: ContextLedgerRule = {
   },
 
   reconciliation: {
-    comparePolicy: "raw_hash",
-    confidence: "exact",
-    exactTextExpected: true,
+    // side query 无 JSONL → expected 不可得 → 只验证 attribution 命中，不做 hash/text 对账
+    comparePolicy: "presence_only",
+    confidence: "inferred",
+    exactTextExpected: false,
   },
 };
 
