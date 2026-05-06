@@ -3,9 +3,9 @@ import {
   assertSectionsLossless,
   blockHasDynamicSections,
   splitProxyBlockSections,
-} from "./proxy-block-splitter";
-import type { ProxyRequestInput } from "./proxy-snapshot-parser";
-import { parseClaudeProxyRequest } from "./proxy-snapshot-parser";
+} from "./block-splitter";
+import type { ProxyRequestInput } from "./snapshot-parser";
+import { parseClaudeProxyRequest } from "./snapshot-parser";
 
 // ── 单元测试：splitter 核心逻辑 ───────────────────────────────────────────────
 
@@ -150,7 +150,7 @@ describe("blockHasDynamicSections", () => {
 // ── fixture 回归测试：system-tools-overhead ────────────────────────────────────
 
 const FIXTURES_DIR = new URL(
-  "../../test/fixtures/context-reconstruction/",
+  "../../../test/fixtures/context-reconstruction/",
   import.meta.url,
 );
 

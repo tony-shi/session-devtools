@@ -353,8 +353,8 @@ function makeSideQueryProxyRecord() {
   };
 }
 
-import { parseClaudeProxyRequest } from "../proxy-snapshot-parser";
-import { inferClaudeProxyAttributions } from "../proxy-attribution";
+import { parseClaudeProxyRequest } from "../proxy/snapshot-parser";
+import { inferClaudeProxyAttributions } from "../proxy/attribution";
 
 describe("proxy_without_jsonl：无 JSONL 时 pipeline 返回 skipped", () => {
   it("side-query-session-title fixture 在 discoverFixtures 结果中出现在 proxyWithoutJsonl", () => {

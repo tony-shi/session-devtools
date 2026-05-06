@@ -47,9 +47,9 @@ import type {
   SegmentCategory,
   SourceRef,
   TargetRequest,
-} from "./types";
-import { getContextLedgerRule as getContextLedgerRuleById } from "./rule-registry";
-import { computeRequestLevelExact } from "./target-request-builder";
+} from "../types";
+import { getContextLedgerRule as getContextLedgerRuleById } from "../rules/rule-registry";
+import { computeRequestLevelExact } from "../target/request-builder";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 输入 / 输出

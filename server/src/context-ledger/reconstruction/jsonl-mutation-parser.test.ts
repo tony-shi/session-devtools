@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { parseClaudeJsonlMutations, pairToolUseAndResult, buildRuntimeSnapshotFromJsonl } from "./jsonl-mutation-parser";
-import type { ContextMutation, SegmentCategory } from "./types";
+import type { ContextMutation, SegmentCategory } from "../types";
 
 const FIXTURE_DIR = new URL(
-  "../../test/fixtures/context-reconstruction",
+  "../../../test/fixtures/context-reconstruction",
   import.meta.url,
 ).pathname;
 

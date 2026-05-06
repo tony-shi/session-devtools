@@ -1,17 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { reconcileClaudeContext } from "./reconciliation-engine";
-import { inferClaudeProxyAttributions } from "./proxy-attribution";
-import { parseClaudeProxyRequest } from "./proxy-snapshot-parser";
-import { parseClaudeJsonlMutations } from "./jsonl-mutation-parser";
-import { reconstructExpectedClaudeContext } from "./expected-context-reconstructor";
-import { buildTargetRequest } from "./target-request-builder";
+import { reconcileClaudeContext } from "./engine";
+import { inferClaudeProxyAttributions } from "../proxy/attribution";
+import { parseClaudeProxyRequest } from "../proxy/snapshot-parser";
+import { parseClaudeJsonlMutations } from "../reconstruction/jsonl-mutation-parser";
+import { reconstructExpectedClaudeContext } from "../reconstruction/expected-context-reconstructor";
+import { buildTargetRequest } from "../target/request-builder";
 import { MOCK_RECONCILIATION_REPORT } from "./report";
-import { computeCharDiff } from "./debug/char-diff";
-import type { ReconciliationReport } from "./types";
+import { computeCharDiff } from "../debug/char-diff";
+import type { ReconciliationReport } from "../types";
 
 const FIXTURE_DIR = new URL(
-  "../../test/fixtures/context-reconstruction",
+  "../../../test/fixtures/context-reconstruction",
   import.meta.url,
 ).pathname;
 

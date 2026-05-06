@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { computeCharDiff } from "./char-diff";
 import { renderCharDiffHtml } from "./render-char-diff-html";
-import { MOCK_RECONCILIATION_REPORT } from "../report";
-import { reconcileClaudeContext } from "../reconciliation-engine";
+import { MOCK_RECONCILIATION_REPORT } from "../reconciliation/report";
+import { reconcileClaudeContext } from "../reconciliation/engine";
 import type {
   ContextSegment,
   ExpectedQueryContext,

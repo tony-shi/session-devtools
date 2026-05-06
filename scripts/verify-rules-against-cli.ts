@@ -24,7 +24,7 @@ import {
   CONTEXT_LEDGER_RULES,
   SUPPORTED_CLAUDE_CODE_VERSION,
   type ContextLedgerRule,
-} from "../server/src/context-ledger/rule-registry";
+} from "../server/src/context-ledger/rules/rule-registry";
 
 // ── 目标文件定位 ────────────────────────────────────────────────────────────────
 

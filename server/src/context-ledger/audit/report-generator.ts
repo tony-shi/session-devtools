@@ -242,7 +242,7 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
   lines.push(`## Next Action Suggestions`, ``);
   if (run.regressedQueries > 0) {
     lines.push(`- **Regression detected**: 检查 proxy-attribution / reconciliation-engine 的 M4 heuristic 是否引入了新的 suspect_match。`);
-    lines.push(`- 参考路径：\`server/src/context-ledger/proxy-attribution.ts\` / \`reconciliation-engine.ts\``);
+    lines.push(`- 参考路径：\`server/src/context-ledger/proxy/attribution.ts\` / \`reconciliation/engine.ts\``);
   }
   if (run.needsReviewQueries > 0) {
     lines.push(`- **Needs review**: 检查 expected-context-reconstructor 的 U1-U5 未实现规则是否压低了 wireExactCoverage + templateCoverage（push 到 attributionOnlyCoverage / unexplainedCoverage）。`);

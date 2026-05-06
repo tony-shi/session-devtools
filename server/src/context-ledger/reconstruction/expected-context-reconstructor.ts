@@ -61,10 +61,10 @@ import type {
   SegmentRole,
   SegmentSection,
   SourceRef,
-} from "./types";
-import { CONTEXT_LEDGER_RULES, SUPPORTED_CLAUDE_CODE_VERSION, isRuleVerified } from "./rule-registry";
-import type { ContextLedgerRule, RulePreCondition } from "./rule-registry";
-import { BUILTIN_TOOL_SCHEMA_JSON } from "./tool-schema-registry";
+} from "../types";
+import { CONTEXT_LEDGER_RULES, SUPPORTED_CLAUDE_CODE_VERSION, isRuleVerified } from "../rules/rule-registry";
+import type { ContextLedgerRule, RulePreCondition } from "../rules/rule-registry";
+import { BUILTIN_TOOL_SCHEMA_JSON } from "../rules/tool-schema-registry";
 
 // 与 proxy-snapshot-parser 口径一致：16位短截 SHA-256
 function sha256Short(text: string): string {

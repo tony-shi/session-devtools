@@ -7,8 +7,8 @@ import {
   // 过渡期兼容别名（测试旧名也能用）
   ATTRIBUTION_RULES,
   getAttributionRule,
-} from "./rule-registry";
-import type { MutationSourceKind, ReconciliationReport } from "./types";
+} from "../rules/rule-registry";
+import type { MutationSourceKind, ReconciliationReport } from "../types";
 
 // @ts-expect-error proxy is a fact-layer source, not a mutation source.
 const invalidMutationSource: MutationSourceKind = "proxy";

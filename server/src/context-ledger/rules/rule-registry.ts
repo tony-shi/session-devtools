@@ -33,8 +33,8 @@ import type {
   SegmentLifecycle,
   SegmentRole,
   SegmentSection,
-} from "./types";
-import type { ProxySegmentAttribution } from "./types";
+} from "../types";
+import type { ProxySegmentAttribution } from "../types";
 
 // 当前唯一支持的 Claude Code 版本。改这里时必须同步把所有 rule 的 verifiedFor 清零并重新人工校对。
 export const SUPPORTED_CLAUDE_CODE_VERSION = "2.1.126";

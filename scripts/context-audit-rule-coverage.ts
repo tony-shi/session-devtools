@@ -19,8 +19,8 @@ import {
   CONTEXT_LEDGER_RULES,
   SUPPORTED_CLAUDE_CODE_VERSION,
   isRuleVerified,
-} from "../server/src/context-ledger/rule-registry";
-import type { ContextLedgerRule } from "../server/src/context-ledger/rule-registry";
+} from "../server/src/context-ledger/rules/rule-registry";
+import type { ContextLedgerRule } from "../server/src/context-ledger/rules/rule-registry";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 类型

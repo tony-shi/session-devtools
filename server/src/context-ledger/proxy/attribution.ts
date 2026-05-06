@@ -28,9 +28,9 @@ import {
   SUPPORTED_CLAUDE_CODE_VERSION,
   CLAUDE_CODE_BILLING_NOISE_RULE,
   CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,
-} from "./rule-registry";
-import type { ContextLedgerRule } from "./rule-registry";
-import { DYNAMIC_SECTION_HEADERS } from "./proxy-block-splitter";
+} from "../rules/rule-registry";
+import type { ContextLedgerRule } from "../rules/rule-registry";
+import { DYNAMIC_SECTION_HEADERS } from "./block-splitter";
 import type {
   ContextSegment,
   MutationSourceKind,
@@ -42,7 +42,7 @@ import type {
   SegmentFlag,
   SegmentLifecycle,
   SegmentSection,
-} from "./types";
+} from "../types";
 
 // ── 常量 ──────────────────────────────────────────────────────────────────────
 

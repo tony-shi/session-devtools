@@ -8,7 +8,7 @@ import type {
   ReconciliationFinding,
   ReconciliationReport,
   SourceRef,
-} from "./types";
+} from "../types";
 
 const generatedAt = "2026-01-01T00:00:00.000Z";
 const sessionId = "mock-session-context-ledger";

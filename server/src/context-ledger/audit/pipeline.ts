@@ -7,13 +7,13 @@
 //   → reconcileClaudeContext → computeCharDiff → renderCharDiffHtml
 
 import { readFileSync, existsSync } from "node:fs";
-import { parseClaudeProxyRequest } from "../proxy-snapshot-parser";
-import type { ProxyRequestInput } from "../proxy-snapshot-parser";
-import { inferClaudeProxyAttributions } from "../proxy-attribution";
-import { parseClaudeJsonlMutations } from "../jsonl-mutation-parser";
-import { reconstructExpectedClaudeContext } from "../expected-context-reconstructor";
-import { reconcileClaudeContext } from "../reconciliation-engine";
-import { buildTargetRequest } from "../target-request-builder";
+import { parseClaudeProxyRequest } from "../proxy/snapshot-parser";
+import type { ProxyRequestInput } from "../proxy/snapshot-parser";
+import { inferClaudeProxyAttributions } from "../proxy/attribution";
+import { parseClaudeJsonlMutations } from "../reconstruction/jsonl-mutation-parser";
+import { reconstructExpectedClaudeContext } from "../reconstruction/expected-context-reconstructor";
+import { reconcileClaudeContext } from "../reconciliation/engine";
+import { buildTargetRequest } from "../target/request-builder";
 import { computeCharDiff } from "../debug/char-diff";
 import { renderCharDiffHtml } from "../debug/render-char-diff-html";
 import type { ReconciliationReport } from "../types";

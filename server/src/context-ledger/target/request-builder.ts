@@ -10,8 +10,8 @@ import type {
   TargetMessage,
   TargetRequest,
   TargetSegment,
-} from "./types";
-import { canonicalJson, hashCanonicalJson } from "./request-canonical";
+} from "../types";
+import { canonicalJson, hashCanonicalJson } from "./canonical";
 
 const PLACEHOLDER_PREFIX = "{{target-placeholder:";
 

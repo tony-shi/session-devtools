@@ -2,18 +2,18 @@ import { describe, expect, test } from "bun:test";
 import {
   buildTargetRequestWithBody,
   computeRequestLevelExact,
-} from "./target-request-builder";
-import { evaluatePreCondition, materializeHarnessRules } from "./expected-context-reconstructor";
-import { CONTEXT_LEDGER_RULES } from "./rule-registry";
-import { BUILTIN_TOOL_SCHEMA_JSON } from "./tool-schema-registry";
-import { hashCanonicalJson } from "./request-canonical";
+} from "./request-builder";
+import { evaluatePreCondition, materializeHarnessRules } from "../reconstruction/expected-context-reconstructor";
+import { CONTEXT_LEDGER_RULES } from "../rules/rule-registry";
+import { BUILTIN_TOOL_SCHEMA_JSON } from "../rules/tool-schema-registry";
+import { hashCanonicalJson } from "./canonical";
 import type {
   ContextSegment,
   ExpectedQueryContext,
   HarnessRuntimeSnapshot,
   ProxyQuerySnapshot,
   SourceRef,
-} from "./types";
+} from "../types";
 
 function jsonlRef(): Extract<SourceRef, { kind: "jsonl" }> {
   return { kind: "jsonl", jsonl: { file: "session.jsonl" } };

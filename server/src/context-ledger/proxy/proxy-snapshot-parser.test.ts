@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { parseClaudeProxyRequest } from "./proxy-snapshot-parser";
-import { hashCanonicalJson, hashSha256Full } from "./request-canonical";
-import type { ProxyRequestInput } from "./proxy-snapshot-parser";
+import { parseClaudeProxyRequest } from "./snapshot-parser";
+import { hashCanonicalJson, hashSha256Full } from "../target/canonical";
+import type { ProxyRequestInput } from "./snapshot-parser";
 
 const FIXTURE_DIR = new URL(
-  "../../test/fixtures/context-reconstruction",
+  "../../../test/fixtures/context-reconstruction",
   import.meta.url,
 ).pathname;
 

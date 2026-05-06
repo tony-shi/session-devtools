@@ -2,15 +2,15 @@
 // 新 contract：inferClaudeProxyAttributions 消费 snapshot.segments（由 parseClaudeProxyRequest 产出），
 // 不再依赖 rawBody，不再 mutate snapshot。
 import { describe, expect, test } from "bun:test";
-import type { ProxyQuerySnapshot } from "./types";
+import type { ProxyQuerySnapshot } from "../types";
 import {
   buildAttributionBreakdown,
   inferClaudeProxyAttributions,
-} from "./proxy-attribution";
-import { parseClaudeProxyRequest } from "./proxy-snapshot-parser";
-import type { ProxyRequestInput } from "./proxy-snapshot-parser";
+} from "./attribution";
+import { parseClaudeProxyRequest } from "./snapshot-parser";
+import type { ProxyRequestInput } from "./snapshot-parser";
 
-const FIXTURES_DIR = new URL("../../test/fixtures/context-reconstruction/", import.meta.url);
+const FIXTURES_DIR = new URL("../../../test/fixtures/context-reconstruction/", import.meta.url);
 
 // 从 fixture 目录 parse 出真实 snapshot（含完整 segments）
 async function loadSnapshot(fixtureName: string): Promise<ProxyQuerySnapshot> {

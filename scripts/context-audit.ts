@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { makeRunId, runDir, AUDIT_HOME, RUNS_DIR, LATEST_JSON, BASELINE_JSON, latestJsonPath, baselineJsonPath } from "../server/src/context-ledger/audit/paths";
 import { discoverFixtures, discoverLocal } from "../server/src/context-ledger/audit/discovery";
 import { runPipelineWithData } from "../server/src/context-ledger/audit/pipeline";
-import { CONTEXT_LEDGER_RULES, SUPPORTED_CLAUDE_CODE_VERSION } from "../server/src/context-ledger/rule-registry";
+import { CONTEXT_LEDGER_RULES, SUPPORTED_CLAUDE_CODE_VERSION } from "../server/src/context-ledger/rules/rule-registry";
 import {
   ensureAuditDirs,
   loadBaselineIndex,

@@ -13,13 +13,13 @@ import { computeCharDiff } from "../server/src/context-ledger/debug/char-diff";
 import type { CharDiffReport, SegmentText } from "../server/src/context-ledger/debug/char-diff";
 import { renderCharDiffHtml } from "../server/src/context-ledger/debug/render-char-diff-html";
 import { renderProxyAttributionView } from "../server/src/context-ledger/audit/proxy-attribution-view";
-import { MOCK_RECONCILIATION_REPORT } from "../server/src/context-ledger/report";
-import { reconcileClaudeContext } from "../server/src/context-ledger/reconciliation-engine";
-import { parseClaudeProxyRequest } from "../server/src/context-ledger/proxy-snapshot-parser";
-import { inferClaudeProxyAttributions } from "../server/src/context-ledger/proxy-attribution";
-import { parseClaudeJsonlMutations } from "../server/src/context-ledger/jsonl-mutation-parser";
-import { reconstructExpectedClaudeContext } from "../server/src/context-ledger/expected-context-reconstructor";
-import { buildTargetRequest } from "../server/src/context-ledger/target-request-builder";
+import { MOCK_RECONCILIATION_REPORT } from "../server/src/context-ledger/reconciliation/report";
+import { reconcileClaudeContext } from "../server/src/context-ledger/reconciliation/engine";
+import { parseClaudeProxyRequest } from "../server/src/context-ledger/proxy/snapshot-parser";
+import { inferClaudeProxyAttributions } from "../server/src/context-ledger/proxy/attribution";
+import { parseClaudeJsonlMutations } from "../server/src/context-ledger/reconstruction/jsonl-mutation-parser";
+import { reconstructExpectedClaudeContext } from "../server/src/context-ledger/reconstruction/expected-context-reconstructor";
+import { buildTargetRequest } from "../server/src/context-ledger/target/request-builder";
 import type { ContextSegment, ReconciliationReport } from "../server/src/context-ledger/types";
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -7,13 +7,13 @@ import {
   UNIMPLEMENTED_RULES,
 } from "./expected-context-reconstructor";
 import type { ReconstructInput } from "./expected-context-reconstructor";
-import { inferClaudeProxyAttributions } from "./proxy-attribution";
-import { parseClaudeProxyRequest } from "./proxy-snapshot-parser";
-import { CONTEXT_LEDGER_RULES } from "./rule-registry";
-import type { MutationSourceRef, SegmentCategory } from "./types";
+import { inferClaudeProxyAttributions } from "../proxy/attribution";
+import { parseClaudeProxyRequest } from "../proxy/snapshot-parser";
+import { CONTEXT_LEDGER_RULES } from "../rules/rule-registry";
+import type { MutationSourceRef, SegmentCategory } from "../types";
 
 const FIXTURE_DIR = new URL(
-  "../../test/fixtures/context-reconstruction",
+  "../../../test/fixtures/context-reconstruction",
   import.meta.url,
 ).pathname;
 
@@ -553,7 +553,7 @@ describe("materializeHarnessRules", () => {
 //   - verifiedFor = SUPPORTED_CLAUDE_CODE_VERSION 的 identity rule 产出 confidence=exact。
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { SUPPORTED_CLAUDE_CODE_VERSION } from "./rule-registry";
+import { SUPPORTED_CLAUDE_CODE_VERSION } from "../rules/rule-registry";
 
 describe("reconstruct-04：system identity rule materialized（not attribution_only）", () => {
   const IDENTITY_RULE_ID = "claude-code.system-prompt-identity.v1";
@@ -636,7 +636,7 @@ describe("reconstruct-04：system identity rule materialized（not attribution_o
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { reconstructExpectedClaudeContext as reconFn } from "./expected-context-reconstructor";
-import type { ContextMutation } from "./types";
+import type { ContextMutation } from "../types";
 
 function makeMutation(overrides: Partial<ContextMutation>): ContextMutation {
   return {

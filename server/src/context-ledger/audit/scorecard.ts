@@ -5,7 +5,7 @@ import type { CharDiffReport } from "../debug/char-diff";
 import type { AuditVerdict, QueryScorecard } from "./types";
 import { queryKeyHash } from "./paths";
 import type { QueryKey } from "./types";
-import { getContextLedgerRule, SUPPORTED_CLAUDE_CODE_VERSION } from "../rule-registry";
+import { getContextLedgerRule, SUPPORTED_CLAUDE_CODE_VERSION } from "../rules/rule-registry";
 
 // verdict 判断阈值
 const THRESHOLDS = {

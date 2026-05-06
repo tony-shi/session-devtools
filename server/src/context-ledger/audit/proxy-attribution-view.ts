@@ -10,8 +10,8 @@
 // 四列通过 segment id 对齐，点击行互相高亮。
 // col-4 需要传入 reconciliationReport；不传时退化为三列视图。
 
-import { CONTEXT_LEDGER_RULE_BY_ID } from "../rule-registry";
-import type { ContextLedgerRule } from "../rule-registry";
+import { CONTEXT_LEDGER_RULE_BY_ID } from "../rules/rule-registry";
+import type { ContextLedgerRule } from "../rules/rule-registry";
 import type {
   AlignmentRef,
   ContextSegment,

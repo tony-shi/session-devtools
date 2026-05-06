@@ -8,7 +8,7 @@ import type {
   MutationSourceRef,
   MutationType,
   SegmentCategory,
-} from "./types";
+} from "../types";
 
 // ── 输入 / 输出 ────────────────────────────────────────────────────────────────
 

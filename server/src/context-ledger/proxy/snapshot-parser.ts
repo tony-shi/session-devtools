@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
-import { splitProxyBlockSections } from "./proxy-block-splitter";
-import { hashCanonicalJson, hashSha256Full } from "./request-canonical";
+import { splitProxyBlockSections } from "./block-splitter";
+import { hashCanonicalJson, hashSha256Full } from "../target/canonical";
 import type {
   CacheHint,
   ContextSegment,
@@ -10,7 +10,7 @@ import type {
   SegmentRole,
   SegmentSection,
   SourceRef,
-} from "./types";
+} from "../types";
 
 // ── 输入类型 ──────────────────────────────────────────────────────────────────
 

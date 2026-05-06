@@ -1,28 +1,28 @@
 export type * from "./types";
-export { buildMockReconciliationReport, MOCK_RECONCILIATION_REPORT } from "./report";
-export { inferClaudeProxyAttributions, buildAttributionBreakdown } from "./proxy-attribution";
-export type { AttributionBreakdown } from "./proxy-attribution";
-export { parseClaudeJsonlMutations, pairToolUseAndResult } from "./jsonl-mutation-parser";
+export { buildMockReconciliationReport, MOCK_RECONCILIATION_REPORT } from "./reconciliation/report";
+export { inferClaudeProxyAttributions, buildAttributionBreakdown } from "./proxy/attribution";
+export type { AttributionBreakdown } from "./proxy/attribution";
+export { parseClaudeJsonlMutations, pairToolUseAndResult } from "./reconstruction/jsonl-mutation-parser";
 export type {
   ParseJsonlOptions,
   JsonlMutationParseResult,
   UnknownJsonlLine,
   ToolUsePairingResult,
-} from "./jsonl-mutation-parser";
+} from "./reconstruction/jsonl-mutation-parser";
 export {
   reconstructExpectedClaudeContext,
   UNIMPLEMENTED_RULES,
-} from "./expected-context-reconstructor";
+} from "./reconstruction/expected-context-reconstructor";
 export type {
   HarnessRuleConfig,
   QueryBoundary,
   ReconstructInput,
   UnimplementedRuleId,
-} from "./expected-context-reconstructor";
-export { reconcileClaudeContext } from "./reconciliation-engine";
-export type { ReconcileInput } from "./reconciliation-engine";
-export { buildTargetRequest, buildTargetRequestWithBody, computeRequestLevelExact } from "./target-request-builder";
-export { canonicalJson, canonicalizeJson, hashCanonicalJson, hashSha256Full } from "./request-canonical";
+} from "./reconstruction/expected-context-reconstructor";
+export { reconcileClaudeContext } from "./reconciliation/engine";
+export type { ReconcileInput } from "./reconciliation/engine";
+export { buildTargetRequest, buildTargetRequestWithBody, computeRequestLevelExact } from "./target/request-builder";
+export { canonicalJson, canonicalizeJson, hashCanonicalJson, hashSha256Full } from "./target/canonical";
 export {
   CONTEXT_LEDGER_RULES,
   CONTEXT_LEDGER_RULE_BY_ID,
@@ -46,7 +46,7 @@ export {
   ATTRIBUTION_RULES,
   ATTRIBUTION_RULE_BY_ID,
   getAttributionRule,
-} from "./rule-registry";
+} from "./rules/rule-registry";
 export type {
   ContextLedgerRule,
   RuleMatchMode,
@@ -57,4 +57,4 @@ export type {
   RulePreCondition,
   // 过渡期兼容别名
   AttributionRule,
-} from "./rule-registry";
+} from "./rules/rule-registry";
