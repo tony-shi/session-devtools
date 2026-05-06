@@ -8,7 +8,7 @@ import { buildSnapshot } from "./snapshot";
 import { CLAUDE_CODE_MAIN_SESSION_TEMPLATE } from "../template/templates/main-session";
 import { CLAUDE_CODE_SIDE_QUERY_TEMPLATE } from "../template/templates/side-query";
 
-export type { ParsedQuerySnapshot, ParsedSegment, SlotMatch } from "./types";
+export type { ParsedQuerySnapshot, SegmentNode, SlotMatch } from "./types";
 
 export interface ParseQueryInput {
   reqBody: MatchSlotsInput["reqBody"];

@@ -3,7 +3,7 @@
 // 排版思路：三个折叠块（System / Tools / Messages），每个 segment 一行，
 // inline children 在父行下方缩进展示。
 
-import type { ParsedQuerySnapshot, ParsedSegment } from "../parser/types";
+import type { ParsedQuerySnapshot, SegmentNode } from "../parser/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 颜色规则（slotId → badge color）
@@ -43,32 +43,33 @@ function esc(s: string): string {
 
 interface Group {
   title: string;
-  segments: ParsedSegment[];
+  roots: SegmentNode[];  // 该 section 的顶层节点
 }
 
-function groupSegments(segments: ParsedSegment[]): { system: Group; tools: Group; messages: Group } {
-  const system: ParsedSegment[] = [];
-  const tools: ParsedSegment[] = [];
-  const messages: ParsedSegment[] = [];
+// 把 snapshot.roots 按 slotId 前缀分进三个 section。
+// 注意：分组只看顶层节点（roots），渲染时递归展开 children。
+function groupRoots(roots: SegmentNode[]): { system: Group; tools: Group; messages: Group } {
+  const system: SegmentNode[] = [];
+  const tools: SegmentNode[] = [];
+  const messages: SegmentNode[] = [];
 
-  for (const seg of segments) {
-    const sid = seg.slotId;
+  for (const node of roots) {
+    const sid = node.slotId;
     if (sid.startsWith("system.") || sid === "side-query.system") {
-      system.push(seg);
+      system.push(node);
     } else if (sid.startsWith("tools.")) {
-      tools.push(seg);
+      tools.push(node);
     } else if (sid.startsWith("messages.") || sid === "side-query.user") {
-      messages.push(seg);
+      messages.push(node);
     } else {
-      // 兜底：unknown 段并入 messages 末尾，方便发现
-      messages.push(seg);
+      messages.push(node);
     }
   }
 
   return {
-    system: { title: "System", segments: system },
-    tools: { title: "Tools", segments: tools },
-    messages: { title: "Messages", segments: messages },
+    system: { title: "System", roots: system },
+    tools: { title: "Tools", roots: tools },
+    messages: { title: "Messages", roots: messages },
   };
 }
 
@@ -76,8 +77,15 @@ function groupSegments(segments: ParsedSegment[]): { system: Group; tools: Group
 // 单行渲染
 // ─────────────────────────────────────────────────────────────────────────────
 
-function renderRow(seg: ParsedSegment): string {
-  const isInline = seg.slotId.indexOf(".inline.") !== -1;
+// renderNode 递归渲染一个 SegmentNode 及其 children。
+// children 在 HTML 里紧跟父行，CSS .inline 控制缩进。
+// depth 用于判断是否需要 .inline 样式（depth > 0 即为子节点）。
+function renderNode(node: SegmentNode, depth = 0): string {
+  return renderRow(node, depth) + node.children.map((c) => renderNode(c, depth + 1)).join("");
+}
+
+function renderRow(seg: SegmentNode, depth = 0): string {
+  const isInline = depth > 0;
   const color = slotColor(seg.slotId);
   const warn = seg.charCount > 10000 ? '<span class="warn" title="charCount &gt; 10000">⚠</span>' : "";
   const hashPrefix = seg.rawHash.length > 19 ? seg.rawHash.slice(0, 19) : seg.rawHash; // "sha256:" + 12 chars
@@ -101,8 +109,14 @@ function renderRow(seg: ParsedSegment): string {
   `;
 }
 
+// 计算一棵节点树的所有节点数（含子孙）
+function countNodes(nodes: SegmentNode[]): number {
+  return nodes.reduce((s, n) => s + 1 + countNodes(n.children), 0);
+}
+
 function renderGroup(g: Group): string {
-  if (g.segments.length === 0) {
+  const total = countNodes(g.roots);
+  if (total === 0) {
     return `
       <details open>
         <summary>${esc(g.title)} <span class="muted">(empty)</span></summary>
@@ -110,11 +124,10 @@ function renderGroup(g: Group): string {
     `;
   }
 
-  // 把 inline children 紧跟在父行后面：靠 segments 顺序天然成立（snapshot 已保证）
-  const rows = g.segments.map(renderRow).join("");
+  const rows = g.roots.map((n) => renderNode(n)).join("");
   return `
     <details open>
-      <summary>${esc(g.title)} <span class="muted">(${g.segments.length})</span></summary>
+      <summary>${esc(g.title)} <span class="muted">(${total})</span></summary>
       <div class="rows">
         <div class="row header">
           <span class="col-id">id</span>
@@ -134,8 +147,9 @@ function renderGroup(g: Group): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function renderParserView(snapshot: ParsedQuerySnapshot): string {
-  const groups = groupSegments(snapshot.segments);
-  const totalChars = snapshot.segments.reduce((s, x) => s + x.charCount, 0);
+  const groups = groupRoots(snapshot.roots);
+  const totalChars = Object.values(snapshot.index).reduce((s, x) => s + x.charCount, 0);
+  const totalNodes = Object.keys(snapshot.index).length;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -294,7 +308,7 @@ export function renderParserView(snapshot: ParsedQuerySnapshot): string {
   <header>
     <div class="meta"><span class="label">queryKind</span><span class="qk-pill">${esc(snapshot.queryKind)}</span></div>
     <div class="meta"><span class="label">proxyFile</span><span class="value">${esc(snapshot.proxyFile)}</span></div>
-    <div class="meta"><span class="label">segments</span><span class="value">${snapshot.segments.length}</span></div>
+    <div class="meta"><span class="label">segments</span><span class="value">${totalNodes}</span></div>
     <div class="meta"><span class="label">totalChars</span><span class="value">${totalChars.toLocaleString()}</span></div>
     <div class="meta"><span class="label">ts</span><span class="value">${esc(snapshot.ts)}</span></div>
   </header>

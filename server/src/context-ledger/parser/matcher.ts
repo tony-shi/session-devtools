@@ -149,7 +149,11 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 按 anchor 顺序逐一匹配，命中则返回；都不命中则 fallback 到 main-prompt-block。
- *  WHY：不用 regex，只比 trimStart() 后的前缀，避免被前导空白干扰。
+ *  routing 顺序与 splitSysPromptPrefix 对应：
+ *    billing  → startsWith("x-anthropic-billing-header")
+ *    identity → CLI_SYSPROMPT_PREFIXES（"You are Claude Code" 等）
+ *    rest     → 兜底，即 main-prompt-block（含 gitStatus 拼尾）
+ *  WHY 不用 regex：只比 trimStart() 后的前缀，避免被前导空白干扰。
  */
 function routeSystemSlot(text: string, slots: TemplateSlot[]): TemplateSlot {
   const trimmed = text.trimStart();
@@ -214,19 +218,23 @@ function splitByH1Headers(
     cursor = lineEnd + 1;
   }
 
-  // 找各子 slot 的 anchor → header 映射；prelude 是无 anchor 的兜底
-  const headerToSlot = new Map<string, TemplateSlot>();
+  // 找各子 slot 的 anchor → 映射；prelude 是无 anchor 的兜底
+  const headerToSlot = new Map<string, TemplateSlot>();   // h1_header anchor
+  const literalSlots: TemplateSlot[] = [];                // literal anchor（如 system.section.context）
   let preludeSlot: TemplateSlot | undefined;
   let unknownSlot: TemplateSlot | undefined;
   for (const cs of childSlots) {
     if (!cs.anchor) {
-      // 第一个无 anchor 的当 prelude，第二个（如果有）当 unknown 兜底
       if (!preludeSlot) preludeSlot = cs;
       else unknownSlot = cs;
       continue;
     }
     if (cs.anchor.kind === "h1_header") {
       headerToSlot.set(cs.anchor.header, cs);
+    } else if (cs.anchor.kind === "literal") {
+      // literal anchor 的子 slot（如 system.section.context / gitStatus:）
+      // 在 H1 切分完成后，对最后一段做尾部剥离
+      literalSlots.push(cs);
     }
   }
 
@@ -261,6 +269,49 @@ function splitByH1Headers(
       charRange: { start: h1.lineStart, end: nextStart },
       rawText,
       anchorEvidence: `# ${h1.header}`,
+      children: [],
+    });
+  }
+
+  // literal anchor 子 slot 的尾部剥离
+  // WHY：appendSystemContext 把 gitStatus 等以 "key: value\n" 格式 push 到 systemPrompt
+  // 数组末尾，最终被 rest.join('\n\n') 合并进 block[2] 末尾，不是独立 block。
+  // 这里把最后一段里的 literal 前缀位置找出来，把尾部切成独立 child。
+  for (const litSlot of literalSlots) {
+    const anchor = litSlot.anchor as { kind: "literal"; text: string };
+    if (out.length === 0) continue;
+
+    // 在整个 text 里找该 literal 的起始位置（只找第一次出现）
+    const litIdx = text.indexOf(anchor.text);
+    if (litIdx === -1) continue;
+
+    // 找包含 litIdx 的那个 out segment，把它从 litIdx 处截断
+    const parentIdx = out.findIndex(
+      (m) => m.charRange && m.charRange.start <= litIdx && litIdx < m.charRange.end,
+    );
+    if (parentIdx === -1) continue;
+
+    const parent = out[parentIdx]!;
+    const parentEnd = parent.charRange!.end;
+
+    // 把 parent 截到 litIdx，尾部独立成 litSlot
+    // 若 parent 截断后为空（litIdx === parent 起始），直接替换
+    if (litIdx > parent.charRange!.start) {
+      out[parentIdx] = {
+        ...parent,
+        rawText: text.slice(parent.charRange!.start, litIdx),
+        charRange: { start: parent.charRange!.start, end: litIdx },
+      };
+    } else {
+      out.splice(parentIdx, 1);
+    }
+
+    out.push({
+      slotId: litSlot.id,
+      jsonPath: parentJsonPath,
+      charRange: { start: litIdx, end: parentEnd },
+      rawText: text.slice(litIdx, parentEnd),
+      anchorEvidence: anchor.text,
       children: [],
     });
   }
@@ -347,6 +398,20 @@ function splitInlineTags(text: string, parentJsonPath: string): SlotMatch[] {
     } else {
       const closeStart = text.indexOf(closeTag, cursor + tag.openLen);
       segEnd = closeStart === -1 ? text.length : closeStart + closeTag.length;
+    }
+
+    // 闭合标签后紧跟的换行符归入本 segment，不切成独立 free-text。
+    // WHY：Claude Code 生成这类 tag 时闭合标签后会跟 \n 或 \n\n（段间空行），
+    // 把它们留在 tag segment 里能保持字节总数与 wire 一致，
+    // 也避免产生 rawText="\n" 的噪声 free-text segment。
+    while (segEnd < text.length) {
+      if (text[segEnd] === "\r" && text[segEnd + 1] === "\n") {
+        segEnd += 2;
+      } else if (text[segEnd] === "\n") {
+        segEnd += 1;
+      } else {
+        break;
+      }
     }
 
     const rawText = text.slice(cursor, segEnd);

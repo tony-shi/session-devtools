@@ -1,19 +1,19 @@
-// snapshot：把 matcher 产出的 SlotMatch 树拍平成 ParsedQuerySnapshot
+// snapshot：把 matcher 产出的 SlotMatch 树转成 ParsedQuerySnapshot（AST 结构）
 // 主要职责：
-//   1. 给每个 segment 分配稳定 id（按 section + 出现顺序）
+//   1. 给每个节点分配稳定 id（按 section + 出现顺序，规则与重构前 segments 数组一致）
 //   2. 计算 rawHash（sha256 前 16 位）和 charCount
-//   3. 保留父子顺序：先父 segment 再 children（children 用 -inline-{ii} 后缀）
+//   3. 递归构建 SegmentNode 树，同时填充 index（所有节点平铺，O(1) 查找）
 
 import { createHash } from "crypto";
-import type { SlotMatch, ParsedSegment, ParsedQuerySnapshot } from "./types";
+import type { SlotMatch, SegmentNode, ParsedQuerySnapshot } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// id 命名规则（与 phase1 prompt 严格对齐）
-//   - system block，无 H1 切分      seg-system-{i}
-//   - system block，H1 切分子 section seg-system-{i}-s{si}
-//   - tool                           seg-tool-{i}
-//   - message block                  seg-msg-{mi}-{bi}
-//   - message inline 切分            seg-msg-{mi}-{bi}-inline-{ii}
+// id 命名规则（与重构前 segments 数组严格一致，保证 index 里 id 不变）
+//   系统 block，无 H1 切分         seg-system-{i}
+//   系统 block，H1 切分子 section  seg-system-{i}-s{si}
+//   tool                           seg-tool-{i}
+//   message block                  seg-msg-{mi}-{bi}
+//   message inline 切分            seg-msg-{mi}-{bi}-inline-{ii}
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function buildSnapshot(params: {
@@ -23,59 +23,77 @@ export function buildSnapshot(params: {
   ts: string;
 }): ParsedQuerySnapshot {
   const { allSlotMatches, queryKind, proxyFile, ts } = params;
-  const segments: ParsedSegment[] = [];
 
-  // 各 section 的递增 index
+  const roots: SegmentNode[] = [];
+  const index: Record<string, SegmentNode> = {};
+
+  // 各 section 的递增 index（与重构前逻辑相同）
   let systemIdx = 0;
   let toolIdx = 0;
-  // messages：用 jsonPath 解析出 (mi, bi)
-  // side-query.* 共用 system index 计数（兼容简单形态）
 
+  // ── 递归构建节点 ────────────────────────────────────────────────────────────
+  // childIdOf：根据父节点的 slotId 决定子节点 id 后缀规则
+  //   system.main-prompt-block 的子节点 → -s{ci}（H1 section）
+  //   messages.text 的子节点            → -inline-{ci}
+  //   其他                               → -c{ci}（兜底，目前不触发）
+  function childIdOf(parentId: string, parentSlotId: string, ci: number): string {
+    if (parentSlotId === "system.main-prompt-block") return `${parentId}-s${ci}`;
+    if (parentSlotId === "messages.text") return `${parentId}-inline-${ci}`;
+    return `${parentId}-c${ci}`;
+  }
+
+  function toNode(id: string, match: SlotMatch, parentId?: string): SegmentNode {
+    const node: SegmentNode = {
+      id,
+      slotId: match.slotId,
+      jsonPath: match.jsonPath,
+      charRange: match.charRange,
+      rawText: match.rawText,
+      rawHash: hashOf(match.rawText),
+      charCount: match.rawText.length,
+      children: [],
+      parentId,
+    };
+    // 递归处理 children
+    node.children = match.children.map((child, ci) =>
+      toNode(childIdOf(id, match.slotId, ci), child, id),
+    );
+    // 注册自身和所有子孙到 index（子节点在递归时已注册，不重复）
+    index[node.id] = node;
+    return node;
+  }
+
+  // ── 主循环：与重构前 buildSnapshot 的 id 分配逻辑完全一致 ─────────────────
   for (const match of allSlotMatches) {
     const section = sectionOf(match.slotId);
 
     if (section === "system" || section === "side-query-system") {
-      const baseId = `seg-system-${systemIdx}`;
-      // 父 segment
-      segments.push(toSegment(baseId, match));
-      // children：H1 切分的子 section，用 -s{si} 后缀
-      for (let si = 0; si < match.children.length; si++) {
-        const child = match.children[si]!;
-        segments.push(toSegment(`${baseId}-s${si}`, child));
-      }
+      const node = toNode(`seg-system-${systemIdx}`, match);
+      roots.push(node);
       systemIdx++;
       continue;
     }
 
     if (section === "tools") {
-      segments.push(toSegment(`seg-tool-${toolIdx}`, match));
+      const node = toNode(`seg-tool-${toolIdx}`, match);
+      roots.push(node);
       toolIdx++;
       continue;
     }
 
     if (section === "messages" || section === "side-query-user") {
-      // 从 jsonPath 解析 (mi, bi)，无法解析时 fallback 0
       const { mi, bi } = parseMessagePath(match.jsonPath);
-      const baseId = `seg-msg-${mi}-${bi}`;
-      segments.push(toSegment(baseId, match));
-      // inline children
-      for (let ii = 0; ii < match.children.length; ii++) {
-        const child = match.children[ii]!;
-        segments.push(toSegment(`${baseId}-inline-${ii}`, child));
-      }
+      const node = toNode(`seg-msg-${mi}-${bi}`, match);
+      roots.push(node);
       continue;
     }
 
-    // unknown section：用 fallback id，不拦着
-    segments.push(toSegment(`seg-unknown-${segments.length}`, match));
+    // unknown section：fallback id
+    const node = toNode(`seg-unknown-${roots.length}`, match);
+    roots.push(node);
   }
 
-  return {
-    queryKind,
-    proxyFile,
-    ts,
-    segments,
-  };
+  return { queryKind, proxyFile, ts, roots, index };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,10 +117,7 @@ function sectionOf(slotId: string): Section {
   return "unknown";
 }
 
-/** 从 "reqBody.messages[3].content[2]" 提取 mi=3, bi=2。
- *  string content 的形式 "reqBody.messages[3]" → mi=3, bi=0
- *  side-query.user "reqBody.messages[0]" 同理。
- */
+/** 从 "reqBody.messages[3].content[2]" 提取 mi=3, bi=2 */
 function parseMessagePath(jsonPath: string): { mi: number; bi: number } {
   const miMatch = /messages\[(\d+)\]/.exec(jsonPath);
   const biMatch = /content\[(\d+)\]/.exec(jsonPath);
@@ -112,19 +127,6 @@ function parseMessagePath(jsonPath: string): { mi: number; bi: number } {
   };
 }
 
-function toSegment(id: string, match: SlotMatch): ParsedSegment {
-  return {
-    id,
-    slotId: match.slotId,
-    jsonPath: match.jsonPath,
-    charRange: match.charRange,
-    rawText: match.rawText,
-    rawHash: hashOf(match.rawText),
-    charCount: match.rawText.length,
-  };
-}
-
 function hashOf(text: string): string {
-  // sha256 前 16 位足以区分 segment，用全长会让 HTML 变得很长
   return "sha256:" + createHash("sha256").update(text).digest("hex").slice(0, 16);
 }

@@ -1,51 +1,59 @@
 // Claude Code 主会话（main_session）模板
-// 适用范围：tools.length > 0 的请求。
-// system block 里包含 identity、若干 H1 章节，messages 里有 text / tool_use / tool_result。
-// 这里只声明 slot 边界（jsonPath + anchor），实际切分在 parser/matcher.ts。
+// 参考：restored-src/src/utils/api.ts splitSysPromptPrefix + appendSystemContext
+//
+// 实际 wire 上 system 固定 3 个 block：
+//   block[0]  billing header（"x-anthropic-billing-header: ..."）  cache_control=null
+//   block[1]  identity（"You are Claude Code, ..."）               cache_control=ephemeral
+//   block[2]  rest.join('\n\n')：主提示词 + '\n\n' + systemContext  cache_control=ephemeral
+//
+// 关键点（来自 appendSystemContext 实现）：
+//   systemContext（gitStatus / cacheBreaker 等）通过 Object.entries().map(...).join('\n')
+//   拼成一个字符串，再 push 到 systemPrompt 数组末尾，最终被 rest.join('\n\n') 合并进
+//   block[2]——不会成为独立的第 4 个 block。
+//
+// block[2] 内部结构（H1 切分 + 末尾 context 段）：
+//   前导段（CLAUDE.md 内容等，H1 之前）
+//   # System  ... # Doing tasks  ...（若干 H1 section）
+//   \n\ngitStatus: ...\n（systemContext 段，位于所有 H1 section 之后）
 
 import type { RequestTemplate } from "../types";
 
 export const CLAUDE_CODE_MAIN_SESSION_TEMPLATE: RequestTemplate = {
   id: "claude-code-main-session",
   queryKindPredicate: "main_session",
-  version: "phase1.v1",
+  version: "phase1.v2",
   slots: {
     // ── system ──────────────────────────────────────────────────────────────
-    // 顺序敏感：matcher 按数组顺序逐一尝试 anchor。
-    // main-prompt-block 没有 anchor，是 fallback——meta / identity / context-management
-    // 都不命中时进入这里，再用 H1 children 切分子 section。
+    // 顺序敏感：matcher 按数组顺序逐一尝试 anchor；main-prompt-block 是 fallback。
     system: [
       {
-        id: "system.meta",
+        id: "system.billing",
         jsonPathPattern: "reqBody.system[*]",
         multiplicity: "optional",
-        // billing & version meta block 通常是裸 frontmatter / "---" 起首
-        anchor: { kind: "literal", text: "---" },
+        // billing header block：内容以 "x-anthropic-billing-header" 开头
+        // 参考 splitSysPromptPrefix：block.startsWith('x-anthropic-billing-header')
+        anchor: { kind: "literal", text: "x-anthropic-billing-header" },
       },
       {
         id: "system.identity",
         jsonPathPattern: "reqBody.system[*]",
         multiplicity: "one",
+        // identity block：CLI_SYSPROMPT_PREFIXES 里最常见的值
+        // 参考 splitSysPromptPrefix：CLI_SYSPROMPT_PREFIXES.has(block)
         anchor: { kind: "literal", text: "You are Claude Code" },
-      },
-      {
-        id: "system.context-management",
-        jsonPathPattern: "reqBody.system[*]",
-        multiplicity: "optional",
-        // gitStatus block 紧贴 system 末尾，是独立 block
-        anchor: { kind: "literal", text: "gitStatus" },
       },
       {
         id: "system.main-prompt-block",
         jsonPathPattern: "reqBody.system[*]",
         multiplicity: "one",
-        // 整块兜底；children 用 H1 header 再切分
+        // rest.join('\n\n')——billing / identity 都不命中时进这里。
+        // 内部用 H1 header 切分，末尾可能有 systemContext 段（gitStatus / cacheBreaker）。
         children: [
           {
             id: "system.section.prelude",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
-            // 没有 anchor = 第一个 H1 之前的前导段
+            // H1 之前的前导段（通常是 CLAUDE.md 注入内容）
           },
           {
             id: "system.section.system",
@@ -81,7 +89,9 @@ export const CLAUDE_CODE_MAIN_SESSION_TEMPLATE: RequestTemplate = {
             id: "system.section.text-output",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
-            anchor: { kind: "h1_header", header: "Text output" },
+            // 实际 H1 含括号副标题，全部 fixture 一致：
+            // "# Text output (does not apply to tool calls)"
+            anchor: { kind: "h1_header", header: "Text output (does not apply to tool calls)" },
           },
           {
             id: "system.section.output-efficiency",
@@ -108,34 +118,48 @@ export const CLAUDE_CODE_MAIN_SESSION_TEMPLATE: RequestTemplate = {
             anchor: { kind: "h1_header", header: "auto memory" },
           },
           {
+            id: "system.section.context-management",
+            jsonPathPattern: "reqBody.system[*]",
+            multiplicity: "optional",
+            // "# Context management" — Claude Code 2.x 实际出现的 section
+            anchor: { kind: "h1_header", header: "Context management" },
+          },
+          {
             id: "system.section.language",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "h1_header", header: "Language" },
+          },
+          {
+            // systemContext 段：appendSystemContext 追加的 "key: value\n..." 块，
+            // 目前包含 gitStatus（和可选的 cacheBreaker）。
+            // 它出现在 block[2] 末尾，紧跟最后一个 H1 section 之后，不含 H1 标题。
+            // WHY 用 literal 而非独立 block：appendSystemContext 把 context 字符串
+            // push 进 systemPrompt 数组，再被 rest.join('\n\n') 合并，不是独立 block。
+            id: "system.section.context",
+            jsonPathPattern: "reqBody.system[*]",
+            multiplicity: "optional",
+            anchor: { kind: "literal", text: "gitStatus:" },
           },
         ],
       },
     ],
 
     // ── tools ───────────────────────────────────────────────────────────────
-    // 不按 name 写死，而是动态展开：matcher 会把每个 tool 的 name 拼到 slotId 里。
     tools: [
       {
         id: "tools.builtin",
         jsonPathPattern: "reqBody.tools[*]",
         multiplicity: "zero_or_more",
-        // 没有 anchor，整块（每个 tool 对象一段）
       },
     ],
 
     // ── messages ────────────────────────────────────────────────────────────
-    // block 级 slot：按 block.type 分流；text block 内再按 inline tag 切 children。
     messages: [
       {
         id: "messages.text",
         jsonPathPattern: "reqBody.messages[*].content[*]",
         multiplicity: "zero_or_more",
-        // 没有 anchor；matcher 内部按 block.type==="text" 命中
         children: [
           {
             id: "messages.inline.system-reminder",
@@ -153,7 +177,6 @@ export const CLAUDE_CODE_MAIN_SESSION_TEMPLATE: RequestTemplate = {
             id: "messages.inline.free-text",
             jsonPathPattern: "reqBody.messages[*].content[*]",
             multiplicity: "optional",
-            // 兜底：非 tag 段
           },
         ],
       },
