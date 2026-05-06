@@ -20,6 +20,18 @@ ProxyQuerySnapshot + ProxySegmentAttribution
 
 proxy 只能作为事实层和 audit 对账输入，不能反向写入 `ContextMutation`、`ExpectedQueryContext` 或 `TargetRequest.sourceMap`。
 
+## Flat Segment 与 SourceSpan 定位
+
+当前的 `ProxyQuerySnapshot.segments` / `ExpectedQueryContext.segments` 仍应保留：它们是 attribution、coverage、HTML 报告和人工审计最合适的工作单元。但 flat segment 只能是从 request AST 派生出的语义视图，不能成为唯一事实源。
+
+后续演进方向是把 `SourceSpan` 提升为一等公民：
+
+- proxy raw request AST 与 `TargetRequest` AST 负责结构事实和 request-level exact。
+- flat segment 负责语义切片、规则匹配和可视化展示。
+- 每个 segment 必须能回溯到 `jsonPath + charRange + blockIndex/occurrenceIndex`，避免用 `orderHint`、宽松 jsonPath 前缀匹配或重复枚举来模拟树上下文。
+- reconciliation 应优先用 span overlap / same-span / parent-child span 关系对齐；粗粒度 attribution 只能作为解释证据，不能直接覆盖子 segment。
+- Template / Grammar 类方案只适合局部 verified static block 或未来复杂嵌套 DSL，不作为当前主路径。
+
 ## 模块边界
 
 ### Fact Layer
@@ -125,7 +137,7 @@ proxy 只能作为事实层和 audit 对账输入，不能反向写入 `ContextM
 - 从本地 settings / env / 当前 `cli.js` 补齐 `HarnessRuntimeSnapshot`。
 - 用 runtime snapshot 替代更多 request scalar proxy fallback。
 - 完整实现 `system_reminder_per_turn`、`prior_session_history`、`compaction_replacement`。
-- 引入精确 `SourceSpan`，替代部分 `RuleLocationConstraint.orderHint`。
+- 引入精确 `SourceSpan`，替代 `RuleLocationConstraint.orderHint` 与 reconciliation 中的宽松 jsonPath 前缀 fallback。
 - 扩展 MCP/plugin tool 的安全表达方式：默认 attribution-only，不伪造 exact schema。
 
 ## 常用验证

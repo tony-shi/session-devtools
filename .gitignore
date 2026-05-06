@@ -26,3 +26,4 @@ docs/contract
 
 # 本地 Claude worktree 可能包含嵌套 .env / digest.cfg 副本
 .claude/worktrees/
+.audit/
