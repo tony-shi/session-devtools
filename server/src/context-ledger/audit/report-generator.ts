@@ -330,6 +330,9 @@ export function writeIndexHtml(runId: string, run: AuditRunRecord, entries: Audi
     const fusionLink = e.reconcileFusionHtmlPath
       ? `<a href="${esc(e.reconcileFusionHtmlPath)}" title="融合视图：coverage 分桶 + 四视角对比" style="color:#10b981;font-weight:600">fusion</a>`
       : "";
+    const parserLink = e.parserViewPath
+      ? `<a href="${esc(e.parserViewPath)}" title="parser-view：新 parser 切分结果" style="color:#f59e0b;font-weight:600">parser</a>`
+      : "";
     const reasons = esc(e.reasons.join(", "));
     return `<tr>
       <td>${verdict}</td>
@@ -338,7 +341,7 @@ export function writeIndexHtml(runId: string, run: AuditRunRecord, entries: Audi
       <td><code>${esc(e.sessionId.slice(0, 8))}…/${esc(e.queryId.slice(0, 20))}</code></td>
       <td>${v2MiniBar(e.v2)}</td>
       <td>${reasons}</td>
-      <td>${reportLink} ${scLink} ${diffLink} ${attrLink} ${fusionLink}</td>
+      <td>${reportLink} ${scLink} ${diffLink} ${attrLink} ${fusionLink} ${parserLink}</td>
     </tr>`;
   };
 
@@ -401,21 +404,21 @@ td a:hover { text-decoration: underline; }
 ${regressions.length > 0 ? `
 <h2>Top Regressions (${regressions.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage (wire/legacy)</th><th>reasons</th><th>links <span style="color:#8b5cf6;font-weight:400">(attr=三列视图)</span> <span style="color:#10b981;font-weight:400">(fusion=融合视图)</span></th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage (wire/legacy)</th><th>reasons</th><th>links <span style="color:#8b5cf6;font-weight:400">(attr=三列视图)</span> <span style="color:#10b981;font-weight:400">(fusion=融合视图)</span> <span style="color:#f59e0b;font-weight:400">(parser=新切分)</span></th></tr>
 ${regressions.map(renderRow).join("\n")}
 </table>` : ""}
 
 ${needsReview.length > 0 ? `
 <h2>Needs Review (${needsReview.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links <span style="color:#f59e0b;font-weight:400">(parser=新切分)</span></th></tr>
 ${needsReview.map(renderRow).join("\n")}
 </table>` : ""}
 
 ${newEntries.length > 0 ? `
 <h2>New Proxy Queries (${newEntries.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links <span style="color:#f59e0b;font-weight:400">(parser=新切分)</span></th></tr>
 ${newEntries.map(renderRow).join("\n")}
 </table>` : ""}
 
@@ -430,13 +433,13 @@ ${proxyWithoutJsonl.map((e) => `<tr><td><code>${esc(e.sessionId)}</code></td><td
 ${failed.length > 0 ? `
 <h2>Failed Queries (${failed.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links <span style="color:#f59e0b;font-weight:400">(parser=新切分)</span></th></tr>
 ${failed.map(renderRow).join("\n")}
 </table>` : ""}
 
 <h2>All Queries (${sorted.length})</h2>
 <table>
-<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links</th></tr>
+<tr><th>verdict</th><th>changeClass</th><th>type</th><th>session/query</th><th>coverage</th><th>reasons</th><th>links <span style="color:#f59e0b;font-weight:400">(parser=新切分)</span></th></tr>
 ${sorted.map(renderRow).join("\n")}
 </table>
 

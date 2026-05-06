@@ -69,3 +69,6 @@ export function proxyAttributionViewPath(hash: string): string {
 export function reconcileFusionHtmlPath(hash: string): string {
   return join("diffs", `${hash}.reconcile-fusion.html`);
 }
+export function parserViewPath(hash: string): string {
+  return join("diffs", `${hash}.parser-view.html`);
+}

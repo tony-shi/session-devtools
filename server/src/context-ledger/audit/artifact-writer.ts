@@ -26,11 +26,14 @@ import {
   charDiffHtmlPath,
   proxyAttributionViewPath,
   reconcileFusionHtmlPath,
+  parserViewPath,
   errorPath,
 } from "./paths";
 import type { AuditMode } from "./paths";
 import { renderProxyAttributionView } from "./proxy-attribution-view";
 import { renderReconcileFusionHtml } from "./render-reconcile-fusion-html";
+import { renderParserView } from "./parser-view";
+import { parseQuery } from "../parser";
 import type { ProxySegmentAttribution } from "../types";
 import type {
   AuditIndexEntry,
@@ -179,6 +182,24 @@ export function writeQueryArtifacts(
       writeFileSync(join(dir, fusionPath), fusionHtml, "utf-8");
       updated.reconcileFusionHtmlPath = fusionPath;
     }
+
+    // parser-view（阶段 1 新 parser 的产出）
+    // 平行于旧 pipeline 跑：失败不影响主流程
+    // WHY：阶段 1 的 parser 与旧的 proxy/rules/reconciliation 完全隔离，
+    //      在这里"附着写出"是为了让 audit run 的产物里立刻能看到新切分结果。
+    try {
+      const parsedSnap = parseQuery({
+        reqBody: data.reqBody as Parameters<typeof parseQuery>[0]["reqBody"],
+        proxyFile: result.proxySourceRef,
+        ts: data.report.snapshot.timestamp,
+      });
+      const pvHtml = renderParserView(parsedSnap);
+      const pvPath = parserViewPath(hash);
+      writeFileSync(join(dir, pvPath), pvHtml, "utf-8");
+      updated.parserViewPath = pvPath;
+    } catch {
+      // parser-view 失败不影响主流程
+    }
   }
 
   return updated;
@@ -253,6 +274,7 @@ export function writeIndex(
       charDiffJsonPath: r.charDiffJsonPath,
       proxyAttributionViewPath: r.proxyAttributionViewPath,
       reconcileFusionHtmlPath: r.reconcileFusionHtmlPath,
+      parserViewPath: r.parserViewPath,
       errorPath: r.errorPath,
     };
     return entry;
