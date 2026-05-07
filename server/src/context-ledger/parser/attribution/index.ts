@@ -1,36 +1,26 @@
 // parser/attribution：AST attribution 子系统对外出口。
 //
-// 内部分层：
-//   types.ts          全部公共类型（RuleHit / RuleMatchEvidence / SegmentAttribution / ...）
-//   rule-evaluator.ts 单 rule 在单 node 上的命中判定（事实层）
-//                     —— 命名刻意区别于 parser/matcher.ts（结构切割）
-//   evidence.ts       RuleHit + node + rule → 字符级证据（证据层）
-//   resolver.ts       RuleHit / wire fallback / rule_gap → SegmentAttribution（语义层）
-//   coverage.ts       SegmentAttribution[] → AttributionCoverage（统计层）
-//
-// 外部只通过本文件 import：
-//   import { attributeSnapshot, computeCoverage } from ".../parser/attribution"
-//   import type { SegmentAttribution, ... } from ".../parser/attribution"
+// 当前分层：
+//   types.ts           最终公共产物类型（SegmentAttribution / CharCoverage / AttributionCoverage）
+//   rule-evaluator.ts  单 rule 在单 node 上执行 pattern，直接产出字符桶和动态字段
+//   resolver.ts        RuleEvaluation / wire fallback / rule_gap → SegmentAttribution
+//   coverage.ts        SegmentAttribution[] → AttributionCoverage
 
 import { getContextRulesForSlotId } from "../../rules/context-rule-registry";
 import type { ParsedQuerySnapshot, SegmentNode } from "../types";
 import { isUnknownSlotId } from "../types";
-import { findFirstRuleHit } from "./rule-evaluator";
-import { resolveFromHit, ruleGap, wireFallback } from "./resolver";
+import { findFirstRuleEvaluation } from "./rule-evaluator";
+import { resolveFromEvaluation, ruleGap, wireFallback } from "./resolver";
 import type { SegmentAttribution } from "./types";
 
 export { computeCoverage } from "./coverage";
 export type {
   AttributionCoverage,
+  AttributionMatchMode,
+  CharCoverage,
   CharRange,
   DynamicField,
   DynamicFieldSource,
-  EvidenceMode,
-  MaterializationEvidence,
-  MaterializationKind,
-  RuleHit,
-  RuleHitMode,
-  RuleMatchEvidence,
   SegmentAttribution,
 } from "./types";
 
@@ -48,8 +38,8 @@ function flattenNodes(roots: SegmentNode[]): SegmentNode[] {
  * attributeSnapshot：对 ParsedQuerySnapshot 的每个节点产生一条 SegmentAttribution。
  *
  * 流程：
- *   1. 按 slotId 取候选 rules → findFirstRuleHit 得 RuleHit
- *   2. 命中：resolveFromHit
+ *   1. 按 slotId 取候选 rules → findFirstRuleEvaluation
+ *   2. 命中：resolveFromEvaluation
  *   3. 未命中：wireFallback（tool_use/tool_result/tools.builtin.*）
  *   4. 仍未命中：ruleGap（unknown slot 或显式无 rule）
  */
@@ -58,10 +48,10 @@ export function attributeSnapshot(snapshot: ParsedQuerySnapshot): SegmentAttribu
 
   for (const node of flattenNodes(snapshot.roots)) {
     const rules = getContextRulesForSlotId(node.slotType);
-    const hit = findFirstRuleHit(node, rules, snapshot.queryKind);
+    const evaluation = findFirstRuleEvaluation(node, rules, snapshot.queryKind);
 
-    if (hit) {
-      out.push(resolveFromHit(node, hit));
+    if (evaluation) {
+      out.push(resolveFromEvaluation(node, evaluation));
       continue;
     }
 
@@ -72,11 +62,11 @@ export function attributeSnapshot(snapshot: ParsedQuerySnapshot): SegmentAttribu
     }
 
     if (isUnknownSlotId(node.slotType)) {
-      out.push(ruleGap(node, node.unknownMeta?.reason ?? "unknown slot"));
+      out.push(ruleGap(node));
       continue;
     }
 
-    out.push(ruleGap(node, `no context rule matched slot ${node.slotType}`));
+    out.push(ruleGap(node));
   }
 
   return out;

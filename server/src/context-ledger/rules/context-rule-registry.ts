@@ -19,12 +19,12 @@ import type {
   RuleMatchMode,
 } from "./rule-registry";
 
-export type ContextRuleMatchMode = "exact" | "prefix" | "contains" | "regex";
+export type ContextRuleMatchMode = "exact" | "prefix" | "regex";
 
 /**
  * ContextRuleMaterialization：rule 在 expected 侧的可重建语义。
  * 与旧 ContextLedgerRule.reconstruction.materialization 同义；
- * AST attribution 用它驱动 MaterializationEvidence，区分
+ * AST attribution 用它驱动 reconstructable 布尔值，区分
  *   exact_text       contentPattern 字面，可逐字节重建
  *   normalized_text  静态模板 + 动态字段可解释，但字节级不保证
  *   shape            只能复现结构/轮廓
@@ -102,8 +102,8 @@ const SLOT_BINDINGS: Record<string, string[]> = {
 };
 
 function normalizeMatchMode(mode: RuleMatchMode): ContextRuleMatchMode {
-  if (mode === "structural") return "prefix";
-  return mode;
+  if (mode === "exact" || mode === "prefix" || mode === "regex") return mode;
+  return "prefix";
 }
 
 function copyAttributionRule(rule: ContextLedgerRule, slotId: string): ContextRule | null {

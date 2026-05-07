@@ -3,17 +3,16 @@
 // 排版思路：三个折叠块（System / Tools / Messages），每个 segment 一行，
 // inline children 在父行下方缩进展示。
 //
-// P1-1：parser-view 升级为"可审计归因"展示。每行除 category/confidence 外，
-//   额外展示 RuleMatchEvidence（matchMode、char 桶比例）+ MaterializationEvidence
-//   （是否可字节重建），并在展开区显示 dynamicFields 的具体值与偏移。
+// P1-1：parser-view 展示每个 AST node 的归因结果。parser 只输出最终
+// SegmentAttribution；notes 等展示派生信息由 view 层按需渲染。
 
 import type { ParsedQuerySnapshot, SegmentNode } from "../parser/types";
 import { isUnknownSlotId } from "../parser/types";
 import type {
   AttributionCoverage,
+  AttributionMatchMode,
+  CharCoverage,
   DynamicField,
-  MaterializationEvidence,
-  RuleMatchEvidence,
   SegmentAttribution,
 } from "../parser/attribution";
 
@@ -67,30 +66,13 @@ function confidenceColor(confidence: string): string {
 // matchMode → badge 颜色：与 evidence "强弱" 一致。
 const MATCH_MODE_COLOR: Record<string, string> = {
   exact: "#10b981",         // 字符串等值，最强
-  template: "#0ea5e9",       // exact_text rule + regex 命中，整段视为模板
   regex: "#3b82f6",         // 模板 + 动态字段
   prefix: "#f59e0b",        // 锚点识别，文本不解释
-  contains: "#f59e0b",
-  wire_schema: "#10b981",   // 由 wire 类型直接确认
   rule_gap: "#ef4444",
 };
 
 function matchModeColor(mode: string): string {
   return MATCH_MODE_COLOR[mode] ?? "#94a3b8";
-}
-
-// materialization kind → badge 颜色：可字节重建越强颜色越绿。
-const MATERIALIZATION_COLOR: Record<string, string> = {
-  exact_text: "#10b981",
-  wire_schema: "#10b981",
-  normalized_text: "#0ea5e9",
-  shape: "#f59e0b",
-  presence: "#a855f7",
-  unavailable: "#ef4444",
-};
-
-function materializationColor(kind: string): string {
-  return MATERIALIZATION_COLOR[kind] ?? "#94a3b8";
 }
 
 // dynamicField.source → badge 颜色：来源越"可控"越绿。
@@ -168,42 +150,38 @@ function groupRoots(roots: SegmentNode[]): { system: Group; tools: Group; messag
 // evidence 渲染
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 单行展示的 evidence 摘要（matchMode + literal/dynamic/unmatched 比例）。
-function renderEvidenceSummary(match: RuleMatchEvidence): string {
-  const modeBadge = `<span class="evd-mode" style="background:${matchModeColor(match.mode)}">${esc(match.mode)}</span>`;
+// 单行展示的字符桶摘要（matchMode + literal/dynamic/unmatched 比例）。
+function renderCoverageSummary(matchMode: AttributionMatchMode, coverage: CharCoverage): string {
+  const modeBadge = `<span class="evd-mode" style="background:${matchModeColor(matchMode)}">${esc(matchMode)}</span>`;
 
   // rule_gap：只展示"未识别"提示，不渲染 char 桶。
-  if (match.mode === "rule_gap") {
-    return `<span class="evd">${modeBadge}<span class="evd-gap">${match.rawChars} chars unmatched</span></span>`;
+  if (matchMode === "rule_gap") {
+    return `<span class="evd">${modeBadge}<span class="evd-gap">${coverage.rawChars} chars unmatched</span></span>`;
   }
 
-  const total = match.rawChars;
-  const literalPct = formatCharRatio(match.literalChars, total);
-  const dynamicPct = formatCharRatio(match.dynamicChars, total);
-  const unmatchedPct = formatCharRatio(match.unmatchedChars, total);
+  const total = coverage.rawChars;
+  const literalPct = formatCharRatio(coverage.literalChars, total);
+  const dynamicPct = formatCharRatio(coverage.dynamicChars, total);
+  const unmatchedPct = formatCharRatio(coverage.unmatchedChars, total);
 
   // 微型分桶条：literal / dynamic / unmatched。
   const widthFor = (chars: number): string => {
     if (total <= 0) return "0%";
     return `${Math.max(0, (chars / total) * 100)}%`;
   };
-  // expectedChars 写进 tooltip：当 < rawChars 时（典型如 prefix anchor），可一眼看出 rule 的解释覆盖范围。
-  const expectedHint = match.expectedChars !== undefined
-    ? `\nexpected ${match.expectedChars} / raw ${match.rawChars}c`
-    : "";
   const microBar = `
-    <span class="evd-bar" title="literal ${literalPct} · dynamic ${dynamicPct} · unmatched ${unmatchedPct}${expectedHint}">
-      <span style="width:${widthFor(match.literalChars)};background:#0ea5e9"></span>
-      <span style="width:${widthFor(match.dynamicChars)};background:#f97316"></span>
-      <span style="width:${widthFor(match.unmatchedChars)};background:#fecaca"></span>
+    <span class="evd-bar" title="literal ${literalPct} · dynamic ${dynamicPct} · unmatched ${unmatchedPct}">
+      <span style="width:${widthFor(coverage.literalChars)};background:#0ea5e9"></span>
+      <span style="width:${widthFor(coverage.dynamicChars)};background:#f97316"></span>
+      <span style="width:${widthFor(coverage.unmatchedChars)};background:#fecaca"></span>
     </span>
   `;
 
   // 不展示比例为 0 的桶，让眼睛聚焦到非零值。
   const tagsRaw: Array<[string, number, string]> = [
-    ["L", match.literalChars, "#0ea5e9"],
-    ["D", match.dynamicChars, "#f97316"],
-    ["U", match.unmatchedChars, "#94a3b8"],
+    ["L", coverage.literalChars, "#0ea5e9"],
+    ["D", coverage.dynamicChars, "#f97316"],
+    ["U", coverage.unmatchedChars, "#94a3b8"],
   ];
   const tags = tagsRaw
     .filter(([, c]) => c > 0)
@@ -215,12 +193,10 @@ function renderEvidenceSummary(match: RuleMatchEvidence): string {
   return `<span class="evd">${modeBadge}${microBar}${tags}</span>`;
 }
 
-function renderMaterializationBadge(materialization: MaterializationEvidence): string {
-  const color = materializationColor(materialization.kind);
-  const tip = materialization.reason
-    ? `${materialization.kind} · canReconstructBytes=${materialization.canReconstructBytes}\n${materialization.reason}`
-    : `${materialization.kind} · canReconstructBytes=${materialization.canReconstructBytes}`;
-  return `<span class="mat-badge" style="background:${color}" title="${esc(tip)}">${esc(materialization.kind)}</span>`;
+function renderReconstructableBadge(reconstructable: boolean): string {
+  const label = reconstructable ? "reconstructable" : "not-reconstructable";
+  const color = reconstructable ? "#10b981" : "#f59e0b";
+  return `<span class="mat-badge" style="background:${color}" title="can reconstruct bytes: ${reconstructable ? "yes" : "no"}">${esc(label)}</span>`;
 }
 
 function renderDynamicFieldsTable(fields: DynamicField[] | undefined): string {
@@ -252,18 +228,13 @@ function renderAttributionCell(attr: SegmentAttribution | undefined): string {
   if (!attr) return `<span class="no-attr">—</span>`;
   const category = attr.category;
   const categoryBadge = `<span class="attr-badge" style="background:${categoryColor(category)}">${esc(category)}</span>`;
-  const matBadge = renderMaterializationBadge(attr.materialization);
-  const conf = attr.materializationConfidence;
+  const matBadge = renderReconstructableBadge(attr.reconstructable);
+  const conf = attr.confidence;
   const confBadge = `<span class="conf" style="color:${confidenceColor(conf)}">${esc(conf)}</span>`;
   const rule = attr.ruleId ? `<code class="rule-id" title="${esc(attr.ruleId)}">${esc(attr.ruleId)}</code>` : "";
-  const evd = renderEvidenceSummary(attr.match);
+  const evd = renderCoverageSummary(attr.matchMode, attr.charCoverage);
 
-  // notes 折进 tooltip，避免一行太挤；evidence 是新的一等公民，不再依赖 notes 计数。
-  const notes = attr.notes?.length
-    ? `<span class="attr-note" title="${esc(attr.notes.join("\n"))}">${attr.notes.length} note</span>`
-    : "";
-
-  return `${categoryBadge}${matBadge}${confBadge}${rule}${evd}${notes}`;
+  return `${categoryBadge}${matBadge}${confBadge}${rule}${evd}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -289,7 +260,7 @@ function renderRow(
 ): string {
   const isInline = depth > 0;
   const attr = attrByNodeId.get(seg.id);
-  const isRuleGap = attr?.match.mode === "rule_gap" || attr?.mechanism === "rule_gap";
+  const isRuleGap = attr?.matchMode === "rule_gap" || attr?.mechanism === "rule_gap";
   const color = slotColor(seg.slotType);
   const warn = seg.charCount > 10000 ? '<span class="warn" title="charCount &gt; 10000">⚠</span>' : "";
   const hashPrefix = seg.rawHash.length > 19 ? seg.rawHash.slice(0, 19) : seg.rawHash;
@@ -378,7 +349,7 @@ function renderCoverageBar(coverage: AttributionCoverage | undefined): string {
     { label: "dynamic", color: "#f97316", chars: coverage.dynamicCapturedChars,
       hint: "regex 命名捕获组覆盖的动态字段字符" },
     { label: "recognized", color: "#a855f7", chars: coverage.recognizedUnexplainedChars,
-      hint: "prefix/contains 仅识别 slot 锚点，文本未解释" },
+      hint: "prefix 或不可重建 exact 仅识别 slot/rule，文本未解释" },
     { label: "rule_gap", color: "#ef4444", chars: coverage.ruleGapChars,
       hint: "完全无 rule 命中" },
   ];
