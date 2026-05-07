@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Header } from "./components/Header";
+import { ProxyPanel } from "./components/ProxyPanel";
 import { SessionList } from "./components/SessionList";
 import { SummaryCards } from "./components/SummaryCards";
-import { ProxyTraffic } from "./components/ProxyTraffic";
-import { ProxySetup } from "./components/ProxySetup";
 import type { SessionsResponse, SummaryData } from "./types";
 
 function getInitialDate(): string {
@@ -13,7 +12,7 @@ function getInitialDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-type Tab = "sessions" | "proxy" | "setup";
+type Tab = "sessions" | "proxy";
 
 export default function App() {
   const [date, setDate] = useState(getInitialDate);
@@ -53,8 +52,7 @@ export default function App() {
         <div style={{ display: "flex", gap: 0, borderBottom: "2px solid #e5e5e5" }}>
           {([
             { id: "sessions", label: "会话" },
-            { id: "proxy",    label: "代理流量" },
-            { id: "setup",    label: "代理管理" },
+            { id: "proxy",    label: "代理" },
           ] as { id: Tab; label: string }[]).map(({ id, label }) => (
             <button
               key={id}
@@ -82,10 +80,8 @@ export default function App() {
             <SummaryCards data={summary} loading={summaryLoading} />
             <SessionList data={sessions} loading={sessionsLoading} date={date} />
           </>
-        ) : tab === "proxy" ? (
-          <ProxyTraffic />
         ) : (
-          <ProxySetup />
+          <ProxyPanel />
         )}
       </main>
     </div>

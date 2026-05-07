@@ -187,7 +187,7 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
   const [contextTraces, setContextTraces] = useState<AgentContextTrace[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<ViewTab>("timeline");
+  const [tab, setTab] = useState<ViewTab>("context");
   // Shared selection state — span id selected across Timeline / Context views
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
 
@@ -303,21 +303,32 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
           </div>
         )}
 
-        {/* Tab bar */}
+        {/* Tab bar：context 优先，其余三项标注 working on */}
         <div className="flex border-b border-gray-200 flex-shrink-0">
-          {(["timeline", "spans", "context", "turns"] as ViewTab[]).map((tabKey) => (
-            <button
-              key={tabKey}
-              onClick={() => setTab(tabKey)}
-              className={`px-4 py-2 text-xs font-medium transition-colors ${
-                tab === tabKey
-                  ? "border-b-2 border-indigo-500 text-indigo-600"
-                  : "text-gray-400 hover:text-gray-600"
-              }`}
-            >
-              {tabLabels[tabKey]}
-            </button>
-          ))}
+          {(["context", "timeline", "spans", "turns"] as ViewTab[]).map((tabKey) => {
+            const isWip = tabKey !== "context";
+            return (
+              <button
+                key={tabKey}
+                onClick={() => setTab(tabKey)}
+                className={`relative px-4 py-2 text-xs font-medium transition-colors ${
+                  tab === tabKey
+                    ? "border-b-2 border-indigo-500 text-indigo-600"
+                    : "text-gray-400 hover:text-gray-600"
+                }`}
+              >
+                {tabLabels[tabKey]}
+                {isWip && (
+                  <span
+                    className="ml-1.5 align-middle text-[10px] px-1 py-0.5 rounded bg-gray-100 text-gray-400 font-normal"
+                    style={{ verticalAlign: "middle" }}
+                  >
+                    working on
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
 
         {/* Content */}
