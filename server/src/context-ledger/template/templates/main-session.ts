@@ -50,43 +50,43 @@ export const CLAUDE_CODE_MAIN_SESSION_TEMPLATE: RequestTemplate = {
         // 内部用 H1 header 切分，末尾可能有 systemContext 段（gitStatus / cacheBreaker）。
         children: [
           {
-            id: "system.section.prelude",
+            id: "system.main-prompt.section.prelude",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             // H1 之前的前导段（通常是 CLAUDE.md 注入内容）
           },
           {
-            id: "system.section.system",
+            id: "system.main-prompt.section.system",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "h1_header", header: "System" },
           },
           {
-            id: "system.section.doing-tasks",
+            id: "system.main-prompt.section.doing-tasks",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "h1_header", header: "Doing tasks" },
           },
           {
-            id: "system.section.actions",
+            id: "system.main-prompt.section.actions",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "h1_header", header: "Executing actions with care" },
           },
           {
-            id: "system.section.using-tools",
+            id: "system.main-prompt.section.using-tools",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "h1_header", header: "Using your tools" },
           },
           {
-            id: "system.section.tone-style",
+            id: "system.main-prompt.section.tone-style",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "h1_header", header: "Tone and style" },
           },
           {
-            id: "system.section.text-output",
+            id: "system.main-prompt.section.text-output",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             // 实际 H1 含括号副标题，全部 fixture 一致：
@@ -94,38 +94,38 @@ export const CLAUDE_CODE_MAIN_SESSION_TEMPLATE: RequestTemplate = {
             anchor: { kind: "h1_header", header: "Text output (does not apply to tool calls)" },
           },
           {
-            id: "system.section.output-efficiency",
+            id: "system.main-prompt.section.output-efficiency",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "h1_header", header: "Output efficiency" },
           },
           {
-            id: "system.section.session-guidance",
+            id: "system.main-prompt.section.session-guidance",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "h1_header", header: "Session-specific guidance" },
           },
           {
-            id: "system.section.environment",
+            id: "system.main-prompt.section.environment",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "h1_header", header: "Environment" },
           },
           {
-            id: "system.section.auto-memory",
+            id: "system.main-prompt.section.auto-memory",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "h1_header", header: "auto memory" },
           },
           {
-            id: "system.section.context-management",
+            id: "system.main-prompt.section.context-management",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             // "# Context management" — Claude Code 2.x 实际出现的 section
             anchor: { kind: "h1_header", header: "Context management" },
           },
           {
-            id: "system.section.language",
+            id: "system.main-prompt.section.language",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "h1_header", header: "Language" },
@@ -136,7 +136,7 @@ export const CLAUDE_CODE_MAIN_SESSION_TEMPLATE: RequestTemplate = {
             // 它出现在 block[2] 末尾，紧跟最后一个 H1 section 之后，不含 H1 标题。
             // WHY 用 literal 而非独立 block：appendSystemContext 把 context 字符串
             // push 进 systemPrompt 数组，再被 rest.join('\n\n') 合并，不是独立 block。
-            id: "system.section.context",
+            id: "system.main-prompt.section.context",
             jsonPathPattern: "reqBody.system[*]",
             multiplicity: "optional",
             anchor: { kind: "literal", text: "gitStatus:" },

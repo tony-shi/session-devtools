@@ -68,7 +68,7 @@ export function evaluateRuleForNode(
     const end = overall?.[1] ?? start + m[0].length;
     return {
       nodeId: node.id,
-      slotId: node.slotId,
+      slotId: node.slotType,
       ruleId: rule.ruleId,
       mode,
       matchedRange: { start, end },
@@ -82,7 +82,7 @@ export function evaluateRuleForNode(
     if (text !== pattern) return null;
     return {
       nodeId: node.id,
-      slotId: node.slotId,
+      slotId: node.slotType,
       ruleId: rule.ruleId,
       mode,
       matchedRange: { start: 0, end: text.length },
@@ -95,7 +95,7 @@ export function evaluateRuleForNode(
     const idx = text.indexOf(pattern);
     return {
       nodeId: node.id,
-      slotId: node.slotId,
+      slotId: node.slotType,
       ruleId: rule.ruleId,
       mode,
       matchedRange: { start: idx, end: idx + pattern.length },
@@ -109,7 +109,7 @@ export function evaluateRuleForNode(
   const trimmedLeading = text.length - text.trimStart().length;
   return {
     nodeId: node.id,
-    slotId: node.slotId,
+    slotId: node.slotType,
     ruleId: rule.ruleId,
     mode,
     matchedRange: { start: trimmedLeading, end: trimmedLeading + pattern.length },

@@ -6,8 +6,8 @@
 //   4. 递归构建 SegmentNode 树，同时填充 index（所有节点平铺，O(1) 查找）
 
 import { createHash } from "crypto";
-import type { SlotMatch, SegmentNode, ParsedQuerySnapshot, NodeKind } from "./types";
-import { isUnknownSlotId, UNKNOWN_SLOT } from "./types";
+import type { SlotMatch, SegmentNode, ParsedQuerySnapshot } from "./types";
+import { UNKNOWN_SLOT } from "./types";
 import type { RequestTemplate, TemplateSlot } from "../template/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,32 +36,20 @@ export function buildParsedQuerySnapshot(params: {
   let toolIdx = 0;
 
   // ── 递归构建节点 ────────────────────────────────────────────────────────────
-  // childIdOf：根据父节点的 slotId 决定子节点 id 后缀规则
+  // childIdOf：根据父节点的 slotType 决定子节点 id 后缀规则
   //   system.main-prompt-block 的子节点 → -s{ci}（H1 section）
   //   messages.text 的子节点            → -inline-{ci}
   //   其他                               → -c{ci}（兜底，目前不触发）
-  function childIdOf(parentId: string, parentSlotId: string, ci: number): string {
-    if (parentSlotId === "system.main-prompt-block") return `${parentId}-s${ci}`;
-    if (parentSlotId === "messages.text") return `${parentId}-inline-${ci}`;
+  function childIdOf(parentId: string, parentSlotType: string, ci: number): string {
+    if (parentSlotType === "system.main-prompt-block") return `${parentId}-s${ci}`;
+    if (parentSlotType === "messages.text") return `${parentId}-inline-${ci}`;
     return `${parentId}-c${ci}`;
   }
 
   function toNode(id: string, match: SlotMatch, parentId?: string): SegmentNode {
-    // nodeKind 判断规则：
-    //   unknown  — slotId 是 *.unknown fallback，或 matcher 显式标了 unknownMeta
-    //   residual — slotId 是 messages.inline.free-text（inline 扫描剩余文本）
-    //   known    — 其他
-    let nodeKind: NodeKind = "known";
-    if (isUnknownSlotId(match.slotId) || match.unknownMeta) {
-      nodeKind = "unknown";
-    } else if (match.slotId === "messages.inline.free-text") {
-      nodeKind = "residual";
-    }
-
     const node: SegmentNode = {
       id,
-      slotId: match.slotId,
-      nodeKind,
+      slotType: match.slotType,
       jsonPath: match.jsonPath,
       charRange: match.charRange,
       rawText: match.rawText,
@@ -69,8 +57,7 @@ export function buildParsedQuerySnapshot(params: {
       charCount: match.rawText.length,
       children: [],
       parentId,
-      // 把 matcher 的 unknownMeta 搬运到 metadata 字段
-      ...(match.unknownMeta && { metadata: match.unknownMeta }),
+      ...(match.unknownMeta && { unknownMeta: match.unknownMeta }),
     };
     // matcher 只产出顶层大块；这里根据 template 展开 H1/inline 子节点。
     // 若调用方未来传入了已有 children，优先使用它们，保证旧中间结构仍能被消费。
@@ -79,7 +66,7 @@ export function buildParsedQuerySnapshot(params: {
       : expandChildren(match, template);
 
     node.children = childMatches.map((child, ci) =>
-      toNode(childIdOf(id, match.slotId, ci), child, id),
+      toNode(childIdOf(id, match.slotType, ci), child, id),
     );
     index[node.id] = node;
     return node;
@@ -87,7 +74,7 @@ export function buildParsedQuerySnapshot(params: {
 
   // ── 主循环：与重构前 segment id 分配逻辑完全一致 ───────────────────────────
   for (const match of allSlotMatches) {
-    const section = sectionOf(match.slotId);
+    const section = sectionOf(match.slotType);
 
     if (section === "system" || section === "side-query-system") {
       const node = toNode(`seg-system-${systemIdx}`, match);
@@ -123,21 +110,21 @@ export function buildParsedQuerySnapshot(params: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function expandChildren(match: SlotMatch, template: RequestTemplate): SlotMatch[] {
-  const slot = findTemplateSlot(template, match.slotId);
+  const slot = findTemplateSlot(template, match.slotType);
   if (!slot?.children) return [];
 
-  if (match.slotId === "system.main-prompt-block") {
+  if (match.slotType === "system.main-prompt-block") {
     return splitByH1Headers(match.rawText, slot.children, match.jsonPath);
   }
 
-  if (match.slotId === "messages.text") {
+  if (match.slotType === "messages.text") {
     return splitInlineTags(match.rawText, match.jsonPath, slot.children);
   }
 
   return [];
 }
 
-function findTemplateSlot(template: RequestTemplate, slotId: string): TemplateSlot | undefined {
+function findTemplateSlot(template: RequestTemplate, slotType: string): TemplateSlot | undefined {
   const roots = [
     ...template.slots.system,
     ...template.slots.tools,
@@ -147,8 +134,8 @@ function findTemplateSlot(template: RequestTemplate, slotId: string): TemplateSl
   const stack = [...roots];
   while (stack.length > 0) {
     const slot = stack.shift()!;
-    if (slot.id === slotId) return slot;
-    if (slot.id === "tools.builtin" && slotId.startsWith("tools.builtin.")) return slot;
+    if (slot.id === slotType) return slot;
+    if (slot.id === "tools.builtin" && slotType.startsWith("tools.builtin.")) return slot;
     if (slot.children) stack.push(...slot.children);
   }
   return undefined;
@@ -205,7 +192,7 @@ function splitByH1Headers(
     const rawText = text.slice(0, firstH1Start);
     if (rawText.length > 0) {
       out.push({
-        slotId: preludeSlot.id,
+        slotType: preludeSlot.id,
         jsonPath: parentJsonPath,
         charRange: { start: 0, end: firstH1Start },
         rawText,
@@ -222,7 +209,7 @@ function splitByH1Headers(
     const knownSlot = headerToSlot.get(h1.header) ?? unknownSlot;
     if (knownSlot) {
       out.push({
-        slotId: knownSlot.id,
+        slotType: knownSlot.id,
         jsonPath: parentJsonPath,
         charRange: { start: h1.lineStart, end: nextStart },
         rawText,
@@ -231,7 +218,7 @@ function splitByH1Headers(
       });
     } else {
       out.push({
-        slotId: UNKNOWN_SLOT.SYSTEM_SECTION,
+        slotType: UNKNOWN_SLOT.SYSTEM_SECTION,
         jsonPath: parentJsonPath,
         charRange: { start: h1.lineStart, end: nextStart },
         rawText,
@@ -273,7 +260,7 @@ function splitByH1Headers(
     }
 
     out.push({
-      slotId: litSlot.id,
+      slotType: litSlot.id,
       jsonPath: parentJsonPath,
       charRange: { start: litIdx, end: parentEnd },
       rawText: text.slice(litIdx, parentEnd),
@@ -318,7 +305,7 @@ function splitInlineTags(
     const rawText = text.slice(freeTextStart, end);
     if (rawText.length === 0) return;
     out.push({
-      slotId: freeTextSlot.id,
+      slotType: freeTextSlot.id,
       jsonPath: parentJsonPath,
       charRange: { start: freeTextStart, end },
       rawText,
@@ -363,7 +350,7 @@ function splitInlineTags(
     }
 
     out.push({
-      slotId: tag.slot.id,
+      slotType: tag.slot.id,
       jsonPath: parentJsonPath,
       charRange: { start: cursor, end: segEnd },
       rawText: text.slice(cursor, segEnd),
@@ -392,12 +379,12 @@ type Section =
   | "side-query-user"
   | "unknown";
 
-function sectionOf(slotId: string): Section {
-  if (slotId.startsWith("system.")) return "system";
-  if (slotId === "side-query.system") return "side-query-system";
-  if (slotId === "side-query.user") return "side-query-user";
-  if (slotId.startsWith("tools.")) return "tools";
-  if (slotId.startsWith("messages.")) return "messages";
+function sectionOf(slotType: string): Section {
+  if (slotType.startsWith("system.")) return "system";
+  if (slotType === "side-query.system") return "side-query-system";
+  if (slotType === "side-query.user") return "side-query-user";
+  if (slotType.startsWith("tools.")) return "tools";
+  if (slotType.startsWith("messages.")) return "messages";
   return "unknown";
 }
 

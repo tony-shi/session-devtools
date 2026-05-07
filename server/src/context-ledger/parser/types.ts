@@ -7,17 +7,19 @@
 //
 // 容错设计：template 描述已知结构，不是合法结构全集。
 //   未知结构必须进入 AST，不能被丢弃（否则丢字符，downstream 无法计算 unexplained coverage）。
-//   每层都有对应的 unknown fallback slotId：
+//   每层都有对应的 unknown fallback slotType：
 //     system.block.unknown    — system[] 里无法路由的 block
-//     system.section.unknown  — main-prompt-block 内无法路由的 H1 section
+//     system.main-prompt.section.unknown  — main-prompt-block 内无法路由的 H1 section
 //     messages.block.unknown  — messages content[] 里无法识别 type 的 block
 //     messages.inline.unknown — inline 切分里的未知段（目前不触发，保留备用）
 //     tools.unknown           — tools[] 里无法路由的条目（目前不触发，保留备用）
 
 /** 一个 slot 在 wire body 里的实际匹配结果（matcher 内部中间结构） */
 export interface SlotMatch {
-  slotId: string;
+  /** slot 类型标签（同一类型可出现多次，如多个 system.main-prompt.section.* 子节点） */
+  slotType: string;
   jsonPath: string;
+  /** 相对父节点 rawText 的字节偏移（左闭右开）；顶层节点无父节点故为 undefined */
   charRange?: { start: number; end: number };
   rawText: string;
   /** 触发本次切分的锚字符串，调试用 */
@@ -34,22 +36,13 @@ export interface SlotMatch {
   };
 }
 
-/**
- * nodeKind 语义：
- *   known    — slotId 在 template 里有明确定义，切分逻辑已覆盖
- *   unknown  — 结构层级可识别（知道是 system block / H1 section / message block），
- *              但 slotId 没有对应规则，进入 *.unknown fallback
- *   residual — inline 扫描后的剩余文本（free-text），没有明确 tag 触发
- */
-export type NodeKind = "known" | "unknown" | "residual";
-
 /** AST 节点：一个 segment 在树里的表示 */
 export interface SegmentNode {
   id: string;
-  /** known slot 名（如 "system.section.doing-tasks"）或 unknown fallback 名 */
-  slotId: string;
-  nodeKind: NodeKind;
+  /** slot 类型标签（如 "system.main-prompt.section.doing-tasks"）或 unknown fallback 名；同一类型可出现多次 */
+  slotType: string;
   jsonPath: string;
+  /** 相对父节点 rawText 的字节偏移（左闭右开）；顶层节点无父节点故为 undefined */
   charRange?: { start: number; end: number };
   rawText: string;
   /** sha256 前 16 位，格式 "sha256:xxxxxxxxxxxxxxxx" */
@@ -58,8 +51,8 @@ export interface SegmentNode {
   children: SegmentNode[];
   /** 父节点 id；根节点为 undefined */
   parentId?: string;
-  /** 容错 / 调试元数据，unknown / residual 节点填写 */
-  metadata?: {
+  /** 容错 / 调试元数据，unknown 节点填写 */
+  unknownMeta?: {
     originalType?: string;
     sectionHeader?: string;
     reason?: string;
@@ -77,18 +70,18 @@ export interface ParsedQuerySnapshot {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Unknown slotId 常量（供 matcher / snapshot / audit 统一引用）
+// Unknown slotType 常量（供 matcher / snapshot / audit 统一引用）
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const UNKNOWN_SLOT = {
   SYSTEM_BLOCK:    "system.block.unknown",
-  SYSTEM_SECTION:  "system.section.unknown",
+  SYSTEM_SECTION:  "system.main-prompt.section.unknown",
   MESSAGES_BLOCK:  "messages.block.unknown",
   MESSAGES_INLINE: "messages.inline.unknown",
   TOOLS:           "tools.unknown",
 } as const;
 
-/** 判断一个 slotId 是否为 unknown fallback */
-export function isUnknownSlotId(slotId: string): boolean {
-  return Object.values(UNKNOWN_SLOT).includes(slotId as never);
+/** 判断一个 slotType 是否为 unknown fallback */
+export function isUnknownSlotId(slotType: string): boolean {
+  return Object.values(UNKNOWN_SLOT).includes(slotType as never);
 }

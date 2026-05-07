@@ -69,19 +69,16 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
     const text = blk.text ?? "";
     const routedSlot = routeSystemSlot(text, template.slots.system);
     const jsonPath = `reqBody.system[${i}]`;
-    const slotId = routedSlot?.id ?? UNKNOWN_SLOT.SYSTEM_BLOCK;
+    const slotType = routedSlot?.id ?? UNKNOWN_SLOT.SYSTEM_BLOCK;
     const match: SlotMatch = {
-      slotId,
+      slotType,
       jsonPath,
       rawText: text,
       anchorEvidence: routedSlot ? anchorEvidenceOf(routedSlot, text) : "",
       children: [],
       // system block 完全无法路由时（template 缺少 fallback slot），产出 unknown
       ...(routedSlot === null && {
-        unknownMeta: {
-          originalType: "system_block",
-          reason: "no matching anchor or fallback in template",
-        },
+        unknownMeta: { originalType: "system_block", reason: "no matching anchor or fallback in template" },
       }),
     };
     out.push(match);
@@ -93,8 +90,8 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
     const tool = tools[i]!;
     const rawText = tool.description ?? JSON.stringify(tool);
     out.push({
-      // 动态 slotId：tools.builtin.{name}
-      slotId: `tools.builtin.${tool.name}`,
+      // 动态 slotType：tools.builtin.{name}
+      slotType: `tools.builtin.${tool.name}`,
       jsonPath: `reqBody.tools[${i}]`,
       rawText,
       anchorEvidence: tool.name,
@@ -111,7 +108,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
     // string content：整条作为 messages.text 段
     if (typeof content === "string") {
       out.push({
-        slotId: "messages.text",
+        slotType: "messages.text",
         jsonPath: `reqBody.messages[${mi}]`,
         rawText: content,
         anchorEvidence: "",
@@ -129,7 +126,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
       if (blk.type === "text") {
         const rawText = blk.text ?? "";
         out.push({
-          slotId: "messages.text",
+          slotType: "messages.text",
           jsonPath,
           rawText,
           anchorEvidence: "",
@@ -142,7 +139,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
           input: blk.input,
         });
         out.push({
-          slotId: "messages.tool_use",
+          slotType: "messages.tool_use",
           jsonPath,
           rawText,
           anchorEvidence: blk.name ?? "",
@@ -150,7 +147,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
         });
       } else if (blk.type === "tool_result") {
         out.push({
-          slotId: "messages.tool_result",
+          slotType: "messages.tool_result",
           jsonPath,
           rawText: extractToolResultText(blk.content),
           anchorEvidence: blk.tool_use_id ?? "",
@@ -160,7 +157,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
         // 未知 block type（image、document 等）：保留原始内容，不丢字符。
         // 阶段 2 按需补 slot；这里先产出 messages.block.unknown 供 audit 识别 gap。
         out.push({
-          slotId: UNKNOWN_SLOT.MESSAGES_BLOCK,
+          slotType: UNKNOWN_SLOT.MESSAGES_BLOCK,
           jsonPath,
           rawText: JSON.stringify(blk),
           anchorEvidence: blk.type ?? "",

@@ -8,7 +8,7 @@
 //   （是否可字节重建），并在展开区显示 dynamicFields 的具体值与偏移。
 
 import type { ParsedQuerySnapshot, SegmentNode } from "../parser/types";
-import { UNKNOWN_SLOT } from "../parser/types";
+import { isUnknownSlotId } from "../parser/types";
 import type {
   AttributionCoverage,
   DynamicField,
@@ -18,23 +18,23 @@ import type {
 } from "../parser/attribution";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 颜色规则（slotId → badge color）
+// 颜色规则（slotType → badge color）
 // 与 phase1 prompt 对齐
 // ─────────────────────────────────────────────────────────────────────────────
 
-function slotColor(slotId: string): string {
-  // unknown / residual → 醒目红色，让 audit 一眼发现 gap
-  if (Object.values(UNKNOWN_SLOT).includes(slotId as never)) return "#ef4444";
-  if (slotId === "system.billing" || slotId === "system.identity") return "#6b7280";
-  if (slotId.startsWith("system.section.")) return "#3b82f6";
-  if (slotId.startsWith("system.")) return "#1d4ed8";
-  if (slotId.startsWith("tools.")) return "#f59e0b";
-  if (slotId === "messages.tool_use") return "#10b981";
-  if (slotId === "messages.tool_result") return "#059669";
-  if (slotId === "messages.text" || slotId === "messages.inline.free-text") return "#0ea5e9";
-  if (slotId === "messages.inline.system-reminder") return "#8b5cf6";
-  if (slotId === "messages.inline.local-command") return "#d97706";
-  if (slotId.startsWith("side-query.")) return "#64748b";
+function slotColor(slotType: string): string {
+  // unknown fallback → 醒目红色，让 audit 一眼发现 gap
+  if (isUnknownSlotId(slotType)) return "#ef4444";
+  if (slotType === "system.billing" || slotType === "system.identity") return "#6b7280";
+  if (slotType.startsWith("system.main-prompt.section.")) return "#3b82f6";
+  if (slotType.startsWith("system.")) return "#1d4ed8";
+  if (slotType.startsWith("tools.")) return "#f59e0b";
+  if (slotType === "messages.tool_use") return "#10b981";
+  if (slotType === "messages.tool_result") return "#059669";
+  if (slotType === "messages.text" || slotType === "messages.inline.free-text") return "#0ea5e9";
+  if (slotType === "messages.inline.system-reminder") return "#8b5cf6";
+  if (slotType === "messages.inline.local-command") return "#d97706";
+  if (slotType.startsWith("side-query.")) return "#64748b";
   return "#ef4444";
 }
 
@@ -137,7 +137,7 @@ interface Group {
   roots: SegmentNode[];  // 该 section 的顶层节点
 }
 
-// 把 snapshot.roots 按 slotId 前缀分进三个 section。
+// 把 snapshot.roots 按 slotType 前缀分进三个 section。
 // 注意：分组只看顶层节点（roots），渲染时递归展开 children。
 function groupRoots(roots: SegmentNode[]): { system: Group; tools: Group; messages: Group } {
   const system: SegmentNode[] = [];
@@ -145,7 +145,7 @@ function groupRoots(roots: SegmentNode[]): { system: Group; tools: Group; messag
   const messages: SegmentNode[] = [];
 
   for (const node of roots) {
-    const sid = node.slotId;
+    const sid = node.slotType;
     if (sid.startsWith("system.") || sid === "side-query.system") {
       system.push(node);
     } else if (sid.startsWith("tools.")) {
@@ -290,14 +290,16 @@ function renderRow(
   const isInline = depth > 0;
   const attr = attrByNodeId.get(seg.id);
   const isRuleGap = attr?.match.mode === "rule_gap" || attr?.mechanism === "rule_gap";
-  const color = slotColor(seg.slotId);
+  const color = slotColor(seg.slotType);
   const warn = seg.charCount > 10000 ? '<span class="warn" title="charCount &gt; 10000">⚠</span>' : "";
   const hashPrefix = seg.rawHash.length > 19 ? seg.rawHash.slice(0, 19) : seg.rawHash;
 
-  // unknown / residual 节点加小标签，方便 audit 一眼发现 gap
-  const kindBadge = seg.nodeKind === "unknown"
-    ? `<span class="kind-badge unknown" title="${esc(seg.metadata?.reason ?? "unknown slot")}">[unknown]</span>`
-    : seg.nodeKind === "residual"
+  // unknown fallback 节点加小标签，方便 audit 一眼发现 gap
+  const isUnknown = isUnknownSlotId(seg.slotType);
+  const isResidual = seg.slotType === "messages.inline.free-text";
+  const kindBadge = isUnknown
+    ? `<span class="kind-badge unknown" title="${esc(seg.unknownMeta?.reason ?? "unknown slot")}">[unknown]</span>`
+    : isResidual
       ? `<span class="kind-badge residual">[residual]</span>`
       : "";
 
@@ -311,9 +313,9 @@ function renderRow(
   `;
 
   return `
-    <div class="row${isInline ? " inline" : ""}${seg.nodeKind !== "known" ? " " + seg.nodeKind : ""}${isRuleGap ? " rule-gap" : ""}">
+    <div class="row${isInline ? " inline" : ""}${isUnknown ? " unknown" : isResidual ? " residual" : ""}${isRuleGap ? " rule-gap" : ""}">
       <span class="col-id">${esc(seg.id)}</span>
-      <span class="col-slot"><span class="badge" style="background:${color}">${esc(seg.slotId)}</span>${kindBadge}</span>
+      <span class="col-slot"><span class="badge" style="background:${color}">${esc(seg.slotType)}</span>${kindBadge}</span>
       <span class="col-path">${esc(seg.jsonPath)}</span>
       <span class="col-count">
         <button class="chars-btn" onclick="var p=this.closest('.row').nextElementSibling;p.hidden=!p.hidden;this.classList.toggle('open')"

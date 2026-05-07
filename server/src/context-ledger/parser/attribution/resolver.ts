@@ -125,7 +125,7 @@ export function resolveFromHit(node: SegmentNode, hit: RuleHit): SegmentAttribut
 
   return {
     nodeId: node.id,
-    slotId: node.slotId,
+    slotId: node.slotType,
     category: rule.attribution.category,
     mechanism: rule.attribution.mechanism,
     classificationConfidence: classification,
@@ -141,10 +141,10 @@ export function resolveFromHit(node: SegmentNode, hit: RuleHit): SegmentAttribut
 // ── wire-schema fallback ─────────────────────────────────────────────────────
 
 export function wireFallback(node: SegmentNode): SegmentAttribution | null {
-  if (node.slotId === "messages.tool_use") {
+  if (node.slotType === "messages.tool_use") {
     return {
       nodeId: node.id,
-      slotId: node.slotId,
+      slotId: node.slotType,
       category: "tool_use",
       mechanism: "wire_schema",
       classificationConfidence: "exact",
@@ -154,10 +154,10 @@ export function wireFallback(node: SegmentNode): SegmentAttribution | null {
     };
   }
 
-  if (node.slotId === "messages.tool_result") {
+  if (node.slotType === "messages.tool_result") {
     return {
       nodeId: node.id,
-      slotId: node.slotId,
+      slotId: node.slotType,
       category: "tool_result",
       mechanism: "wire_schema",
       classificationConfidence: "exact",
@@ -167,10 +167,10 @@ export function wireFallback(node: SegmentNode): SegmentAttribution | null {
     };
   }
 
-  if (node.slotId.startsWith("tools.builtin.")) {
+  if (node.slotType.startsWith("tools.builtin.")) {
     return {
       nodeId: node.id,
-      slotId: node.slotId,
+      slotId: node.slotType,
       category: "tools_schema",
       mechanism: "wire_schema",
       classificationConfidence: "exact",
@@ -189,7 +189,7 @@ export function wireFallback(node: SegmentNode): SegmentAttribution | null {
 export function ruleGap(node: SegmentNode, reason: string): SegmentAttribution {
   return {
     nodeId: node.id,
-    slotId: node.slotId,
+    slotId: node.slotType,
     category: "unknown",
     mechanism: "rule_gap",
     classificationConfidence: "unknown",

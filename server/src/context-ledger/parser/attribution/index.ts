@@ -57,7 +57,7 @@ export function attributeSnapshot(snapshot: ParsedQuerySnapshot): SegmentAttribu
   const out: SegmentAttribution[] = [];
 
   for (const node of flattenNodes(snapshot.roots)) {
-    const rules = getContextRulesForSlotId(node.slotId);
+    const rules = getContextRulesForSlotId(node.slotType);
     const hit = findFirstRuleHit(node, rules, snapshot.queryKind);
 
     if (hit) {
@@ -71,12 +71,12 @@ export function attributeSnapshot(snapshot: ParsedQuerySnapshot): SegmentAttribu
       continue;
     }
 
-    if (isUnknownSlotId(node.slotId)) {
-      out.push(ruleGap(node, node.metadata?.reason ?? "unknown slot"));
+    if (isUnknownSlotId(node.slotType)) {
+      out.push(ruleGap(node, node.unknownMeta?.reason ?? "unknown slot"));
       continue;
     }
 
-    out.push(ruleGap(node, `no context rule matched slot ${node.slotId}`));
+    out.push(ruleGap(node, `no context rule matched slot ${node.slotType}`));
   }
 
   return out;
