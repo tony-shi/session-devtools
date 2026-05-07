@@ -43,13 +43,17 @@ function SessionRow({
 }) {
   const [hovered, setHovered] = useState(false);
   const badge = TOOL_BADGE[session.tool] ?? { bg: "#f3f4f6", color: "#374151" };
-  const totalTokens = (session.input_tokens ?? 0) + (session.output_tokens ?? 0);
 
-  // 主标题：优先 ai/custom-title，其次 project 末段，最后 id 前 8 位
+  // 主标题：优先 ai/custom-title，其次 project（parser 已解码为可读路径），最后 id 前 8 位
   const displayName =
     session.title ||
-    session.project?.split("/").pop() ||
+    session.project ||
     session.id.slice(0, 8);
+
+  // 工作区：cwd 末段（文件夹名），比 project 更精确
+  const cwdLabel = session.cwd
+    ? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd
+    : session.project?.split("/").pop() ?? "—";
 
   // 最后一条 human input 摘要
   const preview = session.last_input_preview?.trim() ?? "";
@@ -94,13 +98,13 @@ function SessionRow({
         )}
       </td>
 
-      {/* 工作区路径 */}
-      <td style={{ padding: "10px 12px", maxWidth: 240 }}>
+      {/* 工作区：cwd 末段 */}
+      <td style={{ padding: "10px 12px", maxWidth: 180 }}>
         <p style={{
           fontSize: 11, color: "#9ca3af",
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>
-          {session.cwd || "—"}
+          {cwdLabel}
         </p>
       </td>
 
@@ -111,11 +115,22 @@ function SessionRow({
         </span>
       </td>
 
-      {/* Tokens */}
-      <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
-        <span style={{ fontSize: 12, color: "#6b7280" }}>
-          {totalTokens > 0 ? fmtTokens(totalTokens) : "—"}
-        </span>
+      {/* Tokens：4 格（cache write / cache read / input / output） */}
+      <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 10px" }}>
+          <span style={{ fontSize: 10, color: "#d97706" }}>
+            W {session.cache_creation_tokens > 0 ? fmtTokens(session.cache_creation_tokens) : "—"}
+          </span>
+          <span style={{ fontSize: 10, color: "#059669" }}>
+            R {session.cache_read_tokens > 0 ? fmtTokens(session.cache_read_tokens) : "—"}
+          </span>
+          <span style={{ fontSize: 10, color: "#6366f1" }}>
+            in {session.input_tokens > 0 ? fmtTokens(session.input_tokens) : "—"}
+          </span>
+          <span style={{ fontSize: 10, color: "#7c3aed" }}>
+            out {session.output_tokens > 0 ? fmtTokens(session.output_tokens) : "—"}
+          </span>
+        </div>
       </td>
 
       {/* 工具调用次数 */}
@@ -198,7 +213,7 @@ export function SessionList({ data, loading, date }: Props) {
               <th style={TH}>会话 / 最后输入</th>
               <th style={TH}>工作区</th>
               <th style={{ ...TH, textAlign: "right" }}>交互</th>
-              <th style={{ ...TH, textAlign: "right" }}>Tokens</th>
+              <th style={TH}>Tokens</th>
               <th style={{ ...TH, textAlign: "right" }}>工具调用</th>
               <th style={{ ...TH, textAlign: "right" }}>开始</th>
               <th style={TH} />
