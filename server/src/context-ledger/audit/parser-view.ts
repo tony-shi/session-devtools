@@ -4,6 +4,7 @@
 // inline children 在父行下方缩进展示。
 
 import type { ParsedQuerySnapshot, SegmentNode } from "../parser/types";
+import { UNKNOWN_SLOT } from "../parser/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 颜色规则（slotId → badge color）
@@ -11,7 +12,9 @@ import type { ParsedQuerySnapshot, SegmentNode } from "../parser/types";
 // ─────────────────────────────────────────────────────────────────────────────
 
 function slotColor(slotId: string): string {
-  if (slotId === "system.meta" || slotId === "system.identity") return "#6b7280";
+  // unknown / residual → 醒目红色，让 audit 一眼发现 gap
+  if (Object.values(UNKNOWN_SLOT).includes(slotId as never)) return "#ef4444";
+  if (slotId === "system.billing" || slotId === "system.identity") return "#6b7280";
   if (slotId.startsWith("system.section.")) return "#3b82f6";
   if (slotId.startsWith("system.")) return "#1d4ed8";
   if (slotId.startsWith("tools.")) return "#f59e0b";
@@ -88,16 +91,22 @@ function renderRow(seg: SegmentNode, depth = 0): string {
   const isInline = depth > 0;
   const color = slotColor(seg.slotId);
   const warn = seg.charCount > 10000 ? '<span class="warn" title="charCount &gt; 10000">⚠</span>' : "";
-  const hashPrefix = seg.rawHash.length > 19 ? seg.rawHash.slice(0, 19) : seg.rawHash; // "sha256:" + 12 chars
+  const hashPrefix = seg.rawHash.length > 19 ? seg.rawHash.slice(0, 19) : seg.rawHash;
 
-  // rawText 展开区：每行附带一个隐藏的 <div>，点击 chars 按钮切换显示
-  // WHY：用 nextElementSibling 定位展开区，避免全局 id 冲突（同页面多个 segment）
+  // unknown / residual 节点加小标签，方便 audit 一眼发现 gap
+  const kindBadge = seg.nodeKind === "unknown"
+    ? `<span class="kind-badge unknown" title="${esc(seg.metadata?.reason ?? "unknown slot")}">[unknown]</span>`
+    : seg.nodeKind === "residual"
+      ? `<span class="kind-badge residual">[residual]</span>`
+      : "";
+
+  // rawText 展开区
   const rawTextHtml = `<div class="raw-expand" hidden><pre class="raw-pre">${esc(seg.rawText)}</pre></div>`;
 
   return `
-    <div class="row${isInline ? " inline" : ""}">
+    <div class="row${isInline ? " inline" : ""}${seg.nodeKind !== "known" ? " " + seg.nodeKind : ""}">
       <span class="col-id">${esc(seg.id)}</span>
-      <span class="col-slot"><span class="badge" style="background:${color}">${esc(seg.slotId)}</span></span>
+      <span class="col-slot"><span class="badge" style="background:${color}">${esc(seg.slotId)}</span>${kindBadge}</span>
       <span class="col-path">${esc(seg.jsonPath)}</span>
       <span class="col-count">
         <button class="chars-btn" onclick="var p=this.closest('.row').nextElementSibling;p.hidden=!p.hidden;this.classList.toggle('open')"
@@ -302,6 +311,21 @@ export function renderParserView(snapshot: ParsedQuerySnapshot): string {
   }
   /* inline 行的展开区也缩进对齐 */
   .row.inline + .raw-expand { padding-left: 40px; }
+  /* unknown / residual 行高亮背景 */
+  .row.unknown { background: #fff1f2; }
+  .row.residual { background: #fffbeb; }
+  /* nodeKind 小标签 */
+  .kind-badge {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    vertical-align: middle;
+  }
+  .kind-badge.unknown { background: #fecaca; color: #991b1b; }
+  .kind-badge.residual { background: #fef3c7; color: #92400e; }
 </style>
 </head>
 <body>

@@ -5,7 +5,8 @@
 //   3. 递归构建 SegmentNode 树，同时填充 index（所有节点平铺，O(1) 查找）
 
 import { createHash } from "crypto";
-import type { SlotMatch, SegmentNode, ParsedQuerySnapshot } from "./types";
+import type { SlotMatch, SegmentNode, ParsedQuerySnapshot, NodeKind } from "./types";
+import { isUnknownSlotId } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // id 命名规则（与重构前 segments 数组严格一致，保证 index 里 id 不变）
@@ -43,9 +44,21 @@ export function buildSnapshot(params: {
   }
 
   function toNode(id: string, match: SlotMatch, parentId?: string): SegmentNode {
+    // nodeKind 判断规则：
+    //   unknown  — slotId 是 *.unknown fallback，或 matcher 显式标了 unknownMeta
+    //   residual — slotId 是 messages.inline.free-text（inline 扫描剩余文本）
+    //   known    — 其他
+    let nodeKind: NodeKind = "known";
+    if (isUnknownSlotId(match.slotId) || match.unknownMeta) {
+      nodeKind = "unknown";
+    } else if (match.slotId === "messages.inline.free-text") {
+      nodeKind = "residual";
+    }
+
     const node: SegmentNode = {
       id,
       slotId: match.slotId,
+      nodeKind,
       jsonPath: match.jsonPath,
       charRange: match.charRange,
       rawText: match.rawText,
@@ -53,12 +66,13 @@ export function buildSnapshot(params: {
       charCount: match.rawText.length,
       children: [],
       parentId,
+      // 把 matcher 的 unknownMeta 搬运到 metadata 字段
+      ...(match.unknownMeta && { metadata: match.unknownMeta }),
     };
     // 递归处理 children
     node.children = match.children.map((child, ci) =>
       toNode(childIdOf(id, match.slotId, ci), child, id),
     );
-    // 注册自身和所有子孙到 index（子节点在递归时已注册，不重复）
     index[node.id] = node;
     return node;
   }

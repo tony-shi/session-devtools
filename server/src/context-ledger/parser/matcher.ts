@@ -9,6 +9,7 @@
 
 import type { RequestTemplate, TemplateSlot } from "../template/types";
 import type { SlotMatch } from "./types";
+import { UNKNOWN_SLOT } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 输入类型
@@ -50,19 +51,26 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
   for (let i = 0; i < systemBlocks.length; i++) {
     const blk = systemBlocks[i]!;
     const text = blk.text ?? "";
-    const slot = routeSystemSlot(text, template.slots.system);
+    const routedSlot = routeSystemSlot(text, template.slots.system);
     const jsonPath = `reqBody.system[${i}]`;
+    const slotId = routedSlot?.id ?? UNKNOWN_SLOT.SYSTEM_BLOCK;
     const match: SlotMatch = {
-      slotId: slot.id,
+      slotId,
       jsonPath,
       rawText: text,
-      // anchorEvidence：命中的 anchor 文本（fallback 给空串）
-      anchorEvidence: anchorEvidenceOf(slot, text),
+      anchorEvidence: routedSlot ? anchorEvidenceOf(routedSlot, text) : "",
       children: [],
+      // system block 完全无法路由时（template 缺少 fallback slot），产出 unknown
+      ...(routedSlot === null && {
+        unknownMeta: {
+          originalType: "system_block",
+          reason: "no matching anchor or fallback in template",
+        },
+      }),
     };
     // 命中 fallback 主块时，再做 H1 切分
-    if (slot.id === "system.main-prompt-block" && slot.children) {
-      match.children = splitByH1Headers(text, slot.children, jsonPath);
+    if (slotId === "system.main-prompt-block" && routedSlot?.children) {
+      match.children = splitByH1Headers(text, routedSlot.children, jsonPath);
     }
     out.push(match);
   }
@@ -136,8 +144,21 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
           anchorEvidence: blk.tool_use_id ?? "",
           children: [],
         });
+      } else {
+        // 未知 block type（image、document 等）：保留原始内容，不丢字符。
+        // 阶段 2 按需补 slot；这里先产出 messages.block.unknown 供 audit 识别 gap。
+        out.push({
+          slotId: UNKNOWN_SLOT.MESSAGES_BLOCK,
+          jsonPath,
+          rawText: JSON.stringify(blk),
+          anchorEvidence: blk.type ?? "",
+          children: [],
+          unknownMeta: {
+            originalType: blk.type ?? "unknown",
+            reason: "unrecognized content block type",
+          },
+        });
       }
-      // 其他 type 暂忽略（image 等），阶段 2 再扩
     }
   }
 
@@ -155,13 +176,15 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
  *    rest     → 兜底，即 main-prompt-block（含 gitStatus 拼尾）
  *  WHY 不用 regex：只比 trimStart() 后的前缀，避免被前导空白干扰。
  */
-function routeSystemSlot(text: string, slots: TemplateSlot[]): TemplateSlot {
+// 返回 null 表示完全无法路由（template 里没有无 anchor 的兜底 slot）。
+// 正常情况下 main-prompt-block 作为 fallback 保证不会 null；
+// 如果 template 定义不完整，返回 null → matcher 产出 system.block.unknown。
+function routeSystemSlot(text: string, slots: TemplateSlot[]): TemplateSlot | null {
   const trimmed = text.trimStart();
   let fallback: TemplateSlot | undefined;
 
   for (const slot of slots) {
     if (!slot.anchor) {
-      // 没有 anchor 的 slot 视作兜底（main-prompt-block）
       fallback = slot;
       continue;
     }
@@ -169,10 +192,8 @@ function routeSystemSlot(text: string, slots: TemplateSlot[]): TemplateSlot {
     if (a.kind === "literal" && trimmed.startsWith(a.text)) {
       return slot;
     }
-    // tag_prefix / h1_header 不在 system block 路由层使用
   }
-  // fallback 一定存在（main-prompt-block 在 template 里写死）
-  return fallback ?? slots[slots.length - 1]!;
+  return fallback ?? null;
 }
 
 function anchorEvidenceOf(slot: TemplateSlot, text: string): string {
@@ -262,15 +283,34 @@ function splitByH1Headers(
     const nextStart = i + 1 < h1s.length ? h1s[i + 1]!.lineStart : text.length;
     const rawText = text.slice(h1.lineStart, nextStart);
     const slot = headerToSlot.get(h1.header) ?? unknownSlot ?? preludeSlot;
-    if (!slot) continue;
-    out.push({
-      slotId: slot.id,
-      jsonPath: parentJsonPath,
-      charRange: { start: h1.lineStart, end: nextStart },
-      rawText,
-      anchorEvidence: `# ${h1.header}`,
-      children: [],
-    });
+    // 路由规则：只有 headerToSlot 里明确定义的 header 才能命中 known slot；
+    // 未命中时一律走 system.section.unknown，不归入 prelude。
+    // WHY：prelude 语义是"H1 之前的前导段"，不是"未知 H1 兜底"；
+    //      把未知 H1 塞进 prelude 会在 audit 时混淆覆盖率统计。
+    const knownSlot = headerToSlot.get(h1.header) ?? unknownSlot;
+    if (knownSlot) {
+      out.push({
+        slotId: knownSlot.id,
+        jsonPath: parentJsonPath,
+        charRange: { start: h1.lineStart, end: nextStart },
+        rawText,
+        anchorEvidence: `# ${h1.header}`,
+        children: [],
+      });
+    } else {
+      out.push({
+        slotId: UNKNOWN_SLOT.SYSTEM_SECTION,
+        jsonPath: parentJsonPath,
+        charRange: { start: h1.lineStart, end: nextStart },
+        rawText,
+        anchorEvidence: `# ${h1.header}`,
+        children: [],
+        unknownMeta: {
+          sectionHeader: h1.header,
+          reason: "H1 header not in template slot map",
+        },
+      });
+    }
   }
 
   // literal anchor 子 slot 的尾部剥离
