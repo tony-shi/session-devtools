@@ -10,6 +10,8 @@ import {
   readFileSync,
 } from "node:fs";
 import { join, dirname, basename } from "node:path";
+import { buildMutationView } from "../reconstruct2";
+import { renderMutationViewHtml } from "../reconstruct2/audit/mutation-view-html";
 import type { CharDiffReport } from "../debug/char-diff";
 import type { ReconciliationReport } from "../types";
 import {
@@ -26,6 +28,7 @@ import {
   proxyAttributionViewPath,
   reconcileFusionHtmlPath,
   parserViewPath,
+  mutationViewPath,
   errorPath,
 } from "./paths";
 import type { AuditMode } from "./paths";
@@ -147,6 +150,28 @@ export function writeQueryArtifacts(
     updated.scorecardPath = sPath;
     updated.charDiffJsonPath = djPath;
     updated.charDiffHtmlPath = dhPath;
+
+    // reconstruct2 第一阶段产物：纯 JSONL mutation view。
+    // 不读 proxy / 不依赖旧 reconstruction，先于 parser-view 写入：失败不阻断主流程，
+    // 仅用于审计 "JSONL → MutationView" 的解释力。
+    if (result.jsonlSourceRef && existsSync(result.jsonlSourceRef)) {
+      try {
+        const jsonlRaw = readFileSync(result.jsonlSourceRef, "utf-8");
+        const mv = buildMutationView(jsonlRaw, {
+          jsonlFile: result.jsonlSourceRef,
+          sessionId: result.queryKey.sessionId,
+        });
+        const mvHtml = renderMutationViewHtml(mv, {
+          title: result.queryKey.sessionId,
+          sourceLabel: result.jsonlSourceRef,
+        });
+        const mvPath = mutationViewPath(hash);
+        writeFileSync(join(dir, mvPath), mvHtml, "utf-8");
+        updated.mutationViewPath = mvPath;
+      } catch {
+        // mutation-view 写入失败不影响其他产出
+      }
+    }
 
     // parser-view（新 AST parser + ContextRule attribution）
     // 平行于旧 pipeline 跑：失败不影响主流程。
@@ -282,6 +307,7 @@ export function writeIndex(
       proxyAttributionViewPath: r.proxyAttributionViewPath,
       reconcileFusionHtmlPath: r.reconcileFusionHtmlPath,
       parserViewPath: r.parserViewPath,
+      mutationViewPath: r.mutationViewPath,
       errorPath: r.errorPath,
     };
     return entry;

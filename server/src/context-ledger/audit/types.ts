@@ -149,6 +149,8 @@ export interface PipelineResult {
   proxyAttributionViewPath?: string;
   reconcileFusionHtmlPath?: string;
   parserViewPath?: string;
+  // reconstruct2 第一阶段产出：纯 JSONL mutation view（与 parser-view 平级）
+  mutationViewPath?: string;
   errorPath?: string;
   // scorecard（成功时有）
   scorecard?: QueryScorecard;
@@ -257,6 +259,7 @@ export interface AuditIndexEntry {
   proxyAttributionViewPath?: string;
   reconcileFusionHtmlPath?: string;
   parserViewPath?: string;
+  mutationViewPath?: string;
   errorPath?: string;
 }
 

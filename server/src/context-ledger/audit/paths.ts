@@ -72,3 +72,8 @@ export function reconcileFusionHtmlPath(hash: string): string {
 export function parserViewPath(hash: string): string {
   return join("diffs", `${hash}.parser-view.html`);
 }
+// reconstruct2 第一阶段产物：纯 JSONL → MutationView 静态页面
+// 与 parser-view 平级，不依赖 proxy/reconcile，便于 audit 时单独审 JSONL 解释力。
+export function mutationViewPath(hash: string): string {
+  return join("diffs", `${hash}.mutation-view.html`);
+}
