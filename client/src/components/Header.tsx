@@ -24,7 +24,7 @@ export function Header({ date, onDateChange }: Props) {
 
   const navBtnStyle: React.CSSProperties = {
     display: "flex", alignItems: "center", justifyContent: "center",
-    width: 30, height: 30, borderRadius: 6, border: "none",
+    width: 28, height: 28, borderRadius: 6, border: "none",
     background: "transparent", cursor: "pointer", color: "#6b7280",
   };
 
@@ -52,27 +52,28 @@ export function Header({ date, onDateChange }: Props) {
   return (
     <header style={{
       display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "12px 24px", background: "#fff", borderBottom: "1px solid #e5e7eb",
-      position: "sticky", top: 0, zIndex: 10,
+      padding: "0 20px", height: 48, background: "#fff",
+      borderBottom: "1px solid #e5e7eb",
+      position: "sticky", top: 0, zIndex: 10, flexShrink: 0,
     }}>
       {/* Logo */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, width: 200, flexShrink: 0 }}>
         <div style={{
-          width: 28, height: 28, borderRadius: 8, background: "#7c3aed",
+          width: 24, height: 24, borderRadius: 6, background: "#7c3aed",
           display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
         }}>
-          <svg width="16" height="16" fill="none" stroke="white" viewBox="0 0 24 24">
+          <svg width="13" height="13" fill="none" stroke="white" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
         </div>
-        <span style={{ fontWeight: 600, fontSize: 15, color: "#111827" }}>session-devtools</span>
+        <span style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>session-devtools</span>
       </div>
 
-      {/* Date nav */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {/* Date nav — center */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <button onClick={() => onDateChange(addDays(date, -1))} style={navBtnStyle} title={t("header.prevDay")}>
-          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </button>
@@ -80,53 +81,47 @@ export function Header({ date, onDateChange }: Props) {
           type="date" value={date}
           onChange={(e) => e.target.value && onDateChange(e.target.value)}
           style={{
-            fontSize: 14, fontWeight: 500, color: "#374151",
+            fontSize: 13, fontWeight: 500, color: "#374151",
             border: "1px solid #d1d5db", borderRadius: 6,
-            padding: "4px 8px", outline: "none", cursor: "pointer",
+            padding: "3px 7px", outline: "none", cursor: "pointer",
           }}
         />
         <button onClick={() => onDateChange(addDays(date, 1))} disabled={isToday}
           style={{ ...navBtnStyle, opacity: isToday ? 0.3 : 1 }} title={t("header.nextDay")}>
-          <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
         </button>
         {!isToday && (
           <button onClick={() => onDateChange(today)} style={{
-            fontSize: 13, padding: "4px 10px", borderRadius: 6,
+            fontSize: 12, padding: "3px 8px", borderRadius: 5,
             background: "#f3e8ff", color: "#7c3aed", border: "none",
             cursor: "pointer", fontWeight: 500,
           }}>{t("header.today")}</button>
         )}
       </div>
 
-      {/* Right controls: Sync + Lang toggle */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {syncMsg && <span style={{ fontSize: 12, color: "#6b7280" }}>{syncMsg}</span>}
+      {/* Right controls */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, width: 200, justifyContent: "flex-end", flexShrink: 0 }}>
+        {syncMsg && <span style={{ fontSize: 11, color: "#6b7280" }}>{syncMsg}</span>}
         <button onClick={handleSync} disabled={syncing} style={{
-          display: "flex", alignItems: "center", gap: 6,
-          fontSize: 13, padding: "5px 12px", borderRadius: 6,
+          display: "flex", alignItems: "center", gap: 5,
+          fontSize: 12, padding: "4px 10px", borderRadius: 6,
           background: "#f3f4f6", color: "#374151", border: "none",
           cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.6 : 1,
         }}>
-          <svg width="14" height="14" style={{ animation: syncing ? "spin 1s linear infinite" : "none" }}
+          <svg width="12" height="12" style={{ animation: syncing ? "spin 1s linear infinite" : "none" }}
             fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
               d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
           {syncing ? t("header.syncing") : t("header.sync")}
         </button>
-
-        {/* Language toggle */}
-        <button
-          onClick={toggleLang}
-          title={t("header.langLabel")}
-          style={{
-            fontSize: 12, padding: "5px 10px", borderRadius: 6,
-            background: "#f3f4f6", color: "#374151", border: "none",
-            cursor: "pointer", fontWeight: 500, letterSpacing: "0.02em",
-          }}
-        >
+        <button onClick={toggleLang} title={t("header.langLabel")} style={{
+          fontSize: 11, padding: "4px 8px", borderRadius: 5,
+          background: "#f3f4f6", color: "#374151", border: "none",
+          cursor: "pointer", fontWeight: 500,
+        }}>
           {lang === "zh-CN" ? "EN" : "中文"}
         </button>
       </div>

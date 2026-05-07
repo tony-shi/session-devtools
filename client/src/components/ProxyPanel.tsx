@@ -20,22 +20,23 @@ export function ProxyPanel() {
   const lang = getLang();
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       {/* Sub-tab bar */}
       <div style={{
         display: "flex",
         gap: 0,
         borderBottom: "1px solid #e5e7eb",
         background: "#fff",
-        borderRadius: "12px 12px 0 0",
-        paddingLeft: 16,
+        borderRadius: "10px 10px 0 0",
+        paddingLeft: 12,
+        flexShrink: 0,
       }}>
         {(["traffic", "setup"] as SubTab[]).map((id) => (
           <button
             key={id}
             onClick={() => setSub(id)}
             style={{
-              padding: "10px 18px",
+              padding: "9px 16px",
               border: "none",
               background: "none",
               cursor: "pointer",
@@ -54,10 +55,10 @@ export function ProxyPanel() {
       {/* Content */}
       <div style={{
         background: "#fff",
-        borderRadius: "0 0 12px 12px",
+        borderRadius: "0 0 10px 10px",
         border: "1px solid #e5e7eb",
         borderTop: "none",
-        minHeight: 400,
+        flex: 1,
       }}>
         {sub === "traffic" ? <ProxyTraffic /> : <ProxySetup />}
       </div>

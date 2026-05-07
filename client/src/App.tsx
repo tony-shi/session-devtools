@@ -44,46 +44,90 @@ export default function App() {
       .finally(() => setSessionsLoading(false));
   }, [date]);
 
+  const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode }[] = [
+    {
+      id: "sessions",
+      label: "会话",
+      icon: (
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+        </svg>
+      ),
+    },
+    {
+      id: "proxy",
+      label: "代理",
+      icon: (
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+      ),
+    },
+  ];
+
   return (
-    <div style={{ minHeight: "100vh", background: "#f5f5f7" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "#f0f2f5" }}>
+      {/* Topbar */}
       <Header date={date} onDateChange={handleDateChange} />
-      {/* Tab 切换 */}
-      <div style={{ maxWidth: 960, margin: "0 auto", padding: "12px 24px 0" }}>
-        <div style={{ display: "flex", gap: 0, borderBottom: "2px solid #e5e5e5" }}>
-          {([
-            { id: "sessions", label: "会话" },
-            { id: "proxy",    label: "代理" },
-          ] as { id: Tab; label: string }[]).map(({ id, label }) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              style={{
-                padding: "8px 20px",
-                border: "none",
-                background: "none",
-                cursor: "pointer",
-                fontSize: 14,
-                fontWeight: tab === id ? 600 : 400,
-                color: tab === id ? "#007aff" : "#666",
-                borderBottom: tab === id ? "2px solid #007aff" : "2px solid transparent",
-                marginBottom: -2,
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+
+      {/* Body: sidebar + content */}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        {/* Sidebar */}
+        <nav style={{
+          width: 200,
+          flexShrink: 0,
+          background: "#fff",
+          borderRight: "1px solid #e5e7eb",
+          display: "flex",
+          flexDirection: "column",
+          padding: "12px 8px",
+          gap: 2,
+        }}>
+          {NAV_ITEMS.map(({ id, label, icon }) => {
+            const active = tab === id;
+            return (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 9,
+                  padding: "7px 10px", borderRadius: 7, border: "none",
+                  background: active ? "#f3e8ff" : "transparent",
+                  color: active ? "#7c3aed" : "#4b5563",
+                  cursor: "pointer", fontSize: 13, fontWeight: active ? 600 : 400,
+                  textAlign: "left", width: "100%",
+                  transition: "background 0.1s",
+                }}
+              >
+                <span style={{ color: active ? "#7c3aed" : "#9ca3af", flexShrink: 0 }}>{icon}</span>
+                {label}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Main content */}
+        <main style={{
+          flex: 1,
+          overflow: "auto",
+          padding: "20px 24px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+          minWidth: 0,
+        }}>
+          {tab === "sessions" ? (
+            <>
+              <SummaryCards data={summary} loading={summaryLoading} />
+              <SessionList data={sessions} loading={sessionsLoading} date={date} />
+            </>
+          ) : (
+            <ProxyPanel />
+          )}
+        </main>
       </div>
-      <main style={{ maxWidth: 960, margin: "0 auto", padding: "16px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
-        {tab === "sessions" ? (
-          <>
-            <SummaryCards data={summary} loading={summaryLoading} />
-            <SessionList data={sessions} loading={sessionsLoading} date={date} />
-          </>
-        ) : (
-          <ProxyPanel />
-        )}
-      </main>
     </div>
   );
 }
