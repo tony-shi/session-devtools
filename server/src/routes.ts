@@ -121,29 +121,60 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     const db = getDb();
     const rows = db
       .query<
-        { tool: string; session_count: number; turn_count: number; projects: string },
+        {
+          tool: string;
+          session_count: number;
+          human_turn_count: number;
+          input_tokens: number;
+          output_tokens: number;
+          cache_creation_tokens: number;
+          cache_read_tokens: number;
+          projects: string;
+        },
         [string, string]
       >(`
-        SELECT tool, COUNT(*) as session_count, SUM(turn_count) as turn_count,
-               GROUP_CONCAT(DISTINCT project) as projects
+        SELECT tool,
+               COUNT(*)                       AS session_count,
+               SUM(human_turn_count)          AS human_turn_count,
+               SUM(input_tokens)              AS input_tokens,
+               SUM(output_tokens)             AS output_tokens,
+               SUM(cache_creation_tokens)     AS cache_creation_tokens,
+               SUM(cache_read_tokens)         AS cache_read_tokens,
+               GROUP_CONCAT(DISTINCT project) AS projects
         FROM sessions
         WHERE started_at BETWEEN ? AND ?
         GROUP BY tool
       `)
       .all(dateStart, dateEnd);
 
-    const totalSessions = rows.reduce((s, r) => s + r.session_count, 0);
-    const totalTurns = rows.reduce((s, r) => s + (r.turn_count ?? 0), 0);
-    const byTool: Record<string, { sessions: number; turns: number; projects: string[] }> = {};
+    const totalSessions        = rows.reduce((s, r) => s + r.session_count, 0);
+    const totalHumanTurns      = rows.reduce((s, r) => s + (r.human_turn_count ?? 0), 0);
+    const totalInputTokens     = rows.reduce((s, r) => s + (r.input_tokens ?? 0), 0);
+    const totalOutputTokens    = rows.reduce((s, r) => s + (r.output_tokens ?? 0), 0);
+    const totalCacheCreation   = rows.reduce((s, r) => s + (r.cache_creation_tokens ?? 0), 0);
+    const totalCacheRead       = rows.reduce((s, r) => s + (r.cache_read_tokens ?? 0), 0);
+
+    const byTool: Record<string, { sessions: number; human_turns: number; projects: string[] }> = {};
     for (const r of rows) {
       byTool[r.tool] = {
         sessions: r.session_count,
-        turns: r.turn_count ?? 0,
+        human_turns: r.human_turn_count ?? 0,
         projects: (r.projects ?? "").split(",").filter(Boolean),
       };
     }
 
-    return json({ date, total_sessions: totalSessions, total_turns: totalTurns, by_tool: byTool });
+    return json({
+      date,
+      total_sessions:      totalSessions,
+      total_human_turns:   totalHumanTurns,
+      tokens: {
+        input:            totalInputTokens,
+        output:           totalOutputTokens,
+        cache_creation:   totalCacheCreation,
+        cache_read:       totalCacheRead,
+      },
+      by_tool: byTool,
+    });
   }
 
   // ── Session list ─────────────────────────────────────────────────────────────

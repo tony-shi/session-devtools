@@ -36,8 +36,14 @@ export interface Turn {
 export interface SummaryData {
   date: string;
   total_sessions: number;
-  total_turns: number;
-  by_tool: Record<string, { sessions: number; turns: number; projects: string[] }>;
+  total_human_turns: number;
+  tokens: {
+    input: number;
+    output: number;
+    cache_creation: number;
+    cache_read: number;
+  };
+  by_tool: Record<string, { sessions: number; human_turns: number; projects: string[] }>;
 }
 
 export interface DigestData {
