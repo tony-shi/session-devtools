@@ -21,6 +21,23 @@ import type {
 
 export type ContextRuleMatchMode = "exact" | "prefix" | "contains" | "regex";
 
+/**
+ * ContextRuleMaterialization：rule 在 expected 侧的可重建语义。
+ * 与旧 ContextLedgerRule.reconstruction.materialization 同义；
+ * AST attribution 用它驱动 MaterializationEvidence，区分
+ *   exact_text       contentPattern 字面，可逐字节重建
+ *   normalized_text  静态模板 + 动态字段可解释，但字节级不保证
+ *   shape            只能复现结构/轮廓
+ *   presence         只能确认存在，内容不可预测
+ *   unavailable      不提供任何可重建证据
+ */
+export type ContextRuleMaterialization =
+  | "exact_text"
+  | "normalized_text"
+  | "shape"
+  | "presence"
+  | "unavailable";
+
 export interface ContextRule {
   ruleId: string;
   /** 该 rule 绑定的精确 slotId；tools.builtin 作为动态工具 slot 的前缀槽。 */
@@ -29,6 +46,13 @@ export interface ContextRule {
   verifiedFor: string | null;
   /** 适用 query 类型；省略等同于 any。 */
   queryScope?: "main_session" | "side_query" | "any";
+  /**
+   * P1-1：声明该 rule 命中后能给出的 materialization 证据。
+   *   - 来自旧 ContextLedgerRule.reconstruction.materialization
+   *   - 结构兜底 rule（STRUCTURAL_FALLBACK_RULES）默认 "presence"
+   * 缺失时 attribution 会按 matchMode 给出保守兜底。
+   */
+  materialization?: ContextRuleMaterialization;
   attribution: {
     pattern: string | null;
     matchMode: ContextRuleMatchMode;
@@ -85,11 +109,16 @@ function normalizeMatchMode(mode: RuleMatchMode): ContextRuleMatchMode {
 function copyAttributionRule(rule: ContextLedgerRule, slotId: string): ContextRule | null {
   const attr = rule.attribution;
   if (!attr) return null;
+  // P1-1：把旧 rule.reconstruction.materialization 投影到 ContextRule，
+  //       让 AST attribution 能直接读出"该 rule 命中后能给出什么 materialization 证据"。
+  //       legacy 的 "unavailable" 在 ContextRule 里同样表达为 "unavailable"。
+  const materialization = rule.reconstruction?.materialization;
   return {
     ruleId: rule.ruleId,
     slotId,
     verifiedFor: rule.verifiedFor,
     queryScope: rule.queryScope,
+    ...(materialization ? { materialization } : {}),
     attribution: {
       pattern: attr.pattern,
       matchMode: normalizeMatchMode(attr.matchMode),
@@ -119,6 +148,8 @@ function fallbackRule(params: {
     ruleId: params.ruleId,
     slotId: params.slotId,
     verifiedFor: null,
+    // 结构兜底 rule 不声称可重建文本：只确认"slot 锚点存在"。
+    materialization: "presence",
     attribution: {
       // 空 prefix 是显式的"结构存在即命中"兜底规则；它必须排在 copy 规则之后。
       pattern: "",

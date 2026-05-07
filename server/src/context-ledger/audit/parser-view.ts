@@ -2,10 +2,20 @@
 // 设计：完整 <!DOCTYPE html>，内联 CSS，无外部依赖（可以直接双击打开）。
 // 排版思路：三个折叠块（System / Tools / Messages），每个 segment 一行，
 // inline children 在父行下方缩进展示。
+//
+// P1-1：parser-view 升级为"可审计归因"展示。每行除 category/confidence 外，
+//   额外展示 RuleMatchEvidence（matchMode、char 桶比例）+ MaterializationEvidence
+//   （是否可字节重建），并在展开区显示 dynamicFields 的具体值与偏移。
 
 import type { ParsedQuerySnapshot, SegmentNode } from "../parser/types";
 import { UNKNOWN_SLOT } from "../parser/types";
-import type { AttributionCoverage, SegmentAttribution } from "../parser/attribution";
+import type {
+  AttributionCoverage,
+  DynamicField,
+  MaterializationEvidence,
+  RuleMatchEvidence,
+  SegmentAttribution,
+} from "../parser/attribution";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 颜色规则（slotId → badge color）
@@ -54,6 +64,48 @@ function confidenceColor(confidence: string): string {
   return "#ef4444";
 }
 
+// matchMode → badge 颜色：与 evidence "强弱" 一致。
+const MATCH_MODE_COLOR: Record<string, string> = {
+  exact: "#10b981",         // 字符串等值，最强
+  template: "#0ea5e9",       // exact_text rule + regex 命中，整段视为模板
+  regex: "#3b82f6",         // 模板 + 动态字段
+  prefix: "#f59e0b",        // 锚点识别，文本不解释
+  contains: "#f59e0b",
+  wire_schema: "#10b981",   // 由 wire 类型直接确认
+  rule_gap: "#ef4444",
+};
+
+function matchModeColor(mode: string): string {
+  return MATCH_MODE_COLOR[mode] ?? "#94a3b8";
+}
+
+// materialization kind → badge 颜色：可字节重建越强颜色越绿。
+const MATERIALIZATION_COLOR: Record<string, string> = {
+  exact_text: "#10b981",
+  wire_schema: "#10b981",
+  normalized_text: "#0ea5e9",
+  shape: "#f59e0b",
+  presence: "#a855f7",
+  unavailable: "#ef4444",
+};
+
+function materializationColor(kind: string): string {
+  return MATERIALIZATION_COLOR[kind] ?? "#94a3b8";
+}
+
+// dynamicField.source → badge 颜色：来源越"可控"越绿。
+const SOURCE_COLOR: Record<string, string> = {
+  env: "#10b981",
+  memory: "#3b82f6",
+  runtime: "#f97316",
+  user: "#a855f7",
+  unknown: "#94a3b8",
+};
+
+function sourceColor(source: string): string {
+  return SOURCE_COLOR[source] ?? "#94a3b8";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HTML 转义
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,6 +117,15 @@ function esc(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 1000) / 10}%`;
+}
+
+function formatCharRatio(chars: number, total: number): string {
+  if (total <= 0) return "0%";
+  return formatPercent(chars / total);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,6 +165,108 @@ function groupRoots(roots: SegmentNode[]): { system: Group; tools: Group; messag
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// evidence 渲染
+// ─────────────────────────────────────────────────────────────────────────────
+
+// 单行展示的 evidence 摘要（matchMode + literal/dynamic/unmatched 比例）。
+function renderEvidenceSummary(match: RuleMatchEvidence): string {
+  const modeBadge = `<span class="evd-mode" style="background:${matchModeColor(match.mode)}">${esc(match.mode)}</span>`;
+
+  // rule_gap：只展示"未识别"提示，不渲染 char 桶。
+  if (match.mode === "rule_gap") {
+    return `<span class="evd">${modeBadge}<span class="evd-gap">${match.rawChars} chars unmatched</span></span>`;
+  }
+
+  const total = match.rawChars;
+  const literalPct = formatCharRatio(match.literalChars, total);
+  const dynamicPct = formatCharRatio(match.dynamicChars, total);
+  const unmatchedPct = formatCharRatio(match.unmatchedChars, total);
+
+  // 微型分桶条：literal / dynamic / unmatched。
+  const widthFor = (chars: number): string => {
+    if (total <= 0) return "0%";
+    return `${Math.max(0, (chars / total) * 100)}%`;
+  };
+  // expectedChars 写进 tooltip：当 < rawChars 时（典型如 prefix anchor），可一眼看出 rule 的解释覆盖范围。
+  const expectedHint = match.expectedChars !== undefined
+    ? `\nexpected ${match.expectedChars} / raw ${match.rawChars}c`
+    : "";
+  const microBar = `
+    <span class="evd-bar" title="literal ${literalPct} · dynamic ${dynamicPct} · unmatched ${unmatchedPct}${expectedHint}">
+      <span style="width:${widthFor(match.literalChars)};background:#0ea5e9"></span>
+      <span style="width:${widthFor(match.dynamicChars)};background:#f97316"></span>
+      <span style="width:${widthFor(match.unmatchedChars)};background:#fecaca"></span>
+    </span>
+  `;
+
+  // 不展示比例为 0 的桶，让眼睛聚焦到非零值。
+  const tagsRaw: Array<[string, number, string]> = [
+    ["L", match.literalChars, "#0ea5e9"],
+    ["D", match.dynamicChars, "#f97316"],
+    ["U", match.unmatchedChars, "#94a3b8"],
+  ];
+  const tags = tagsRaw
+    .filter(([, c]) => c > 0)
+    .map(([label, chars, color]) =>
+      `<span class="evd-tag" style="color:${color}" title="${label === "L" ? "literal" : label === "D" ? "dynamic" : "unmatched"} chars">${label} ${chars}</span>`,
+    )
+    .join("");
+
+  return `<span class="evd">${modeBadge}${microBar}${tags}</span>`;
+}
+
+function renderMaterializationBadge(materialization: MaterializationEvidence): string {
+  const color = materializationColor(materialization.kind);
+  const tip = materialization.reason
+    ? `${materialization.kind} · canReconstructBytes=${materialization.canReconstructBytes}\n${materialization.reason}`
+    : `${materialization.kind} · canReconstructBytes=${materialization.canReconstructBytes}`;
+  return `<span class="mat-badge" style="background:${color}" title="${esc(tip)}">${esc(materialization.kind)}</span>`;
+}
+
+function renderDynamicFieldsTable(fields: DynamicField[] | undefined): string {
+  if (!fields || fields.length === 0) return "";
+  const rows = fields
+    .map((f) => `
+      <tr>
+        <td class="df-name">${esc(f.name)}</td>
+        <td class="df-source"><span class="df-src-badge" style="background:${sourceColor(f.source)}">${esc(f.source)}</span></td>
+        <td class="df-range">[${f.charStart}, ${f.charEnd}) · ${f.charCount}c</td>
+        <td class="df-value"><code>${esc(f.valuePreview)}</code></td>
+      </tr>
+    `)
+    .join("");
+
+  return `
+    <details class="df-block">
+      <summary>capture fields (${fields.length})</summary>
+      <table class="df-table">
+        <thead><tr><th>name</th><th>source</th><th>range</th><th>value</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </details>
+  `;
+}
+
+// 单行渲染的 attribution cell：badge 集合 + evidence 摘要。
+function renderAttributionCell(attr: SegmentAttribution | undefined): string {
+  if (!attr) return `<span class="no-attr">—</span>`;
+  const category = attr.category;
+  const categoryBadge = `<span class="attr-badge" style="background:${categoryColor(category)}">${esc(category)}</span>`;
+  const matBadge = renderMaterializationBadge(attr.materialization);
+  const conf = attr.materializationConfidence;
+  const confBadge = `<span class="conf" style="color:${confidenceColor(conf)}">${esc(conf)}</span>`;
+  const rule = attr.ruleId ? `<code class="rule-id" title="${esc(attr.ruleId)}">${esc(attr.ruleId)}</code>` : "";
+  const evd = renderEvidenceSummary(attr.match);
+
+  // notes 折进 tooltip，避免一行太挤；evidence 是新的一等公民，不再依赖 notes 计数。
+  const notes = attr.notes?.length
+    ? `<span class="attr-note" title="${esc(attr.notes.join("\n"))}">${attr.notes.length} note</span>`
+    : "";
+
+  return `${categoryBadge}${matBadge}${confBadge}${rule}${evd}${notes}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 单行渲染
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -119,19 +282,6 @@ function renderNode(
     node.children.map((c) => renderNode(c, attrByNodeId, depth + 1)).join("");
 }
 
-function renderAttributionCell(attr: SegmentAttribution | undefined): string {
-  if (!attr) return `<span class="no-attr">—</span>`;
-  const category = attr.category;
-  const categoryBadge = `<span class="attr-badge" style="background:${categoryColor(category)}">${esc(category)}</span>`;
-  const conf = attr.materializationConfidence;
-  const confBadge = `<span class="conf" style="color:${confidenceColor(conf)}">${esc(conf)}</span>`;
-  const rule = attr.ruleId ? `<code class="rule-id">${esc(attr.ruleId)}</code>` : "";
-  const notes = attr.notes?.length
-    ? `<span class="attr-note" title="${esc(attr.notes.join("; "))}">${attr.notes.length} note</span>`
-    : "";
-  return `${categoryBadge}${confBadge}${rule}${notes}`;
-}
-
 function renderRow(
   seg: SegmentNode,
   attrByNodeId: Map<string, SegmentAttribution>,
@@ -139,7 +289,7 @@ function renderRow(
 ): string {
   const isInline = depth > 0;
   const attr = attrByNodeId.get(seg.id);
-  const isRuleGap = attr?.mechanism === "rule_gap";
+  const isRuleGap = attr?.match.mode === "rule_gap" || attr?.mechanism === "rule_gap";
   const color = slotColor(seg.slotId);
   const warn = seg.charCount > 10000 ? '<span class="warn" title="charCount &gt; 10000">⚠</span>' : "";
   const hashPrefix = seg.rawHash.length > 19 ? seg.rawHash.slice(0, 19) : seg.rawHash;
@@ -151,8 +301,14 @@ function renderRow(
       ? `<span class="kind-badge residual">[residual]</span>`
       : "";
 
-  // rawText 展开区
-  const rawTextHtml = `<div class="raw-expand" hidden><pre class="raw-pre">${esc(seg.rawText)}</pre></div>`;
+  // 展开区：rawText + 动态字段表
+  const dynamicHtml = renderDynamicFieldsTable(attr?.dynamicFields);
+  const rawTextHtml = `
+    <div class="raw-expand" hidden>
+      ${dynamicHtml}
+      <pre class="raw-pre">${esc(seg.rawText)}</pre>
+    </div>
+  `;
 
   return `
     <div class="row${isInline ? " inline" : ""}${seg.nodeKind !== "known" ? " " + seg.nodeKind : ""}${isRuleGap ? " rule-gap" : ""}">
@@ -161,7 +317,7 @@ function renderRow(
       <span class="col-path">${esc(seg.jsonPath)}</span>
       <span class="col-count">
         <button class="chars-btn" onclick="var p=this.closest('.row').nextElementSibling;p.hidden=!p.hidden;this.classList.toggle('open')"
-          title="点击展开/折叠原文">${seg.charCount.toLocaleString()}${warn}</button>
+          title="点击展开/折叠原文与动态字段">${seg.charCount.toLocaleString()}${warn}</button>
       </span>
       <span class="col-hash">${esc(hashPrefix)}</span>
       <span class="col-attr">${renderAttributionCell(attr)}</span>
@@ -196,7 +352,7 @@ function renderGroup(g: Group, attrByNodeId: Map<string, SegmentAttribution>): s
           <span class="col-path">jsonPath</span>
           <span class="col-count">chars</span>
           <span class="col-hash">hash</span>
-          <span class="col-attr">attribution</span>
+          <span class="col-attr">attribution · evidence</span>
         </div>
         ${rows}
       </div>
@@ -208,18 +364,21 @@ function renderGroup(g: Group, attrByNodeId: Map<string, SegmentAttribution>): s
 // 顶层 render
 // ─────────────────────────────────────────────────────────────────────────────
 
-function formatPercent(value: number): string {
-  return `${Math.round(value * 1000) / 10}%`;
-}
-
 function renderCoverageBar(coverage: AttributionCoverage | undefined): string {
   if (!coverage) return "";
   const total = coverage.totalChars || 1;
+  // 桶顺序：从证据最强（exact）到最弱（rule_gap）。
   const parts = [
-    { label: "exact", color: "#10b981", chars: coverage.exact.chars },
-    { label: "estimated", color: "#3b82f6", chars: coverage.estimated.chars },
-    { label: "inferred", color: "#f59e0b", chars: coverage.inferred.chars },
-    { label: "rule_gap", color: "#ef4444", chars: coverage.ruleGap.chars },
+    { label: "exact", color: "#10b981", chars: coverage.exactChars,
+      hint: "exact matchMode 命中或 wire_schema 精确路径，可逐字节重建" },
+    { label: "template", color: "#0ea5e9", chars: coverage.templateLiteralChars,
+      hint: "regex 命中后非占位符的静态文本（含 exact_text rule 的整段）" },
+    { label: "dynamic", color: "#f97316", chars: coverage.dynamicCapturedChars,
+      hint: "regex 命名捕获组覆盖的动态字段字符" },
+    { label: "recognized", color: "#a855f7", chars: coverage.recognizedUnexplainedChars,
+      hint: "prefix/contains 仅识别 slot 锚点，文本未解释" },
+    { label: "rule_gap", color: "#ef4444", chars: coverage.ruleGapChars,
+      hint: "完全无 rule 命中" },
   ];
 
   return `
@@ -227,13 +386,16 @@ function renderCoverageBar(coverage: AttributionCoverage | undefined): string {
       <div class="coverage-bar">
         ${parts.map((part) => {
           const width = Math.max(0, (part.chars / total) * 100);
-          return `<span style="width:${width}%;background:${part.color}" title="${esc(part.label)} ${formatPercent(part.chars / total)}"></span>`;
+          return `<span style="width:${width}%;background:${part.color}" title="${esc(part.label)} ${formatPercent(part.chars / total)} · ${esc(part.hint)}"></span>`;
         }).join("")}
       </div>
       <div class="coverage-meta">
-        ${parts.map((part) => `<span><b style="color:${part.color}">${esc(part.label)}</b> ${formatPercent(part.chars / total)}</span>`).join("")}
-        <span class="coverage-ratio">识别率 ${formatPercent(coverage.recognitionRatio)}</span>
-        <span class="coverage-ratio">证据覆盖 ${formatPercent(coverage.evidenceBackedRatio)}</span>
+        ${parts.map((part) => `<span title="${esc(part.hint)}"><b style="color:${part.color}">${esc(part.label)}</b> ${formatPercent(part.chars / total)} · ${part.chars.toLocaleString()}c</span>`).join("")}
+      </div>
+      <div class="coverage-ratios">
+        <span class="coverage-ratio" title="(totalChars - ruleGapChars) / totalChars">识别率 <b>${formatPercent(coverage.recognitionRatio)}</b></span>
+        <span class="coverage-ratio" title="(exact + template + dynamic) / totalChars">证据覆盖 <b>${formatPercent(coverage.evidenceBackedRatio)}</b></span>
+        <span class="coverage-ratio" title="exact / totalChars — 可字节重建占比">字节重建 <b>${formatPercent(coverage.byteReconstructableRatio)}</b></span>
       </div>
     </section>
   `;
@@ -308,7 +470,7 @@ export function renderParserView(
   .rows { padding: 4px 0; }
   .row {
     display: grid;
-    grid-template-columns: 220px 240px 1fr 100px 180px 280px;
+    grid-template-columns: 200px 220px 1fr 100px 140px 460px;
     gap: 12px;
     padding: 6px 16px;
     align-items: center;
@@ -364,6 +526,7 @@ export function renderParserView(
     gap: 6px;
     min-width: 0;
     overflow: hidden;
+    flex-wrap: wrap;
   }
   .attr-badge {
     display: inline-block;
@@ -372,6 +535,15 @@ export function renderParserView(
     color: #fff;
     font-size: 10px;
     font-weight: 700;
+    white-space: nowrap;
+  }
+  .mat-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
     white-space: nowrap;
   }
   .conf {
@@ -386,13 +558,54 @@ export function renderParserView(
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    max-width: 200px;
+    display: inline-block;
   }
   .attr-note {
     color: #94a3b8;
     font-size: 10px;
     white-space: nowrap;
+    border-bottom: 1px dotted #cbd5e1;
+    cursor: help;
   }
   .no-attr { color: #94a3b8; }
+  /* evidence summary */
+  .evd {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: nowrap;
+  }
+  .evd-mode {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: #fff;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .evd-bar {
+    display: inline-flex;
+    width: 90px;
+    height: 8px;
+    border-radius: 999px;
+    background: #e2e8f0;
+    overflow: hidden;
+  }
+  .evd-bar > span { display: block; height: 100%; }
+  .evd-tag {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .evd-gap {
+    color: #ef4444;
+    font-size: 10px;
+    font-weight: 600;
+  }
   .warn {
     color: #ef4444;
     margin-left: 6px;
@@ -410,11 +623,10 @@ export function renderParserView(
     user-select: none;
   }
   .chars-btn:hover { color: #0ea5e9; border-bottom-color: #0ea5e9; }
-  /* 展开状态：数字变蓝表示已打开 */
   .chars-btn.open { color: #0ea5e9; border-bottom-style: solid; }
   /* 展开区 */
   .raw-expand {
-    padding: 0 16px 10px 16px;
+    padding: 6px 16px 10px 16px;
     border-bottom: 1px solid #f1f5f9;
   }
   .raw-expand[hidden] { display: none; }
@@ -433,9 +645,49 @@ export function renderParserView(
     max-height: 400px;
     overflow-y: auto;
   }
-  /* inline 行的展开区也缩进对齐 */
   .row.inline + .raw-expand { padding-left: 40px; }
-  /* unknown / residual 行高亮背景 */
+  /* dynamic fields */
+  .df-block {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    padding: 0 12px;
+  }
+  .df-block > summary {
+    padding: 6px 0;
+    cursor: pointer;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: #475569;
+    background: transparent;
+    border-bottom: none;
+  }
+  .df-table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 6px 0 8px 0;
+    font-size: 11.5px;
+  }
+  .df-table th, .df-table td {
+    text-align: left;
+    padding: 4px 6px;
+    border-bottom: 1px solid #e2e8f0;
+    vertical-align: top;
+  }
+  .df-table th { color: #64748b; font-weight: 600; }
+  .df-name { font-family: ui-monospace, monospace; color: #1d4ed8; white-space: nowrap; }
+  .df-source .df-src-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    color: #fff; font-size: 10px; font-weight: 700;
+  }
+  .df-range { font-family: ui-monospace, monospace; color: #64748b; white-space: nowrap; }
+  .df-value code {
+    font-family: ui-monospace, monospace; font-size: 11px;
+    background: #0f172a; color: #e2e8f0; padding: 1px 6px; border-radius: 3px;
+    word-break: break-all;
+  }
+  /* unknown / residual / rule_gap 行高亮 */
   .row.unknown { background: #fff1f2; }
   .row.residual { background: #fffbeb; }
   .row.rule-gap { background: #fff1f2; }
@@ -452,6 +704,7 @@ export function renderParserView(
   }
   .kind-badge.unknown { background: #fecaca; color: #991b1b; }
   .kind-badge.residual { background: #fef3c7; color: #92400e; }
+  /* coverage panel */
   .coverage-panel {
     background: #fff;
     border: 1px solid #e2e8f0;
@@ -475,7 +728,17 @@ export function renderParserView(
     color: #64748b;
     font-size: 12px;
   }
-  .coverage-ratio { color: #0f172a; font-weight: 600; }
+  .coverage-ratios {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px dashed #e2e8f0;
+    color: #475569;
+    font-size: 12px;
+  }
+  .coverage-ratio b { color: #0f172a; margin-left: 4px; }
 </style>
 </head>
 <body>

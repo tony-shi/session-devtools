@@ -14,6 +14,15 @@ export {
 } from "./attribution";
 export type {
   AttributionCoverage,
+  CharRange,
+  DynamicField,
+  DynamicFieldSource,
+  EvidenceMode,
+  MaterializationEvidence,
+  MaterializationKind,
+  RuleHit,
+  RuleHitMode,
+  RuleMatchEvidence,
   SegmentAttribution,
 } from "./attribution";
 
