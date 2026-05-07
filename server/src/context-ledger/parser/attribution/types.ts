@@ -25,16 +25,20 @@ export type AttributionMatchMode = "exact" | "regex" | "prefix" | "rule_gap";
 /**
  * CharCoverage：单节点字符级解释桶。
  *
- * rawChars        节点 rawText 总字符数
- * matchedChars    rule 或 wire fallback 命中的字符数
- * literalChars    静态规则文本解释的字符数
- * dynamicChars    regex 命名捕获组解释的动态字符数
- * unmatchedChars  rawChars - matchedChars，或未被 rule 声称解释的尾部字符
+ * 不变量：
+ *   rawChars     = matchedChars + unmatchedChars
+ *   matchedChars = staticChars  + dynamicChars
+ *
+ * rawChars        节点 rawText 总字符数（外部输入）
+ * matchedChars    rule 或 wire fallback 命中的字符数（外部输入）
+ * dynamicChars    regex 命名捕获组解释的动态字符数（外部输入）
+ * staticChars     派生：matchedChars - dynamicChars，覆盖 exact 文本与 regex 静态片段
+ * unmatchedChars  派生：rawChars - matchedChars，未被 rule 声称解释的尾部字符
  */
 export interface CharCoverage {
   rawChars: number;
   matchedChars: number;
-  literalChars: number;
+  staticChars: number;
   dynamicChars: number;
   unmatchedChars: number;
 }
@@ -80,30 +84,28 @@ export interface SegmentAttribution {
 /**
  * AttributionCoverage：基于 SegmentAttribution.charCoverage 的字符级桶统计。
  *
- * 字段名保持不变，避免影响 audit/view 下游。
+ * staticChars 合并了原 exactChars + templateLiteralChars 两个桶——
+ * matchMode=exact 与 matchMode=regex 路径的静态字符在覆盖率上同质，
+ * 不再为 audit 单独区分两者。
  */
 export interface AttributionCoverage {
   totalNodes: number;
   totalChars: number;
 
-  /** matchMode=exact 且 reconstructable=true 的 literalChars。 */
-  exactChars: number;
-  /** regex 命中中的静态 literal 部分。 */
-  templateLiteralChars: number;
+  /** matchMode=exact 与 regex 路径合并后的静态字符（rule 文本可解释的部分）。 */
+  staticChars: number;
   /** regex 命名捕获组覆盖的动态字段字符。 */
   dynamicCapturedChars: number;
-  /** 已识别 slot/rule，但不可作为 exact/template/dynamic 证据的字符。 */
+  /** 已识别 slot/rule，但不可作为 static/dynamic 证据的字符。 */
   recognizedUnexplainedChars: number;
   /** 完全 rule_gap 的字符。 */
   ruleGapChars: number;
 
-  /** 兼容 proxy-attribution-view 的页头摘要：以 rule_gap chars 占比显示。 */
+  /** 页头摘要：rule_gap 节点数与字符数。 */
   ruleGap: { nodes: number; chars: number };
 
   /** (totalChars - ruleGapChars) / totalChars */
   recognitionRatio: number;
-  /** (exactChars + templateLiteralChars + dynamicCapturedChars) / totalChars */
+  /** (staticChars + dynamicCapturedChars) / totalChars */
   evidenceBackedRatio: number;
-  /** exactChars / totalChars */
-  byteReconstructableRatio: number;
 }

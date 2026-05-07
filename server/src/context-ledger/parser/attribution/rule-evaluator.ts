@@ -38,21 +38,22 @@ export function inferCaptureSource(name: string): DynamicFieldSource {
   return "unknown";
 }
 
+// CharCoverage 不变量见 types.ts；这里只接收三个独立输入：
+//   rawChars / matchedChars / dynamicChars
+// staticChars 与 unmatchedChars 都从这三个值派生，避免调用方手算静态字符。
 function charCoverage(params: {
   rawChars: number;
   matchedChars: number;
-  literalChars: number;
   dynamicChars?: number;
 }): CharCoverage {
-  const dynamicChars = params.dynamicChars ?? 0;
   const matchedChars = Math.max(0, Math.min(params.matchedChars, params.rawChars));
-  const literalChars = Math.max(0, Math.min(params.literalChars, matchedChars));
+  const dynamicChars = Math.max(0, Math.min(params.dynamicChars ?? 0, matchedChars));
   return {
     rawChars: params.rawChars,
     matchedChars,
-    literalChars,
-    dynamicChars: Math.max(0, Math.min(dynamicChars, matchedChars)),
-    unmatchedChars: Math.max(0, params.rawChars - matchedChars),
+    staticChars: matchedChars - dynamicChars,
+    dynamicChars,
+    unmatchedChars: params.rawChars - matchedChars,
   };
 }
 
@@ -137,7 +138,6 @@ export function evaluateRuleForNode(
       charCoverage: charCoverage({
         rawChars,
         matchedChars,
-        literalChars: Math.max(0, matchedChars - dynamic.dynamicChars),
         dynamicChars: dynamic.dynamicChars,
       }),
       ...(dynamic.fields ? { dynamicFields: dynamic.fields } : {}),
@@ -153,7 +153,6 @@ export function evaluateRuleForNode(
       charCoverage: charCoverage({
         rawChars,
         matchedChars: rawChars,
-        literalChars: rawChars,
       }),
     };
   }
@@ -171,7 +170,6 @@ export function evaluateRuleForNode(
     charCoverage: charCoverage({
       rawChars,
       matchedChars,
-      literalChars: matchedChars,
     }),
   };
 }

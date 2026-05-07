@@ -27,7 +27,7 @@ function fullLiteralCoverage(node: SegmentNode): CharCoverage {
   return {
     rawChars,
     matchedChars: rawChars,
-    literalChars: rawChars,
+    staticChars: rawChars,
     dynamicChars: 0,
     unmatchedChars: 0,
   };
@@ -38,7 +38,7 @@ function ruleGapCoverage(node: SegmentNode): CharCoverage {
   return {
     rawChars,
     matchedChars: 0,
-    literalChars: 0,
+    staticChars: 0,
     dynamicChars: 0,
     unmatchedChars: rawChars,
   };

@@ -22,15 +22,13 @@ export function computeCoverage(
   const coverage: AttributionCoverage = {
     totalNodes: nodes.length,
     totalChars,
-    exactChars: 0,
-    templateLiteralChars: 0,
+    staticChars: 0,
     dynamicCapturedChars: 0,
     recognizedUnexplainedChars: 0,
     ruleGapChars: 0,
     ruleGap: { nodes: 0, chars: 0 },
     recognitionRatio: 0,
     evidenceBackedRatio: 0,
-    byteReconstructableRatio: 0,
   };
 
   for (const node of nodes) {
@@ -45,10 +43,12 @@ export function computeCoverage(
 
     const c = attr.charCoverage;
 
+    // exact 与 regex 路径同质：staticChars 都是 rule 文本可解释的部分。
+    // exact 路径区分 reconstructable：不可重建时 matched 部分回落到 recognizedUnexplained。
     if (attr.matchMode === "exact") {
       if (attr.reconstructable) {
-        coverage.exactChars += c.literalChars;
-        coverage.recognizedUnexplainedChars += Math.max(0, c.matchedChars - c.literalChars) + c.unmatchedChars;
+        coverage.staticChars += c.staticChars;
+        coverage.recognizedUnexplainedChars += (c.matchedChars - c.staticChars) + c.unmatchedChars;
       } else {
         coverage.recognizedUnexplainedChars += recognizedChars(attr);
       }
@@ -56,22 +56,20 @@ export function computeCoverage(
     }
 
     if (attr.matchMode === "regex") {
-      coverage.templateLiteralChars += c.literalChars;
+      coverage.staticChars += c.staticChars;
       coverage.dynamicCapturedChars += c.dynamicChars;
       coverage.recognizedUnexplainedChars += c.unmatchedChars;
       continue;
     }
 
-    // prefix：slot 已识别，但内容不参与 exact/template/dynamic 证据。
+    // prefix：slot 已识别，但内容不参与 static/dynamic 证据。
     coverage.recognizedUnexplainedChars += recognizedChars(attr);
   }
 
   if (totalChars > 0) {
-    const evidenceBacked =
-      coverage.exactChars + coverage.templateLiteralChars + coverage.dynamicCapturedChars;
+    const evidenceBacked = coverage.staticChars + coverage.dynamicCapturedChars;
     coverage.recognitionRatio = (totalChars - coverage.ruleGapChars) / totalChars;
     coverage.evidenceBackedRatio = evidenceBacked / totalChars;
-    coverage.byteReconstructableRatio = coverage.exactChars / totalChars;
   }
 
   return coverage;

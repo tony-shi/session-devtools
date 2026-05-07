@@ -160,18 +160,18 @@ function renderCoverageSummary(matchMode: AttributionMatchMode, coverage: CharCo
   }
 
   const total = coverage.rawChars;
-  const literalPct = formatCharRatio(coverage.literalChars, total);
+  const staticPct = formatCharRatio(coverage.staticChars, total);
   const dynamicPct = formatCharRatio(coverage.dynamicChars, total);
   const unmatchedPct = formatCharRatio(coverage.unmatchedChars, total);
 
-  // 微型分桶条：literal / dynamic / unmatched。
+  // 微型分桶条：static / dynamic / unmatched。
   const widthFor = (chars: number): string => {
     if (total <= 0) return "0%";
     return `${Math.max(0, (chars / total) * 100)}%`;
   };
   const microBar = `
-    <span class="evd-bar" title="literal ${literalPct} · dynamic ${dynamicPct} · unmatched ${unmatchedPct}">
-      <span style="width:${widthFor(coverage.literalChars)};background:#0ea5e9"></span>
+    <span class="evd-bar" title="static ${staticPct} · dynamic ${dynamicPct} · unmatched ${unmatchedPct}">
+      <span style="width:${widthFor(coverage.staticChars)};background:#0ea5e9"></span>
       <span style="width:${widthFor(coverage.dynamicChars)};background:#f97316"></span>
       <span style="width:${widthFor(coverage.unmatchedChars)};background:#fecaca"></span>
     </span>
@@ -179,14 +179,14 @@ function renderCoverageSummary(matchMode: AttributionMatchMode, coverage: CharCo
 
   // 不展示比例为 0 的桶，让眼睛聚焦到非零值。
   const tagsRaw: Array<[string, number, string]> = [
-    ["L", coverage.literalChars, "#0ea5e9"],
+    ["S", coverage.staticChars, "#0ea5e9"],
     ["D", coverage.dynamicChars, "#f97316"],
     ["U", coverage.unmatchedChars, "#94a3b8"],
   ];
   const tags = tagsRaw
     .filter(([, c]) => c > 0)
     .map(([label, chars, color]) =>
-      `<span class="evd-tag" style="color:${color}" title="${label === "L" ? "literal" : label === "D" ? "dynamic" : "unmatched"} chars">${label} ${chars}</span>`,
+      `<span class="evd-tag" style="color:${color}" title="${label === "S" ? "static" : label === "D" ? "dynamic" : "unmatched"} chars">${label} ${chars}</span>`,
     )
     .join("");
 
@@ -352,12 +352,10 @@ function renderGroup(g: Group, attrByNodeId: Map<string, SegmentAttribution>): s
 function renderCoverageBar(coverage: AttributionCoverage | undefined): string {
   if (!coverage) return "";
   const total = coverage.totalChars || 1;
-  // 桶顺序：从证据最强（exact）到最弱（rule_gap）。
+  // 桶顺序：从证据最强（static）到最弱（rule_gap）。
   const parts = [
-    { label: "exact", color: "#10b981", chars: coverage.exactChars,
-      hint: "exact matchMode 命中或 wire_schema 精确路径，可逐字节重建" },
-    { label: "template", color: "#0ea5e9", chars: coverage.templateLiteralChars,
-      hint: "regex 命中后非占位符的静态文本（含 exact_text rule 的整段）" },
+    { label: "static", color: "#0ea5e9", chars: coverage.staticChars,
+      hint: "exact 与 regex 路径合并的静态文本（rule 文本可解释的字符）" },
     { label: "dynamic", color: "#f97316", chars: coverage.dynamicCapturedChars,
       hint: "regex 命名捕获组覆盖的动态字段字符" },
     { label: "recognized", color: "#a855f7", chars: coverage.recognizedUnexplainedChars,
@@ -379,8 +377,7 @@ function renderCoverageBar(coverage: AttributionCoverage | undefined): string {
       </div>
       <div class="coverage-ratios">
         <span class="coverage-ratio" title="(totalChars - ruleGapChars) / totalChars">识别率 <b>${formatPercent(coverage.recognitionRatio)}</b></span>
-        <span class="coverage-ratio" title="(exact + template + dynamic) / totalChars">证据覆盖 <b>${formatPercent(coverage.evidenceBackedRatio)}</b></span>
-        <span class="coverage-ratio" title="exact / totalChars — 可字节重建占比">字节重建 <b>${formatPercent(coverage.byteReconstructableRatio)}</b></span>
+        <span class="coverage-ratio" title="(static + dynamic) / totalChars">证据覆盖 <b>${formatPercent(coverage.evidenceBackedRatio)}</b></span>
       </div>
     </section>
   `;
