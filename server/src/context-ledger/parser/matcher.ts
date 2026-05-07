@@ -24,7 +24,7 @@
 //   当前契约边界：ParsedQuerySnapshot 是 Layer 1/2 的稳定接口，保持不变。
 
 import type { RequestTemplate, TemplateSlot } from "../template/types";
-import type { SlotMatch } from "./types";
+import type { CachePolicy, SlotMatch } from "./types";
 import { UNKNOWN_SLOT } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ import { UNKNOWN_SLOT } from "./types";
 export interface MatchSlotsInput {
   reqBody: {
     system?: Array<{ type: string; text: string; cache_control?: unknown }>;
-    tools?: Array<{ name: string; description?: string; input_schema?: unknown }>;
+    tools?: Array<{ name: string; description?: string; input_schema?: unknown; cache_control?: unknown }>;
     messages?: Array<{
       role: string;
       content:
@@ -76,6 +76,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
       rawText: text,
       anchorEvidence: routedSlot ? anchorEvidenceOf(routedSlot, text) : "",
       children: [],
+      cachePolicy: parseCachePolicy(blk.cache_control as Record<string, unknown> | undefined),
       // system block 完全无法路由时（template 缺少 fallback slot），产出 unknown
       ...(routedSlot === null && {
         unknownMeta: { originalType: "system_block", reason: "no matching anchor or fallback in template" },
@@ -96,6 +97,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
       rawText,
       anchorEvidence: tool.name,
       children: [],
+      cachePolicy: parseCachePolicy(tool.cache_control as Record<string, unknown> | undefined),
     });
   }
 
@@ -131,6 +133,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
           rawText,
           anchorEvidence: "",
           children: [],
+          cachePolicy: parseCachePolicy(blk.cache_control as Record<string, unknown> | undefined),
         });
       } else if (blk.type === "tool_use") {
         const rawText = JSON.stringify({
@@ -144,6 +147,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
           rawText,
           anchorEvidence: blk.name ?? "",
           children: [],
+          cachePolicy: parseCachePolicy(blk.cache_control as Record<string, unknown> | undefined),
         });
       } else if (blk.type === "tool_result") {
         out.push({
@@ -152,6 +156,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
           rawText: extractToolResultText(blk.content),
           anchorEvidence: blk.tool_use_id ?? "",
           children: [],
+          cachePolicy: parseCachePolicy(blk.cache_control as Record<string, unknown> | undefined),
         });
       } else {
         // 未知 block type（image、document 等）：保留原始内容，不丢字符。
@@ -230,4 +235,16 @@ function extractToolResultText(
     .filter((c) => c.type === "text" && typeof c.text === "string")
     .map((c) => c.text!)
     .join("");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// cache_control → CachePolicy
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** wire 层 cache_control 对象 → 结构化 CachePolicy；无 cache_control 时返回 undefined */
+function parseCachePolicy(cc: Record<string, unknown> | undefined): CachePolicy | undefined {
+  if (!cc || cc["type"] !== "ephemeral") return undefined;
+  const ttl: CachePolicy["ttl"] = cc["ttl"] === "1h" ? "1h" : "5m";
+  const scope: CachePolicy["scope"] = cc["scope"] === "global" ? "global" : "org";
+  return { ttl, scope };
 }

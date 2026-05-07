@@ -54,7 +54,7 @@ function makeExpected(segments: ContextSegment[]): ExpectedQueryContext {
     queryId: "q1",
     mutationIds: [],
     segments,
-    rulesApplied: [{ ruleId: "R1_base_append", source: "harness_rule", confidence: "exact" }],
+    rulesApplied: [{ ruleId: "R1_base_append", source: "harness_rule", confidence: "definitive" }],
     generatedAt: "2026-01-01T00:00:00.000Z",
     metadata: { unimplementedRules: ["system_reminder_per_turn"] },
   };

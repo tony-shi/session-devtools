@@ -72,10 +72,10 @@ export type ComparisonGrade =
   | "presence"
   | "none";
 
-export type Confidence = "exact" | "estimated" | "inferred" | "unknown";
+export type Confidence = "definitive" | "estimated" | "inferred" | "unknown";
 
 // P3-2：从 P2-6 拆分 confidence 的两个独立维度，仅作用于 ProxySegmentAttribution
-// classificationConfidence：这段属于该 category/rule 的识别确信（regex 命中即可达 exact）
+// classificationConfidence：这段属于该 category/rule 的识别确信（regex 命中即可达 definitive）
 // materializationConfidence：能否原样复现该 segment 的内容（regex 命中通常封顶 estimated）
 export type ClassificationConfidence = Confidence;
 export type MaterializationConfidence = Confidence;

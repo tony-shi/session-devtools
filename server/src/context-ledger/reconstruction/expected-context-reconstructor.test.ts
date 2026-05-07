@@ -495,7 +495,7 @@ describe("materializeHarnessRules", () => {
       const seg = result.segments.find((s) => s.metadata?.ruleId === appliedRule.ruleId);
       if (!seg) continue;
       if (seg.metadata?.ruleVerified === true) {
-        expect(appliedRule.confidence).toBe("exact");
+        expect(appliedRule.confidence).toBe("definitive");
       } else {
         expect(appliedRule.confidence).toBe("inferred");
       }
@@ -590,7 +590,7 @@ describe("reconstruct-04：system identity rule materialized（not attribution_o
     const result = materializeHarnessRules(CONTEXT_LEDGER_RULES, { queryId: "q" });
     const applied = result.appliedRules.find((r) => r.ruleId === IDENTITY_RULE_ID);
     expect(applied).toBeDefined();
-    expect(applied!.confidence).toBe("exact");
+    expect(applied!.confidence).toBe("definitive");
     expect(applied!.source).toBe("harness_rule");
   });
 
@@ -648,7 +648,7 @@ function makeMutation(overrides: Partial<ContextMutation>): ContextMutation {
     source: "jsonl",
     sourceRef: { kind: "jsonl", jsonl: { file: "test.jsonl" } },
     charDeltaEstimate: 0,
-    confidence: "exact",
+    confidence: "definitive",
     ...overrides,
   };
 }

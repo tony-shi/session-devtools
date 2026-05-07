@@ -236,7 +236,7 @@ export function normalizeMutations(input: NormalizeInput): NormalizeResult {
       category,
       source: "jsonl",
       sourceRef: fixedRef,
-      confidence: extras.confidence ?? "exact",
+      confidence: extras.confidence ?? "definitive",
       ...(event.timestamp ? { timestamp: event.timestamp } : {}),
       ...(extras.contentRef ? { contentRef: extras.contentRef } : {}),
       ...(extras.toolUseId ? { toolUseId: extras.toolUseId } : {}),

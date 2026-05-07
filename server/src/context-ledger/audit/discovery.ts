@@ -42,6 +42,7 @@ export const VALID_FIXTURE_NAMES = [
   "side-query-session-title",
   // @file 首次 mention：session 首轮，attachment.type=file，验证 file-attachment rule 重建
   "file-attachment-first-mention",
+  "cron-workload-loop",
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

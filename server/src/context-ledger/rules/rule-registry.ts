@@ -261,7 +261,7 @@ export const CLAUDE_CODE_SYSTEM_PROMPT_IDENTITY_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "char_diff",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };
@@ -563,7 +563,7 @@ export const CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE: ContextLedgerRule = {
     // 注意：MEMORY.md 内容（用户私有数据）通过 MEMORY.md key 注入 system-reminder，
     // 不在此 section 里，因此 auto memory section 本身是可以精确对账的。
     comparePolicy: "normalized_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: false,
   },
 };
@@ -674,7 +674,7 @@ export const CLAUDE_CODE_BILLING_NOISE_RULE: ContextLedgerRule = {
   reconciliation: {
     // 不计入 coverage 分子，直接归入 known_noise finding
     comparePolicy: "known_noise",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: false,
   },
 };
@@ -750,7 +750,7 @@ export const CLAUDE_CODE_INTRO_STANDARD_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "raw_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };
@@ -798,7 +798,7 @@ export const CLAUDE_CODE_INTRO_OUTPUT_STYLE_RULE: ContextLedgerRule = {
   reconciliation: {
     // 措辞固定但 output style 名称会嵌入，用 normalized_hash 对账
     comparePolicy: "normalized_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: false,
   },
 };
@@ -858,7 +858,7 @@ export const CLAUDE_CODE_SYSTEM_SECTION_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "raw_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };
@@ -936,7 +936,7 @@ export const CLAUDE_CODE_DOING_TASKS_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "raw_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };
@@ -1007,7 +1007,7 @@ export const CLAUDE_CODE_USING_YOUR_TOOLS_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "raw_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };
@@ -1069,7 +1069,7 @@ export const CLAUDE_CODE_ACTIONS_SECTION_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "raw_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };
@@ -1125,7 +1125,7 @@ export const CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "raw_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };
@@ -1191,7 +1191,7 @@ export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "raw_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };
@@ -1260,7 +1260,7 @@ export const CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "raw_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };
@@ -1478,7 +1478,7 @@ export const CLAUDE_CODE_TOOL_EDIT_RULE: ContextLedgerRule = {
     emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
   },
 
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 // ── Write ────────────────────────────────────────────────────────────────────
@@ -1510,7 +1510,7 @@ export const CLAUDE_CODE_TOOL_WRITE_RULE: ContextLedgerRule = {
     emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
   },
 
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 // ── Read ─────────────────────────────────────────────────────────────────────
@@ -1549,7 +1549,7 @@ export const CLAUDE_CODE_TOOL_READ_RULE: ContextLedgerRule = {
     emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
   },
 
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 // ── Skill ────────────────────────────────────────────────────────────────────
@@ -1588,7 +1588,7 @@ export const CLAUDE_CODE_TOOL_SKILL_RULE: ContextLedgerRule = {
     emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
   },
 
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 // ── ToolSearch ───────────────────────────────────────────────────────────────
@@ -1620,7 +1620,7 @@ export const CLAUDE_CODE_TOOL_TOOLSEARCH_RULE: ContextLedgerRule = {
     emits: { section: "tools", category: "tools_schema", lifecycle: "query" },
   },
 
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 // ── Agent ────────────────────────────────────────────────────────────────────
@@ -1749,7 +1749,7 @@ export const CLAUDE_CODE_TOOL_ASKUSERQUESTION_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_CRONCREATE_RULE: ContextLedgerRule = {
@@ -1765,7 +1765,7 @@ export const CLAUDE_CODE_TOOL_CRONCREATE_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_CRONDELETE_RULE: ContextLedgerRule = {
@@ -1781,7 +1781,7 @@ export const CLAUDE_CODE_TOOL_CRONDELETE_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_CRONLIST_RULE: ContextLedgerRule = {
@@ -1797,7 +1797,7 @@ export const CLAUDE_CODE_TOOL_CRONLIST_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_ENTERPLANMODE_RULE: ContextLedgerRule = {
@@ -1813,7 +1813,7 @@ export const CLAUDE_CODE_TOOL_ENTERPLANMODE_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_ENTERWORKTREE_RULE: ContextLedgerRule = {
@@ -1829,7 +1829,7 @@ export const CLAUDE_CODE_TOOL_ENTERWORKTREE_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_EXITPLANMODE_RULE: ContextLedgerRule = {
@@ -1845,7 +1845,7 @@ export const CLAUDE_CODE_TOOL_EXITPLANMODE_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_EXITWORKTREE_RULE: ContextLedgerRule = {
@@ -1861,7 +1861,7 @@ export const CLAUDE_CODE_TOOL_EXITWORKTREE_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_MONITOR_RULE: ContextLedgerRule = {
@@ -1877,7 +1877,7 @@ export const CLAUDE_CODE_TOOL_MONITOR_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_NOTEBOOKEDIT_RULE: ContextLedgerRule = {
@@ -1893,7 +1893,7 @@ export const CLAUDE_CODE_TOOL_NOTEBOOKEDIT_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_PUSHNOTIFICATION_RULE: ContextLedgerRule = {
@@ -1909,7 +1909,7 @@ export const CLAUDE_CODE_TOOL_PUSHNOTIFICATION_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_REMOTETRIGGER_RULE: ContextLedgerRule = {
@@ -1925,7 +1925,7 @@ export const CLAUDE_CODE_TOOL_REMOTETRIGGER_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_SENDMESSAGE_RULE: ContextLedgerRule = {
@@ -1941,7 +1941,7 @@ export const CLAUDE_CODE_TOOL_SENDMESSAGE_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_TASKCREATE_RULE: ContextLedgerRule = {
@@ -1957,7 +1957,7 @@ export const CLAUDE_CODE_TOOL_TASKCREATE_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_TASKGET_RULE: ContextLedgerRule = {
@@ -1973,7 +1973,7 @@ export const CLAUDE_CODE_TOOL_TASKGET_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_TASKLIST_RULE: ContextLedgerRule = {
@@ -1989,7 +1989,7 @@ export const CLAUDE_CODE_TOOL_TASKLIST_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_TASKOUTPUT_RULE: ContextLedgerRule = {
@@ -2005,7 +2005,7 @@ export const CLAUDE_CODE_TOOL_TASKOUTPUT_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_TASKSTOP_RULE: ContextLedgerRule = {
@@ -2021,7 +2021,7 @@ export const CLAUDE_CODE_TOOL_TASKSTOP_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_TASKUPDATE_RULE: ContextLedgerRule = {
@@ -2037,7 +2037,7 @@ export const CLAUDE_CODE_TOOL_TASKUPDATE_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_TEAMCREATE_RULE: ContextLedgerRule = {
@@ -2054,7 +2054,7 @@ export const CLAUDE_CODE_TOOL_TEAMCREATE_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_TEAMDELETE_RULE: ContextLedgerRule = {
@@ -2070,7 +2070,7 @@ export const CLAUDE_CODE_TOOL_TEAMDELETE_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_WEBFETCH_RULE: ContextLedgerRule = {
@@ -2086,7 +2086,7 @@ export const CLAUDE_CODE_TOOL_WEBFETCH_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 // ── side query rules ──────────────────────────────────────────────────────────
@@ -2256,7 +2256,7 @@ export const CLAUDE_CODE_TOOL_MCP_GMAIL_AUTH_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_MCP_GMAIL_COMPLETE_AUTH_RULE: ContextLedgerRule = {
@@ -2272,7 +2272,7 @@ export const CLAUDE_CODE_TOOL_MCP_GMAIL_COMPLETE_AUTH_RULE: ContextLedgerRule = 
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 // ── claude.ai Google Calendar ─────────────────────────────────────────────────
@@ -2289,7 +2289,7 @@ export const CLAUDE_CODE_TOOL_MCP_GCAL_AUTH_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_MCP_GCAL_COMPLETE_AUTH_RULE: ContextLedgerRule = {
@@ -2305,7 +2305,7 @@ export const CLAUDE_CODE_TOOL_MCP_GCAL_COMPLETE_AUTH_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 // ── claude.ai Google Drive ────────────────────────────────────────────────────
@@ -2322,7 +2322,7 @@ export const CLAUDE_CODE_TOOL_MCP_GDRIVE_AUTH_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_MCP_GDRIVE_COMPLETE_AUTH_RULE: ContextLedgerRule = {
@@ -2338,7 +2338,7 @@ export const CLAUDE_CODE_TOOL_MCP_GDRIVE_COMPLETE_AUTH_RULE: ContextLedgerRule =
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 // ── tavily MCP ────────────────────────────────────────────────────────────────
@@ -2355,7 +2355,7 @@ export const CLAUDE_CODE_TOOL_MCP_TAVILY_CRAWL_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_MCP_TAVILY_EXTRACT_RULE: ContextLedgerRule = {
@@ -2371,7 +2371,7 @@ export const CLAUDE_CODE_TOOL_MCP_TAVILY_EXTRACT_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_MCP_TAVILY_MAP_RULE: ContextLedgerRule = {
@@ -2387,7 +2387,7 @@ export const CLAUDE_CODE_TOOL_MCP_TAVILY_MAP_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_MCP_TAVILY_RESEARCH_RULE: ContextLedgerRule = {
@@ -2403,7 +2403,7 @@ export const CLAUDE_CODE_TOOL_MCP_TAVILY_RESEARCH_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 export const CLAUDE_CODE_TOOL_MCP_TAVILY_SEARCH_RULE: ContextLedgerRule = {
@@ -2419,7 +2419,7 @@ export const CLAUDE_CODE_TOOL_MCP_TAVILY_SEARCH_RULE: ContextLedgerRule = {
     category: "tools_schema",
   },
   reconstruction: { trigger: "always_per_query", materialization: "exact_text", emits: { section: "tools", category: "tools_schema", lifecycle: "query" } },
-  reconciliation: { comparePolicy: "raw_hash", confidence: "exact", exactTextExpected: true },
+  reconciliation: { comparePolicy: "raw_hash", confidence: "definitive", exactTextExpected: true },
 };
 
 // ── messages 层注入 rule ──────────────────────────────────────────────────────
@@ -2494,7 +2494,7 @@ export const CLAUDE_CODE_TASK_REMINDER_RULE: ContextLedgerRule = {
     // P1-2 加法重建后：task_reminder 文本已追加到对应 tool_result expected segment 尾部，
     // reconcile 直接用 raw_hash/char_diff 比较，无需 known_noise 扣除。
     comparePolicy: "char_diff",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };
@@ -2660,7 +2660,7 @@ export const CLAUDE_CODE_LOCAL_COMMAND_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "raw_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };
@@ -2697,7 +2697,7 @@ export const CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "char_diff",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: false,
   },
 };
@@ -2770,7 +2770,7 @@ export const CLAUDE_CODE_FILE_ATTACHMENT_RULE: ContextLedgerRule = {
 
   reconciliation: {
     comparePolicy: "raw_hash",
-    confidence: "exact",
+    confidence: "definitive",
     exactTextExpected: true,
   },
 };

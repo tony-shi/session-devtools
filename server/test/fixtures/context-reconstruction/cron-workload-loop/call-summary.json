@@ -1,0 +1,63 @@
+{
+  "case": "cron-workload-loop",
+  "proxy_request": {
+    "traffic_jsonl_file": "traffic.jsonl",
+    "traffic_jsonl_line": 12253,
+    "ts": "2026-05-07T11:29:28.769Z",
+    "model": "claude-opus-4-7",
+    "status": 200,
+    "messages_count": 5,
+    "tools_defined_count": 40,
+    "system_chars": 28427,
+    "req_chars": 156250,
+    "is_stream": true,
+    "source_file": "traffic.jsonl"
+  },
+  "billing_header": {
+    "raw": "x-anthropic-billing-header: cc_version=2.1.132.665; cc_entrypoint=cli; cch=ade84; cc_workload=cron;",
+    "cc_version": "2.1.132.665",
+    "cc_entrypoint": "cli",
+    "cc_workload": "cron"
+  },
+  "messages_breakdown": {
+    "tool_use_count": 1,
+    "tool_result_count": 1,
+    "tool_names_used": [
+      "CronCreate"
+    ],
+    "max_tool_result_chars": 0
+  },
+  "system_breakdown": {
+    "system_seg_count": 3,
+    "seg_0_kind": "billing_noise_cron",
+    "seg_0_chars": 99,
+    "seg_0_cache": null,
+    "seg_1_kind": "identity",
+    "seg_1_chars": 57,
+    "seg_1_cache": {
+      "type": "ephemeral",
+      "ttl": "1h"
+    },
+    "seg_2_kind": "system_prompt",
+    "seg_2_chars": 28271,
+    "seg_2_cache": {
+      "type": "ephemeral",
+      "ttl": "1h"
+    }
+  },
+  "session_alignment": {
+    "session_jsonl": "a681e441-4146-4842-97e6-719c327eda62.jsonl",
+    "session_dir": "-Users-shihuashen-Documents-session-dashboard",
+    "aligned": true,
+    "alignment_method": "session_id_exact"
+  },
+  "fixture_purpose": "cron_workload_identification",
+  "cli_version": "2.1.132",
+  "loop_context": {
+    "trigger": "/loop 1m are you there? what can you do?",
+    "cron_expr": "*/1 * * * *",
+    "job_id": "f0257541",
+    "call_index_in_session": 3,
+    "note": "第1次 cron 触发（loop 创建后约60s），billing header 中 cc_workload=cron"
+  }
+}

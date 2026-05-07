@@ -66,7 +66,7 @@ function fixtureTests(fixtureName: string) {
       const snapshot = await loadSnapshot(fixtureName);
       const attributions = inferClaudeProxyAttributions(snapshot);
       if (fixtureName !== "system-tools-overhead") {
-        const nonExact = attributions.filter((a) => a.materializationConfidence !== "exact");
+        const nonExact = attributions.filter((a) => a.materializationConfidence !== "definitive");
         expect(nonExact.length).toBeGreaterThan(0);
       }
     });
@@ -136,7 +136,7 @@ describe("cross-fixture: system-tools-overhead 的 tools 被识别为 tools_sche
     // P3-2：拆分后 classificationConfidence 反映"这是 tools_schema"的识别确信
     // exact = tool rule 精确命中（Edit/Write/Read 等静态 rule）
     // estimated/inferred = regex rule 头尾锚定（Agent/Bash 等动态 rule）
-    expect(["exact", "estimated", "inferred"]).toContain(toolsAttr.classificationConfidence);
+    expect(["definitive", "estimated", "inferred"]).toContain(toolsAttr.classificationConfidence);
     expect(toolsAttr.charCount ?? 0).toBeGreaterThan(0);
   });
 });
@@ -249,8 +249,8 @@ describe("rule registry 集成：identity rule 驱动 attribution", () => {
     expect(envAttr).toBeDefined();
     expect(envAttr!.category).toBe("harness_injection");
     // P3-2 / P2-6：regex allGroupsFilled → classification=exact, materialization=estimated
-    expect(["exact", "estimated", "inferred"]).toContain(envAttr!.classificationConfidence);
-    expect(["exact", "estimated", "inferred"]).toContain(envAttr!.materializationConfidence);
+    expect(["definitive", "estimated", "inferred"]).toContain(envAttr!.classificationConfidence);
+    expect(["definitive", "estimated", "inferred"]).toContain(envAttr!.materializationConfidence);
     // 确认 cwd、platform 等动态字段已提取到 notes。
     expect(envAttr!.notes?.some(n => n.startsWith("cwd="))).toBe(true);
   });

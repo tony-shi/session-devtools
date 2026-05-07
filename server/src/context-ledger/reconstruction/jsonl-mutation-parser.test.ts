@@ -537,7 +537,7 @@ describe("HarnessRuntimeSnapshot（第一版）", () => {
         category: "assistant_text",
         source: "jsonl",
         sourceRef: { kind: "jsonl", jsonl: { file: "f.jsonl", line: 1 } },
-        confidence: "exact",
+        confidence: "definitive",
         timestamp: "2026-05-01T12:00:00.000Z",
         metadata: { model: "claude-opus-4-7" },
       },

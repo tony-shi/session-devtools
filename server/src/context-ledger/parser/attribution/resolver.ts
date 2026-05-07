@@ -52,9 +52,9 @@ function deriveConfidence(rule: ContextRule, evaluation: RuleEvaluation): Confid
   let confidence: Confidence;
 
   if (evaluation.matchMode === "exact") {
-    confidence = "exact";
+    confidence = "definitive";
   } else if (evaluation.matchMode === "regex") {
-    confidence = evaluation.dynamicFields?.length ? "exact" : "estimated";
+    confidence = evaluation.dynamicFields?.length ? "definitive" : "estimated";
   } else {
     confidence = "estimated";
   }
@@ -110,7 +110,7 @@ function wireAttribution(
     ...(fullRange(node) ? { matchedRange: fullRange(node) } : {}),
     charCoverage: fullLiteralCoverage(node),
     reconstructable: true,
-    confidence: "exact",
+    confidence: "definitive",
   };
 }
 

@@ -14,6 +14,14 @@
 //     messages.inline.unknown — inline 切分里的未知段（目前不触发，保留备用）
 //     tools.unknown           — tools[] 里无法路由的条目（目前不触发，保留备用）
 
+/** wire 层 cache_control 的结构化表示，来自 reqBody.system[i].cache_control 或 messages block */
+export interface CachePolicy {
+  /** 缓存 TTL："5m" 为 Anthropic 默认（无 ttl 字段时）；"1h" 需服务端支持 */
+  ttl: "5m" | "1h";
+  /** 缓存 scope："org" 为默认（无 scope 字段时）；"global" 跨 org */
+  scope: "org" | "global";
+}
+
 /** 一个 slot 在 wire body 里的实际匹配结果（matcher 内部中间结构） */
 export interface SlotMatch {
   /** slot 类型标签（同一类型可出现多次，如多个 system.main-prompt.section.* 子节点） */
@@ -25,6 +33,8 @@ export interface SlotMatch {
   /** 触发本次切分的锚字符串，调试用 */
   anchorEvidence: string;
   children: SlotMatch[];
+  /** wire 层 cache_control 的结构化表示；无 cache_control 时为 undefined */
+  cachePolicy?: CachePolicy;
   /** 容错元数据：matcher 在产出 unknown 节点时填写 */
   unknownMeta?: {
     /** 触发 unknown 的原始 block type（如 "image"）或 H1 header 文本 */
@@ -51,6 +61,9 @@ export interface SegmentNode {
   children: SegmentNode[];
   /** 父节点 id；根节点为 undefined */
   parentId?: string;
+  /** wire 层 cache_control 的结构化表示；无 cache_control 时为 undefined。
+   *  顶层 system block 由 matcher 直接填入；H1 section 等子节点由 ast-builder 从父节点继承。 */
+  cachePolicy?: CachePolicy;
   /** 容错 / 调试元数据，unknown 节点填写 */
   unknownMeta?: {
     originalType?: string;

@@ -146,7 +146,7 @@ describe("computeCharDiff: exact match", () => {
   const alignment: ReconciliationReport["alignments"][0] = {
     id: "align-1",
     comparisonGrade: "exact",
-    confidence: "exact",
+    confidence: "definitive",
     expectedSegmentIds: ["e1"],
     proxySegmentIds: ["p1"],
     basis: "raw_hash",
@@ -247,7 +247,7 @@ describe("computeCharDiff: server_side_attribution", () => {
   const alignment: ReconciliationReport["alignments"][0] = {
     id: "align-noise",
     comparisonGrade: "presence",
-    confidence: "exact",
+    confidence: "definitive",
     expectedSegmentIds: [],
     proxySegmentIds: ["p-noise"],
     basis: "server_side_attribution",

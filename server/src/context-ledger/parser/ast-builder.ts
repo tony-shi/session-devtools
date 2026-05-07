@@ -46,7 +46,10 @@ export function buildParsedQuerySnapshot(params: {
     return `${parentId}-c${ci}`;
   }
 
-  function toNode(id: string, match: SlotMatch, parentId?: string): SegmentNode {
+  function toNode(id: string, match: SlotMatch, parentId?: string, inheritedCachePolicy?: import("./types").CachePolicy): SegmentNode {
+    // cachePolicy 优先使用 match 自身携带的值（顶层 block 由 matcher 填入）；
+    // 子节点（H1 section 等 wire 内部切分）自身无 cache_control，继承父节点的值。
+    const cachePolicy = match.cachePolicy ?? inheritedCachePolicy;
     const node: SegmentNode = {
       id,
       slotType: match.slotType,
@@ -57,6 +60,7 @@ export function buildParsedQuerySnapshot(params: {
       charCount: match.rawText.length,
       children: [],
       parentId,
+      ...(cachePolicy && { cachePolicy }),
       ...(match.unknownMeta && { unknownMeta: match.unknownMeta }),
     };
     // matcher 只产出顶层大块；这里根据 template 展开 H1/inline 子节点。
@@ -66,7 +70,7 @@ export function buildParsedQuerySnapshot(params: {
       : expandChildren(match, template);
 
     node.children = childMatches.map((child, ci) =>
-      toNode(childIdOf(id, match.slotType, ci), child, id),
+      toNode(childIdOf(id, match.slotType, ci), child, id, cachePolicy),
     );
     index[node.id] = node;
     return node;

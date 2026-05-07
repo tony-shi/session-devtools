@@ -234,10 +234,10 @@ function applyRuleMatch(
   let materializationConfidence: ProxySegmentAttribution["materializationConfidence"];
 
   if (attr.matchMode === "exact") {
-    classificationConfidence = "exact";
-    materializationConfidence = "exact";
+    classificationConfidence = "definitive";
+    materializationConfidence = "definitive";
   } else if (attr.matchMode === "regex") {
-    classificationConfidence = allGroupsFilled ? "exact" : "estimated";
+    classificationConfidence = allGroupsFilled ? "definitive" : "estimated";
     materializationConfidence = allGroupsFilled ? "estimated" : "inferred";
   } else {
     classificationConfidence = baseConfidence;
@@ -399,7 +399,7 @@ export function inferClaudeProxyAttributions(
       category = "tools_schema";
       mechanism = "tools_schema_pattern";
       // wire schema 确定（parser 已验证 blk.type），但具体 tool 文本无 rule 复现
-      classificationConfidence = "exact";
+      classificationConfidence = "definitive";
       materializationConfidence = "inferred";
       attributedSource = "harness_rule";
       lifecycle = "session";
@@ -411,8 +411,8 @@ export function inferClaudeProxyAttributions(
       if (seg.category === "tool_use") {
         // wire schema：category 由 parser 直接确定，tool_use 文本来自 jsonl 可精确复现
         mechanism = "tool_use_id_match";
-        classificationConfidence = "exact";
-        materializationConfidence = "exact";
+        classificationConfidence = "definitive";
+        materializationConfidence = "definitive";
         attributedSource = "jsonl";
         lifecycle = "query";
       } else if (seg.category === "tool_result") {
@@ -420,8 +420,8 @@ export function inferClaudeProxyAttributions(
         const tid = seg.toolUseId;
         const idMatched = !!tid && knownToolUseIds.has(tid);
         mechanism = idMatched ? "tool_use_id_match" : "unknown";
-        classificationConfidence = idMatched ? "exact" : "inferred";
-        materializationConfidence = idMatched ? "exact" : "inferred";
+        classificationConfidence = idMatched ? "definitive" : "inferred";
+        materializationConfidence = idMatched ? "definitive" : "inferred";
         attributedSource = "jsonl";
         lifecycle = "query";
         if (!idMatched) {
@@ -441,7 +441,7 @@ export function inferClaudeProxyAttributions(
       } else if (seg.category === "user_message" || seg.category === "assistant_text") {
         // wire schema 确定类型（识别确信），但内容来自 jsonl 拼接，复现需 reconcile 验证
         mechanism = "unknown";
-        classificationConfidence = "exact";
+        classificationConfidence = "definitive";
         materializationConfidence = "inferred";
         attributedSource = "jsonl";
         lifecycle = "query";

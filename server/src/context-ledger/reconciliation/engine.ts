@@ -104,7 +104,7 @@ export function reconcileClaudeContext(input: ReconcileInput): ReconciliationRep
       id: nextAlignId(),
       // P3-2：server_side_attribution 不构成内容对账，复现层级标 presence
       comparisonGrade: "presence",
-      confidence: "exact",
+      confidence: "definitive",
       expectedSegmentIds: expectedBilling ? [expectedBilling.id] : [],
       proxySegmentIds: [pseg.id],
       // P0-2：billing_noise 用 server_side_attribution basis，明确与 evidence-backed 分离
@@ -441,7 +441,7 @@ function matchOneExpected(
       return {
         alignment: {
           comparisonGrade: "exact",
-          confidence: "exact",
+          confidence: "definitive",
           expectedSegmentIds: [eseg.id],
           proxySegmentIds: [pseg.id],
           basis: "raw_hash" as AlignmentBasis,
@@ -485,7 +485,7 @@ function matchOneExpected(
       return {
         alignment: {
           comparisonGrade: "exact",
-          confidence: "exact",
+          confidence: "definitive",
           expectedSegmentIds: [eseg.id],
           proxySegmentIds: [pseg.id],
           basis: "tool_use_id" as AlignmentBasis,
@@ -536,7 +536,7 @@ function matchOneExpected(
         alignConfidence = "inferred";
       } else if (mat === "exact_text") {
         comparisonGrade = "template";
-        alignConfidence = "exact";
+        alignConfidence = "definitive";
       } else {
         comparisonGrade = "regex";
         alignConfidence = "inferred";

@@ -6,7 +6,7 @@
 // P1-1：parser-view 展示每个 AST node 的归因结果。parser 只输出最终
 // SegmentAttribution；notes 等展示派生信息由 view 层按需渲染。
 
-import type { ParsedQuerySnapshot, SegmentNode } from "../parser/types";
+import type { CachePolicy, ParsedQuerySnapshot, SegmentNode } from "../parser/types";
 import { isUnknownSlotId } from "../parser/types";
 import type {
   AttributionCoverage,
@@ -57,7 +57,7 @@ function categoryColor(category: string): string {
 }
 
 function confidenceColor(confidence: string): string {
-  if (confidence === "exact") return "#10b981";
+  if (confidence === "definitive") return "#10b981";
   if (confidence === "estimated") return "#3b82f6";
   if (confidence === "inferred") return "#f59e0b";
   return "#ef4444";
@@ -253,6 +253,16 @@ function renderNode(
     node.children.map((c) => renderNode(c, attrByNodeId, depth + 1)).join("");
 }
 
+function renderCachePolicyBadge(policy: CachePolicy | undefined): string {
+  if (!policy) return `<span class="cache-none">—</span>`;
+  const ttlColor = policy.ttl === "1h" ? "#0ea5e9" : "#64748b";
+  const scopeColor = policy.scope === "global" ? "#8b5cf6" : "#475569";
+  return [
+    `<span class="cache-ttl" style="color:${ttlColor}" title="cache TTL">${esc(policy.ttl)}</span>`,
+    `<span class="cache-scope" style="color:${scopeColor}" title="cache scope">${esc(policy.scope)}</span>`,
+  ].join(" ");
+}
+
 function renderRow(
   seg: SegmentNode,
   attrByNodeId: Map<string, SegmentAttribution>,
@@ -293,6 +303,7 @@ function renderRow(
           title="点击展开/折叠原文与动态字段">${seg.charCount.toLocaleString()}${warn}</button>
       </span>
       <span class="col-hash">${esc(hashPrefix)}</span>
+      <span class="col-cache">${renderCachePolicyBadge(seg.cachePolicy)}</span>
       <span class="col-attr">${renderAttributionCell(attr)}</span>
     </div>
     ${rawTextHtml}
@@ -325,6 +336,7 @@ function renderGroup(g: Group, attrByNodeId: Map<string, SegmentAttribution>): s
           <span class="col-path">jsonPath</span>
           <span class="col-count">chars</span>
           <span class="col-hash">hash</span>
+          <span class="col-cache">cache</span>
           <span class="col-attr">attribution · evidence</span>
         </div>
         ${rows}
@@ -443,7 +455,7 @@ export function renderParserView(
   .rows { padding: 4px 0; }
   .row {
     display: grid;
-    grid-template-columns: 200px 220px 1fr 100px 140px 460px;
+    grid-template-columns: 200px 220px 1fr 100px 140px 80px 460px;
     gap: 12px;
     padding: 6px 16px;
     align-items: center;
@@ -493,6 +505,17 @@ export function renderParserView(
     font-size: 11px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .col-cache {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .cache-none { color: #cbd5e1; }
+  .cache-ttl, .cache-scope { white-space: nowrap; }
   .col-attr {
     display: flex;
     align-items: center;

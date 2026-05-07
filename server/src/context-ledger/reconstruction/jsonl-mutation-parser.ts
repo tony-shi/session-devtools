@@ -257,7 +257,7 @@ export function parseClaudeJsonlMutations(
       category,
       source: "jsonl",
       sourceRef,
-      confidence: extras.confidence ?? "exact",
+      confidence: extras.confidence ?? "definitive",
       ...(extras.timestamp ? { timestamp: extras.timestamp } : {}),
       ...(extras.contentRef ? { contentRef: extras.contentRef } : {}),
       ...(extras.toolUseId ? { toolUseId: extras.toolUseId } : {}),
@@ -692,7 +692,7 @@ function handleAttachment(
           : JSON.stringify(rawContent);
 
   let category: SegmentCategory;
-  let confidence: ContextMutation["confidence"] = "exact";
+  let confidence: ContextMutation["confidence"] = "definitive";
   if (at === "skill_listing") {
     category = "skill_listing";
   } else if (at === "task_reminder") {
@@ -718,7 +718,7 @@ function handleAttachment(
       timestamp: ts,
       contentRef: inlineRef(fileText),
       charDeltaEstimate: fileText.length,
-      confidence: "exact",
+      confidence: "definitive",
       metadata: {
         attachmentType: at,
         fileAttachmentFilename: att.filename as string | undefined,
@@ -821,7 +821,7 @@ function handleSystem(
       timestamp: ts,
       contentRef: inlineRef(content),
       charDeltaEstimate: content.length,
-      confidence: "exact",
+      confidence: "definitive",
       metadata: {
         systemSubtype: st,
         parentUuid: rec.parentUuid ?? undefined,

@@ -345,7 +345,7 @@ describe("cross-fixture invariants", () => {
     const toolUseAlignments = report.alignments.filter((a) => a.basis === "tool_use_id");
     expect(toolUseAlignments.length).toBeGreaterThan(0);
     for (const a of toolUseAlignments) {
-      expect(a.confidence).toBe("exact");
+      expect(a.confidence).toBe("definitive");
       expect(a.comparisonGrade).toBe("exact");
     }
   });

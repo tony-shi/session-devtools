@@ -687,7 +687,7 @@ function collectAppliedRules(
 ): AppliedRule[] {
   const out: AppliedRule[] = [];
   const push = (ruleId: string, source: AppliedRule["source"]): void => {
-    out.push({ ruleId, source, confidence: "exact", version: "v1" });
+    out.push({ ruleId, source, confidence: "definitive", version: "v1" });
   };
   if (rules.appendBaseMessages) push("R1_base_append", "harness_rule");
   if (rules.mergeAssistantToolUses && mutations.some((m) => m.category === "tool_use"))
@@ -1360,7 +1360,7 @@ function ruleToAppliedRule(rule: ContextLedgerRule): AppliedRule {
     source: "harness_rule",
     version: rule.verifiedFor ?? undefined,
     // verified rule 才算 exact confidence；未 verified 降为 inferred
-    confidence: isRuleVerified(rule) ? "exact" : "inferred",
+    confidence: isRuleVerified(rule) ? "definitive" : "inferred",
   };
 }
 
