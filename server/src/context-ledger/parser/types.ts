@@ -1,5 +1,5 @@
 // parser 输出类型定义
-// SlotMatch       = matcher 切分得到的中间结构（保留 children 嵌套）
+// SlotMatch       = matcher 切分得到的顶层中间结构；children 保留给旧调用和 AST builder 内部递归
 // SegmentNode     = snapshot 产出的 AST 节点（树形，带 parentId 反向链接）
 // ParsedQuerySnapshot = 一个 query 的完整 parser 产出
 //   roots = 顶层节点（system blocks、tools、messages）

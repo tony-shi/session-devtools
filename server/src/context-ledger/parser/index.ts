@@ -1,13 +1,21 @@
 // parser 模块入口
-// parseQuery：调用 template/selector 选定 template → matchSlots → buildSnapshot
+// parseQuery：调用 template/selector 选定 template → matchSlots → buildParsedQuerySnapshot
 
 import type { ParsedQuerySnapshot } from "./types";
 import type { MatchSlotsInput } from "./matcher";
 import { matchSlots } from "./matcher";
-import { buildSnapshot } from "./snapshot";
+import { buildParsedQuerySnapshot } from "./ast-builder";
 import { selectTemplate } from "../template/selector";
 
 export type { ParsedQuerySnapshot, SegmentNode, SlotMatch } from "./types";
+export {
+  attributeSnapshot,
+  computeCoverage,
+} from "./attribution";
+export type {
+  AttributionCoverage,
+  SegmentAttribution,
+} from "./attribution";
 
 export interface ParseQueryInput {
   reqBody: MatchSlotsInput["reqBody"];
@@ -23,5 +31,5 @@ export function parseQuery(input: ParseQueryInput): ParsedQuerySnapshot {
   const { template, queryKind } = selectTemplate(reqBody, reqHeaders);
   const allSlotMatches = matchSlots({ reqBody, template });
 
-  return buildSnapshot({ allSlotMatches, queryKind, proxyFile, ts });
+  return buildParsedQuerySnapshot({ allSlotMatches, template, queryKind, proxyFile, ts });
 }

@@ -5,6 +5,7 @@
 
 import type { ParsedQuerySnapshot, SegmentNode } from "../parser/types";
 import { UNKNOWN_SLOT } from "../parser/types";
+import type { AttributionCoverage, SegmentAttribution } from "../parser/attribution";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 颜色规则（slotId → badge color）
@@ -24,6 +25,32 @@ function slotColor(slotId: string): string {
   if (slotId === "messages.inline.system-reminder") return "#8b5cf6";
   if (slotId === "messages.inline.local-command") return "#d97706";
   if (slotId.startsWith("side-query.")) return "#64748b";
+  return "#ef4444";
+}
+
+const CATEGORY_COLOR: Record<string, string> = {
+  billing_noise: "#6b7280",
+  system_prompt: "#3b82f6",
+  harness_injection: "#8b5cf6",
+  memory_injection: "#a855f7",
+  tools_schema: "#f59e0b",
+  tool_use: "#10b981",
+  tool_result: "#059669",
+  user_message: "#0ea5e9",
+  assistant_text: "#64748b",
+  local_command_history: "#d97706",
+  attachment: "#ec4899",
+  unknown: "#ef4444",
+};
+
+function categoryColor(category: string): string {
+  return CATEGORY_COLOR[category] ?? "#94a3b8";
+}
+
+function confidenceColor(confidence: string): string {
+  if (confidence === "exact") return "#10b981";
+  if (confidence === "estimated") return "#3b82f6";
+  if (confidence === "inferred") return "#f59e0b";
   return "#ef4444";
 }
 
@@ -83,12 +110,36 @@ function groupRoots(roots: SegmentNode[]): { system: Group; tools: Group; messag
 // renderNode 递归渲染一个 SegmentNode 及其 children。
 // children 在 HTML 里紧跟父行，CSS .inline 控制缩进。
 // depth 用于判断是否需要 .inline 样式（depth > 0 即为子节点）。
-function renderNode(node: SegmentNode, depth = 0): string {
-  return renderRow(node, depth) + node.children.map((c) => renderNode(c, depth + 1)).join("");
+function renderNode(
+  node: SegmentNode,
+  attrByNodeId: Map<string, SegmentAttribution>,
+  depth = 0,
+): string {
+  return renderRow(node, attrByNodeId, depth) +
+    node.children.map((c) => renderNode(c, attrByNodeId, depth + 1)).join("");
 }
 
-function renderRow(seg: SegmentNode, depth = 0): string {
+function renderAttributionCell(attr: SegmentAttribution | undefined): string {
+  if (!attr) return `<span class="no-attr">—</span>`;
+  const category = attr.category;
+  const categoryBadge = `<span class="attr-badge" style="background:${categoryColor(category)}">${esc(category)}</span>`;
+  const conf = attr.materializationConfidence;
+  const confBadge = `<span class="conf" style="color:${confidenceColor(conf)}">${esc(conf)}</span>`;
+  const rule = attr.ruleId ? `<code class="rule-id">${esc(attr.ruleId)}</code>` : "";
+  const notes = attr.notes?.length
+    ? `<span class="attr-note" title="${esc(attr.notes.join("; "))}">${attr.notes.length} note</span>`
+    : "";
+  return `${categoryBadge}${confBadge}${rule}${notes}`;
+}
+
+function renderRow(
+  seg: SegmentNode,
+  attrByNodeId: Map<string, SegmentAttribution>,
+  depth = 0,
+): string {
   const isInline = depth > 0;
+  const attr = attrByNodeId.get(seg.id);
+  const isRuleGap = attr?.mechanism === "rule_gap";
   const color = slotColor(seg.slotId);
   const warn = seg.charCount > 10000 ? '<span class="warn" title="charCount &gt; 10000">⚠</span>' : "";
   const hashPrefix = seg.rawHash.length > 19 ? seg.rawHash.slice(0, 19) : seg.rawHash;
@@ -104,7 +155,7 @@ function renderRow(seg: SegmentNode, depth = 0): string {
   const rawTextHtml = `<div class="raw-expand" hidden><pre class="raw-pre">${esc(seg.rawText)}</pre></div>`;
 
   return `
-    <div class="row${isInline ? " inline" : ""}${seg.nodeKind !== "known" ? " " + seg.nodeKind : ""}">
+    <div class="row${isInline ? " inline" : ""}${seg.nodeKind !== "known" ? " " + seg.nodeKind : ""}${isRuleGap ? " rule-gap" : ""}">
       <span class="col-id">${esc(seg.id)}</span>
       <span class="col-slot"><span class="badge" style="background:${color}">${esc(seg.slotId)}</span>${kindBadge}</span>
       <span class="col-path">${esc(seg.jsonPath)}</span>
@@ -113,6 +164,7 @@ function renderRow(seg: SegmentNode, depth = 0): string {
           title="点击展开/折叠原文">${seg.charCount.toLocaleString()}${warn}</button>
       </span>
       <span class="col-hash">${esc(hashPrefix)}</span>
+      <span class="col-attr">${renderAttributionCell(attr)}</span>
     </div>
     ${rawTextHtml}
   `;
@@ -123,7 +175,7 @@ function countNodes(nodes: SegmentNode[]): number {
   return nodes.reduce((s, n) => s + 1 + countNodes(n.children), 0);
 }
 
-function renderGroup(g: Group): string {
+function renderGroup(g: Group, attrByNodeId: Map<string, SegmentAttribution>): string {
   const total = countNodes(g.roots);
   if (total === 0) {
     return `
@@ -133,7 +185,7 @@ function renderGroup(g: Group): string {
     `;
   }
 
-  const rows = g.roots.map((n) => renderNode(n)).join("");
+  const rows = g.roots.map((n) => renderNode(n, attrByNodeId)).join("");
   return `
     <details open>
       <summary>${esc(g.title)} <span class="muted">(${total})</span></summary>
@@ -144,6 +196,7 @@ function renderGroup(g: Group): string {
           <span class="col-path">jsonPath</span>
           <span class="col-count">chars</span>
           <span class="col-hash">hash</span>
+          <span class="col-attr">attribution</span>
         </div>
         ${rows}
       </div>
@@ -155,10 +208,46 @@ function renderGroup(g: Group): string {
 // 顶层 render
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function renderParserView(snapshot: ParsedQuerySnapshot): string {
+function formatPercent(value: number): string {
+  return `${Math.round(value * 1000) / 10}%`;
+}
+
+function renderCoverageBar(coverage: AttributionCoverage | undefined): string {
+  if (!coverage) return "";
+  const total = coverage.totalChars || 1;
+  const parts = [
+    { label: "exact", color: "#10b981", chars: coverage.exact.chars },
+    { label: "estimated", color: "#3b82f6", chars: coverage.estimated.chars },
+    { label: "inferred", color: "#f59e0b", chars: coverage.inferred.chars },
+    { label: "rule_gap", color: "#ef4444", chars: coverage.ruleGap.chars },
+  ];
+
+  return `
+    <section class="coverage-panel">
+      <div class="coverage-bar">
+        ${parts.map((part) => {
+          const width = Math.max(0, (part.chars / total) * 100);
+          return `<span style="width:${width}%;background:${part.color}" title="${esc(part.label)} ${formatPercent(part.chars / total)}"></span>`;
+        }).join("")}
+      </div>
+      <div class="coverage-meta">
+        ${parts.map((part) => `<span><b style="color:${part.color}">${esc(part.label)}</b> ${formatPercent(part.chars / total)}</span>`).join("")}
+        <span class="coverage-ratio">识别率 ${formatPercent(coverage.recognitionRatio)}</span>
+        <span class="coverage-ratio">证据覆盖 ${formatPercent(coverage.evidenceBackedRatio)}</span>
+      </div>
+    </section>
+  `;
+}
+
+export function renderParserView(
+  snapshot: ParsedQuerySnapshot,
+  attributions?: SegmentAttribution[],
+  coverage?: AttributionCoverage,
+): string {
   const groups = groupRoots(snapshot.roots);
   const totalChars = Object.values(snapshot.index).reduce((s, x) => s + x.charCount, 0);
   const totalNodes = Object.keys(snapshot.index).length;
+  const attrByNodeId = new Map((attributions ?? []).map((attr) => [attr.nodeId, attr]));
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -219,7 +308,7 @@ export function renderParserView(snapshot: ParsedQuerySnapshot): string {
   .rows { padding: 4px 0; }
   .row {
     display: grid;
-    grid-template-columns: 220px 240px 1fr 100px 200px;
+    grid-template-columns: 220px 240px 1fr 100px 180px 280px;
     gap: 12px;
     padding: 6px 16px;
     align-items: center;
@@ -269,6 +358,41 @@ export function renderParserView(snapshot: ParsedQuerySnapshot): string {
     font-size: 11px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  .col-attr {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .attr-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .conf {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .rule-id {
+    color: #64748b;
+    font-size: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .attr-note {
+    color: #94a3b8;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .no-attr { color: #94a3b8; }
   .warn {
     color: #ef4444;
     margin-left: 6px;
@@ -314,6 +438,8 @@ export function renderParserView(snapshot: ParsedQuerySnapshot): string {
   /* unknown / residual 行高亮背景 */
   .row.unknown { background: #fff1f2; }
   .row.residual { background: #fffbeb; }
+  .row.rule-gap { background: #fff1f2; }
+  .row.rule-gap .col-id { color: #dc2626; }
   /* nodeKind 小标签 */
   .kind-badge {
     display: inline-block;
@@ -326,6 +452,30 @@ export function renderParserView(snapshot: ParsedQuerySnapshot): string {
   }
   .kind-badge.unknown { background: #fecaca; color: #991b1b; }
   .kind-badge.residual { background: #fef3c7; color: #92400e; }
+  .coverage-panel {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 10px 16px;
+    margin-bottom: 16px;
+  }
+  .coverage-bar {
+    display: flex;
+    height: 10px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #e2e8f0;
+  }
+  .coverage-bar span { display: block; min-width: 1px; }
+  .coverage-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 8px;
+    color: #64748b;
+    font-size: 12px;
+  }
+  .coverage-ratio { color: #0f172a; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -337,9 +487,11 @@ export function renderParserView(snapshot: ParsedQuerySnapshot): string {
     <div class="meta"><span class="label">ts</span><span class="value">${esc(snapshot.ts)}</span></div>
   </header>
 
-  ${renderGroup(groups.system)}
-  ${renderGroup(groups.tools)}
-  ${renderGroup(groups.messages)}
+  ${renderCoverageBar(coverage)}
+
+  ${renderGroup(groups.system, attrByNodeId)}
+  ${renderGroup(groups.tools, attrByNodeId)}
+  ${renderGroup(groups.messages, attrByNodeId)}
 </body>
 </html>`;
 }

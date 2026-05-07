@@ -2,6 +2,17 @@ export type * from "./types";
 export { buildMockReconciliationReport, MOCK_RECONCILIATION_REPORT } from "./reconciliation/report";
 export { inferClaudeProxyAttributions, buildAttributionBreakdown } from "./proxy/attribution";
 export type { AttributionBreakdown } from "./proxy/attribution";
+export {
+  parseQuery,
+  attributeSnapshot,
+  computeCoverage as computeParserAttributionCoverage,
+} from "./parser";
+export type {
+  ParsedQuerySnapshot,
+  SegmentNode,
+  SegmentAttribution,
+  AttributionCoverage,
+} from "./parser";
 export { parseClaudeJsonlMutations, pairToolUseAndResult } from "./reconstruction/jsonl-mutation-parser";
 export type {
   ParseJsonlOptions,
@@ -58,3 +69,12 @@ export type {
   // 过渡期兼容别名
   AttributionRule,
 } from "./rules/rule-registry";
+export {
+  CONTEXT_RULES,
+  CONTEXT_RULE_BY_ID,
+  getContextRulesForSlotId,
+} from "./rules/context-rule-registry";
+export type {
+  ContextRule,
+  ContextRuleMatchMode,
+} from "./rules/context-rule-registry";

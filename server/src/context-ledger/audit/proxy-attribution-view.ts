@@ -15,10 +15,10 @@ import type { ContextLedgerRule } from "../rules/rule-registry";
 import type {
   AlignmentRef,
   ContextSegment,
-  ExpectedQueryContext,
   ProxySegmentAttribution,
   ReconciliationReport,
 } from "../types";
+import type { AttributionCoverage } from "../parser/attribution";
 
 // ── 颜色 / badge 映射 ─────────────────────────────────────────────────────────
 
@@ -57,6 +57,10 @@ function esc(s: string): string {
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s;
   return s.slice(0, n) + "…";
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(value * 1000) / 10}%`;
 }
 
 // ── reqBody 原文提取 ──────────────────────────────────────────────────────────
@@ -412,12 +416,16 @@ export interface ProxyAttributionViewInput {
   proxySourceRef?: string;
   /** 可选。传入后启用第四列 Expected（reconciliation 结果）。 */
   reconciliationReport?: ReconciliationReport;
+  /** 新 AST parser attribution 覆盖率摘要；用于把 parser-view 的结果并入 proxy-view 页头。 */
+  parserCoverage?: AttributionCoverage;
+  /** 相对于当前 HTML 文件的 parser-view 链接。 */
+  parserViewHref?: string;
 }
 
 export function renderProxyAttributionView(input: ProxyAttributionViewInput): string {
   const {
     queryId, sessionId, timestamp, segments, attributions, reqBody, proxySourceRef,
-    reconciliationReport,
+    reconciliationReport, parserCoverage, parserViewHref,
   } = input;
 
   // 第四列需要的索引
@@ -539,6 +547,17 @@ export function renderProxyAttributionView(input: ProxyAttributionViewInput): st
     </span>`;
   })() : "";
 
+  const parserSummary = parserCoverage ? `
+    <div class="parser-summary">
+      <span class="parser-summary-title">AST parser attribution</span>
+      <span class="stat"><b>${parserCoverage.totalNodes}</b> nodes</span>
+      <span class="stat">recognition <b>${formatPercent(parserCoverage.recognitionRatio)}</b></span>
+      <span class="stat">evidence <b>${formatPercent(parserCoverage.evidenceBackedRatio)}</b></span>
+      <span class="stat">rule_gap <b>${formatPercent(parserCoverage.totalChars > 0 ? parserCoverage.ruleGap.chars / parserCoverage.totalChars : 0)}</b></span>
+      ${parserViewHref ? `<a class="parser-link" href="${esc(parserViewHref)}">open parser view</a>` : ""}
+    </div>
+  ` : "";
+
   // 列宽：4列模式下收窄，优先 Raw 和 Expected 内容
   const colWidthStyle = hasExpectedCol
     ? `col.col-raw-orig { width: 28%; } col.col-parser { width: 16%; } col.col-attr { width: 28%; } col.col-expected { width: 28%; }`
@@ -562,6 +581,24 @@ body { font-family: ui-monospace, 'Cascadia Code', monospace; font-size: 12px;
 .summary-row { margin-top: 10px; display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
 .stat { color: #94a3b8; }
 .stat b { color: #e2e8f0; }
+.parser-summary {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 10px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 6px;
+}
+.parser-summary-title { color: #f59e0b; font-weight: 700; }
+.parser-link {
+  color: #7dd3fc;
+  text-decoration: none;
+  border-bottom: 1px dashed #7dd3fc;
+}
+.parser-link:hover { color: #bae6fd; border-bottom-color: #bae6fd; }
 
 /* ── table layout ── */
 table { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -679,6 +716,7 @@ details.rule-detail:not([open]) .rule-id-text::before { content: "▸ "; }
     <span style="flex:1">${summaryBadges}</span>
     ${reconSummary}
   </div>
+  ${parserSummary}
 </div>
 
 <table>

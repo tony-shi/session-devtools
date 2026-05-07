@@ -9,12 +9,11 @@ import {
   existsSync,
   readFileSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 import type { CharDiffReport } from "../debug/char-diff";
 import type { ReconciliationReport } from "../types";
 import {
   AUDIT_HOME,
-  RUNS_DIR,
   LATEST_JSON,
   BASELINE_JSON,
   latestJsonPath,
@@ -33,7 +32,8 @@ import type { AuditMode } from "./paths";
 import { renderProxyAttributionView } from "./proxy-attribution-view";
 import { renderReconcileFusionHtml } from "./render-reconcile-fusion-html";
 import { renderParserView } from "./parser-view";
-import { parseQuery } from "../parser";
+import { parseQuery, attributeSnapshot, computeCoverage } from "../parser";
+import type { AttributionCoverage } from "../parser";
 import type { ProxySegmentAttribution } from "../types";
 import type {
   AuditIndexEntry,
@@ -148,6 +148,28 @@ export function writeQueryArtifacts(
     updated.charDiffJsonPath = djPath;
     updated.charDiffHtmlPath = dhPath;
 
+    // parser-view（新 AST parser + ContextRule attribution）
+    // 平行于旧 pipeline 跑：失败不影响主流程。
+    // WHY：新 parser attribution 仍在并行验收阶段，不能阻断旧 proxy/reconcile 产物。
+    let parserCoverage: AttributionCoverage | undefined;
+    let parserViewHref: string | undefined;
+    try {
+      const parsedSnap = parseQuery({
+        reqBody: data.reqBody as Parameters<typeof parseQuery>[0]["reqBody"],
+        proxyFile: result.proxySourceRef,
+        ts: data.report.snapshot.timestamp,
+      });
+      const parserAttributions = attributeSnapshot(parsedSnap);
+      parserCoverage = computeCoverage(parserAttributions, parsedSnap);
+      const pvHtml = renderParserView(parsedSnap, parserAttributions, parserCoverage);
+      const pvPath = parserViewPath(hash);
+      writeFileSync(join(dir, pvPath), pvHtml, "utf-8");
+      updated.parserViewPath = pvPath;
+      parserViewHref = basename(pvPath);
+    } catch {
+      // parser-view 失败不影响主流程
+    }
+
     // proxy-attribution view（四列 HTML：raw / parser / attribution / expected）
     if (data.attributions) {
       const snap = data.report.snapshot;
@@ -161,6 +183,8 @@ export function writeQueryArtifacts(
         reqBody: data.reqBody ?? {},
         proxySourceRef: result.proxySourceRef,
         reconciliationReport: data.report,
+        parserCoverage,
+        parserViewHref,
       });
       const pavPath = proxyAttributionViewPath(hash);
       writeFileSync(join(dir, pavPath), pavHtml, "utf-8");
@@ -183,23 +207,6 @@ export function writeQueryArtifacts(
       updated.reconcileFusionHtmlPath = fusionPath;
     }
 
-    // parser-view（阶段 1 新 parser 的产出）
-    // 平行于旧 pipeline 跑：失败不影响主流程
-    // WHY：阶段 1 的 parser 与旧的 proxy/rules/reconciliation 完全隔离，
-    //      在这里"附着写出"是为了让 audit run 的产物里立刻能看到新切分结果。
-    try {
-      const parsedSnap = parseQuery({
-        reqBody: data.reqBody as Parameters<typeof parseQuery>[0]["reqBody"],
-        proxyFile: result.proxySourceRef,
-        ts: data.report.snapshot.timestamp,
-      });
-      const pvHtml = renderParserView(parsedSnap);
-      const pvPath = parserViewPath(hash);
-      writeFileSync(join(dir, pvPath), pvHtml, "utf-8");
-      updated.parserViewPath = pvPath;
-    } catch {
-      // parser-view 失败不影响主流程
-    }
   }
 
   return updated;

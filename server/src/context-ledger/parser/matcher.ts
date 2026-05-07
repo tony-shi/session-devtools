@@ -1,25 +1,21 @@
-// matcher：核心切分引擎
+// matcher：顶层刚性切割引擎
 // ─────────────────────────────────────────────────────────────────────────────
 // 设计原则（与 phase1 prompt 对齐）：
-//   1. 只做"位置切分"，不做语义判断（语义识别留给阶段 2 的 SubRule）。
+//   1. 只做 wire 顶层位置切割，不做语义判断。
 //   2. 路由判断只用 startsWith / indexOf / 字符串相等，不用 regex。
-//      WHY：regex 在 anchor 阶段容易误吃 / 漏吃，先用最朴素的字符串匹配把
-//      边界确定下来，后续如果要做内容识别，再在 slot 内部用 SubRule 处理。
-//   3. parser/ 不 import proxy/ 或 rules/ 下任何文件。
+//      WHY：regex 在 anchor 阶段容易误吃 / 漏吃；matcher 只决定大块归槽。
+//   3. H1 section / inline tag 等子结构由 snapshot(AST builder) 依据 template
+//      继续展开，matcher 不递归建树。
+//   4. parser/ 不 import proxy/ 或 rules/ 下任何文件。
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// TODO：架构优化（低优先级，待 SubRule 层稳定后再推进）
+// TODO：架构优化（低优先级，待 ContextRule 层稳定后再推进）
 //
-//   现状：matcher 承担了"顶层路由"和"递归建树"两个职责（H1 切分、inline 切分
-//         都在此完成），导致 snapshot 只做 SlotMatch → SegmentNode 的格式转换。
+//   现状：matcher 只承担顶层路由，snapshot 承接递归建树 + 装饰（id / hash / nodeKind）。
 //
 //   目标架构（两层）：
-//     Layer 1  parser → AST（ParsedQuerySnapshot）
-//       - matcher 只做顶层路由，产出 flat SlotMatch[]
-//       - snapshot 承接递归建树 + 装饰（id / hash / nodeKind）
-//       - SlotMatch 降级为 parser 内部类型，不对外 export
-//
-//     Layer 2  AST + SubRule → 语义分析
+//     Layer 1  JSON → 顶层 SlotMatch → ParsedQuerySnapshot(AST)
+//     Layer 2  AST + ContextRule → 语义分析
 //       - pattern 命中（哪些 slot 满足哪条规则）
 //       - 动态字段提取（从 rawText 抠出变量值）
 //       - 归因（每个字符属于哪个 slot / rule）
@@ -88,10 +84,6 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
         },
       }),
     };
-    // 命中 fallback 主块时，再做 H1 切分
-    if (slotId === "system.main-prompt-block" && routedSlot?.children) {
-      match.children = splitByH1Headers(text, routedSlot.children, jsonPath);
-    }
     out.push(match);
   }
 
@@ -123,7 +115,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
         jsonPath: `reqBody.messages[${mi}]`,
         rawText: content,
         anchorEvidence: "",
-        children: splitInlineTags(content, `reqBody.messages[${mi}]`),
+        children: [],
       });
       continue;
     }
@@ -141,7 +133,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
           jsonPath,
           rawText,
           anchorEvidence: "",
-          children: splitInlineTags(rawText, jsonPath),
+          children: [],
         });
       } else if (blk.type === "tool_use") {
         const rawText = JSON.stringify({
@@ -225,273 +217,6 @@ function anchorEvidenceOf(slot: TemplateSlot, text: string): string {
   // 兜底：取首行
   const idx = text.indexOf("\n");
   return idx === -1 ? text : text.slice(0, idx);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// H1 切分（system.main-prompt-block 内部）
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** 按行扫描，遇到 "# Header" 就切一段；H1 之前的内容归入 prelude。
- *  WHY：用最朴素的 line.startsWith("# ") + slice(2).trim()，
- *  不用 regex——避免误吃缩进里的 "#"、代码块里的 "#" 等情况。
- */
-function splitByH1Headers(
-  text: string,
-  childSlots: TemplateSlot[],
-  parentJsonPath: string,
-): SlotMatch[] {
-  // 找出所有 H1 行的偏移（line start 的 char index）
-  type H1 = { lineStart: number; lineEnd: number; header: string };
-  const h1s: H1[] = [];
-  let cursor = 0;
-  while (cursor < text.length) {
-    const lineEnd = text.indexOf("\n", cursor);
-    const lineEndExclusive = lineEnd === -1 ? text.length : lineEnd;
-    const line = text.slice(cursor, lineEndExclusive);
-    if (line.startsWith("# ")) {
-      h1s.push({
-        lineStart: cursor,
-        lineEnd: lineEndExclusive,
-        header: line.slice(2).trim(),
-      });
-    }
-    if (lineEnd === -1) break;
-    cursor = lineEnd + 1;
-  }
-
-  // 找各子 slot 的 anchor → 映射；prelude 是无 anchor 的兜底
-  const headerToSlot = new Map<string, TemplateSlot>();   // h1_header anchor
-  const literalSlots: TemplateSlot[] = [];                // literal anchor（如 system.section.context）
-  let preludeSlot: TemplateSlot | undefined;
-  let unknownSlot: TemplateSlot | undefined;
-  for (const cs of childSlots) {
-    if (!cs.anchor) {
-      if (!preludeSlot) preludeSlot = cs;
-      else unknownSlot = cs;
-      continue;
-    }
-    if (cs.anchor.kind === "h1_header") {
-      headerToSlot.set(cs.anchor.header, cs);
-    } else if (cs.anchor.kind === "literal") {
-      // literal anchor 的子 slot（如 system.section.context / gitStatus:）
-      // 在 H1 切分完成后，对最后一段做尾部剥离
-      literalSlots.push(cs);
-    }
-  }
-
-  const out: SlotMatch[] = [];
-
-  // prelude：第一个 H1 之前
-  const firstH1Start = h1s.length > 0 ? h1s[0]!.lineStart : text.length;
-  if (firstH1Start > 0 && preludeSlot) {
-    const rawText = text.slice(0, firstH1Start);
-    if (rawText.length > 0) {
-      out.push({
-        slotId: preludeSlot.id,
-        jsonPath: parentJsonPath,
-        charRange: { start: 0, end: firstH1Start },
-        rawText,
-        anchorEvidence: "",
-        children: [],
-      });
-    }
-  }
-
-  // 各 H1 段：从本 H1 lineStart 到下一个 H1 lineStart（或文末）
-  for (let i = 0; i < h1s.length; i++) {
-    const h1 = h1s[i]!;
-    const nextStart = i + 1 < h1s.length ? h1s[i + 1]!.lineStart : text.length;
-    const rawText = text.slice(h1.lineStart, nextStart);
-    const slot = headerToSlot.get(h1.header) ?? unknownSlot ?? preludeSlot;
-    // 路由规则：只有 headerToSlot 里明确定义的 header 才能命中 known slot；
-    // 未命中时一律走 system.section.unknown，不归入 prelude。
-    // WHY：prelude 语义是"H1 之前的前导段"，不是"未知 H1 兜底"；
-    //      把未知 H1 塞进 prelude 会在 audit 时混淆覆盖率统计。
-    const knownSlot = headerToSlot.get(h1.header) ?? unknownSlot;
-    if (knownSlot) {
-      out.push({
-        slotId: knownSlot.id,
-        jsonPath: parentJsonPath,
-        charRange: { start: h1.lineStart, end: nextStart },
-        rawText,
-        anchorEvidence: `# ${h1.header}`,
-        children: [],
-      });
-    } else {
-      out.push({
-        slotId: UNKNOWN_SLOT.SYSTEM_SECTION,
-        jsonPath: parentJsonPath,
-        charRange: { start: h1.lineStart, end: nextStart },
-        rawText,
-        anchorEvidence: `# ${h1.header}`,
-        children: [],
-        unknownMeta: {
-          sectionHeader: h1.header,
-          reason: "H1 header not in template slot map",
-        },
-      });
-    }
-  }
-
-  // literal anchor 子 slot 的尾部剥离
-  // WHY：appendSystemContext 把 gitStatus 等以 "key: value\n" 格式 push 到 systemPrompt
-  // 数组末尾，最终被 rest.join('\n\n') 合并进 block[2] 末尾，不是独立 block。
-  // 这里把最后一段里的 literal 前缀位置找出来，把尾部切成独立 child。
-  for (const litSlot of literalSlots) {
-    const anchor = litSlot.anchor as { kind: "literal"; text: string };
-    if (out.length === 0) continue;
-
-    // 在整个 text 里找该 literal 的起始位置（只找第一次出现）
-    const litIdx = text.indexOf(anchor.text);
-    if (litIdx === -1) continue;
-
-    // 找包含 litIdx 的那个 out segment，把它从 litIdx 处截断
-    const parentIdx = out.findIndex(
-      (m) => m.charRange && m.charRange.start <= litIdx && litIdx < m.charRange.end,
-    );
-    if (parentIdx === -1) continue;
-
-    const parent = out[parentIdx]!;
-    const parentEnd = parent.charRange!.end;
-
-    // 把 parent 截到 litIdx，尾部独立成 litSlot
-    // 若 parent 截断后为空（litIdx === parent 起始），直接替换
-    if (litIdx > parent.charRange!.start) {
-      out[parentIdx] = {
-        ...parent,
-        rawText: text.slice(parent.charRange!.start, litIdx),
-        charRange: { start: parent.charRange!.start, end: litIdx },
-      };
-    } else {
-      out.splice(parentIdx, 1);
-    }
-
-    out.push({
-      slotId: litSlot.id,
-      jsonPath: parentJsonPath,
-      charRange: { start: litIdx, end: parentEnd },
-      rawText: text.slice(litIdx, parentEnd),
-      anchorEvidence: anchor.text,
-      children: [],
-    });
-  }
-
-  return out;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// inline 切分（messages.text 内部）
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** 从头到尾线性扫描 rawText，切出 system-reminder / local-command / free-text 三类段。
- *  charRange 是相对于父 SlotMatch rawText 的起始偏移。
- *  WHY：tag 边界用 startsWith 探测，闭合标签用 indexOf 找——简单直接，
- *  不用栈式 parser，因为目前只关心顶层 tag，嵌套很罕见且阶段 2 才处理。
- */
-function splitInlineTags(text: string, parentJsonPath: string): SlotMatch[] {
-  const out: SlotMatch[] = [];
-  if (!text) return out;
-
-  let cursor = 0;
-  let freeTextStart = 0;
-
-  // 在指定起点尝试匹配 tag；命中返回 tag 名，未命中返回 null
-  function tagAt(pos: number): { kind: "system-reminder" | "local-command"; openLen: number } | null {
-    if (text.startsWith("<system-reminder>", pos)) {
-      return { kind: "system-reminder", openLen: "<system-reminder>".length };
-    }
-    if (text.startsWith("<local-command-", pos)) {
-      // 不强求 open tag 立刻闭合，openLen 用前缀长度作启发式即可
-      return { kind: "local-command", openLen: "<local-command-".length };
-    }
-    return null;
-  }
-
-  function flushFreeText(end: number): void {
-    if (end <= freeTextStart) return;
-    const rawText = text.slice(freeTextStart, end);
-    if (rawText.length === 0) return;
-    out.push({
-      slotId: "messages.inline.free-text",
-      jsonPath: parentJsonPath,
-      charRange: { start: freeTextStart, end },
-      rawText,
-      anchorEvidence: "",
-      children: [],
-    });
-  }
-
-  while (cursor < text.length) {
-    const tag = tagAt(cursor);
-    if (!tag) {
-      cursor++;
-      continue;
-    }
-
-    // 先把前面攒的 free-text 吐掉
-    flushFreeText(cursor);
-
-    // 找闭合标签
-    let closeTag: string;
-    let anchorPrefix: string;
-    let slotId: string;
-    if (tag.kind === "system-reminder") {
-      closeTag = "</system-reminder>";
-      anchorPrefix = "<system-reminder>";
-      slotId = "messages.inline.system-reminder";
-    } else {
-      closeTag = "</local-command-stdout>";
-      anchorPrefix = "<local-command-";
-      slotId = "messages.inline.local-command";
-    }
-
-    // 闭合标签搜索：local-command 闭合形式可能多样（stdout/stderr/...），用通用 "</local-command-" 起首再找 ">"
-    let segEnd: number;
-    if (tag.kind === "local-command") {
-      const closeStart = text.indexOf("</local-command-", cursor + tag.openLen);
-      if (closeStart === -1) {
-        segEnd = text.length;
-      } else {
-        const closeGT = text.indexOf(">", closeStart);
-        segEnd = closeGT === -1 ? text.length : closeGT + 1;
-      }
-    } else {
-      const closeStart = text.indexOf(closeTag, cursor + tag.openLen);
-      segEnd = closeStart === -1 ? text.length : closeStart + closeTag.length;
-    }
-
-    // 闭合标签后紧跟的换行符归入本 segment，不切成独立 free-text。
-    // WHY：Claude Code 生成这类 tag 时闭合标签后会跟 \n 或 \n\n（段间空行），
-    // 把它们留在 tag segment 里能保持字节总数与 wire 一致，
-    // 也避免产生 rawText="\n" 的噪声 free-text segment。
-    while (segEnd < text.length) {
-      if (text[segEnd] === "\r" && text[segEnd + 1] === "\n") {
-        segEnd += 2;
-      } else if (text[segEnd] === "\n") {
-        segEnd += 1;
-      } else {
-        break;
-      }
-    }
-
-    const rawText = text.slice(cursor, segEnd);
-    out.push({
-      slotId,
-      jsonPath: parentJsonPath,
-      charRange: { start: cursor, end: segEnd },
-      rawText,
-      anchorEvidence: anchorPrefix,
-      children: [],
-    });
-
-    cursor = segEnd;
-    freeTextStart = segEnd;
-  }
-
-  // 收尾 free-text
-  flushFreeText(text.length);
-
-  return out;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
