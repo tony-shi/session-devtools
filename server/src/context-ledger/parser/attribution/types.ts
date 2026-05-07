@@ -2,20 +2,20 @@
 //
 // 模块职责：
 //   - 此文件不包含运行时逻辑，只承载类型定义。
-//   - rule-matcher.ts 写入 RuleHit；evidence.ts 读 RuleHit 写 RuleMatchEvidence；
+//   - rule-evaluator.ts 写入 RuleHit；evidence.ts 读 RuleHit 写 RuleMatchEvidence；
 //     resolver.ts 把两者拼成 SegmentAttribution；coverage.ts 用 SegmentAttribution
 //     的 evidence 桶计算覆盖率。
 //   - 接入旧调用方时只需 re-export，不暴露子模块的内部 helpers。
 //
 // 命名约定：
-//   - RuleHit 描述"是否命中 + 命中位置"，是 rule-matcher 的输出层。
+//   - RuleHit 描述"是否命中 + 命中位置"，是 rule-evaluator 的输出层。
 //   - RuleMatchEvidence 描述"命中后的字符级证据"，是 evidence 层的输出。
 //   - SegmentAttribution 是 attribution 子系统对外的归因记录。
 //   - AttributionCoverage 是字符级 evidence 的统计口径。
 
 import type { Confidence, SegmentCategory } from "../../types";
 
-// ── RuleHit：rule-matcher 层输出 ─────────────────────────────────────────────
+// ── RuleHit：rule-evaluator 层输出 ────────────────────────────────────────────
 
 export type RuleHitMode = "exact" | "regex" | "prefix" | "contains";
 
@@ -49,7 +49,7 @@ export interface RuleHit {
   groupIndices?: Record<string, CharRange | undefined>;
 }
 
-// ── Evidence 层：rule-matcher → evidence 后产出的字符级证据 ─────────────────────
+// ── Evidence 层：rule-evaluator → evidence 后产出的字符级证据 ──────────────────
 
 /**
  * RuleMatchEvidence：rule 命中后的字符级证据，是 SegmentAttribution 的核心字段。

@@ -1,7 +1,7 @@
 // parser/attribution/resolver：RuleHit / wire fallback / rule_gap → SegmentAttribution。
 //
 // 模块职责（语义层）：
-//   - 把 rule-matcher 的 RuleHit + evidence 模块的字符级证据组合成对外的 SegmentAttribution。
+//   - 把 rule-evaluator 的 RuleHit + evidence 模块的字符级证据组合成对外的 SegmentAttribution。
 //   - 推导 classification/materialization 双轨 confidence。
 //   - 处理 verifiedFor 降级、wire_schema fallback、unknown/rule_gap。
 //   - 渲染 notes（rule.attribution.notesTemplate）。

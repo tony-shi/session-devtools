@@ -1,11 +1,12 @@
 // parser/attribution：AST attribution 子系统对外出口。
 //
 // 内部分层：
-//   types.ts        全部公共类型（RuleHit / RuleMatchEvidence / SegmentAttribution / ...）
-//   rule-matcher.ts AST node + ContextRule[] → RuleHit  （事实层）
-//   evidence.ts     RuleHit + node + rule → 字符级证据  （证据层）
-//   resolver.ts     RuleHit / wire fallback / rule_gap → SegmentAttribution（语义层）
-//   coverage.ts     SegmentAttribution[] → AttributionCoverage（统计层）
+//   types.ts          全部公共类型（RuleHit / RuleMatchEvidence / SegmentAttribution / ...）
+//   rule-evaluator.ts 单 rule 在单 node 上的命中判定（事实层）
+//                     —— 命名刻意区别于 parser/matcher.ts（结构切割）
+//   evidence.ts       RuleHit + node + rule → 字符级证据（证据层）
+//   resolver.ts       RuleHit / wire fallback / rule_gap → SegmentAttribution（语义层）
+//   coverage.ts       SegmentAttribution[] → AttributionCoverage（统计层）
 //
 // 外部只通过本文件 import：
 //   import { attributeSnapshot, computeCoverage } from ".../parser/attribution"
@@ -14,7 +15,7 @@
 import { getContextRulesForSlotId } from "../../rules/context-rule-registry";
 import type { ParsedQuerySnapshot, SegmentNode } from "../types";
 import { isUnknownSlotId } from "../types";
-import { matchNodeRules } from "./rule-matcher";
+import { findFirstRuleHit } from "./rule-evaluator";
 import { resolveFromHit, ruleGap, wireFallback } from "./resolver";
 import type { SegmentAttribution } from "./types";
 
@@ -47,7 +48,7 @@ function flattenNodes(roots: SegmentNode[]): SegmentNode[] {
  * attributeSnapshot：对 ParsedQuerySnapshot 的每个节点产生一条 SegmentAttribution。
  *
  * 流程：
- *   1. 按 slotId 取候选 rules → matchNodeRules 得 RuleHit
+ *   1. 按 slotId 取候选 rules → findFirstRuleHit 得 RuleHit
  *   2. 命中：resolveFromHit
  *   3. 未命中：wireFallback（tool_use/tool_result/tools.builtin.*）
  *   4. 仍未命中：ruleGap（unknown slot 或显式无 rule）
@@ -57,7 +58,7 @@ export function attributeSnapshot(snapshot: ParsedQuerySnapshot): SegmentAttribu
 
   for (const node of flattenNodes(snapshot.roots)) {
     const rules = getContextRulesForSlotId(node.slotId);
-    const hit = matchNodeRules(node, rules, snapshot.queryKind);
+    const hit = findFirstRuleHit(node, rules, snapshot.queryKind);
 
     if (hit) {
       out.push(resolveFromHit(node, hit));

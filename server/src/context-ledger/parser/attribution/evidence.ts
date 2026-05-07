@@ -1,7 +1,7 @@
 // parser/attribution/evidence：RuleHit + node + rule → 字符级证据。
 //
 // 模块职责（证据层）：
-//   - 把 rule-matcher 的 RuleHit 转为 char 桶（literal/dynamic/unmatched）+ DynamicField[]。
+//   - 把 rule-evaluator 的 RuleHit 转为 char 桶（literal/dynamic/unmatched）+ DynamicField[]。
 //   - 把 ContextRule.materialization 转为 MaterializationEvidence。
 //   - 不写 confidence、不做 fallback、不读 verifiedFor——那是 resolver 的职责。
 //

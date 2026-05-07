@@ -1,23 +1,25 @@
-// parser/attribution/rule-matcher：AST node + ContextRule[] → RuleHit。
+// parser/attribution/rule-evaluator：单 ContextRule 在单 AST node 上的命中判定。
+//
+// 命名取 "evaluator" 而非 "matcher"——后者已被 parser/matcher.ts（结构切割）占用，
+// 把"评估一条 rule 是否命中"和"切片"两件事在文件名层面就分清。
 //
 // 模块职责（事实层，不解释来源）：
 //   - 对单条 rule 做 pattern match，遵守 rule.queryScope。
 //   - 命中时回填 nodeId/slotId/ruleId 与命中区间，便于 evidence/resolver 直接消费。
 //   - 不算 confidence、不做 wire_schema fallback、不写 unknown/rule_gap——那是 resolver 的职责。
+//   - 不读 rule.materialization / verifiedFor / confidenceOverride。
+//
+// 接口刻意保持很窄：
+//   evaluateRuleForNode(node, rule, queryKind)：单 rule 是否命中
+//   findFirstRuleHit(node, rules, queryKind)：候选集里取首个命中（registry 顺序即优先级）
 
 import type { ContextRule } from "../../rules/context-rule-registry";
 import type { SegmentNode } from "../types";
 import type { CharRange, RuleHit, RuleHitMode } from "./types";
 
-// ContextRule.attribution.matchMode 已经被归一化（structural→prefix）成下面四种。
-// 这里复用 RuleHitMode；新增 mode 时同步更新两端。
+// ContextRule.attribution.matchMode 已被归一化（structural→prefix）成下面四种。
 function modeOf(rule: ContextRule): RuleHitMode {
   return rule.attribution.matchMode as RuleHitMode;
-}
-
-function rangeFromIndices(indices: [number, number] | undefined, fallbackStart: number, fallbackEnd: number): CharRange {
-  if (indices) return { start: indices[0], end: indices[1] };
-  return { start: fallbackStart, end: fallbackEnd };
 }
 
 function buildGroupIndices(
@@ -32,12 +34,17 @@ function buildGroupIndices(
 }
 
 /**
- * tryMatchRule：对一条 rule 做匹配，返回 RuleHit 或 null。
+ * evaluateRuleForNode：判定一条 rule 是否命中 node。
  *
- * 不读取 ContextRule.materialization / verifiedFor / confidenceOverride 等"语义"字段，
- * 让 matcher 与 evidence/resolver 各自只关心自己的层。
+ * 命中语义：
+ *   exact      text === pattern；matchedRange = [0, text.length)
+ *   regex      `new RegExp(pattern, "sd").exec(text)` 命中；matchedRange = m.indices[0]
+ *   contains   text.includes(pattern)；matchedRange = [idx, idx+pattern.length)
+ *   prefix     text.trimStart().startsWith(pattern)；matchedRange = [trimmedStart, trimmedStart+pattern.length)
+ *
+ * 不命中或 queryScope 不符返回 null。
  */
-export function tryMatchRule(
+export function evaluateRuleForNode(
   node: SegmentNode,
   rule: ContextRule,
   queryKind: string,
@@ -85,14 +92,13 @@ export function tryMatchRule(
 
   if (matchMode === "contains") {
     if (!text.includes(pattern)) return null;
-    // contains 只承诺"锚点存在"；matchedRange 用锚点起点
     const idx = text.indexOf(pattern);
     return {
       nodeId: node.id,
       slotId: node.slotId,
       ruleId: rule.ruleId,
       mode,
-      matchedRange: rangeFromIndices(undefined, idx, idx + pattern.length),
+      matchedRange: { start: idx, end: idx + pattern.length },
       matchedChars: pattern.length,
     };
   }
@@ -112,18 +118,18 @@ export function tryMatchRule(
 }
 
 /**
- * matchNodeRules：在 rule 候选集里取第一个命中的 rule。
+ * findFirstRuleHit：在候选 rule 集里取首个命中。
  *
  * candidate 顺序由 rule registry 控制（实体 rule 在前，结构兜底在后），
  * 这里不重排，保持 registry 的优先级语义。
  */
-export function matchNodeRules(
+export function findFirstRuleHit(
   node: SegmentNode,
   rules: ContextRule[],
   queryKind: string,
 ): RuleHit | null {
   for (const rule of rules) {
-    const hit = tryMatchRule(node, rule, queryKind);
+    const hit = evaluateRuleForNode(node, rule, queryKind);
     if (hit) return hit;
   }
   return null;
