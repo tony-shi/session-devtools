@@ -1,7 +1,7 @@
 {
-  "name": "session-dashboard",
-  "version": "0.1.0",
-  "description": "Local dashboard for visualizing Claude Code, Codex CLI, and Gemini CLI sessions",
+  "name": "session-devtools",
+  "version": "0.1.0-alpha",
+  "description": "Local devtools for AI coding sessions. Claude Code first.",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
-import { DigestPanel } from "./components/DigestPanel";
 import { Header } from "./components/Header";
 import { SessionList } from "./components/SessionList";
 import { SummaryCards } from "./components/SummaryCards";
 import { ProxyTraffic } from "./components/ProxyTraffic";
 import { ProxySetup } from "./components/ProxySetup";
-import type { DigestData, SessionsResponse, SummaryData } from "./types";
+import type { SessionsResponse, SummaryData } from "./types";
 
 function getInitialDate(): string {
   const hash = window.location.hash.slice(1);
@@ -23,8 +22,6 @@ export default function App() {
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [sessions, setSessions] = useState<SessionsResponse | null>(null);
   const [sessionsLoading, setSessionsLoading] = useState(true);
-  const [digest, setDigest] = useState<DigestData | null>(null);
-  const [digestLoading, setDigestLoading] = useState(true);
 
   function handleDateChange(newDate: string) {
     setDate(newDate);
@@ -34,10 +31,8 @@ export default function App() {
   useEffect(() => {
     setSummaryLoading(true);
     setSessionsLoading(true);
-    setDigestLoading(true);
     setSummary(null);
     setSessions(null);
-    setDigest(null);
 
     api.summary(date)
       .then(setSummary)
@@ -48,11 +43,6 @@ export default function App() {
       .then(setSessions)
       .catch(console.error)
       .finally(() => setSessionsLoading(false));
-
-    api.digest(date)
-      .then(setDigest)
-      .catch(console.error)
-      .finally(() => setDigestLoading(false));
   }, [date]);
 
   return (
@@ -90,12 +80,6 @@ export default function App() {
         {tab === "sessions" ? (
           <>
             <SummaryCards data={summary} loading={summaryLoading} />
-            <DigestPanel
-              date={date}
-              data={digest}
-              loading={digestLoading}
-              onRefresh={setDigest}
-            />
             <SessionList data={sessions} loading={sessionsLoading} date={date} />
           </>
         ) : tab === "proxy" ? (
