@@ -15,6 +15,8 @@ export interface Session {
   cache_read_tokens: number;
   tool_call_count: number;
   tool_call_names: Record<string, number>;
+  title?: string | null;
+  last_input_preview?: string | null;
 }
 
 export interface Turn {

@@ -192,6 +192,14 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     if (project) { filterConds.push("s.project = ?"); filterParams.push(project); }
     const filterSql = filterConds.length ? "AND " + filterConds.join(" AND ") : "";
 
+    // 子查询：取每个 session 最后一条 human_input 的 content 前 40 字
+    const lastInputSql = `(
+      SELECT substr(t.content, 1, 40)
+      FROM turns t
+      WHERE t.session_id = s.id AND t.turn_kind = 'human_input'
+      ORDER BY t.turn_index DESC LIMIT 1
+    ) AS last_input_preview`;
+
     let rows: any[], total: number;
 
     if (date) {
@@ -211,7 +219,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
         `SELECT COUNT(DISTINCT s.id) as cnt FROM sessions s ${whereSql}`,
       ).get(...dateParams) as any)?.cnt ?? 0;
       rows = db.query(
-        `SELECT DISTINCT s.* FROM sessions s ${whereSql} ORDER BY COALESCE(s.ended_at, s.started_at) DESC LIMIT ? OFFSET ?`,
+        `SELECT DISTINCT s.*, ${lastInputSql} FROM sessions s ${whereSql} ORDER BY COALESCE(s.ended_at, s.started_at) DESC LIMIT ? OFFSET ?`,
       ).all(...dateParams, limit, offset) as any[];
     } else {
       const where = filterConds.length
@@ -221,7 +229,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
         `SELECT COUNT(*) as cnt FROM sessions ${where}`,
       ).get(...filterParams) as any)?.cnt ?? 0;
       rows = db.query(
-        `SELECT * FROM sessions ${where} ORDER BY COALESCE(ended_at, started_at) DESC LIMIT ? OFFSET ?`,
+        `SELECT s.*, ${lastInputSql} FROM sessions s ${where} ORDER BY COALESCE(s.ended_at, s.started_at) DESC LIMIT ? OFFSET ?`,
       ).all(...filterParams, limit, offset) as any[];
     }
 

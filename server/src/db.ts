@@ -61,7 +61,8 @@ export function initDb(): void {
       cache_creation_tokens INTEGER DEFAULT 0,
       cache_read_tokens INTEGER DEFAULT 0,
       tool_call_count INTEGER DEFAULT 0,
-      tool_call_names TEXT DEFAULT '{}'
+      tool_call_names TEXT DEFAULT '{}',
+      title TEXT
     );
 
     CREATE TABLE IF NOT EXISTS turns (
@@ -153,6 +154,12 @@ export function initDb(): void {
     JOIN sessions s ON s.id = u.session_id
     WHERE u.role = 'user' AND u.turn_kind = 'human_input';
   `);
+
+  // 迁移：为存量 DB 补 title 列（幂等）
+  const sessionCols = db.query<{ name: string }, []>("PRAGMA table_info(sessions)").all();
+  if (!sessionCols.some((c) => c.name === "title")) {
+    db.exec("ALTER TABLE sessions ADD COLUMN title TEXT");
+  }
 
   initDigestSchema();
   initProxySchema();
@@ -247,8 +254,8 @@ function _upsertSessionSync(
     INSERT OR REPLACE INTO sessions
       (id, tool, project, cwd, started_at, ended_at, turn_count, human_turn_count,
        model, source_file, input_tokens, output_tokens, cache_creation_tokens,
-       cache_read_tokens, tool_call_count, tool_call_names)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       cache_read_tokens, tool_call_count, tool_call_names, title)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const deleteTurns = db.prepare("DELETE FROM turns WHERE session_id = ?");
@@ -289,6 +296,7 @@ function _upsertSessionSync(
       session.cache_read_tokens,
       session.tool_call_count,
       JSON.stringify(session.tool_call_names),
+      session.title ?? null,
     );
 
     deleteTurns.run(session.id);

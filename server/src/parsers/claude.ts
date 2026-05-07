@@ -54,6 +54,9 @@ export async function parseClaudeSession(filePath: string): Promise<ParseResult>
   const toolCallNames: Record<string, number> = {};
   const turns: Turn[] = [];
   let turnIndex = 0;
+  // custom-title 优先于 ai-title（参考 sourcemap restored-src/src/utils/sessionStorage.ts）
+  let aiTitle: string | null = null;
+  let customTitle: string | null = null;
 
   for (const line of lines) {
     let rec: any;
@@ -67,6 +70,17 @@ export async function parseClaudeSession(filePath: string): Promise<ParseResult>
     if (rec.isMeta) continue;
     // Skip sidechain records
     if (rec.isSidechain) continue;
+
+    // 解析 AI 生成标题（参考 sourcemap restored-src/src/types/logs.ts: AiTitleMessage）
+    if (rec.type === "ai-title" && typeof rec.aiTitle === "string") {
+      aiTitle = rec.aiTitle.trim() || null;
+      continue;
+    }
+    // 解析用户自定义标题（参考 sourcemap restored-src/src/types/logs.ts: CustomTitleMessage）
+    if (rec.type === "custom-title" && typeof rec.customTitle === "string") {
+      customTitle = rec.customTitle.trim() || null;
+      continue;
+    }
 
     const ts: string = rec.timestamp ?? rec.ts ?? "";
     if (ts && !startedAt) startedAt = ts;
@@ -163,6 +177,8 @@ export async function parseClaudeSession(filePath: string): Promise<ParseResult>
   }
 
   const humanTurnCount = turns.filter((t) => t.turn_kind === "human_input").length;
+  // custom-title 优先；均无则 null
+  const title = customTitle ?? aiTitle ?? null;
 
   const session: Session = {
     id: sessionId,
@@ -181,6 +197,7 @@ export async function parseClaudeSession(filePath: string): Promise<ParseResult>
     cache_read_tokens: cacheReadTokens,
     tool_call_count: toolCallCount,
     tool_call_names: toolCallNames,
+    title,
   };
 
   return { session, turns };
