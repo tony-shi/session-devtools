@@ -6,6 +6,26 @@
 //      WHY：regex 在 anchor 阶段容易误吃 / 漏吃，先用最朴素的字符串匹配把
 //      边界确定下来，后续如果要做内容识别，再在 slot 内部用 SubRule 处理。
 //   3. parser/ 不 import proxy/ 或 rules/ 下任何文件。
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// TODO：架构优化（低优先级，待 SubRule 层稳定后再推进）
+//
+//   现状：matcher 承担了"顶层路由"和"递归建树"两个职责（H1 切分、inline 切分
+//         都在此完成），导致 snapshot 只做 SlotMatch → SegmentNode 的格式转换。
+//
+//   目标架构（两层）：
+//     Layer 1  parser → AST（ParsedQuerySnapshot）
+//       - matcher 只做顶层路由，产出 flat SlotMatch[]
+//       - snapshot 承接递归建树 + 装饰（id / hash / nodeKind）
+//       - SlotMatch 降级为 parser 内部类型，不对外 export
+//
+//     Layer 2  AST + SubRule → 语义分析
+//       - pattern 命中（哪些 slot 满足哪条规则）
+//       - 动态字段提取（从 rawText 抠出变量值）
+//       - 归因（每个字符属于哪个 slot / rule）
+//       - coverage（已归因字符 / 总字符）
+//
+//   当前契约边界：ParsedQuerySnapshot 是 Layer 1/2 的稳定接口，保持不变。
 
 import type { RequestTemplate, TemplateSlot } from "../template/types";
 import type { SlotMatch } from "./types";
