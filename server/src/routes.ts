@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { getDb } from "./db";
 import { backfillDigests, findDatesMissingDigest, generateDigest } from "./digest";
 import { runSync, runSyncForDate } from "./sync";
@@ -348,13 +350,12 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     if (!sessionRow) return json({ error: "session not found" }, 404);
     if (sessionRow.tool !== "claude") return json({ traces: [] });
 
-    const file = Bun.file(sessionRow.source_file);
-    if (!(await file.exists())) return json({ error: "source file not found" }, 404);
-    const raw = await file.text();
+    if (!existsSync(sessionRow.source_file)) return json({ error: "source file not found" }, 404);
+    const raw = await readFile(sessionRow.source_file, "utf8");
 
     const subagents: Record<string, { jsonl: string; meta: unknown }> = {};
     try {
-      const { readdir, readFile } = await import("node:fs/promises");
+      const { readdir } = await import("node:fs/promises");
       const { join, dirname, basename } = await import("node:path");
       const subDir = join(dirname(sessionRow.source_file), basename(sessionRow.source_file, ".jsonl"), "subagents");
       const entries = await readdir(subDir).catch(() => [] as string[]);
@@ -393,16 +394,15 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     ).get(sessionId) as { source_file: string } | undefined;
     if (!sessionRow) return json({ error: "session not found" }, 404);
 
-    const file = Bun.file(sessionRow.source_file);
-    if (!(await file.exists())) return json({ error: "source file not found" }, 404);
+    if (!existsSync(sessionRow.source_file)) return json({ error: "source file not found" }, 404);
 
-    const raw = await file.text();
+    const raw = await readFile(sessionRow.source_file, "utf8");
 
     // Load Claude Code subagent transcripts (side-files under `<session>/subagents/`).
     // Shape: `{agentId: {jsonl, meta}}`. Only present for Claude sessions.
     const subagents: Record<string, { jsonl: string; meta: unknown }> = {};
     try {
-      const { readdir, readFile } = await import("node:fs/promises");
+      const { readdir } = await import("node:fs/promises");
       const { join, dirname, basename } = await import("node:path");
       const srcPath = sessionRow.source_file;
       const subDir = join(dirname(srcPath), basename(srcPath, ".jsonl"), "subagents");
