@@ -11,6 +11,8 @@
   "scripts": {
     "dev": "bash scripts/setup-env.sh && bun install --frozen-lockfile && concurrently \"bun run server:dev\" \"bun run client:dev\"",
     "server:dev": "bun --watch server/index.ts",
+    "start:node": "server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json server/main.ts",
+    "dev:node": "server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json --watch server/main.ts",
     "client:dev": "cd client && bun install --frozen-lockfile && bun run dev",
     "build": "cd client && bun run build",
     "start": "bash scripts/setup-env.sh && bun server/index.ts",
