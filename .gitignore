@@ -33,3 +33,5 @@ dump-attr.ts
 scripts
 
 .claude
+server/test/fixtures
+server/test/README.md
