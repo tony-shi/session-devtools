@@ -1,8 +1,8 @@
 // 安装器 —— 设计文档 §5.1 / §5.3。
 // 流程：preflight → 备份 settings → 迁移 HTTPS_PROXY → 写入 5 个 env key。
 //
-// 当前阶段 proxy 不再安装为 LaunchAgent/systemd 常驻服务，而是由 session-dashboard server
-// 托管子进程。这样 `bun run dev` 退出时 proxy 会一起退出，避免本地代理在后台残留。
+// 当前阶段 proxy 不再安装为 LaunchAgent/systemd 常驻服务。安装器只写入 settings，
+// 实际代理进程由管理页显式启动/停止，避免 `bun run dev` 隐式改写 Claude Code 出口。
 // --dry-run: 打印 diff，不写盘。
 import { existsSync, mkdirSync, readFileSync, writeFileSync, cpSync } from "node:fs";
 import { join } from "node:path";
@@ -213,7 +213,7 @@ async function main() {
   // 在 dashboard 退出后把 proxy 留在后台。
   uninstallDaemon();
 
-  log("安装完成。proxy 将由 session-dashboard server 托管启动。重启 Claude Code 后 settings.json 生效。");
+  log("安装完成。请在管理页显式启动 proxy；重启 Claude Code 后 settings.json 生效。");
   log(`卸载: bun run proxy:uninstall`);
   log(`状态: bun run proxy:status`);
   log(`白名单诊断: bun run proxy:whitelist`);

@@ -32,6 +32,7 @@ export const PATHS = {
   trafficLog: join(PROXY_HOME, "traffic.jsonl"),
   pidFile: join(PROXY_HOME, "proxy.pid"),
   portFile: join(PROXY_HOME, "proxy.port"),
+  desiredStateFile: join(PROXY_HOME, "desired-state.json"),
   backups: BACKUPS_HOME,
   // A5.1: 用户声明的自定义拦截主机列表（L1 层）
   mitmHostsFile: join(PROXY_HOME, "mitm-hosts.json"),

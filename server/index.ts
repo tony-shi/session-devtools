@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { checkDbHealth, initDb } from "./src/db";
-import { startManagedProxyIfConfigured, stopManagedProxyIfRunning } from "./src/proxy/managed";
+import { startManagedProxyIfDesired, stopManagedProxyIfRunning } from "./src/proxy/managed";
 import { handleRequest } from "./src/routes";
 import { runSync, startAutoSync } from "./src/sync";
 
@@ -58,10 +58,17 @@ if (health.status === "missing") {
 startAutoSync();
 
 // ── Managed proxy ────────────────────────────────────────────────────────────
-// 当前阶段 proxy 跟随 dashboard server 存活，不再作为 LaunchAgent/systemd 常驻服务。
-// 如果 settings.json 已经被安装器注入，server 启动时自动拉起 proxy；Ctrl+C 时一起停。
+// 默认不随 dashboard server 自动拉起 MITM proxy。代理会改写 Claude Code 出口，
+// 必须由用户在管理页显式安装/启动。用户显式启动后会记录 desired state，
+// 使 bun --watch 热重启可以恢复代理；需要旧行为时可设置 API_DASHBOARD_PROXY_AUTOSTART=1。
 
-await startManagedProxyIfConfigured();
+const PROXY_AUTOSTART = /^(1|true|yes)$/i.test(process.env.API_DASHBOARD_PROXY_AUTOSTART ?? "");
+if (PROXY_AUTOSTART) {
+  const { startManagedProxyIfConfigured } = await import("./src/proxy/managed");
+  await startManagedProxyIfConfigured();
+} else {
+  await startManagedProxyIfDesired();
+}
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
 

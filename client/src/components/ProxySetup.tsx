@@ -1,11 +1,11 @@
 // Proxy 安装管理面板 —— 独立 tab。
-// 当前阶段 proxy 由 session-dashboard server 托管，跟随 dashboard 启停。
+// 代理只由用户显式安装/启动，不随 dashboard server 默认启动。
 import { useEffect, useRef, useState } from "react";
 
 // 集中文案（AGENTS.md §5 过渡期方案）
 const T = {
   title:        { zh: "代理管理", en: "Proxy Setup" },
-  subtitle:     { zh: "MITM 代理 — 跟随 Session Dashboard 运行", en: "MITM Proxy — Managed by Session Dashboard" },
+  subtitle:     { zh: "MITM 代理 — 手动启停", en: "MITM Proxy — Manual Start/Stop" },
   statusLabel:  { zh: "当前状态", en: "Status" },
   notInstalled: { zh: "未安装", en: "Not Installed" },
   ok:           { zh: "运行中", en: "Running" },
@@ -14,8 +14,9 @@ const T = {
   install:      { zh: "安装并启动", en: "Install & Start" },
   uninstall:    { zh: "卸载", en: "Uninstall" },
   start:        { zh: "启动", en: "Start" },
+  keepRunning:  { zh: "保持运行", en: "Keep Running" },
   stop:         { zh: "停止代理", en: "Stop Proxy" },
-  stopHint:     { zh: "⚠ 停止后 settings.json 仍指向代理端口。继续使用 Claude Code 前请先启动 dashboard/proxy 或卸载配置。", en: "⚠ settings.json still points to proxy after stop. Start dashboard/proxy or uninstall before using Claude Code." },
+  stopHint:     { zh: "⚠ settings.json 仍指向代理端口。继续使用 Claude Code 前请先启动代理或卸载配置。", en: "⚠ settings.json still points to proxy. Start the proxy or uninstall before using Claude Code." },
   preflight:    { zh: "运行检查", en: "Run Checks" },
   dryRun:       { zh: "预览变更（不写盘）", en: "Preview changes (dry-run)" },
   loading:      { zh: "处理中…", en: "Processing…" },
@@ -28,7 +29,7 @@ const T = {
   settingsInjected: { zh: "settings.json 已注入", en: "settings.json injected" },
   settingsNotInjected: { zh: "settings.json 未注入", en: "settings.json not injected" },
   warning:      { zh: "⚠ 内部工具：仅供本机使用，流量明文存储在本地。", en: "⚠ Internal tool: local use only, traffic stored in plaintext." },
-  restartHint:  { zh: "安装完成后需重启 Claude Code 使 settings.json 生效；proxy 会随 dashboard server 启停。", en: "Restart Claude Code after install; proxy follows the dashboard server lifecycle." },
+  restartHint:  { zh: "安装完成后需重启 Claude Code 使 settings.json 生效；之后请在此页手动启停代理。", en: "Restart Claude Code after install; then start or stop the proxy manually here." },
 };
 
 type Lang = "zh" | "en";
@@ -43,6 +44,7 @@ type DaemonStatus = "OK" | "DEGRADED" | "DOWN";
 
 interface SetupStatus {
   injected: boolean;
+  desiredRunning?: boolean;
   daemonStatus: DaemonStatus;
   statusHint?: string;
   pid: number | null;
@@ -200,6 +202,7 @@ export function ProxySetup() {
           />
           {status?.pid && <StatusBadge label={t("pid", lang)} value={String(status.pid)} color="#007aff" />}
           {status?.port && <StatusBadge label={t("port", lang)} value={String(status.port)} color="#007aff" />}
+          {status?.desiredRunning && <StatusBadge label="desired" value={lang === "zh" ? "保持运行" : "running"} color="#34c759" />}
           {isDaemonRunning && (
             <StatusBadge
               label="lifecycle"
@@ -235,7 +238,12 @@ export function ProxySetup() {
               {!isDaemonRunning ? (
                 <ActionButton label={t("start", lang)} loading={actionLoading} color="#34c759" onClick={() => doAction("start")} />
               ) : (
-                <ActionButton label={t("stop", lang)} loading={actionLoading} color="#ff9f0a" onClick={() => doAction("stop")} />
+                <>
+                  {!status?.desiredRunning && (
+                    <ActionButton label={t("keepRunning", lang)} loading={actionLoading} color="#34c759" onClick={() => doAction("start")} />
+                  )}
+                  <ActionButton label={t("stop", lang)} loading={actionLoading} color="#ff9f0a" onClick={() => doAction("stop")} />
+                </>
               )}
               {isDaemonRunning === false && isInstalled && (
                 <span style={{ fontSize: 12, color: "#ff9f0a" }}>{t("stopHint", lang)}</span>
