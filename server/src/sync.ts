@@ -125,10 +125,10 @@ export async function runSyncForDate(date: string): Promise<{
   // Find source files for sessions active on this date
   const db = getDb();
   const rows = db
-    .query<{ source_file: string }, [string]>(
+    .prepare(
       "SELECT DISTINCT source_file FROM sessions WHERE date(started_at) = ?",
     )
-    .all(date);
+    .all(date) as { source_file: string }[];
   const dateFiles = new Set(rows.map((r) => r.source_file));
 
   let matched = files.filter(({ path }) => dateFiles.has(path));
@@ -216,10 +216,10 @@ export async function syncProxyTraffic(): Promise<{ inserted: number; errors: nu
   initProxySchema();
 
   const stateRow = db
-    .query<{ last_line: number }, [string]>(
+    .prepare(
       "SELECT last_line FROM proxy_sync_state WHERE source_file = ?",
     )
-    .get(trafficLog);
+    .get(trafficLog) as { last_line: number } | undefined;
   const storedLine = stateRow?.last_line ?? 0;
 
   const records = await parseTrafficFile(trafficLog);

@@ -70,8 +70,8 @@ export function fetchTurnPairsForDate(date: string): TurnPair[] {
   const db = getDb();
   initDigestSchema();
   return db
-    .query<TurnPair, [string]>("SELECT * FROM turn_pairs WHERE date = ? ORDER BY user_ts")
-    .all(date);
+    .prepare("SELECT * FROM turn_pairs WHERE date = ? ORDER BY user_ts")
+    .all(date) as TurnPair[];
 }
 
 // ── Prompt building ───────────────────────────────────────────────────────────
@@ -184,11 +184,8 @@ export async function generateDigest(
   // Check cache
   if (!force) {
     const cached = db
-      .query<
-        { summary: string; pair_count: number; model: string; mock: number; generated_at: string; stale: number },
-        [string]
-      >("SELECT * FROM daily_digest WHERE date = ? AND stale = 0")
-      .get(date);
+      .prepare("SELECT * FROM daily_digest WHERE date = ? AND stale = 0")
+      .get(date) as { summary: string; pair_count: number; model: string; mock: number; generated_at: string; stale: number } | undefined;
     if (cached) {
       return {
         date,
@@ -247,7 +244,7 @@ export function findDatesMissingDigest(): string[] {
   const db = getDb();
   initDigestSchema();
   const rows = db
-    .query<{ date: string }, []>(`
+    .prepare(`
       SELECT DISTINCT date(started_at) AS date FROM sessions
       WHERE started_at IS NOT NULL
         AND date(started_at) NOT IN (
@@ -255,7 +252,7 @@ export function findDatesMissingDigest(): string[] {
         )
       ORDER BY date DESC
     `)
-    .all();
+    .all() as { date: string }[];
   return rows.map((r) => r.date).filter(Boolean);
 }
 
@@ -269,12 +266,12 @@ export async function backfillDigests(force = false): Promise<{
 }> {
   const dates = force
     ? (getDb()
-        .query<{ date: string }, []>(
+        .prepare(
           "SELECT DISTINCT date(started_at) AS date FROM sessions WHERE started_at IS NOT NULL ORDER BY date DESC",
         )
-        .all()
+        .all() as { date: string }[])
         .map((r) => r.date)
-        .filter(Boolean))
+        .filter(Boolean)
     : findDatesMissingDigest();
 
   let generated = 0, skipped = 0, errors = 0;

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import Database from "better-sqlite3";
 import { existsSync, mkdirSync, statSync } from "fs";
 import { join } from "path";
 import type { Session, Turn } from "./parsers/index";
@@ -14,11 +14,11 @@ export const SESSIONS_DB_PATH = join(API_DASHBOARD_DIR, "sessions.db");
 
 // ── Singleton DB connection ───────────────────────────────────────────────────
 
-let _db: Database | null = null;
+let _db: Database.Database | null = null;
 
-export function getDb(): Database {
+export function getDb(): Database.Database {
   if (!_db) {
-    _db = new Database(SESSIONS_DB_PATH, { create: true });
+    _db = new Database(SESSIONS_DB_PATH);
     _db.exec("PRAGMA journal_mode=WAL");
     _db.exec("PRAGMA foreign_keys=ON");
     _db.exec("PRAGMA busy_timeout=10000"); // wait up to 10s instead of failing immediately
@@ -27,8 +27,9 @@ export function getDb(): Database {
 }
 
 // ── Write serialization queue ─────────────────────────────────────────────────
-// bun:sqlite Database is not concurrent-safe for writes. All write operations
-// must be serialized through this queue to avoid "database is locked" errors.
+// better-sqlite3 is synchronous; this queue exists for API compatibility with
+// callers that await serializeWrite(). All writes still happen synchronously
+// under the hood, but the queue ensures ordering if callers ever mix async work.
 
 let _writeQueue: Promise<unknown> = Promise.resolve();
 
@@ -156,7 +157,7 @@ export function initDb(): void {
   `);
 
   // 迁移：为存量 DB 补 title 列（幂等）
-  const sessionCols = db.query<{ name: string }, []>("PRAGMA table_info(sessions)").all();
+  const sessionCols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[];
   if (!sessionCols.some((c) => c.name === "title")) {
     db.exec("ALTER TABLE sessions ADD COLUMN title TEXT");
   }
@@ -200,7 +201,7 @@ export function initProxySchema(): void {
     );
   `);
 
-  const columns = db.query<{ name: string }, []>("PRAGMA table_info(proxy_requests)").all();
+  const columns = db.prepare("PRAGMA table_info(proxy_requests)").all() as { name: string }[];
   if (!columns.some((c) => c.name === "started_at")) {
     db.exec("ALTER TABLE proxy_requests ADD COLUMN started_at TEXT");
     db.exec("UPDATE proxy_requests SET started_at = ts WHERE started_at IS NULL");
@@ -334,10 +335,8 @@ function _upsertSessionSync(
 export function fileChanged(filePath: string): boolean {
   const db = getDb();
   const row = db
-    .query<{ mtime: number; size: number }, [string]>(
-      "SELECT mtime, size FROM sync_state WHERE source_file = ?",
-    )
-    .get(filePath);
+    .prepare("SELECT mtime, size FROM sync_state WHERE source_file = ?")
+    .get(filePath) as { mtime: number; size: number } | undefined;
 
   if (!row) return true;
 
@@ -370,9 +369,7 @@ export function checkDbHealth(): DbHealthResult {
   const db = getDb();
 
   const existing = new Set(
-    db
-      .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type IN ('table','index')")
-      .all()
+    (db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','index')").all() as { name: string }[])
       .map((r) => r.name),
   );
 
@@ -383,8 +380,8 @@ export function checkDbHealth(): DbHealthResult {
 
   if (missing.length > 0) return { status: "incomplete", missing };
 
-  const { sessions } = db.query<{ sessions: number }, []>("SELECT COUNT(*) as sessions FROM sessions").get()!;
-  const { turns } = db.query<{ turns: number }, []>("SELECT COUNT(*) as turns FROM turns").get()!;
+  const sessRow = db.prepare("SELECT COUNT(*) as sessions FROM sessions").get() as { sessions: number };
+  const turnRow = db.prepare("SELECT COUNT(*) as turns FROM turns").get() as { turns: number };
 
-  return { status: "ok", sessions, turns };
+  return { status: "ok", sessions: sessRow.sessions, turns: turnRow.turns };
 }

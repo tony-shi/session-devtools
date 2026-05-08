@@ -41,7 +41,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
   if (path === "/api/sessions/digest/list" && req.method === "GET") {
     const db = getDb();
     const rows = db
-      .query("SELECT date, pair_count, model, mock, generated_at, stale FROM daily_digest ORDER BY date DESC")
+      .prepare("SELECT date, pair_count, model, mock, generated_at, stale FROM daily_digest ORDER BY date DESC")
       .all();
     return json({ digests: rows });
   }
@@ -72,10 +72,8 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     if (!force) {
       const db = getDb();
       const cached = db
-        .query<{ summary: string; pair_count: number; model: string; mock: number; generated_at: string; stale: number }, [string]>(
-          "SELECT * FROM daily_digest WHERE date = ? AND stale = 0",
-        )
-        .get(date);
+        .prepare("SELECT * FROM daily_digest WHERE date = ? AND stale = 0")
+        .get(date) as { summary: string; pair_count: number; model: string; mock: number; generated_at: string; stale: number } | undefined;
       if (cached) {
         return json({
           date,
@@ -113,19 +111,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
 
     const db = getDb();
     const rows = db
-      .query<
-        {
-          tool: string;
-          session_count: number;
-          human_turn_count: number;
-          input_tokens: number;
-          output_tokens: number;
-          cache_creation_tokens: number;
-          cache_read_tokens: number;
-          projects: string;
-        },
-        [string, string]
-      >(`
+      .prepare(`
         SELECT tool,
                COUNT(*)                       AS session_count,
                SUM(human_turn_count)          AS human_turn_count,
@@ -138,7 +124,16 @@ export async function handleRequest(req: Request): Promise<Response | null> {
         WHERE started_at BETWEEN ? AND ?
         GROUP BY tool
       `)
-      .all(dateStart, dateEnd);
+      .all(dateStart, dateEnd) as {
+        tool: string;
+        session_count: number;
+        human_turn_count: number;
+        input_tokens: number;
+        output_tokens: number;
+        cache_creation_tokens: number;
+        cache_read_tokens: number;
+        projects: string;
+      }[];
 
     const totalSessions        = rows.reduce((s, r) => s + r.session_count, 0);
     const totalHumanTurns      = rows.reduce((s, r) => s + (r.human_turn_count ?? 0), 0);
@@ -208,22 +203,22 @@ export async function handleRequest(req: Request): Promise<Response | null> {
             )
           )
       `;
-      total = (db.query<{ cnt: number }, SqlParam[]>(
+      total = (db.prepare(
         `SELECT COUNT(DISTINCT s.id) as cnt FROM sessions s ${whereSql}`,
-      ).get(...dateParams) as any)?.cnt ?? 0;
-      rows = db.query(
+      ).get(dateParams) as any)?.cnt ?? 0;
+      rows = db.prepare(
         `SELECT DISTINCT s.*, ${lastInputSql} FROM sessions s ${whereSql} ORDER BY COALESCE(s.ended_at, s.started_at) DESC LIMIT ? OFFSET ?`,
-      ).all(...dateParams, limit, offset) as any[];
+      ).all([...dateParams, limit, offset]) as any[];
     } else {
       const where = filterConds.length
         ? "WHERE " + filterConds.map((c) => c.replace("s.", "")).join(" AND ")
         : "";
-      total = (db.query<{ cnt: number }, SqlParam[]>(
+      total = (db.prepare(
         `SELECT COUNT(*) as cnt FROM sessions ${where}`,
-      ).get(...filterParams) as any)?.cnt ?? 0;
-      rows = db.query(
+      ).get(filterParams) as any)?.cnt ?? 0;
+      rows = db.prepare(
         `SELECT s.*, ${lastInputSql} FROM sessions s ${where} ORDER BY COALESCE(s.ended_at, s.started_at) DESC LIMIT ? OFFSET ?`,
-      ).all(...filterParams, limit, offset) as any[];
+      ).all([...filterParams, limit, offset]) as any[];
     }
 
     const sessions = rows.map((r: any) => ({
@@ -241,17 +236,17 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     const date = q.get("date");
     const db = getDb();
 
-    const sessionRow = db.query("SELECT * FROM sessions WHERE id = ?").get(sessionId) as any;
+    const sessionRow = db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as any;
     if (!sessionRow) return json({ error: "session not found" }, 404);
 
     let turns: any[];
     if (date) {
       turns = db
-        .query("SELECT * FROM turns WHERE session_id = ? AND date(timestamp) = ? ORDER BY turn_index")
+        .prepare("SELECT * FROM turns WHERE session_id = ? AND date(timestamp) = ? ORDER BY turn_index")
         .all(sessionId, date) as any[];
     } else {
       turns = db
-        .query("SELECT * FROM turns WHERE session_id = ? ORDER BY turn_index")
+        .prepare("SELECT * FROM turns WHERE session_id = ? ORDER BY turn_index")
         .all(sessionId) as any[];
     }
 
@@ -275,7 +270,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     const date = q.get("date");
     const db = getDb();
 
-    const sessionRow = db.query("SELECT * FROM sessions WHERE id = ?").get(sessionId) as any;
+    const sessionRow = db.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as any;
     if (!sessionRow) return json({ error: "session not found" }, 404);
 
     let humanTurns: any[];
@@ -283,14 +278,14 @@ export async function handleRequest(req: Request): Promise<Response | null> {
 
     if (date) {
       humanTurns = db
-        .query(`
+        .prepare(`
           SELECT id, content, timestamp, turn_index FROM turns
           WHERE session_id = ? AND turn_kind = 'human_input' AND date(timestamp) = ?
           ORDER BY turn_index
         `)
         .all(sessionId, date) as any[];
       tokRow = db
-        .query(`
+        .prepare(`
           SELECT
             SUM(input_tokens) as input, SUM(output_tokens) as output,
             SUM(cache_creation_tokens) as cache_creation, SUM(cache_read_tokens) as cache_read,
@@ -301,7 +296,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
         .get(sessionId, date);
     } else {
       humanTurns = db
-        .query(`
+        .prepare(`
           SELECT id, content, timestamp, turn_index FROM turns
           WHERE session_id = ? AND turn_kind = 'human_input'
           ORDER BY turn_index
@@ -347,9 +342,9 @@ export async function handleRequest(req: Request): Promise<Response | null> {
   if (contextMatch && req.method === "GET") {
     const sessionId = decodeURIComponent(contextMatch[1]);
     const db = getDb();
-    const sessionRow = db.query<{ source_file: string; tool: string }, [string]>(
+    const sessionRow = db.prepare(
       "SELECT source_file, tool FROM sessions WHERE id = ?",
-    ).get(sessionId);
+    ).get(sessionId) as { source_file: string; tool: string } | undefined;
     if (!sessionRow) return json({ error: "session not found" }, 404);
     if (sessionRow.tool !== "claude") return json({ traces: [] });
 
@@ -393,9 +388,9 @@ export async function handleRequest(req: Request): Promise<Response | null> {
   if (rawMatch && req.method === "GET") {
     const sessionId = decodeURIComponent(rawMatch[1]);
     const db = getDb();
-    const sessionRow = db.query<{ source_file: string }, [string]>(
+    const sessionRow = db.prepare(
       "SELECT source_file FROM sessions WHERE id = ?",
-    ).get(sessionId);
+    ).get(sessionId) as { source_file: string } | undefined;
     if (!sessionRow) return json({ error: "session not found" }, 404);
 
     const file = Bun.file(sessionRow.source_file);
@@ -451,12 +446,12 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     if (status) { conds.push("status = ?"); params.push(Number(status)); }
     const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
 
-    const total = (db.query<{ cnt: number }, (string | number)[]>(
+    const total = (db.prepare(
       `SELECT COUNT(*) as cnt FROM proxy_requests ${where}`,
-    ).get(...params) as any)?.cnt ?? 0;
-    const rows = db.query(
+    ).get(params) as any)?.cnt ?? 0;
+    const rows = db.prepare(
       `SELECT * FROM proxy_requests ${where} ORDER BY COALESCE(started_at, ts) DESC, id DESC LIMIT ? OFFSET ?`,
-    ).all(...params, limit, offset) as any[];
+    ).all([...params, limit, offset]) as any[];
 
     return json({ requests: rows, total, limit, offset });
   }
@@ -465,7 +460,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
   if (proxyDetailMatch && req.method === "GET") {
     const id = Number(proxyDetailMatch[1]);
     const db = getDb();
-    const row = db.query("SELECT * FROM proxy_requests WHERE id = ?").get(id) as any;
+    const row = db.prepare("SELECT * FROM proxy_requests WHERE id = ?").get(id) as any;
     if (!row) return json({ error: "not found" }, 404);
     return json({
       ...row,
@@ -493,7 +488,7 @@ export async function handleRequest(req: Request): Promise<Response | null> {
             const { syncProxyTraffic } = await import("./sync");
             await syncProxyTraffic();
             const db = getDb();
-            const rows = db.query(
+            const rows = db.prepare(
               `SELECT * FROM proxy_requests
                WHERE id > ?
                ORDER BY COALESCE(started_at, ts) ASC, id ASC
