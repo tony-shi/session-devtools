@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { readFileSync } from "fs";
 import { parseClaudeJsonlMutations, pairToolUseAndResult, buildRuntimeSnapshotFromJsonl } from "./jsonl-mutation-parser";
 import type { ContextMutation, SegmentCategory } from "../types";

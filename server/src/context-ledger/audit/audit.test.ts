@@ -2,9 +2,10 @@
 // 覆盖：scorecard delta 分类 / run comparison / proxy-first discovery 口径 / artifact paths
 //       P3-4：pipeline attribution-only 路径（proxy_without_jsonl + proxyOnly=true）
 
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -327,7 +328,7 @@ import { runPipeline, runPipelineWithData } from "./pipeline";
 import { discoverFixtures, VALID_FIXTURE_NAMES } from "./discovery";
 
 const FIXTURE_BASE = resolve(
-  import.meta.dir,
+  fileURLToPath(new URL(".", import.meta.url)),
   "../../../test/fixtures/context-reconstruction",
 );
 

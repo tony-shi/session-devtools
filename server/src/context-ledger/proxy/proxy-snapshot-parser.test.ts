@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { parseClaudeProxyRequest } from "./snapshot-parser";
 import { hashCanonicalJson, hashSha256Full } from "../target/canonical";
 import type { ProxyRequestInput } from "./snapshot-parser";

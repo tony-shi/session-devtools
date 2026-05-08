@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import {
   assertSectionsLossless,
   blockHasDynamicSections,
@@ -157,7 +159,7 @@ const FIXTURES_DIR = new URL(
 describe("fixture 回归：system-tools-overhead non-global-cache system[2]", () => {
   async function loadFixtureSystem2Text(): Promise<string> {
     const url = new URL("system-tools-overhead/proxy-request.json", FIXTURES_DIR);
-    const raw = await Bun.file(url).json();
+    const raw = JSON.parse(await readFile(fileURLToPath(url), "utf8"));
     return (raw.reqBody.system[2] as { text: string }).text;
   }
 
@@ -206,7 +208,7 @@ describe("fixture 回归：system-tools-overhead non-global-cache system[2]", ()
 
   test("parseClaudeProxyRequest 对 system[2] 产出多个 segment（pseg-system-2-s*）", async () => {
     const url = new URL("system-tools-overhead/proxy-request.json", FIXTURES_DIR);
-    const raw = await Bun.file(url).json() as ProxyRequestInput;
+    const raw = JSON.parse(await readFile(fileURLToPath(url), "utf8")) as ProxyRequestInput;
     const snapshot = parseClaudeProxyRequest(raw, {
       proxyFile: "system-tools-overhead/proxy-request.json",
     });
@@ -220,7 +222,7 @@ describe("fixture 回归：system-tools-overhead non-global-cache system[2]", ()
 
   test("parser 全保守：所有 system[2] section 的 category=system_prompt，lifecycle 不设", async () => {
     const url = new URL("system-tools-overhead/proxy-request.json", FIXTURES_DIR);
-    const raw = await Bun.file(url).json() as ProxyRequestInput;
+    const raw = JSON.parse(await readFile(fileURLToPath(url), "utf8")) as ProxyRequestInput;
     const snapshot = parseClaudeProxyRequest(raw, {
       proxyFile: "system-tools-overhead/proxy-request.json",
     });
@@ -235,7 +237,7 @@ describe("fixture 回归：system-tools-overhead non-global-cache system[2]", ()
 
   test("parser metadata 只含中性结构事实（sectionHeader/sectionIndex/blockIndex，无 stabilityHint）", async () => {
     const url = new URL("system-tools-overhead/proxy-request.json", FIXTURES_DIR);
-    const raw = await Bun.file(url).json() as ProxyRequestInput;
+    const raw = JSON.parse(await readFile(fileURLToPath(url), "utf8")) as ProxyRequestInput;
     const snapshot = parseClaudeProxyRequest(raw, {
       proxyFile: "system-tools-overhead/proxy-request.json",
     });
@@ -252,7 +254,7 @@ describe("fixture 回归：system-tools-overhead non-global-cache system[2]", ()
 
   test("dynamic section 的 sourceRef 含 charRange", async () => {
     const url = new URL("system-tools-overhead/proxy-request.json", FIXTURES_DIR);
-    const raw = await Bun.file(url).json() as ProxyRequestInput;
+    const raw = JSON.parse(await readFile(fileURLToPath(url), "utf8")) as ProxyRequestInput;
     const snapshot = parseClaudeProxyRequest(raw, {
       proxyFile: "system-tools-overhead/proxy-request.json",
     });

@@ -1,7 +1,9 @@
 // proxy-attribution 验收测试
 // 新 contract：inferClaudeProxyAttributions 消费 snapshot.segments（由 parseClaudeProxyRequest 产出），
 // 不再依赖 rawBody，不再 mutate snapshot。
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import type { ProxyQuerySnapshot } from "../types";
 import {
   buildAttributionBreakdown,
@@ -15,7 +17,7 @@ const FIXTURES_DIR = new URL("../../../test/fixtures/context-reconstruction/", i
 // 从 fixture 目录 parse 出真实 snapshot（含完整 segments）
 async function loadSnapshot(fixtureName: string): Promise<ProxyQuerySnapshot> {
   const url = new URL(`${fixtureName}/proxy-request.json`, FIXTURES_DIR);
-  const raw = await Bun.file(url).json() as ProxyRequestInput;
+  const raw = JSON.parse(await readFile(fileURLToPath(url), "utf8")) as ProxyRequestInput;
   return parseClaudeProxyRequest(raw, {
     proxyFile: `server/test/fixtures/context-reconstruction/${fixtureName}/proxy-request.json`,
   });

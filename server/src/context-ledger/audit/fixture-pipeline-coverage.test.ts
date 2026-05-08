@@ -5,7 +5,7 @@
 // 覆盖目标：server/src/context-ledger/ 下所有核心模块（parser、attribution、reconstructor、
 //           reconciliation、scorecard、pipeline）在真实 fixture 数据上的执行路径。
 
-import { test, expect } from "bun:test";
+import { test, expect } from "vitest";
 import { discoverFixtures } from "./discovery";
 import { runPipelineWithData } from "./pipeline";
 

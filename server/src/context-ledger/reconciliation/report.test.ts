@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { buildMockReconciliationReport } from "./report";
 import {
   CONTEXT_LEDGER_RULES,
@@ -15,7 +17,7 @@ const invalidMutationSource: MutationSourceKind = "proxy";
 void invalidMutationSource;
 
 async function readFixture(): Promise<ReconciliationReport> {
-  return Bun.file(new URL("./__fixtures__/mock-report.json", import.meta.url)).json();
+  return JSON.parse(await readFile(fileURLToPath(new URL("../__fixtures__/mock-report.json", import.meta.url)), "utf8")) as ReconciliationReport;
 }
 
 describe("context-ledger mock report contract", () => {
