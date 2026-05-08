@@ -71,7 +71,10 @@ const app = await NestFactory.create<NestFastifyApplication>(
   new FastifyAdapter({ logger: false }),
 );
 
-// CORS is handled inside handleRequest (LegacyController) for OPTIONS preflight.
+await app.register(
+  (await import("@fastify/cors")).default,
+  { origin: "*", methods: ["GET", "POST", "PUT", "OPTIONS"] },
+);
 
 await app.listen(PORT, "0.0.0.0");
 console.log(
