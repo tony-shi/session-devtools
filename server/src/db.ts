@@ -165,7 +165,6 @@ export function initDb(): void {
   initProxySchema();
 }
 
-// B2.2: proxy_requests 表
 export function initProxySchema(): void {
   const db = getDb();
   db.exec(`
@@ -203,12 +202,9 @@ export function initProxySchema(): void {
 
   const columns = db.query<{ name: string }, []>("PRAGMA table_info(proxy_requests)").all();
   if (!columns.some((c) => c.name === "started_at")) {
-    // started_at 是请求发起时间，用于 UI 排序和实时流增量游标。
-    // ts 保留为日志记录时间兼容旧数据；历史行迁移时用 ts 回填 started_at。
     db.exec("ALTER TABLE proxy_requests ADD COLUMN started_at TEXT");
     db.exec("UPDATE proxy_requests SET started_at = ts WHERE started_at IS NULL");
   }
-  // B1.3: body 编码标记。"utf8"（默认）= 原文；"base64" = 二进制需 atob
   if (!columns.some((c) => c.name === "req_body_encoding")) {
     db.exec("ALTER TABLE proxy_requests ADD COLUMN req_body_encoding TEXT DEFAULT 'utf8'");
   }

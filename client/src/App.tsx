@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Header } from "./components/Header";
-import { ProxyPanel } from "./components/ProxyPanel";
 import { ProxyV2Setup } from "./components/ProxyV2Setup";
 import { SessionList } from "./components/SessionList";
 import { SummaryCards } from "./components/SummaryCards";
@@ -13,7 +12,7 @@ function getInitialDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-type Tab = "sessions" | "proxy" | "proxy-v2";
+type Tab = "sessions" | "proxy-v2";
 
 export default function App() {
   const [date, setDate] = useState(getInitialDate);
@@ -57,18 +56,8 @@ export default function App() {
       ),
     },
     {
-      id: "proxy",
-      label: "代理",
-      icon: (
-        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-      ),
-    },
-    {
       id: "proxy-v2",
-      label: "代理 v2",
+      label: "代理",
       icon: (
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -134,8 +123,6 @@ export default function App() {
               <SummaryCards data={summary} loading={summaryLoading} />
               <SessionList data={sessions} loading={sessionsLoading} date={date} />
             </>
-          ) : tab === "proxy" ? (
-            <ProxyPanel />
           ) : (
             <ProxyV2Setup />
           )}

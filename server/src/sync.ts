@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "fs";
+import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { fileChanged, getDb, upsertSession } from "./db";
 import { PARSERS } from "./parsers/index";
@@ -200,22 +200,21 @@ export function stopAutoSync(): void {
   }
 }
 
-// ── B2.1: Proxy traffic.jsonl 增量同步 ───────────────────────────────────────
+// ── Proxy traffic.jsonl 增量同步 ─────────────────────────────────────────────
 
 export async function syncProxyTraffic(): Promise<{ inserted: number; errors: number }> {
   const { parseTrafficFile } = await import("./parsers/proxy-traffic");
   const { initProxySchema, serializeWrite, getDb } = await import("./db");
-  const { PATHS: PROXY_PATHS } = await import("./proxy/config");
+  const { PROXY_SERVER_PATHS } = await import("./proxy-v2/paths");
 
   // proxy 是机器级全局设施，traffic.jsonl 固定在 ~/.api-dashboard/proxy。
   // 这里不能跟随 worktree 的 API_DASHBOARD_DIR，否则 UI 会读取旧 worktree 日志，
   // 与当前 dashboard 托管的运行中 proxy 脱节。
-  const trafficLog = PROXY_PATHS.trafficLog;
+  const trafficLog = PROXY_SERVER_PATHS.trafficLog;
 
   const db = getDb();
   initProxySchema();
 
-  // 读取上次同步到的行号
   const stateRow = db
     .query<{ last_line: number }, [string]>(
       "SELECT last_line FROM proxy_sync_state WHERE source_file = ?",
@@ -225,8 +224,7 @@ export async function syncProxyTraffic(): Promise<{ inserted: number; errors: nu
 
   const records = await parseTrafficFile(trafficLog);
 
-  // P2 修复：maybeRotate() 可能把旧文件改名并新建空文件。
-  // 若当前文件总行数 < storedLine，说明发生了轮转，从头同步。
+  // 若文件被轮转（总行数 < storedLine），从头同步
   const lastLine = records.length < storedLine ? 0 : storedLine;
 
   const newRecords = records.slice(lastLine);
@@ -257,7 +255,6 @@ export async function syncProxyTraffic(): Promise<{ inserted: number; errors: nu
           errors++;
         }
       }
-      // 更新同步状态
       db.prepare(`
         INSERT OR REPLACE INTO proxy_sync_state (source_file, last_line, synced_at)
         VALUES (?, ?, ?)
@@ -267,3 +264,4 @@ export async function syncProxyTraffic(): Promise<{ inserted: number; errors: nu
 
   return { inserted, errors };
 }
+

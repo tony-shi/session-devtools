@@ -1,7 +1,5 @@
 import { getDb } from "./db";
 import { backfillDigests, findDatesMissingDigest, generateDigest } from "./digest";
-import { readSettings } from "./proxy-v2/settings";
-import { PROXY_SERVER_PATHS } from "./proxy-v2/paths";
 import { runSync, runSyncForDate } from "./sync";
 
 // Track dates currently being generated to avoid duplicate LLM calls
@@ -432,16 +430,14 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     return json({ raw, subagents });
   }
 
-  // ── B2: Proxy 流量 API ───────────────────────────────────────────────────────
+  // ── 代理流量 API ─────────────────────────────────────────────────────────────
 
-  // 手动触发 proxy traffic 同步
   if (path === "/api/proxy/sync" && req.method === "POST") {
     const { syncProxyTraffic } = await import("./sync");
     const result = await syncProxyTraffic();
     return json(result);
   }
 
-  // 流量列表（分页）
   if (path === "/api/proxy/requests" && req.method === "GET") {
     const db = getDb();
     const limit = Math.min(parseInt(q.get("limit") ?? "50"), 200);
@@ -465,7 +461,6 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     return json({ requests: rows, total, limit, offset });
   }
 
-  // 单请求详情
   const proxyDetailMatch = path.match(/^\/api\/proxy\/requests\/(\d+)$/);
   if (proxyDetailMatch && req.method === "GET") {
     const id = Number(proxyDetailMatch[1]);
@@ -479,13 +474,11 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     });
   }
 
-  // B2.4: SSE 实时流量订阅
   if (path === "/api/proxy/stream" && req.method === "GET") {
     const encoder = new TextEncoder();
     let closed = false;
     const stream = new ReadableStream({
       start(controller) {
-        // 心跳，防止连接超时
         const heartbeat = setInterval(() => {
           if (closed) { clearInterval(heartbeat); return; }
           try {
@@ -493,14 +486,10 @@ export async function handleRequest(req: Request): Promise<Response | null> {
           } catch { clearInterval(heartbeat); }
         }, 8000);
 
-        // 监听新 proxy 流量（轮询：先同步 JSONL → 再查 DB，每 2s 一次）。
-        // 增量游标用插入 id，避免漏掉"早发起、晚完成"的长请求；
-        // 返回顺序仍按 started_at + id 稳定排列，前端展示也按请求发起时间处理。
         let lastId = Number(q.get("since_id") ?? "0");
         const poll = setInterval(async () => {
           if (closed) { clearInterval(poll); return; }
           try {
-            // P2 修复：每次 poll 先把 traffic.jsonl 的新行同步进 DB，再查询
             const { syncProxyTraffic } = await import("./sync");
             await syncProxyTraffic();
             const db = getDb();
@@ -537,9 +526,9 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     });
   }
 
-  // B5.1: 白名单管理 API（供 UI Capture Targets 页使用）
   if (path === "/api/proxy/whitelist" && req.method === "GET") {
     const { existsSync, readFileSync } = await import("node:fs");
+    const { PROXY_SERVER_PATHS } = await import("./proxy-v2/paths");
     let hosts: string[] = [];
     if (existsSync(PROXY_SERVER_PATHS.mitmHostsFile)) {
       try {
@@ -554,59 +543,14 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     const body = await req.json().catch(() => null);
     if (!body || !Array.isArray(body.hosts)) return json({ error: "invalid body" }, 400);
     const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { PROXY_SERVER_PATHS } = await import("./proxy-v2/paths");
     mkdirSync(PROXY_SERVER_PATHS.home, { recursive: true, mode: 0o700 });
     const userHosts = (body.hosts as string[]).filter((h) => h !== "api.anthropic.com");
     writeFileSync(PROXY_SERVER_PATHS.mitmHostsFile, JSON.stringify({ hosts: userHosts }, null, 2) + "\n");
     return json({ ok: true, hosts: userHosts });
   }
 
-  // ── Proxy 安装管理 API（已迁移至 proxy-v2）────────────────────────────────────
-
-  // 查询当前状态（委托给 v2 controller）
-  if (path === "/api/proxy/setup/status" && req.method === "GET") {
-    const { proxyV2Controller } = await import("./proxy-v2/controller");
-    return json(proxyV2Controller.getSnapshot());
-  }
-
-  // 安装 = 启动 v2 proxy（v2 的 prepareForStart 负责写 settings）
-  if (path === "/api/proxy/setup/install" && req.method === "POST") {
-    const { proxyV2Controller } = await import("./proxy-v2/controller");
-    const snap = await proxyV2Controller.setTarget("RUNNING");
-    return json({ ok: snap.phase === "running", output: snap.log.join("\n"), snapshot: snap });
-  }
-
-  // 卸载 = 停止 v2 proxy（v2 的 reconcileToStopped 负责还原 settings）
-  if (path === "/api/proxy/setup/uninstall" && req.method === "POST") {
-    const { proxyV2Controller } = await import("./proxy-v2/controller");
-    const snap = await proxyV2Controller.setTarget("STOPPED");
-    return json({ ok: snap.phase === "idle", output: snap.log.join("\n"), snapshot: snap });
-  }
-
-  // 启动
-  if (path === "/api/proxy/setup/start" && req.method === "POST") {
-    const { proxyV2Controller } = await import("./proxy-v2/controller");
-    const snap = await proxyV2Controller.setTarget("RUNNING");
-    return json(snap);
-  }
-
-  // 停止
-  if (path === "/api/proxy/setup/stop" && req.method === "POST") {
-    const { proxyV2Controller } = await import("./proxy-v2/controller");
-    const snap = await proxyV2Controller.setTarget("STOPPED");
-    return json(snap);
-  }
-
-  // 运行 preflight 检查（不写盘）
-  if (path === "/api/proxy/setup/preflight" && req.method === "GET") {
-    const { runPreflight } = await import("./proxy-v2/preflight");
-    const { FIXED_PORT } = await import("./proxy-v2/port");
-    const portArg = Number(q.get("port") ?? FIXED_PORT);
-    const report = await runPreflight({ ourPort: portArg });
-    return json(report);
-  }
-
-  // ── Proxy v2（新模块，基于 controller）─────────────────────────────────────
-  // 与上面的 /api/proxy/setup/* 完全独立，互不影响。
+  // ── Proxy v2 ────────────────────────────────────────────────────────────────
 
   if (path === "/api/proxy-v2/status" && req.method === "GET") {
     const { proxyV2Controller } = await import("./proxy-v2/controller");

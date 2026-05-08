@@ -1,6 +1,6 @@
-// Proxy v2 极简管理页 —— 只有 Start / Stop 两个按钮 + 状态展示。
-// 后端是 controller.ts 的状态机，前端只负责调 API + 渲染快照。
+// Proxy v2 管理页 —— 控制面板（Start / Stop）+ 流量展示。
 import { useEffect, useRef, useState } from "react";
+import { ProxyTraffic } from "./ProxyTraffic";
 
 type Target = "STOPPED" | "RUNNING";
 type Phase = "idle" | "starting" | "running" | "stopping";
@@ -72,7 +72,7 @@ export function ProxyV2Setup() {
     phase === "stopping" ? "停止中…" : "已停止";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 720 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* 警告条 */}
       <div style={{
         background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8,
@@ -187,6 +187,9 @@ export function ProxyV2Setup() {
           {snap?.log?.length ? snap.log.join("\n") : "(暂无日志)"}
         </pre>
       </div>
+
+      {/* 流量记录 */}
+      <ProxyTraffic />
     </div>
   );
 }
