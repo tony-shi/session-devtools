@@ -12,6 +12,7 @@ digest.cfg
 docs/draft
 docs/contract
 docs/archive
+docs/
 
 # Python virtualenv
 .venv/
@@ -28,3 +29,7 @@ docs/archive
 # 本地 Claude worktree 可能包含嵌套 .env / digest.cfg 副本
 .claude/worktrees/
 .audit/
+dump-attr.ts
+scripts
+
+.claude
