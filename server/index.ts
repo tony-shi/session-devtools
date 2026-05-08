@@ -70,6 +70,17 @@ if (PROXY_AUTOSTART) {
   await startManagedProxyIfDesired();
 }
 
+// ── Proxy v2 boot reconcile ─────────────────────────────────────────────────
+// 覆盖上次 dashboard SIGKILL / 断电 / OS 重启留下的脏状态。
+// 默认快速路径：~/.api-devtools/proxy/active.json 不存在 → 直接返回。
+// 慢路径：发现残留 → 杀孤儿进程 + 还原 ~/.claude/settings.json（永不抛）。
+try {
+  const { proxyV2Controller } = await import("./src/proxy-v2/controller");
+  await proxyV2Controller.reconcileOnBoot();
+} catch (err) {
+  console.error("[proxy-v2] boot reconcile fatal:", err);
+}
+
 // ── HTTP server ───────────────────────────────────────────────────────────────
 
 const server = Bun.serve({
@@ -111,7 +122,16 @@ async function shutdown(signal: string) {
   if (stopping) return;
   stopping = true;
   console.log(`[server] received ${signal}, shutting down...`);
+  // 先停旧 proxy（仅杀子进程，不动 settings）
   await stopManagedProxyIfRunning();
+  // 再停 v2 controller —— 这步会还原 settings（如果 active.json 存在）。
+  // 必须 await：dashboard 退出 = 用户当前会话结束 = settings 必须回干净
+  try {
+    const { proxyV2Controller } = await import("./src/proxy-v2/controller");
+    await proxyV2Controller.shutdown();
+  } catch (err) {
+    console.error("[server] proxy-v2 shutdown error:", err);
+  }
   server.stop(true);
   process.exit(0);
 }

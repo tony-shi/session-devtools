@@ -648,5 +648,25 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     return json(report);
   }
 
+  // ── Proxy v2（新模块，基于 controller）─────────────────────────────────────
+  // 与上面的 /api/proxy/setup/* 完全独立，互不影响。
+
+  if (path === "/api/proxy-v2/status" && req.method === "GET") {
+    const { proxyV2Controller } = await import("./proxy-v2/controller");
+    return json(proxyV2Controller.getSnapshot());
+  }
+
+  if (path === "/api/proxy-v2/start" && req.method === "POST") {
+    const { proxyV2Controller } = await import("./proxy-v2/controller");
+    const snap = await proxyV2Controller.setTarget("RUNNING");
+    return json(snap);
+  }
+
+  if (path === "/api/proxy-v2/stop" && req.method === "POST") {
+    const { proxyV2Controller } = await import("./proxy-v2/controller");
+    const snap = await proxyV2Controller.setTarget("STOPPED");
+    return json(snap);
+  }
+
   return null; // not handled
 }

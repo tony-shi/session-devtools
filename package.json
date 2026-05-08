@@ -24,8 +24,6 @@
     "proxy:whitelist": "bun run server/src/proxy/cli/whitelist.ts",
     "proxy:doctor": "bun run server/src/proxy/cli/doctor.ts",
     "proxy:export-share": "bun run server/src/proxy/cli/export-share.ts",
-    "proxy-v2:start": "bun run proxy:build && bun run server/src/proxy-v2/cli/start.ts",
-    "proxy-v2:stop": "bun run server/src/proxy-v2/cli/stop.ts",
     "context:audit": "bun run scripts/context-audit.ts",
     "context:audit:since-last": "bun run scripts/context-audit.ts --since-last",
     "context:audit:fixtures": "bun run scripts/context-audit.ts --fixtures",
