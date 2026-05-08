@@ -47,10 +47,11 @@ export async function spawnProxy(port: number, log: (msg: string) => void): Prom
   await buildNodeBundle(log);
   log("[runner] spawning proxy server via node...");
 
-  // settings.json 的 env 块需要传给 proxy 子进程，否则它读不到 ANTHROPIC_BASE_URL / 上游代理等。
-  // 但标准代理变量不能传给 proxy 自己：Bun 的 http.request 会读取这些环境变量，
-  // 若子进程继承 HTTP_PROXY=http://127.0.0.1:<ourPort>，HTTP forward 会回打自身并卡死。
-  // proxy server 的出站链路只允许通过 API_DASHBOARD_PROXY_UPSTREAM 显式控制。
+  // settings.json 的 env 块需要传给 proxy 子进程，否则它读不到 ANTHROPIC_BASE_URL 等业务配置。
+  // 但标准代理变量不能传给 proxy 自己：它们是给 Claude 客户端消费的，不是给本地 proxy server 消费的。
+  // 一旦子进程继承 HTTP_PROXY=http://127.0.0.1:<ourPort>，任何运行时/库若按环境变量出站，
+  // 都可能把 proxy 的上游请求回打到自己。proxy server 的出站链路只允许通过
+  // API_DASHBOARD_PROXY_UPSTREAM 显式控制。
   const settingsEnv = readSettings().env;
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
