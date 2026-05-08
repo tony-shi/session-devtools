@@ -141,7 +141,7 @@ export function writeAuditRunMd(runId: string, run: AuditRunRecord, entries: Aud
     const unverifiedPct = rs.totalRules > 0 ? ((rs.unverifiedRules / rs.totalRules) * 100).toFixed(1) : "0.0";
     lines.push(``);
     if (rs.unverifiedRules > rs.totalRules * 0.3) {
-      lines.push(`> ⚠️  未验证 rule 占比 ${unverifiedPct}%（>30%）→ 当前覆盖率数字不可信，建议运行 \`bun run scripts/verify-rules-against-cli.ts\` 更新 verifiedFor。`);
+      lines.push(`> ⚠️  未验证 rule 占比 ${unverifiedPct}%（>30%）→ 当前覆盖率数字不可信，建议运行 \`npm run scripts/verify-rules-against-cli.ts\` 更新 verifiedFor。`);
     } else {
       lines.push(`> ✓ 未验证 rule 占比 ${unverifiedPct}%`);
     }

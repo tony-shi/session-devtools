@@ -1,7 +1,7 @@
 // audit artifact 路径管理
 // 默认产物写到 ~/.api-dashboard/context-audit/。
 // 并行 worktree 跑 fixture/audit 时，可用 CONTEXT_AUDIT_HOME 指向同一个隔离目录：
-//   CONTEXT_AUDIT_HOME=$PWD/.audit/reconstruct bun run context:audit:fixtures --no-update-latest
+//   CONTEXT_AUDIT_HOME=$PWD/.audit/reconstruct npm run context:audit:fixtures --no-update-latest
 // 这样各 run 目录仍共享 baseline，但不会污染用户主 dashboard 的 audit 指针。
 
 import { homedir } from "node:os";

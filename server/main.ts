@@ -56,6 +56,10 @@ if (health.status === "missing") {
 // ── Background sync ───────────────────────────────────────────────────────────
 startAutoSync();
 
+// ── Proxy traffic background sync ────────────────────────────────────────────
+const { ensureSyncLoop } = await import("./src/proxy-traffic.controller.ts");
+ensureSyncLoop();
+
 // ── Proxy v2 boot reconcile ───────────────────────────────────────────────────
 try {
   const { proxyV2Controller } = await import("./src/proxy-v2/controller.ts");

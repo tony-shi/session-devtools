@@ -24,8 +24,7 @@ const AMBIENT_PROXY_ENV_KEYS = [
   "no_proxy",
 ];
 
-// 本地 ChildProcess 接口 —— Bun 的 @types/bun 屏蔽了 node:child_process 的 on/once，
-// 我们用最小可用面 cast。
+// 本地 ChildProcess 接口 —— 使用最小可用面 cast，避免直接依赖 node:child_process 完整类型。
 export interface ManagedChild {
   pid?: number;
   exitCode: number | null;

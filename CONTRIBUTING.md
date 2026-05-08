@@ -16,16 +16,15 @@
 ```bash
 git clone https://github.com/tony-shi/session-dashboard
 cd session-dashboard
-bun install
-cd client && bun install && cd ..
-bun run dev
+npm install
+npm run dev
 ```
 
 ## Making Changes
 
 1. Cut a branch from `develop`: `git checkout -b feature/my-feature develop`
 2. Make your changes
-3. Verify type check: `bunx tsc --noEmit` and `cd client && bun run lint`
+3. Verify type check: `npx tsc --noEmit` and `cd client && npm run lint`
 4. Open a PR against `develop`
 
 ## Commit Style
@@ -56,4 +55,4 @@ GET /api/sessions/sync?date=YYYY-MM-DD
 
 ## Reporting Issues
 
-Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md). Include your OS, Bun version, and the relevant CLI tool.
+Use the [bug report template](.github/ISSUE_TEMPLATE/bug_report.md). Include your OS, Node.js version, and the relevant CLI tool.

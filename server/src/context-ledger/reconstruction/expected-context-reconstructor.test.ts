@@ -875,8 +875,8 @@ describe("Guardrail G1：expected segments 不含 proxy sourceRef", () => {
   // 构造一个 kind="proxy" 的对象尝试赋值给 MutationSourceRef，
   // 应触发 TypeScript 编译错误（用 @ts-expect-error 标注来固化此约束）。
   // 这个测试本身没有运行时断言，只要 @ts-expect-error 下面没有 TS 错误，
-  // 说明约束失效——bun test 时 TypeScript 不做类型检查，
-  // 所以此处作为注释文档保留，实际类型检查由 `bunx tsc --noEmit` 验证。
+  // 说明约束失效——vitest 运行时 TypeScript 不做类型检查，
+  // 所以此处作为注释文档保留，实际类型检查由 `tsc --noEmit` 验证。
   test("类型约束：MutationSourceRef 不允许 kind=proxy，ReconstructInput 不含 proxy 字段（由 tsc 验证）", () => {
     const _badMutRef: MutationSourceRef = {
       // @ts-expect-error — "proxy" 不在 MutationSourceKind 中，tsc 应拒绝此赋值

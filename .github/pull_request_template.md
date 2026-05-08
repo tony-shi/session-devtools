@@ -10,9 +10,9 @@
 ## Testing
 
 <!-- How did you verify this works? -->
-- [ ] Ran `bun run dev` and tested manually
-- [ ] Type check passes (`bunx tsc --noEmit`)
-- [ ] Lint passes (`cd client && bun run lint`)
+- [ ] Ran `npm run dev` and tested manually
+- [ ] Type check passes (`npx tsc --noEmit`)
+- [ ] Lint passes (`cd client && npm run lint`)
 
 ## Related Issues
 

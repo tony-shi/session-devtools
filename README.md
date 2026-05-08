@@ -12,9 +12,8 @@ It currently focuses on Claude Code sessions and request-side context attributio
 ```bash
 git clone https://github.com/tony-shi/session-dashboard
 cd session-dashboard
-bun install
-cd client && bun install && cd ..
-bun run dev
+npm install
+npm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173) in your browser.
@@ -49,7 +48,7 @@ To enable:
 
 ## Requirements
 
-- [Bun](https://bun.sh) v1.1+
+- Node.js v22+
 - Claude Code (for session data)
 
 ## Configuration
@@ -61,10 +60,10 @@ The database is stored at `~/.api-dashboard/sessions.db`. Override with `API_DAS
 ## Development
 
 ```bash
-bun run dev          # start server + client with hot reload
-bun run build        # production build of client
-bunx tsc --noEmit    # type check
-cd client && bun run lint
+npm run dev          # start server + client with hot reload
+npm run build        # production build of client
+npx tsc --noEmit     # type check
+cd client && npm run lint
 ```
 
 ## License

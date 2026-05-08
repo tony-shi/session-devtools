@@ -585,7 +585,7 @@ export const CLAUDE_CODE_SYSTEM_PROMPT_DYNAMIC_SECTION_RULE = CLAUDE_CODE_ENVIRO
 //   cc_version    — <semver>.<fingerprint>，fingerprint 由当前 turn 消息内容 hash 计算（每次不同）
 //   cc_entrypoint — CLAUDE_CODE_ENTRYPOINT env，如 "cli"（进程级固定）
 //   cch           — attestation token，NATIVE_CLIENT_ATTESTATION feature 开启时出现；
-//                   Bun native HTTP stack 将占位符 "00000" 替换为真实 hash（每次不同）
+//                   Claude Code HTTP stack 将占位符 "00000" 替换为真实 hash（每次不同）
 //   cc_workload   — 可选，cron 等特殊 workload 场景注入，普通交互请求不出现
 //
 // 注入位置（唯一合法来源，sourcemap 确认）：

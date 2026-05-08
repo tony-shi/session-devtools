@@ -143,23 +143,23 @@ proxy 只能作为事实层和 audit 对账输入，不能反向写入 `ContextM
 ## 常用验证
 
 ```bash
-bun test server/src/context-ledger/jsonl-mutation-parser.test.ts
-bun test server/src/context-ledger/expected-context-reconstructor.test.ts
-bun test server/src/context-ledger/target-request-builder.test.ts
-bun test server/src/context-ledger/reconciliation-engine.test.ts
-bun test server/src/context-ledger/audit/audit.test.ts
-bunx tsc --noEmit
+cd server && npx vitest run src/context-ledger/reconstruction/jsonl-mutation-parser.test.ts
+cd server && npx vitest run src/context-ledger/reconstruction/expected-context-reconstructor.test.ts
+cd server && npx vitest run src/context-ledger/target/target-request-builder.test.ts
+cd server && npx vitest run src/context-ledger/reconciliation/reconciliation-engine.test.ts
+cd server && npx vitest run src/context-ledger/audit/audit.test.ts
+npx tsc --noEmit
 ```
 
 Audit 验证：
 
 ```bash
 CONTEXT_AUDIT_HOME="$PWD/.audit/reconstruct" \
-  bun run context:audit:fixtures --no-update-latest
+  npm run context:audit:fixtures --no-update-latest
 ```
 
 完整 fixture 验证：
 
 ```bash
-bun run context:audit:fixtures:full
+npm run context:audit:fixtures:full
 ```

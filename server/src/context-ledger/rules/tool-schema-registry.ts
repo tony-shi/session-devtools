@@ -19,7 +19,7 @@
 //   (c) reconciliation 产生虚假 order_mismatch finding。
 // 所有已录制 fixture（2026-05-01，5 个 main_session fixture）验证：tools[] 顺序完全一致。
 //
-// 验证命令：bun run context:audit:fixtures（P0 dump 对账）
+// 验证命令：npm run context:audit:fixtures（P0 dump 对账）
 
 export const BUILTIN_TOOL_SCHEMA_JSON: Readonly<Record<string, string>> = {
   // AskUserQuestion: 4880B

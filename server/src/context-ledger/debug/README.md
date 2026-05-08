@@ -28,30 +28,30 @@ reconciliation 结果，也不反写 proxy 内容。
 **用真实 src fixture 一条命令运行**（完整调用链：proxy parser → attribution → reconstructor → reconciler）：
 
 ```sh
-bun run scripts/context-char-diff.ts --fixture single-tool-call
+npm run scripts/context-char-diff.ts --fixture single-tool-call
 open /tmp/context-char-diff-single-tool-call.html
 ```
 
 可用的四个 fixture：
 
 ```sh
-bun run scripts/context-char-diff.ts --fixture single-tool-call
-bun run scripts/context-char-diff.ts --fixture large-tool-output
-bun run scripts/context-char-diff.ts --fixture multi-turn-human
-bun run scripts/context-char-diff.ts --fixture system-tools-overhead
+npm run scripts/context-char-diff.ts --fixture single-tool-call
+npm run scripts/context-char-diff.ts --fixture large-tool-output
+npm run scripts/context-char-diff.ts --fixture multi-turn-human
+npm run scripts/context-char-diff.ts --fixture system-tools-overhead
 ```
 
 指定输出路径：
 
 ```sh
-bun run scripts/context-char-diff.ts --fixture large-tool-output --out /tmp/audit.html
+npm run scripts/context-char-diff.ts --fixture large-tool-output --out /tmp/audit.html
 open /tmp/audit.html
 ```
 
 查看帮助：
 
 ```sh
-bun run scripts/context-char-diff.ts --help
+npm run scripts/context-char-diff.ts --help
 ```
 
 ## 其他模式
@@ -59,14 +59,14 @@ bun run scripts/context-char-diff.ts --help
 **内置 mock**（无需任何外部文件，适合快速验证工具本身）：
 
 ```sh
-bun run scripts/context-char-diff.ts --mock
+npm run scripts/context-char-diff.ts --mock
 open /tmp/context-char-diff-mock.html
 ```
 
 **已有 JSON 报告**（传入 `reconcileClaudeContext()` 序列化的文件）：
 
 ```sh
-bun run scripts/context-char-diff.ts /path/to/report.json
+npm run scripts/context-char-diff.ts /path/to/report.json
 ```
 
 ## 条目类型说明

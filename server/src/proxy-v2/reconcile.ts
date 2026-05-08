@@ -90,7 +90,7 @@ export async function prepareForStart(log: (msg: string) => void = noop): Promis
   if (isActive()) {
     return {
       ok: false,
-      error: `previous session is still active (marker at ${V2_PATHS.active}). Run 'bun run proxy-v2:stop' first.`,
+      error: `previous session is still active (marker at ${V2_PATHS.active}). Run 'npm run proxy:stop' first.`,
       preflightWarnings,
     };
   }

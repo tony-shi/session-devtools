@@ -1,6 +1,6 @@
 // fixture-pipeline-coverage.test.ts
 // 专为代码覆盖率收集而写的测试文件——不做业务断言，只驱动真实 fixture 跑完整 pipeline。
-// 不要加入日常 bun test 套件；只在 context:audit:fixtures:coverage 命令里使用。
+// 不要加入日常 vitest 套件；只在 context:audit:fixtures:coverage 命令里使用。
 //
 // 覆盖目标：server/src/context-ledger/ 下所有核心模块（parser、attribution、reconstructor、
 //           reconciliation、scorecard、pipeline）在真实 fixture 数据上的执行路径。

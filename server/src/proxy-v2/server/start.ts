@@ -1,4 +1,4 @@
-// proxy-v2 server 入口。由 runner.ts 通过 spawn("bun run ...") 启动。
+// proxy-v2 server 入口。由 runner.ts 通过 spawn("node") 启动。
 // A5.2: 监听 mitm-hosts.json 变化，热重载白名单（免重启）。
 import { watch } from "node:fs";
 import { startProxy } from "./index";

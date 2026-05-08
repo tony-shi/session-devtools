@@ -1,9 +1,20 @@
 import { Controller, Get, Param, Post, Query, Req, Res } from "@nestjs/common";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { Readable } from "node:stream";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { getDb } from "./db.ts";
 import { syncProxyTraffic } from "./sync.ts";
+
+// 独立后台同步循环：每 5s 把 traffic.jsonl 增量写入 DB。
+// 与 SSE poll 完全解耦，确保 start/stop/query 不被 sync 占用的写锁阻塞。
+let _syncLoopStarted = false;
+export function ensureSyncLoop(): void {
+  if (_syncLoopStarted) return;
+  _syncLoopStarted = true;
+  const run = () => {
+    syncProxyTraffic().catch(() => {}).finally(() => setTimeout(run, 5000));
+  };
+  setTimeout(run, 5000);
+}
 
 function parseJsonField<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -15,6 +26,7 @@ export class ProxyTrafficController {
   // ── Proxy sync ────────────────────────────────────────────────────────────────
   @Post("sync")
   async proxySync() {
+    ensureSyncLoop();
     return syncProxyTraffic();
   }
 
@@ -64,6 +76,8 @@ export class ProxyTrafficController {
     @Req() _req: FastifyRequest,
     @Res() reply: FastifyReply,
   ): void {
+    ensureSyncLoop();
+
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -92,10 +106,10 @@ export class ProxyTrafficController {
       write(": heartbeat\n\n");
     }, 8000);
 
-    const poll = setInterval(async () => {
+    // SSE poll 只读 DB，不触发文件同步——sync 由后台循环独立完成
+    const poll = setInterval(() => {
       if (closed) return;
       try {
-        await syncProxyTraffic();
         const db = getDb();
         const rows = db.prepare(
           `SELECT * FROM proxy_requests WHERE id > ? ORDER BY COALESCE(started_at, ts) ASC, id ASC LIMIT 20`,

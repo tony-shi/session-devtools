@@ -130,7 +130,7 @@ async function callLlmOnce(prompt: string, cfg: DigestCfg): Promise<string> {
     signal: AbortSignal.timeout(120_000),
   };
 
-  // Bun supports proxy via env automatically; no special handling needed
+  // Node fetch supports proxy via env automatically; no special handling needed
   const res = await fetch(`${cfg.base_url}/v1/messages`, fetchOptions);
   if (!res.ok) {
     const body = await res.text();

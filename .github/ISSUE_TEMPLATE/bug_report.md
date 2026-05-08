@@ -19,8 +19,8 @@ What you expected to happen.
 
 **Environment**
 - OS: [e.g. macOS 14, Ubuntu 22.04]
-- Bun version: [run `bun --version`]
+- Node.js version: [run `node --version`]
 - Session source: [Claude Code / Codex CLI / Gemini CLI]
 
 **Logs**
-Paste any relevant server logs (run with `bun run dev` and check terminal output).
+Paste any relevant server logs (run with `npm run dev` and check terminal output).

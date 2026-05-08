@@ -10,7 +10,7 @@
   "workspaces": ["packages/*", "client"],
   "scripts": {
     "dev": "bash scripts/setup-env.sh && concurrently \"npm run server:dev\" \"npm run client:dev\"",
-    "server:dev": "server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json --watch server/main.ts",
+    "server:dev": "server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json server/main.ts",
     "client:dev": "cd client && bun run dev",
     "build": "cd client && bun run build",
     "start": "bash scripts/setup-env.sh && server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json server/main.ts",
