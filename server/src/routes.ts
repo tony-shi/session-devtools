@@ -1,12 +1,7 @@
 import { getDb } from "./db";
 import { backfillDigests, findDatesMissingDigest, generateDigest } from "./digest";
-import {
-  getManagedProxyStatus,
-  readClaudeSettingsEnv,
-  startManagedProxy,
-  stopManagedProxy,
-} from "./proxy/managed";
-import { PATHS as PROXY_PATHS } from "./proxy/config";
+import { readSettings } from "./proxy-v2/settings";
+import { PROXY_SERVER_PATHS } from "./proxy-v2/paths";
 import { runSync, runSyncForDate } from "./sync";
 
 // Track dates currently being generated to avoid duplicate LLM calls
@@ -546,9 +541,9 @@ export async function handleRequest(req: Request): Promise<Response | null> {
   if (path === "/api/proxy/whitelist" && req.method === "GET") {
     const { existsSync, readFileSync } = await import("node:fs");
     let hosts: string[] = [];
-    if (existsSync(PROXY_PATHS.mitmHostsFile)) {
+    if (existsSync(PROXY_SERVER_PATHS.mitmHostsFile)) {
       try {
-        const raw = JSON.parse(readFileSync(PROXY_PATHS.mitmHostsFile, "utf8"));
+        const raw = JSON.parse(readFileSync(PROXY_SERVER_PATHS.mitmHostsFile, "utf8"));
         if (Array.isArray(raw.hosts)) hosts = raw.hosts;
       } catch {}
     }
@@ -559,91 +554,53 @@ export async function handleRequest(req: Request): Promise<Response | null> {
     const body = await req.json().catch(() => null);
     if (!body || !Array.isArray(body.hosts)) return json({ error: "invalid body" }, 400);
     const { mkdirSync, writeFileSync } = await import("node:fs");
-    mkdirSync(PROXY_PATHS.home, { recursive: true, mode: 0o700 });
+    mkdirSync(PROXY_SERVER_PATHS.home, { recursive: true, mode: 0o700 });
     const userHosts = (body.hosts as string[]).filter((h) => h !== "api.anthropic.com");
-    writeFileSync(PROXY_PATHS.mitmHostsFile, JSON.stringify({ hosts: userHosts }, null, 2) + "\n");
+    writeFileSync(PROXY_SERVER_PATHS.mitmHostsFile, JSON.stringify({ hosts: userHosts }, null, 2) + "\n");
     return json({ ok: true, hosts: userHosts });
   }
 
-  // ── Proxy 安装管理 API ────────────────────────────────────────────────────────
+  // ── Proxy 安装管理 API（已迁移至 proxy-v2）────────────────────────────────────
 
-  // 查询当前安装状态（preflight + daemon health + settings 检测）
+  // 查询当前状态（委托给 v2 controller）
   if (path === "/api/proxy/setup/status" && req.method === "GET") {
-    return json(await getManagedProxyStatus());
+    const { proxyV2Controller } = await import("./proxy-v2/controller");
+    return json(proxyV2Controller.getSnapshot());
   }
 
-  // 读取 settings.json env 块的辅助函数（供 install/start/uninstall 子进程继承）
-  const loadSettingsEnv = async (): Promise<Record<string, string>> => {
-    return readClaudeSettingsEnv();
-  };
-
-  // 执行安装（dry-run 可选）
+  // 安装 = 启动 v2 proxy（v2 的 prepareForStart 负责写 settings）
   if (path === "/api/proxy/setup/install" && req.method === "POST") {
-    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    const dryRun = body.dryRun === true;
-    const { spawn } = await import("node:child_process");
-    const { join } = await import("node:path");
-
-    const scriptPath = join(import.meta.dir, "proxy/cli/install.ts");
-    const args = ["run", scriptPath];
-    if (dryRun) args.push("--dry-run");
-
-    // 合并 settings.json env，让安装器能看到用户已有的代理配置
-    const settingsEnv = await loadSettingsEnv();
-    const childEnv = { ...settingsEnv, ...process.env };
-
-    const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
-      const child = spawn("bun", args, { env: childEnv, stdio: ["ignore", "pipe", "pipe"] }) as any;
-      let out = "";
-      child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
-      child.stderr?.on("data", (d: Buffer) => (out += d.toString()));
-      child.on("close", (code: number) => resolve({ ok: code === 0, output: out }));
-    });
-    if (result.ok && !dryRun) {
-      const started = await startManagedProxy();
-      result.output += started.ok
-        ? `\n[managed] proxy 已由 dashboard 托管启动，PID=${started.pid ?? "unknown"}\n`
-        : `\n[managed] proxy 托管启动失败：${started.reason ?? "unknown"}\n`;
-    }
-    return json(result);
+    const { proxyV2Controller } = await import("./proxy-v2/controller");
+    const snap = await proxyV2Controller.setTarget("RUNNING");
+    return json({ ok: snap.phase === "running", output: snap.log.join("\n"), snapshot: snap });
   }
 
-  // 执行卸载
+  // 卸载 = 停止 v2 proxy（v2 的 reconcileToStopped 负责还原 settings）
   if (path === "/api/proxy/setup/uninstall" && req.method === "POST") {
-    const { spawn } = await import("node:child_process");
-    const { join } = await import("node:path");
-
-    await stopManagedProxy();
-
-    const scriptPath = join(import.meta.dir, "proxy/cli/uninstall.ts");
-    const settingsEnv = await loadSettingsEnv();
-    const childEnv = { ...settingsEnv, ...process.env };
-
-    const result = await new Promise<{ ok: boolean; output: string }>((resolve) => {
-      const child = spawn("bun", ["run", scriptPath], { env: childEnv, stdio: ["ignore", "pipe", "pipe"] }) as any;
-      let out = "";
-      child.stdout?.on("data", (d: Buffer) => (out += d.toString()));
-      child.stderr?.on("data", (d: Buffer) => (out += d.toString()));
-      child.on("close", (code: number) => resolve({ ok: code === 0, output: out }));
-    });
-    return json(result);
+    const { proxyV2Controller } = await import("./proxy-v2/controller");
+    const snap = await proxyV2Controller.setTarget("STOPPED");
+    return json({ ok: snap.phase === "idle", output: snap.log.join("\n"), snapshot: snap });
   }
 
-  // 启动 dashboard 托管 proxy（仅构建 + 启动，不写 settings）
+  // 启动
   if (path === "/api/proxy/setup/start" && req.method === "POST") {
-    return json(await startManagedProxy());
+    const { proxyV2Controller } = await import("./proxy-v2/controller");
+    const snap = await proxyV2Controller.setTarget("RUNNING");
+    return json(snap);
   }
 
-  // 停止 dashboard 托管 proxy；如果发现旧版本遗留进程占用配置端口，也会尝试停止。
+  // 停止
   if (path === "/api/proxy/setup/stop" && req.method === "POST") {
-    return json(await stopManagedProxy());
+    const { proxyV2Controller } = await import("./proxy-v2/controller");
+    const snap = await proxyV2Controller.setTarget("STOPPED");
+    return json(snap);
   }
 
   // 运行 preflight 检查（不写盘）
-  // preflight 内部自动读取 managed / settings / shell 三层，无需在此合并。
   if (path === "/api/proxy/setup/preflight" && req.method === "GET") {
-    const { runPreflight } = await import("./proxy/preflight");
-    const portArg = Number(q.get("port") ?? process.env.API_DASHBOARD_PROXY_PORT ?? 38421);
+    const { runPreflight } = await import("./proxy-v2/preflight");
+    const { FIXED_PORT } = await import("./proxy-v2/port");
+    const portArg = Number(q.get("port") ?? FIXED_PORT);
     const report = await runPreflight({ ourPort: portArg });
     return json(report);
   }

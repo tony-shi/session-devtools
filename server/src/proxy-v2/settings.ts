@@ -12,7 +12,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { PATHS } from "../proxy/config";   // 仍然用 PATHS.caCert（CA 文件由 proxy server 管）
+import { PROXY_SERVER_PATHS as PATHS } from "./paths";
 import { V2_PATHS } from "./paths";
 
 const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");

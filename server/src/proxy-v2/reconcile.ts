@@ -5,7 +5,7 @@
 // - kill 与 restore 完全解耦：哪怕端口上是非我们的进程没敢杀，settings 也照样要还原
 //   （否则 Claude Code 仍指向那个外部进程，污染未消除）
 // - prepareForStart 失败时调用方应当立刻 reconcileToStopped 自动 rollback
-import { runPreflight } from "../proxy/preflight";
+import { runPreflight } from "./preflight";
 import { isActive, markActive, restoreSettings, injectSettings } from "./settings";
 import { killByPort } from "./runner";
 import { FIXED_PORT } from "./port";
@@ -138,7 +138,7 @@ export async function prepareForStart(log: (msg: string) => void = noop): Promis
   let caFingerprint: string | undefined;
   try {
     log("[prepare] ensuring local CA certificate...");
-    const ca = await import("../proxy/ca");
+    const ca = await import("./ca");
     const result = await ca.ensureCa();
     caFingerprint = ca.caFingerprint(result.certPem);
     log(`  CA SHA-256: ${caFingerprint}`);

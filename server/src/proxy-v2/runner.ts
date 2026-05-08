@@ -2,17 +2,30 @@
 // 关键决策：每次 spawn 都是一次性的子进程，没有 PID 文件、没有 adopted 概念。
 // "活着"的判定只依赖 /_health 探测，不读任何持久化状态。
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
 import type { Readable } from "node:stream";
 import { readSettings } from "./settings";
 
 const REPO_ROOT = join(import.meta.dir, "../../..");
-const DIST_PATH = join(import.meta.dir, "../proxy/dist/start.mjs");
+const SERVER_ENTRY = join(import.meta.dir, "server/start.ts");
+const BUILD_DIR = join(homedir(), ".api-dashboard", "proxy-v2-runtime");
+const DIST_ENTRY = join(BUILD_DIR, "start.mjs");
+const AMBIENT_PROXY_ENV_KEYS = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy",
+];
 
 // 本地 ChildProcess 接口 —— Bun 的 @types/bun 屏蔽了 node:child_process 的 on/once，
-// 我们用最小可用面 cast，与 server/src/proxy/managed.ts 同样的处理。
+// 我们用最小可用面 cast。
 export interface ManagedChild {
   pid?: number;
   exitCode: number | null;
@@ -30,41 +43,25 @@ export interface SpawnedProxy {
   child: ManagedChild;
 }
 
-// 一次性首装：dist 不存在时 build；存在直接用。
-//
-// 注意（开发者）：改了 server/src/proxy/server/* 等会被打包进 dist 的源码后，
-// bun --watch 不会自动重 build dist（spawn 出来的进程不在 dashboard 的 import 图里）。
-// 必须手动 `bun run proxy:rebuild`，否则 spawn 出来的还是旧 bundle。
-// MVP 用户不会遇到这个 —— 他们安装一次，dist 稳定，永远走 fast path。
-async function ensureBuilt(log: (msg: string) => void): Promise<void> {
-  if (existsSync(DIST_PATH)) return;
-  log("[runner] proxy dist not found, building (bun run proxy:build)...");
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn("bun", ["run", "proxy:build"], {
-      cwd: REPO_ROOT,
-      env: process.env,
-      stdio: "inherit",
-    }) as unknown as ManagedChild;
-    child.on("close", (code: number | null) => {
-      if (code === 0) resolve();
-      else reject(new Error(`proxy:build failed with exit code ${code}`));
-    });
-    child.on("error", reject);
-  });
-}
-
 export async function spawnProxy(port: number, log: (msg: string) => void): Promise<SpawnedProxy> {
-  await ensureBuilt(log);
+  await buildNodeBundle(log);
+  log("[runner] spawning proxy server via node...");
 
-  // settings.json 的 env 块需要传给 proxy 子进程，否则它读不到 ANTHROPIC_BASE_URL / 上游代理等
+  // settings.json 的 env 块需要传给 proxy 子进程，否则它读不到 ANTHROPIC_BASE_URL / 上游代理等。
+  // 但标准代理变量不能传给 proxy 自己：Bun 的 http.request 会读取这些环境变量，
+  // 若子进程继承 HTTP_PROXY=http://127.0.0.1:<ourPort>，HTTP forward 会回打自身并卡死。
+  // proxy server 的出站链路只允许通过 API_DASHBOARD_PROXY_UPSTREAM 显式控制。
   const settingsEnv = readSettings().env;
-  const childEnv = {
+  const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     ...settingsEnv,
     API_DASHBOARD_PROXY_MODE: "managed-v2",
   };
+  for (const key of AMBIENT_PROXY_ENV_KEYS) {
+    delete childEnv[key];
+  }
 
-  const child = spawn("node", [DIST_PATH, "--port", String(port)], {
+  const child = spawn("node", [DIST_ENTRY, "--port", String(port)], {
     cwd: REPO_ROOT,
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
@@ -74,6 +71,27 @@ export async function spawnProxy(port: number, log: (msg: string) => void): Prom
   child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(`[proxy] ${chunk}`));
 
   return { child };
+}
+
+async function buildNodeBundle(log: (msg: string) => void): Promise<void> {
+  mkdirSync(BUILD_DIR, { recursive: true, mode: 0o700 });
+  log("[runner] building proxy-v2 node bundle...");
+
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("bun", ["build", SERVER_ENTRY, "--target=node", "--outfile", DIST_ENTRY], {
+      cwd: REPO_ROOT,
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    }) as unknown as ManagedChild;
+
+    child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(`[proxy:build] ${chunk}`));
+    child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(`[proxy:build] ${chunk}`));
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`proxy-v2 build failed with code ${code}`));
+    });
+    child.on("error", reject);
+  });
 }
 
 /**
@@ -87,7 +105,7 @@ export async function spawnProxy(port: number, log: (msg: string) => void): Prom
  *   - 不允许删除/改名/改语义已有字段
  *   - 真要 break 时，bump `version` 并支持读旧版
  *
- * 实现端：server/src/proxy/server/index.ts 的 `/_health` 端点。任何对该端点 JSON
+ * 实现端：server/src/proxy-v2/server/index.ts 的 `/_health` 端点。任何对该端点 JSON
  * 形状的修改必须同步更新这里的 interface 与下面的 `isOurs()`。
  */
 export interface HealthV1 {

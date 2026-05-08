@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { checkDbHealth, initDb } from "./src/db";
-import { startManagedProxyIfDesired, stopManagedProxyIfRunning } from "./src/proxy/managed";
 import { handleRequest } from "./src/routes";
 import { runSync, startAutoSync } from "./src/sync";
 
@@ -57,19 +56,6 @@ if (health.status === "missing") {
 
 startAutoSync();
 
-// ── Managed proxy ────────────────────────────────────────────────────────────
-// 默认不随 dashboard server 自动拉起 MITM proxy。代理会改写 Claude Code 出口，
-// 必须由用户在管理页显式安装/启动。用户显式启动后会记录 desired state，
-// 使 bun --watch 热重启可以恢复代理；需要旧行为时可设置 API_DASHBOARD_PROXY_AUTOSTART=1。
-
-const PROXY_AUTOSTART = /^(1|true|yes)$/i.test(process.env.API_DASHBOARD_PROXY_AUTOSTART ?? "");
-if (PROXY_AUTOSTART) {
-  const { startManagedProxyIfConfigured } = await import("./src/proxy/managed");
-  await startManagedProxyIfConfigured();
-} else {
-  await startManagedProxyIfDesired();
-}
-
 // ── Proxy v2 boot reconcile ─────────────────────────────────────────────────
 // 覆盖上次 dashboard SIGKILL / 断电 / OS 重启留下的脏状态。
 // 默认快速路径：~/.api-devtools/proxy/active.json 不存在 → 直接返回。
@@ -122,9 +108,7 @@ async function shutdown(signal: string) {
   if (stopping) return;
   stopping = true;
   console.log(`[server] received ${signal}, shutting down...`);
-  // 先停旧 proxy（仅杀子进程，不动 settings）
-  await stopManagedProxyIfRunning();
-  // 再停 v2 controller —— 这步会还原 settings（如果 active.json 存在）。
+  // 停 v2 controller —— 还原 settings（如果 active.json 存在）。
   // 必须 await：dashboard 退出 = 用户当前会话结束 = settings 必须回干净
   try {
     const { proxyV2Controller } = await import("./src/proxy-v2/controller");
