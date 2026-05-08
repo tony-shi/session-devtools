@@ -17,6 +17,7 @@
     "env:init": "[ -f .env ] || cp .env.example .env && echo 'Created .env from .env.example'",
     "proxy:preflight": "bun run server/src/proxy/cli/preflight.ts",
     "proxy:build": "bun build server/src/proxy/cli/start.ts --target=node --format=esm --outfile=server/src/proxy/dist/start.mjs",
+    "proxy:rebuild": "rm -f server/src/proxy/dist/start.mjs && bun run proxy:build",
     "proxy:start": "bun run proxy:build && node server/src/proxy/dist/start.mjs",
     "proxy:install": "bun run proxy:build && bun run server/src/proxy/cli/install.ts",
     "proxy:uninstall": "bun run server/src/proxy/cli/uninstall.ts",

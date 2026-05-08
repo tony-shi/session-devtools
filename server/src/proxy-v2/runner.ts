@@ -30,6 +30,12 @@ export interface SpawnedProxy {
   child: ManagedChild;
 }
 
+// 一次性首装：dist 不存在时 build；存在直接用。
+//
+// 注意（开发者）：改了 server/src/proxy/server/* 等会被打包进 dist 的源码后，
+// bun --watch 不会自动重 build dist（spawn 出来的进程不在 dashboard 的 import 图里）。
+// 必须手动 `bun run proxy:rebuild`，否则 spawn 出来的还是旧 bundle。
+// MVP 用户不会遇到这个 —— 他们安装一次，dist 稳定，永远走 fast path。
 async function ensureBuilt(log: (msg: string) => void): Promise<void> {
   if (existsSync(DIST_PATH)) return;
   log("[runner] proxy dist not found, building (bun run proxy:build)...");
