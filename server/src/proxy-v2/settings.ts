@@ -1,23 +1,26 @@
-// ~/.claude/settings.json 的读/写/备份/还原/注入。
-// 设计目标：每个动作都是一个原子小函数，reconcile 层负责编排。
-import { existsSync, readFileSync, writeFileSync, mkdirSync, cpSync, readdirSync } from "node:fs";
+// ~/.claude/settings.json 的读/写/标记/还原/注入。
+//
+// 设计：backup-only 还原模型。
+//
+//   start: 先 cp 当前 settings → active.json（marker + 还原源）+ history/<ts>.json（归档）
+//          再 apply 注入 patch
+//   stop:  active.json 存在 → 拿它的 originalSettings 写回 settings.json，删 active.json
+//          active.json 不存在 → 不动 settings（"无 marker = 没注入"，避免误删用户配置）
+//
+// 这套不依赖 settings 内容做 marker 判定。即使用户手写过 NODE_EXTRA_CA_CERTS=<我们的 ca.pem>，
+// 我们也不会乱碰他的 settings —— 只有自己写过 active.json 的会话才会动还原。
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { PATHS } from "../proxy/config";
+import { PATHS } from "../proxy/config";   // 仍然用 PATHS.caCert（CA 文件由 proxy server 管）
+import { V2_PATHS } from "./paths";
 
 const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
 
-// 我们注入的 5 个 env key（与旧 proxy 一致，保持兼容）
-export const OUR_ENV_KEYS = [
-  "HTTPS_PROXY",
-  "HTTP_PROXY",
-  "NO_PROXY",
-  "NODE_EXTRA_CA_CERTS",
-  "API_DASHBOARD_PROXY_UPSTREAM",
-] as const;
-
-// NO_PROXY 最小集：只排除 localhost 域名形式，不排除 127.0.0.1 IP
-// （用户可能把自定义网关放在 127.0.0.1:xxxx，需要经过我们 MITM）
+// NO_PROXY 注入的最小集 —— 只豁免 localhost 字符串（不豁免 127.0.0.1，
+// 因为用户的自定义网关常在 127.0.0.1:xxxx，那条流量我们要抓）。
+// undici 不会自动豁免 localhost；不注入会让 Claude Code 调用本地 MCP / 工具时
+// 经过我们 proxy → 浪费 + 可能造成 MITM 自身回环。
 const OUR_NO_PROXY_MIN = ["localhost", "::1"];
 
 export interface SettingsSnapshot {
@@ -42,34 +45,48 @@ function writeSettings(raw: Record<string, unknown>): void {
   writeFileSync(SETTINGS_PATH, JSON.stringify(raw, null, 2) + "\n", { mode: 0o600 });
 }
 
-// 当前 settings 是否含我们注入的痕迹（用于决定是否要还原）
-export function hasInjectionMarker(env: Record<string, string>): boolean {
-  return env.NODE_EXTRA_CA_CERTS === PATHS.caCert ||
-    env.API_DASHBOARD_PROXY_UPSTREAM !== undefined;
+interface ActiveMarker {
+  startedAt: string;       // ISO
+  port: number;
+  // 原 settings.json 的完整文本（保留原始空白/注释/尾逗号等不严格 JSON）
+  // null = 注入前 settings.json 不存在
+  originalSettings: string | null;
 }
 
-// 备份 settings.json，返回备份路径；原文件不存在则返回 null
-export function backupSettings(): string | null {
-  if (!existsSync(SETTINGS_PATH)) return null;
-  mkdirSync(PATHS.backups, { recursive: true, mode: 0o700 });
+// 当前是否处于已注入会话
+export function isActive(): boolean {
+  return existsSync(V2_PATHS.active);
+}
+
+// 写 active.json（marker + 还原源）+ history/<ts>.json（人工兜底归档）。
+// 必须在 inject 之前调用。
+export function markActive(port: number): { activePath: string; historyPath: string | null } {
+  mkdirSync(V2_PATHS.home, { recursive: true, mode: 0o700 });
+  mkdirSync(V2_PATHS.history, { recursive: true, mode: 0o700 });
+
+  const original: string | null = existsSync(SETTINGS_PATH)
+    ? readFileSync(SETTINGS_PATH, "utf8")
+    : null;
+
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const dest = join(PATHS.backups, `settings.json.before-mitm-${ts}`);
-  cpSync(SETTINGS_PATH, dest);
-  return dest;
+  const marker: ActiveMarker = {
+    startedAt: new Date().toISOString(),
+    port,
+    originalSettings: original,
+  };
+
+  // 历史归档：仅在原文件存在时写。意外删除 active.json 时用户能从 history 里手工恢复。
+  let historyPath: string | null = null;
+  if (original !== null) {
+    historyPath = join(V2_PATHS.history, `before-mitm-${ts}.json`);
+    writeFileSync(historyPath, original, { mode: 0o600 });
+  }
+
+  writeFileSync(V2_PATHS.active, JSON.stringify(marker, null, 2) + "\n", { mode: 0o600 });
+  return { activePath: V2_PATHS.active, historyPath };
 }
 
-// 找到最近的 before-mitm 备份（用于 restore）
-function findLatestBackup(): string | null {
-  if (!existsSync(PATHS.backups)) return null;
-  const candidates = readdirSync(PATHS.backups)
-    .filter((n) => n.startsWith("settings.json.before-mitm-"))
-    .map((n) => join(PATHS.backups, n));
-  if (candidates.length === 0) return null;
-  candidates.sort();  // ISO 时间戳天然有序
-  return candidates[candidates.length - 1] ?? null;
-}
-
-// 计算注入后的 env patch（与旧 install.ts buildEnvPatch 等价，但精简为同步）
+// 计算注入 patch
 function buildEnvPatch(existingEnv: Record<string, string>, port: number, caCertPath: string): Record<string, string> {
   const patch: Record<string, string> = {};
   const ourProxy = `http://127.0.0.1:${port}`;
@@ -77,8 +94,8 @@ function buildEnvPatch(existingEnv: Record<string, string>, port: number, caCert
   const currentHttpsProxy = existingEnv.HTTPS_PROXY ?? existingEnv.https_proxy ?? "";
   const isAlreadyOurs = currentHttpsProxy === ourProxy;
 
-  // 已经指向我们 = 重启路径，不动上游
-  // 否则有上游 = 迁移到 API_DASHBOARD_PROXY_UPSTREAM
+  // 已经指向我们 = 重启路径，不动上游；否则有上游 = 迁移到 API_DASHBOARD_PROXY_UPSTREAM
+  // (env var 名暂保留兼容老 proxy server，迁移期同时支持后改)
   if (!isAlreadyOurs && currentHttpsProxy) {
     patch.API_DASHBOARD_PROXY_UPSTREAM = currentHttpsProxy;
   }
@@ -98,51 +115,36 @@ function buildEnvPatch(existingEnv: Record<string, string>, port: number, caCert
   return patch;
 }
 
-// 注入：合并 patch 进 env 块，写盘
 export function injectSettings(port: number): void {
   const { raw, env } = readSettings();
   const patch = buildEnvPatch(env, port, PATHS.caCert);
   writeSettings({ ...raw, env: { ...env, ...patch } });
 }
 
-export interface RestoreResult {
-  // backup    = 直接 cp 整份备份回去（最干净）
-  // key-removal = 没找到备份，按 OUR_ENV_KEYS 删除我们的痕迹（fallback）
-  // no-change = 当前没有注入痕迹，无需操作
-  method: "backup" | "key-removal" | "no-change";
-}
+export type RestoreOutcome =
+  | { kind: "restored-from-active"; originalExisted: boolean }
+  | { kind: "no-active-marker" };
 
-// 还原 settings：优先恢复整份备份，缺失则按 key 删除并回填 upstream
-export function restoreSettings(): RestoreResult {
-  const { raw, env } = readSettings();
-  if (!hasInjectionMarker(env) && !existsSync(SETTINGS_PATH)) {
-    return { method: "no-change" };
+// 还原 settings：仅依赖 active.json。
+// - active.json 不存在 → 我们没注入证据，不动 settings（避免误删用户配置）
+// - active.json 存在但 originalSettings=null → 注入前 settings.json 不存在，删除
+// - active.json 存在且有 originalSettings → 写回原文（保留原始空白/不严格 JSON）
+export function restoreSettings(): RestoreOutcome {
+  if (!existsSync(V2_PATHS.active)) return { kind: "no-active-marker" };
+
+  const marker = JSON.parse(readFileSync(V2_PATHS.active, "utf8")) as ActiveMarker;
+
+  if (marker.originalSettings !== null) {
+    // 直接写原始字节，不做 JSON.parse+stringify —— 原文件可能 JSON 不严格（注释、尾逗号），
+    // re-stringify 会丢失这些细节。
+    const dir = join(homedir(), ".claude");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(SETTINGS_PATH, marker.originalSettings, { mode: 0o600 });
+  } else if (existsSync(SETTINGS_PATH)) {
+    // 原本不存在 settings.json，注入后才有 → 删掉
+    rmSync(SETTINGS_PATH, { force: true });
   }
 
-  const backup = findLatestBackup();
-  if (backup) {
-    cpSync(backup, SETTINGS_PATH);
-    return { method: "backup" };
-  }
-
-  if (!hasInjectionMarker(env)) return { method: "no-change" };
-
-  const upstream = env.API_DASHBOARD_PROXY_UPSTREAM;
-  const newEnv: Record<string, string> = { ...env };
-  for (const k of OUR_ENV_KEYS) delete newEnv[k];
-  if (upstream) {
-    newEnv.HTTPS_PROXY = upstream;
-    newEnv.HTTP_PROXY = upstream;
-  }
-
-  // 摘除我们追加的 NO_PROXY 最小集
-  const orig = env.NO_PROXY ?? "";
-  if (orig) {
-    const filtered = orig.split(",").map((s) => s.trim()).filter((s) => s && !OUR_NO_PROXY_MIN.includes(s));
-    if (filtered.length > 0) newEnv.NO_PROXY = filtered.join(",");
-    else delete newEnv.NO_PROXY;
-  }
-
-  writeSettings({ ...raw, env: newEnv });
-  return { method: "key-removal" };
+  rmSync(V2_PATHS.active, { force: true });
+  return { kind: "restored-from-active", originalExisted: marker.originalSettings !== null };
 }

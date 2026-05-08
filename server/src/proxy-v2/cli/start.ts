@@ -6,8 +6,12 @@
 // - prepareForStart 失败 → 立刻 reconcileToStopped 回 STOPPED
 // - RUNNING 中 proxy 崩 → watchdog 退避重启（1s/2s/4s，3 次失败放弃）
 // - 收到 SIGINT/SIGTERM → reconcileToStopped 后 exit
+
+// TODO：现在的设计是在start/stop下。我理解可以，但是我更希望的是更k8s的controller的风格。
+// reconcile是核心函数。然后controller负责维护状态机，然后按照用户的内存的要求，调用reconcile？
+// 这样的话，逻辑能够更清晰？请分析有这个可能吗？
 import { prepareForStart, reconcileToStopped } from "../reconcile";
-import { spawnProxy, waitForHealth, pingHealth, type ManagedChild } from "../runner";
+import { spawnProxy, waitForHealth, pingHealth, isOurs, type ManagedChild } from "../runner";
 import { FIXED_PORT } from "../port";
 
 const HEALTH_TIMEOUT_MS = 5000;
@@ -25,8 +29,13 @@ async function main() {
   // 0. 先看看端口是否已被占用（旧版残留 / 我们自己上次没退干净 / 别的进程）
   const existing = await pingHealth(FIXED_PORT, 800);
   if (existing?.ok) {
-    log(`[start] ✗ port ${FIXED_PORT} already serving /_health (PID ${existing.pid}, mode=${existing.mode})`);
-    log(`[start]   先运行 'bun run proxy-v2:stop' 清理，再重试`);
+    if (isOurs(existing)) {
+      log(`[start] ✗ port ${FIXED_PORT} already serving devtools-proxy (PID ${existing.pid as number})`);
+      log(`[start]   先运行 'bun run proxy-v2:stop' 清理，再重试`);
+    } else {
+      log(`[start] ✗ port ${FIXED_PORT} already serving HTTP but not our service (mode=${String(existing.mode)})`);
+      log(`[start]   端口被外部进程占用，请手动检查：lsof -i:${FIXED_PORT}`);
+    }
     process.exit(1);
   }
 

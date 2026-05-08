@@ -70,15 +70,42 @@ export async function spawnProxy(port: number, log: (msg: string) => void): Prom
   return { child };
 }
 
-export interface HealthResponse {
+/**
+ * /_health 响应契约 —— VERSION-STABLE。
+ *
+ * reconcile / killByPort / start preempt-check 等所有路径靠 `service` 字段判定
+ * "端口上的进程是不是我们家的"。这是误杀的硬防线。
+ *
+ * 修改原则：
+ *   - 只允许新增可选字段
+ *   - 不允许删除/改名/改语义已有字段
+ *   - 真要 break 时，bump `version` 并支持读旧版
+ *
+ * 实现端：server/src/proxy/server/index.ts 的 `/_health` 端点。任何对该端点 JSON
+ * 形状的修改必须同步更新这里的 interface 与下面的 `isOurs()`。
+ */
+export interface HealthV1 {
+  service: "session-devtools-proxy";   // 唯一服务标识；isOurs 的硬条件
+  version: 1;
   ok: boolean;
-  pid?: number;
-  port?: number;
-  mode?: string;
-  uptime?: number;
+  pid: number;
+  port: number;
+  mode: "managed" | "managed-v2" | "standalone";
+  upstream: "configured" | "none";
+  uptime: number;
+  requestCount: number;
 }
 
-export function pingHealth(port: number, timeoutMs = 1500): Promise<HealthResponse | null> {
+// pingHealth 返回的是 server 给的任意 JSON（可能是老版本、可能 shape 不匹配）。
+// 用宽松类型 Record<string, unknown>，让 isOurs 通过 service 字段做硬判定。
+export type LooseHealth = Record<string, unknown>;
+
+export function isOurs(health: LooseHealth | null | undefined): boolean {
+  if (!health || typeof health !== "object") return false;
+  return health.service === "session-devtools-proxy";
+}
+
+export function pingHealth(port: number, timeoutMs = 1500): Promise<LooseHealth | null> {
   return new Promise((resolve) => {
     const req = http.get(`http://127.0.0.1:${port}/_health`, (res) => {
       let buf = "";
@@ -94,7 +121,7 @@ export function pingHealth(port: number, timeoutMs = 1500): Promise<HealthRespon
 }
 
 // 拉起 proxy 后等它健康；带轮询，避免单次探测过早判失败
-export async function waitForHealth(port: number, totalTimeoutMs: number): Promise<HealthResponse | null> {
+export async function waitForHealth(port: number, totalTimeoutMs: number): Promise<LooseHealth | null> {
   const deadline = Date.now() + totalTimeoutMs;
   while (Date.now() < deadline) {
     const h = await pingHealth(port, 500);
@@ -128,11 +155,28 @@ export async function waitPortReleased(port: number, timeoutMs = 2000): Promise<
   return !(await findListeningPid(port));
 }
 
-export async function killByPort(port: number, log: (msg: string) => void): Promise<{ killed: boolean; pid?: number; method?: "SIGTERM" | "SIGKILL" }> {
-  const pid = await findListeningPid(port);
-  if (!pid) return { killed: false };
+export interface KillByPortResult {
+  killed: boolean;
+  pid?: number;
+  method?: "SIGTERM" | "SIGKILL";
+  // 没杀的具体原因，调用方据此决定 warning 文案
+  reason?: "no-listener" | "external-process" | "kill-timeout";
+}
 
-  log(`[runner] sending SIGTERM to proxy PID ${pid} on port ${port}`);
+// 杀我们家的 proxy。识别"我们家"的硬条件是 /_health 返回 service: "session-devtools-proxy"。
+// 端口上是别的进程时不动手，只返回 reason: "external-process" 让调用方报 warning。
+export async function killByPort(port: number, log: (msg: string) => void): Promise<KillByPortResult> {
+  const pid = await findListeningPid(port);
+  if (!pid) return { killed: false, reason: "no-listener" };
+
+  // 端口有 listener，先 ping /_health 校验 service 字段
+  const health = await pingHealth(port, 800);
+  if (!isOurs(health)) {
+    log(`[runner] ✗ port ${port} held by PID ${pid}, /_health does not advertise service="session-devtools-proxy" — refusing to kill`);
+    return { killed: false, pid, reason: "external-process" };
+  }
+
+  log(`[runner] sending SIGTERM to devtools proxy PID ${pid} on port ${port}`);
   try { process.kill(pid, "SIGTERM"); } catch { /* may have already died */ }
   if (await waitPortReleased(port, 1500)) return { killed: true, pid, method: "SIGTERM" };
 
@@ -140,5 +184,5 @@ export async function killByPort(port: number, log: (msg: string) => void): Prom
   try { process.kill(pid, "SIGKILL"); } catch { /* same */ }
   if (await waitPortReleased(port, 1500)) return { killed: true, pid, method: "SIGKILL" };
 
-  return { killed: false, pid };
+  return { killed: false, pid, reason: "kill-timeout" };
 }

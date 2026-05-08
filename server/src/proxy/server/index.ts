@@ -54,11 +54,18 @@ export async function startProxy(opts: StartOptions): Promise<{ close: () => Pro
 
   // 主入口：标准 HTTP 代理协议。
   const proxy = http.createServer((req, res) => {
-    // B3.1: /_health 端点
+    // B3.1: /_health 端点。
+    //
+    // 响应 shape 契约见 server/src/proxy-v2/runner.ts: HealthV1。
+    // 所有 reconcile / killByPort / preempt-check 路径靠 `service` 字段判定
+    // "端口上的进程是不是我们家的"（误杀的硬防线）。
+    // 修改原则：只允许新增可选字段；删除/改名/改语义已有字段必须 bump `version`。
     if (req.url === "/_health" && req.method === "GET") {
       const upstream = process.env.API_DASHBOARD_PROXY_UPSTREAM;
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
+        service: "session-devtools-proxy",
+        version: 1,
         ok: true,
         listening: true,
         upstream: upstream ? "configured" : "none",
