@@ -2,17 +2,16 @@
 // 关键决策：每次 spawn 都是一次性的子进程，没有 PID 文件、没有 adopted 概念。
 // "活着"的判定只依赖 /_health 探测，不读任何持久化状态。
 import { spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import http from "node:http";
 import type { Readable } from "node:stream";
 import { readSettings } from "./settings";
 
-const REPO_ROOT = join(import.meta.dirname, "../../..");
+const SERVER_ROOT = join(import.meta.dirname, "../..");
 const SERVER_ENTRY = join(import.meta.dirname, "server/start.ts");
-const BUILD_DIR = join(homedir(), ".api-dashboard", "proxy-v2-runtime");
-const DIST_ENTRY = join(BUILD_DIR, "start.mjs");
+const TSX_BIN = join(SERVER_ROOT, "node_modules/.bin/tsx");
+const TSCONFIG = join(SERVER_ROOT, "tsconfig.node.json");
 const AMBIENT_PROXY_ENV_KEYS = [
   "HTTP_PROXY",
   "HTTPS_PROXY",
@@ -43,8 +42,14 @@ export interface SpawnedProxy {
 }
 
 export async function spawnProxy(port: number, log: (msg: string) => void): Promise<SpawnedProxy> {
-  await buildNodeBundle(log);
-  log("[runner] spawning proxy server via node...");
+  log("[runner] spawning proxy server via tsx...");
+
+  if (!existsSync(TSX_BIN)) {
+    throw new Error(`tsx binary not found at ${TSX_BIN}. Run "cd server && npm install" before starting proxy-v2.`);
+  }
+  if (!existsSync(TSCONFIG)) {
+    throw new Error(`tsconfig not found at ${TSCONFIG}`);
+  }
 
   // settings.json 的 env 块需要传给 proxy 子进程，否则它读不到 ANTHROPIC_BASE_URL 等业务配置。
   // 但标准代理变量不能传给 proxy 自己：它们是给 Claude 客户端消费的，不是给本地 proxy server 消费的。
@@ -61,38 +66,19 @@ export async function spawnProxy(port: number, log: (msg: string) => void): Prom
     delete childEnv[key];
   }
 
-  const child = spawn("node", [DIST_ENTRY, "--port", String(port)], {
-    cwd: REPO_ROOT,
+  const child = spawn(TSX_BIN, ["--tsconfig", TSCONFIG, SERVER_ENTRY, "--port", String(port)], {
+    cwd: SERVER_ROOT,
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   }) as unknown as ManagedChild;
 
   child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(`[proxy] ${chunk}`));
   child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(`[proxy] ${chunk}`));
+  child.on("error", (err) => log(`[runner] proxy spawn error: ${err.message}`));
 
   return { child };
 }
 
-async function buildNodeBundle(log: (msg: string) => void): Promise<void> {
-  mkdirSync(BUILD_DIR, { recursive: true, mode: 0o700 });
-  log("[runner] building proxy-v2 node bundle...");
-
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn("bun", ["build", SERVER_ENTRY, "--target=node", "--outfile", DIST_ENTRY], {
-      cwd: REPO_ROOT,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    }) as unknown as ManagedChild;
-
-    child.stdout?.on("data", (chunk: Buffer) => process.stdout.write(`[proxy:build] ${chunk}`));
-    child.stderr?.on("data", (chunk: Buffer) => process.stderr.write(`[proxy:build] ${chunk}`));
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`proxy-v2 build failed with code ${code}`));
-    });
-    child.on("error", reject);
-  });
-}
 
 /**
  * /_health 响应契约 —— VERSION-STABLE。

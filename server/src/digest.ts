@@ -284,6 +284,8 @@ export async function backfillDigests(force = false): Promise<{
         skipped++;
       } else if (result.pair_count === 0) {
         skipped++;
+      } else if (result.mock) {
+        skipped++;
       } else {
         generated++;
         generatedDates.push(date);

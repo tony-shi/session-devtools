@@ -80,6 +80,21 @@ await app.register(
   { origin: "*", methods: ["GET", "POST", "PUT", "OPTIONS"] },
 );
 
+const SILENT_PATHS = new Set([
+  "/api/proxy-v2/status",
+]);
+
+const fastify = app.getHttpAdapter().getInstance();
+fastify.addHook("onResponse", (request: any, reply: any, done: () => void) => {
+  const url: string = request.url.split("?")[0];
+  if (!SILENT_PATHS.has(url)) {
+    const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+    console.log(`[http] ${time} ${reply.statusCode} ${request.method} ${request.url} ${Math.round(reply.elapsedTime)}ms`);
+  }
+  done();
+});
+
+await app.init();
 await app.listen(PORT, "0.0.0.0");
 console.log(
   `[server] Session Dashboard (Node) running at http://localhost:${PORT}`,
