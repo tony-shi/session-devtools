@@ -1,5 +1,6 @@
 import { createHash } from "crypto";
 import { existsSync } from "fs";
+import { readFile } from "fs/promises";
 import { join } from "path";
 import type { ParseResult, Session, Turn } from "./index";
 
@@ -15,7 +16,7 @@ async function readProjectRoot(projectHash: string): Promise<string> {
   const rootFile = join(historyDir, ".project_root");
   if (existsSync(rootFile)) {
     try {
-      return (await Bun.file(rootFile).text()).trim();
+      return (await readFile(rootFile, "utf-8")).trim();
     } catch {
       return "";
     }
@@ -24,7 +25,7 @@ async function readProjectRoot(projectHash: string): Promise<string> {
 }
 
 export async function parseGeminiSession(filePath: string): Promise<ParseResult> {
-  const text = await Bun.file(filePath).text();
+  const text = await readFile(filePath, "utf-8");
   let data: any;
   try {
     data = JSON.parse(text);

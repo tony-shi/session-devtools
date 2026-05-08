@@ -5,7 +5,7 @@ import { getDb, initDigestSchema, serializeWrite } from "./db";
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const DIGEST_CFG_PATH =
-  process.env.DIGEST_CFG ?? join(import.meta.dir, "..", "..", "digest.cfg");
+  process.env.DIGEST_CFG ?? join(import.meta.dirname, "..", "..", "digest.cfg");
 
 const PROMPT_CHAR_BUDGET = parseInt(process.env.DIGEST_PROMPT_BUDGET ?? "1200000");
 
@@ -155,7 +155,7 @@ export async function callLlm(
     } catch (e: any) {
       console.warn(`[digest] LLM attempt ${attempt + 1} failed: ${e?.message}`);
       if (attempt < RETRY_DELAYS.length - 1) {
-        await Bun.sleep(RETRY_DELAYS[attempt] * 1000);
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt] * 1000));
       }
     }
   }

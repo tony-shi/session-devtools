@@ -25,9 +25,9 @@ const CLAUDE_PROJECTS_DIR = join(homedir(), ".claude", "projects");
 const TRAFFIC_LOG = join(homedir(), ".api-dashboard", "proxy", "traffic.jsonl");
 
 // fixture 测试模式：从 server/test/fixtures/context-reconstruction 加载
-// import.meta.dir = server/src/context-ledger/audit → 走 3 级到 server/ → test/...
+// import.meta.dirname = server/src/context-ledger/audit → 走 3 级到 server/ → test/...
 const FIXTURE_BASE = resolve(
-  import.meta.dir,
+  import.meta.dirname,
   "../../../test/fixtures/context-reconstruction",
 );
 export const VALID_FIXTURE_NAMES = [

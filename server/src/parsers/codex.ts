@@ -1,4 +1,5 @@
 import { createHash } from "crypto";
+import { readFile } from "fs/promises";
 import type { ParseResult, Session, Turn } from "./index";
 
 function makeTurnId(sessionId: string, index: number, role: string): string {
@@ -9,7 +10,7 @@ function makeTurnId(sessionId: string, index: number, role: string): string {
 }
 
 export async function parseCodexSession(filePath: string): Promise<ParseResult> {
-  const text = await Bun.file(filePath).text();
+  const text = await readFile(filePath, "utf-8");
   const lines = text.trim().split("\n").filter(Boolean);
 
   const sessionId = filePath.split("/").pop()!.replace(/\.jsonl$/, "");

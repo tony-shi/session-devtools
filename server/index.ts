@@ -22,7 +22,7 @@ function loadEnvFile(path: string) {
   }
 }
 
-const ROOT = join(import.meta.dir, "..");
+const ROOT = join(import.meta.dirname, "..");
 loadEnvFile(join(ROOT, ".env"));
 loadEnvFile(join(ROOT, ".env.local"));
 
@@ -30,7 +30,7 @@ loadEnvFile(join(ROOT, ".env.local"));
 
 const PORT = parseInt(process.env.PORT ?? "5051");
 const IS_PROD = process.env.NODE_ENV === "production";
-const PUBLIC_DIR = join(import.meta.dir, "public");
+const PUBLIC_DIR = join(import.meta.dirname, "public");
 
 // ── DB health check ───────────────────────────────────────────────────────────
 

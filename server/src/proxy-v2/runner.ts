@@ -9,8 +9,8 @@ import http from "node:http";
 import type { Readable } from "node:stream";
 import { readSettings } from "./settings";
 
-const REPO_ROOT = join(import.meta.dir, "../../..");
-const SERVER_ENTRY = join(import.meta.dir, "server/start.ts");
+const REPO_ROOT = join(import.meta.dirname, "../../..");
+const SERVER_ENTRY = join(import.meta.dirname, "server/start.ts");
 const BUILD_DIR = join(homedir(), ".api-dashboard", "proxy-v2-runtime");
 const DIST_ENTRY = join(BUILD_DIR, "start.mjs");
 const AMBIENT_PROXY_ENV_KEYS = [
