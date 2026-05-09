@@ -167,14 +167,16 @@ async function backgroundSync() {
     console.warn(`[sync] Auto-sync failed: ${e?.message}`);
   }
 
-  // Backfill missing digests after sync
+  // Backfill missing digests after sync (only when digest is enabled)
   try {
-    const { backfillDigests } = await import("./digest");
-    const bf = await backfillDigests(false);
-    if (bf.generated > 0) {
-      console.log(
-        `[digest] backfill: generated=${bf.generated} skipped=${bf.skipped} errors=${bf.errors}`,
-      );
+    const { loadDigestCfg, backfillDigests } = await import("./digest");
+    if (loadDigestCfg().enabled) {
+      const bf = await backfillDigests(false);
+      if (bf.generated > 0) {
+        console.log(
+          `[digest] backfill: generated=${bf.generated} skipped=${bf.skipped} errors=${bf.errors}`,
+        );
+      }
     }
   } catch (e: any) {
     console.warn(`[digest] Backfill failed: ${e?.message}`);
