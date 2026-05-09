@@ -82,11 +82,6 @@ interface ProxyRequest {
   duration_ms: number | null;
   req_headers: Record<string, string> | string;
   res_headers: Record<string, string> | string;
-  req_body: string;
-  res_body: string;
-  // B1.3: body 编码标记。base64 时 LazyBody 渲染前先 atob 还原原始字节
-  req_body_encoding?: "utf8" | "base64";
-  res_body_encoding?: "utf8" | "base64";
   sse_event_count: number;
   is_stream: number | boolean;
 }
@@ -129,44 +124,14 @@ function mergeRequests(prev: ProxyRequest[], incoming: ProxyRequest[]): ProxyReq
     });
 }
 
-// ── 懒加载消息体 ──────────────────────────────────────────────────────────────
+// ── 懒加载消息体（按需 fetch） ─────────────────────────────────────────────────
 
-// 解析占位符，返回可读描述
-function parsePlaceholder(value: string, lang: Lang): string | null {
-  // [truncated N bytes] — safeBody() 在 req_body > 256KB 时截断
-  const truncMatch = value.match(/^\[truncated (\d+) bytes\]$/);
-  if (truncMatch) {
-    const bytes = Number(truncMatch[1]);
-    return lang === "zh"
-      ? `[请求体过大（${formatBytes(bytes)}），落盘时已截断；原始流量已完整转发]`
-      : `[Body too large (${formatBytes(bytes)}), truncated on disk; original traffic forwarded intact]`;
-  }
-  // [sse N events, M bytes] — SSE 流式响应汇总
-  const sseMatch = value.match(/^\[sse (\d+) events, (\d+) bytes\]$/);
-  if (sseMatch) {
-    const events = Number(sseMatch[1]);
-    const bytes = Number(sseMatch[2]);
-    if (events === 0) {
-      return lang === "zh"
-        ? `[SSE 流式响应，${formatBytes(bytes)}，未解析到完整事件（可能被提前关闭或格式非标准）]`
-        : `[SSE stream, ${formatBytes(bytes)}, no complete events parsed (possibly closed early or non-standard format)]`;
-    }
-    return lang === "zh"
-      ? `[SSE 流式响应，${events} 个事件，${formatBytes(bytes)}]`
-      : `[SSE stream, ${events} events, ${formatBytes(bytes)}]`;
-  }
-  // [stream N bytes] / [binary N bytes]
-  if (value.startsWith("[stream ") || value.startsWith("[binary ")) return value;
-  return null;
-}
-
-// B1.3: base64 → utf8。失败时 fallback 到原字节描述（不阻塞 UI）。
+// base64 → utf8。失败时 fallback 到原字节描述。
 function decodeBase64ToText(b64: string): { text: string; isBinary: boolean; bytes: number } {
   try {
     const bin = atob(b64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    // 含 NUL / 大量控制符则认为二进制
     let ctrl = 0;
     for (let i = 0; i < Math.min(bytes.length, 256); i++) {
       const c = bytes[i];
@@ -180,45 +145,79 @@ function decodeBase64ToText(b64: string): { text: string; isBinary: boolean; byt
   }
 }
 
-function LazyBody({ value, lang, encoding }: { value: string; lang: Lang; encoding?: "utf8" | "base64" }) {
+function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | "res"; lang: Lang }) {
   const [open, setOpen] = useState(false);
+  const [body, setBody] = useState<{ value: string; encoding: "utf8" | "base64" } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  if (!value || value === "") return <span style={{ color: "#ccc", fontSize: 12 }}>—</span>;
-
-  const placeholder = parsePlaceholder(value, lang);
-  if (placeholder !== null) {
-    return <span style={{ color: "#999", fontSize: 12, fontStyle: "italic" }}>{placeholder}</span>;
-  }
-
-  // base64 编码：先解码，binary 显示提示，文本走正常流程
-  let displayValue = value;
-  let binaryHint: string | null = null;
-  if (encoding === "base64") {
-    const decoded = decodeBase64ToText(value);
-    if (decoded.isBinary) {
-      binaryHint = lang === "zh"
-        ? `[二进制内容，${formatBytes(decoded.bytes)}（已 base64 落盘，原文完整）]`
-        : `[Binary payload, ${formatBytes(decoded.bytes)} (stored as base64, original intact)]`;
-    } else {
-      displayValue = decoded.text;
+  const handleOpen = async () => {
+    setOpen(true);
+    if (!body && !error && !loading) {
+      setLoading(true);
+      try {
+        const res = await fetch(`/api/proxy/requests/${requestId}/body`);
+        const data = await res.json();
+        if (data.error === "file_deleted") {
+          setError(lang === "zh" ? "原始日志文件已被删除" : "Original log file has been deleted");
+        } else if (data.error) {
+          setError(data.error);
+        } else {
+          const value = kind === "req" ? (data.req_body ?? "") : (data.res_body ?? "");
+          const encoding = kind === "req" ? (data.req_body_encoding ?? "utf8") : (data.res_body_encoding ?? "utf8");
+          setBody({ value, encoding });
+        }
+      } catch (e) {
+        setError(String(e));
+      }
+      setLoading(false);
     }
-  }
-
-  if (binaryHint) {
-    return <span style={{ color: "#999", fontSize: 12, fontStyle: "italic" }}>{binaryHint}</span>;
-  }
+  };
 
   if (!open) {
-    const preview = displayValue.length > 80 ? displayValue.slice(0, 80) + "…" : displayValue;
     return (
       <button
-        onClick={() => setOpen(true)}
-        style={{ background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", width: "100%" }}
+        onClick={handleOpen}
+        style={{ background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
       >
-        <span style={{ fontSize: 11, color: "#999", fontFamily: "monospace" }}>{preview}</span>
-        <span style={{ marginLeft: 6, fontSize: 10, color: "#007aff" }}>{t("loadBody", lang)}</span>
+        <span style={{ fontSize: 10, color: "#007aff" }}>{t("loadBody", lang)}</span>
       </button>
     );
+  }
+
+  if (loading) {
+    return <span style={{ color: "#999", fontSize: 12 }}>{t("loading", lang)}</span>;
+  }
+
+  if (error) {
+    return <span style={{ color: "#999", fontSize: 12, fontStyle: "italic" }}>{error}</span>;
+  }
+
+  if (!body || body.value === "") {
+    return <span style={{ color: "#ccc", fontSize: 12 }}>—</span>;
+  }
+
+  // SSE / stream placeholder（legacy）
+  const sseMatch = body.value.match(/^\[sse (\d+) events, (\d+) bytes\]$/);
+  if (sseMatch) {
+    const events = Number(sseMatch[1]);
+    const bytes = Number(sseMatch[2]);
+    const msg = lang === "zh"
+      ? `[SSE 流式响应，${events} 个事件，${formatBytes(bytes)}]`
+      : `[SSE stream, ${events} events, ${formatBytes(bytes)}]`;
+    return <span style={{ color: "#999", fontSize: 12, fontStyle: "italic" }}>{msg}</span>;
+  }
+
+  let displayValue = body.value;
+  if (body.encoding === "base64") {
+    const decoded = decodeBase64ToText(body.value);
+    if (decoded.isBinary) {
+      const msg = lang === "zh"
+        ? `[二进制内容，${formatBytes(decoded.bytes)}（已 base64 落盘，原文完整）]`
+        : `[Binary payload, ${formatBytes(decoded.bytes)} (stored as base64, original intact)]`;
+      return <span style={{ color: "#999", fontSize: 12, fontStyle: "italic" }}>{msg}</span>;
+    }
+    displayValue = decoded.text;
   }
 
   let pretty = displayValue;
@@ -289,7 +288,7 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
         </DetailSection>
 
         <DetailSection title={t("reqBody", lang)}>
-          <LazyBody value={req.req_body} lang={lang} encoding={req.req_body_encoding} />
+          <LazyBody requestId={req.id} kind="req" lang={lang} />
         </DetailSection>
 
         <DetailSection title={t("resHeaders", lang)}>
@@ -297,7 +296,7 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
         </DetailSection>
 
         <DetailSection title={t("resBody", lang)}>
-          <LazyBody value={req.res_body} lang={lang} encoding={req.res_body_encoding} />
+          <LazyBody requestId={req.id} kind="res" lang={lang} />
         </DetailSection>
       </div>
     </div>

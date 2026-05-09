@@ -1,33 +1,56 @@
 import { Controller, Get, Param, Post, Query, Req, Res } from "@nestjs/common";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { createGunzip } from "node:zlib";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { getDb } from "./db.ts";
-import { syncProxyTraffic } from "./sync.ts";
-
-// 独立后台同步循环：每 5s 把 traffic.jsonl 增量写入 DB。
-// 与 SSE poll 完全解耦，确保 start/stop/query 不被 sync 占用的写锁阻塞。
-let _syncLoopStarted = false;
-export function ensureSyncLoop(): void {
-  if (_syncLoopStarted) return;
-  _syncLoopStarted = true;
-  const run = () => {
-    syncProxyTraffic().catch(() => {}).finally(() => setTimeout(run, 5000));
-  };
-  setTimeout(run, 5000);
-}
+import { getColdIndexProgress } from "./proxy-v2/log/cold-indexer.ts";
 
 function parseJsonField<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
 }
 
+async function readLineFromGzip(filePath: string, offset: number): Promise<string> {
+  const stream = createReadStream(filePath).pipe(createGunzip());
+  let consumed = 0;
+  let buffer = "";
+  for await (const chunk of stream as AsyncIterable<Buffer>) {
+    const chunkLen = chunk.length;
+    if (consumed + chunkLen <= offset) {
+      consumed += chunkLen;
+      continue;
+    }
+    const skipInChunk = Math.max(0, offset - consumed);
+    buffer += chunk.slice(skipInChunk).toString("utf8");
+    const newlineIdx = buffer.indexOf("\n");
+    if (newlineIdx >= 0) return buffer.slice(0, newlineIdx);
+    consumed += chunkLen;
+  }
+  return buffer;
+}
+
+async function readLineFromPlain(filePath: string, offset: number): Promise<string> {
+  const { openSync, readSync, closeSync } = await import("node:fs");
+  const fd = openSync(filePath, "r");
+  try {
+    // Read up to 1MB from offset to find the line
+    const maxRead = 1024 * 1024;
+    const buf = Buffer.alloc(maxRead);
+    const bytesRead = readSync(fd, buf, 0, maxRead, offset);
+    const text = buf.slice(0, bytesRead).toString("utf8");
+    const newlineIdx = text.indexOf("\n");
+    return newlineIdx >= 0 ? text.slice(0, newlineIdx) : text;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 @Controller("api/proxy")
 export class ProxyTrafficController {
-  // ── Proxy sync ────────────────────────────────────────────────────────────────
+  // ── Proxy sync (deprecated — kept for UI compat) ──────────────────────────────
   @Post("sync")
   async proxySync() {
-    ensureSyncLoop();
-    return syncProxyTraffic();
+    return { ok: true, message: "sync is now handled by background workers" };
   }
 
   // ── Proxy requests list ───────────────────────────────────────────────────────
@@ -49,18 +72,60 @@ export class ProxyTrafficController {
     const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
 
     const total = ((db.prepare(`SELECT COUNT(*) as cnt FROM proxy_requests ${where}`).get(params)) as { cnt: number })?.cnt ?? 0;
-    const rows = db.prepare(
-      `SELECT * FROM proxy_requests ${where} ORDER BY COALESCE(started_at, ts) DESC, id DESC LIMIT ? OFFSET ?`,
-    ).all([...params, limit, offset]);
+    const rows = db.prepare(`
+      SELECT id, ts, started_at, sni, method, url, status,
+             bytes_in, bytes_out, duration_ms,
+             req_headers, res_headers, sse_event_count, is_stream
+      FROM proxy_requests ${where}
+      ORDER BY COALESCE(started_at, ts) DESC, id DESC
+      LIMIT ? OFFSET ?
+    `).all([...params, limit, offset]);
 
-    return { requests: rows, total, limit, offset };
+    return { requests: rows, total, limit, offset, indexProgress: getColdIndexProgress() };
+  }
+
+  // ── Proxy request body (lazy fetch from file) ─────────────────────────────────
+  // NOTE: must be declared before requests/:id to avoid route conflict
+  @Get("requests/:id/body")
+  async requestBody(@Param("id") id: string) {
+    const db = getDb();
+    const row = db.prepare(`
+      SELECT jsonl_file, jsonl_byte_offset FROM proxy_requests WHERE id = ?
+    `).get(Number(id)) as { jsonl_file: string; jsonl_byte_offset: number } | undefined;
+    if (!row) return { error: "not_found" };
+
+    if (!row.jsonl_file || !existsSync(row.jsonl_file)) {
+      return { error: "file_deleted", message: "原始日志文件已被删除" };
+    }
+
+    try {
+      const isCold = row.jsonl_file.endsWith(".gz");
+      const line = isCold
+        ? await readLineFromGzip(row.jsonl_file, row.jsonl_byte_offset)
+        : await readLineFromPlain(row.jsonl_file, row.jsonl_byte_offset);
+
+      const rec = JSON.parse(line);
+      return {
+        req_body: rec.reqBody ?? "",
+        res_body: rec.resBody ?? "",
+        req_body_encoding: rec.reqBodyEncoding ?? "utf8",
+        res_body_encoding: rec.resBodyEncoding ?? "utf8",
+      };
+    } catch (e: any) {
+      return { error: "parse_error", message: e?.message };
+    }
   }
 
   // ── Proxy request detail ──────────────────────────────────────────────────────
   @Get("requests/:id")
   requestDetail(@Param("id") id: string) {
     const db = getDb();
-    const row = db.prepare("SELECT * FROM proxy_requests WHERE id = ?").get(Number(id)) as Record<string, unknown> | undefined;
+    const row = db.prepare(`
+      SELECT id, ts, started_at, sni, method, url, status,
+             bytes_in, bytes_out, duration_ms,
+             req_headers, res_headers, sse_event_count, is_stream
+      FROM proxy_requests WHERE id = ?
+    `).get(Number(id)) as Record<string, unknown> | undefined;
     if (!row) throw Object.assign(new Error("not found"), { status: 404 });
     return {
       ...row,
@@ -76,8 +141,6 @@ export class ProxyTrafficController {
     @Req() _req: FastifyRequest,
     @Res() reply: FastifyReply,
   ): void {
-    ensureSyncLoop();
-
     reply.raw.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -106,14 +169,16 @@ export class ProxyTrafficController {
       write(": heartbeat\n\n");
     }, 8000);
 
-    // SSE poll 只读 DB，不触发文件同步——sync 由后台循环独立完成
     const poll = setInterval(() => {
       if (closed) return;
       try {
         const db = getDb();
-        const rows = db.prepare(
-          `SELECT * FROM proxy_requests WHERE id > ? ORDER BY COALESCE(started_at, ts) ASC, id ASC LIMIT 20`,
-        ).all(lastId) as Record<string, unknown>[];
+        const rows = db.prepare(`
+          SELECT id, ts, started_at, sni, method, url, status,
+                 bytes_in, bytes_out, duration_ms,
+                 req_headers, res_headers, sse_event_count, is_stream
+          FROM proxy_requests WHERE id > ? ORDER BY COALESCE(started_at, ts) ASC, id ASC LIMIT 20
+        `).all(lastId) as Record<string, unknown>[];
         for (const row of rows) {
           lastId = row.id as number;
           const data = JSON.stringify({

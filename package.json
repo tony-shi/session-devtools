@@ -26,7 +26,8 @@
     "context:audit:fixtures:full": "server/node_modules/.bin/tsx scripts/context-audit-fixtures-full.ts",
     "reconstruct:list": "server/node_modules/.bin/tsx scripts/reconstruct-parallel.ts list",
     "reconstruct:command": "server/node_modules/.bin/tsx scripts/reconstruct-parallel.ts command",
-    "reconstruct:commands": "server/node_modules/.bin/tsx scripts/reconstruct-parallel.ts commands"
+    "reconstruct:commands": "server/node_modules/.bin/tsx scripts/reconstruct-parallel.ts commands",
+    "migrate:proxy-traffic": "server/node_modules/.bin/tsx scripts/migrate-proxy-traffic.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.9.0",

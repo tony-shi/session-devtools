@@ -56,9 +56,42 @@ if (health.status === "missing") {
 // ── Background sync ───────────────────────────────────────────────────────────
 startAutoSync();
 
-// ── Proxy traffic background sync ────────────────────────────────────────────
-const { ensureSyncLoop } = await import("./src/proxy-traffic.controller.ts");
-ensureSyncLoop();
+// ── Proxy traffic workers ────────────────────────────────────────────────────
+{
+  const { PROXY_SERVER_PATHS } = await import("./src/proxy-v2/paths.ts");
+  const { getDb } = await import("./src/db.ts");
+
+  // Step 2: 清理 cache 历史记录（上次关机时 sync 状态已丢失，cache 必须重新同步）
+  // 只删 jsonl_file = trafficLog（确定是 cache 阶段的实时预览），不删 jsonl_file=''
+  // （那是未迁移的存量数据，body 接口会优雅返回 file_deleted，不应在此一刀砍掉）
+  try {
+    const db = getDb();
+    getDb().prepare("DELETE FROM proxy_requests WHERE jsonl_file = ?")
+      .run(PROXY_SERVER_PATHS.trafficLog);
+    // 提示：如果存量数据的 jsonl_file='' 且 indexed_cold_files 为空，说明用户未跑迁移脚本
+    const legacyCount = (db.prepare("SELECT COUNT(*) as n FROM proxy_requests WHERE jsonl_file = ''").get() as { n: number }).n;
+    const coldIndexed = (db.prepare("SELECT COUNT(*) as n FROM indexed_cold_files").get() as { n: number }).n;
+    if (legacyCount > 0 && coldIndexed === 0) {
+      console.warn(`[proxy] ${legacyCount} legacy records with empty jsonl_file — body fetch will return file_deleted. Run "npm run migrate:proxy-traffic" to rebuild.`);
+    }
+  } catch { /* 表可能还未建，忽略 */ }
+
+  // Step 3: 启动 RotationWorker（先处理未压缩中间态）
+  const { startRotationWorker } = await import("./src/proxy-v2/log/rotation-worker.ts");
+  startRotationWorker();
+
+  // Step 4: 启动 CacheSyncWorker
+  const { startCacheSyncWorker } = await import("./src/proxy-v2/log/cache-sync-worker.ts");
+  startCacheSyncWorker();
+
+  // Step 5: 启动 ColdIndexerWorker
+  const { startColdIndexer } = await import("./src/proxy-v2/log/cold-indexer.ts");
+  startColdIndexer();
+
+  // Step 6: 启动 FilesystemDiffWorker
+  const { startFilesystemDiffWorker } = await import("./src/proxy-v2/log/filesystem-diff.ts");
+  startFilesystemDiffWorker();
+}
 
 // ── Proxy v2 boot reconcile ───────────────────────────────────────────────────
 try {

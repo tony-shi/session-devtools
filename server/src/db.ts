@@ -170,49 +170,54 @@ export function initProxySchema(): void {
   const db = getDb();
   db.exec(`
     CREATE TABLE IF NOT EXISTS proxy_requests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ts TEXT NOT NULL,
-      started_at TEXT,
-      sni TEXT NOT NULL,
-      method TEXT NOT NULL DEFAULT 'GET',
-      url TEXT NOT NULL,
-      status INTEGER,
-      bytes_in INTEGER DEFAULT 0,
-      bytes_out INTEGER DEFAULT 0,
-      duration_ms INTEGER,
-      req_headers TEXT DEFAULT '{}',
-      res_headers TEXT DEFAULT '{}',
-      req_body TEXT DEFAULT '',
-      res_body TEXT DEFAULT '',
-      req_body_encoding TEXT DEFAULT 'utf8',
-      res_body_encoding TEXT DEFAULT 'utf8',
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts              TEXT NOT NULL,
+      started_at      TEXT,
+      sni             TEXT NOT NULL,
+      method          TEXT NOT NULL DEFAULT 'GET',
+      url             TEXT NOT NULL,
+      status          INTEGER,
+      bytes_in        INTEGER DEFAULT 0,
+      bytes_out       INTEGER DEFAULT 0,
+      duration_ms     INTEGER,
+      req_headers     TEXT DEFAULT '{}',
+      res_headers     TEXT DEFAULT '{}',
       sse_event_count INTEGER DEFAULT 0,
-      is_stream INTEGER DEFAULT 0
+      is_stream       INTEGER DEFAULT 0,
+      jsonl_file        TEXT NOT NULL DEFAULT '',
+      jsonl_byte_offset INTEGER NOT NULL DEFAULT 0
     );
 
-    CREATE INDEX IF NOT EXISTS idx_proxy_ts ON proxy_requests(ts);
-    CREATE INDEX IF NOT EXISTS idx_proxy_sni ON proxy_requests(sni);
-    CREATE INDEX IF NOT EXISTS idx_proxy_status ON proxy_requests(status);
+    CREATE INDEX IF NOT EXISTS idx_proxy_started ON proxy_requests(started_at);
+    CREATE INDEX IF NOT EXISTS idx_proxy_sni     ON proxy_requests(sni);
+    CREATE INDEX IF NOT EXISTS idx_proxy_status  ON proxy_requests(status);
 
-    CREATE TABLE IF NOT EXISTS proxy_sync_state (
-      source_file TEXT PRIMARY KEY,
-      last_line INTEGER DEFAULT 0,
-      synced_at TEXT
+    CREATE TABLE IF NOT EXISTS indexed_cold_files (
+      file_path     TEXT PRIMARY KEY,
+      ts_start      TEXT,
+      ts_end        TEXT,
+      record_count  INTEGER NOT NULL,
+      byte_size     INTEGER NOT NULL,
+      indexed_at    TEXT NOT NULL
     );
+
+    CREATE INDEX IF NOT EXISTS idx_cold_ts ON indexed_cold_files(ts_start, ts_end);
   `);
 
+  // 迁移：为存量 DB 补新字段（幂等）
   const columns = db.prepare("PRAGMA table_info(proxy_requests)").all() as { name: string }[];
   if (!columns.some((c) => c.name === "started_at")) {
     db.exec("ALTER TABLE proxy_requests ADD COLUMN started_at TEXT");
     db.exec("UPDATE proxy_requests SET started_at = ts WHERE started_at IS NULL");
   }
-  if (!columns.some((c) => c.name === "req_body_encoding")) {
-    db.exec("ALTER TABLE proxy_requests ADD COLUMN req_body_encoding TEXT DEFAULT 'utf8'");
+  if (!columns.some((c) => c.name === "jsonl_file")) {
+    db.exec("ALTER TABLE proxy_requests ADD COLUMN jsonl_file TEXT NOT NULL DEFAULT ''");
   }
-  if (!columns.some((c) => c.name === "res_body_encoding")) {
-    db.exec("ALTER TABLE proxy_requests ADD COLUMN res_body_encoding TEXT DEFAULT 'utf8'");
+  if (!columns.some((c) => c.name === "jsonl_byte_offset")) {
+    db.exec("ALTER TABLE proxy_requests ADD COLUMN jsonl_byte_offset INTEGER NOT NULL DEFAULT 0");
   }
-  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_started ON proxy_requests(started_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_file ON proxy_requests(jsonl_file)");
+  // 旧的 body 列（仅存量 DB 可能有，不在新表里 — 留给迁移脚本处理，这里不删）
 }
 
 export function initDigestSchema(): void {

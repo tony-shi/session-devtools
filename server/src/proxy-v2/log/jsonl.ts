@@ -9,9 +9,10 @@
 //
 // B1.1 SSE 流式响应：按 SSE 事件拆行落盘，每事件一条 JSONL。
 // B1.2 JSONL 滚动：单文件 > 100 MB 切分；保留最近 7 天，更早压缩。
-import { appendFileSync, existsSync, mkdirSync, statSync, renameSync, readdirSync, unlinkSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
+import { dirname } from "node:path";
 import { PROXY_SERVER_PATHS as PATHS } from "../paths";
+import { TRAFFIC_CACHE_MAX_BYTES } from "./config";
 
 export type TrafficRecord = {
   ts: string; // ISO
@@ -48,10 +49,6 @@ const ALWAYS_STRIP_REQ_HEADERS = new Set(["proxy-authorization"]);
 // 仅在 REDACT 模式下截断的 header。
 const REDACTABLE_REQ_HEADERS = new Set(["authorization", "x-api-key"]);
 
-// B1.2: 单文件最大体积（100 MB）
-const MAX_FILE_BYTES = 100 * 1024 * 1024;
-// B1.2: 保留最近 N 天的切分文件
-const RETAIN_DAYS = 7;
 
 function ensureDir() {
   const dir = dirname(PATHS.trafficLog);
@@ -78,36 +75,29 @@ function processReqHeaders(h: Record<string, string> | undefined): Record<string
   return out;
 }
 
-// B1.2: 检查是否需要切分，如需要则重命名当前文件，清理过期文件。
+// 检查是否需要切分，如需要则 rename 成带时间戳+分片号的中间态文件。
+// proxy 进程不压缩——压缩由主服务的 rotation-worker 接手。
 function maybeRotate(): void {
   if (!existsSync(PATHS.trafficLog)) return;
   try {
     const stat = statSync(PATHS.trafficLog);
-    if (stat.size < MAX_FILE_BYTES) return;
-    const ts = new Date().toISOString().replace(/[:.]/g, "-");
-    renameSync(PATHS.trafficLog, `${PATHS.trafficLog}.${ts}`);
-    cleanOldRotated();
+    if (stat.size < TRAFFIC_CACHE_MAX_BYTES) return;
+    // 去掉毫秒，生成 "2026-05-09T12-34-56Z" 形式，与 rotation-worker/cache-sync 正则匹配
+    const ts = new Date().toISOString().replace(/\.\d{3}Z$/, "Z").replace(/[:.]/g, "-");
+    let shard = 1;
+    while (
+      existsSync(`${PATHS.trafficLog}.${ts}.${pad4(shard)}`) ||
+      existsSync(`${PATHS.trafficLog}.${ts}.${pad4(shard)}.gz`)
+    ) {
+      shard++;
+    }
+    renameSync(PATHS.trafficLog, `${PATHS.trafficLog}.${ts}.${pad4(shard)}`);
   } catch {
     // 切分失败不影响主流程
   }
 }
 
-// 删除 7 天前的切分文件
-function cleanOldRotated(): void {
-  const dir = dirname(PATHS.trafficLog);
-  const base = "traffic.jsonl.";
-  const cutoff = Date.now() - RETAIN_DAYS * 24 * 60 * 60 * 1000;
-  try {
-    for (const name of readdirSync(dir)) {
-      if (!name.startsWith(base)) continue;
-      const fullPath = join(dir, name);
-      try {
-        const st = statSync(fullPath);
-        if (st.mtimeMs < cutoff) unlinkSync(fullPath);
-      } catch {}
-    }
-  } catch {}
-}
+function pad4(n: number): string { return n.toString().padStart(4, "0"); }
 
 export function writeTraffic(rec: TrafficRecord): void {
   ensureDir();

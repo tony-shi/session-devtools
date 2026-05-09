@@ -1,0 +1,7 @@
+export const TRAFFIC_CACHE_MAX_BYTES = 5 * 1024 * 1024;
+export const TRAFFIC_COLD_MAX_BYTES = 32 * 1024 * 1024;
+export const SYNC_TICK_MS = 200;
+export const FILESYSTEM_DIFF_INTERVAL_MS = 60_000;
+export const ROTATION_WORKER_INTERVAL_MS = 5_000;
+export const COLD_INDEXER_IDLE_MS = 30_000;
+export const SYNC_BATCH_RECORDS = 500;
