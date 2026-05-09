@@ -220,6 +220,56 @@ export function initProxySchema(): void {
   // 旧的 body 列（仅存量 DB 可能有，不在新表里 — 留给迁移脚本处理，这里不删）
 }
 
+export function initV2Schema(): void {
+  const db = getDb();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions_meta_v2 (
+      session_id          TEXT PRIMARY KEY,
+      tool                TEXT NOT NULL,
+      source_file         TEXT NOT NULL,
+
+      file_mtime          REAL NOT NULL,
+      file_size           INTEGER NOT NULL,
+      parser_version      INTEGER NOT NULL,
+      schema_fingerprint  TEXT,
+      source_present      INTEGER NOT NULL DEFAULT 1,
+
+      first_event_at      TEXT,
+      last_event_at       TEXT,
+
+      cwd                 TEXT,
+      project             TEXT,
+      title               TEXT,
+      first_user_message  TEXT,
+
+      event_count         INTEGER NOT NULL DEFAULT 0,
+
+      input_tokens               INTEGER NOT NULL DEFAULT 0,
+      output_tokens              INTEGER NOT NULL DEFAULT 0,
+      cache_creation_tokens      INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens          INTEGER NOT NULL DEFAULT 0,
+      models                     TEXT NOT NULL DEFAULT '[]',
+
+      tool_call_count            INTEGER NOT NULL DEFAULT 0,
+      human_input_count          INTEGER NOT NULL DEFAULT 0,
+
+      claude_code_api_error_count INTEGER NOT NULL DEFAULT 0,  -- Claude Code "system/api_error" events; NOT HTTP errors (those live in proxy_requests.error_class)
+      parser_warnings            TEXT NOT NULL DEFAULT '[]'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sm2_last_event   ON sessions_meta_v2(last_event_at);
+    CREATE INDEX IF NOT EXISTS idx_sm2_first_event  ON sessions_meta_v2(first_event_at);
+    CREATE INDEX IF NOT EXISTS idx_sm2_tool         ON sessions_meta_v2(tool);
+    CREATE INDEX IF NOT EXISTS idx_sm2_source       ON sessions_meta_v2(source_file);
+    CREATE INDEX IF NOT EXISTS idx_sm2_present      ON sessions_meta_v2(source_present);
+  `);
+  // Migrate: rename api_error_count → claude_code_api_error_count (idempotent)
+  const v2cols = db.prepare("PRAGMA table_info(sessions_meta_v2)").all() as { name: string }[];
+  if (v2cols.some((c) => c.name === "api_error_count")) {
+    db.exec("ALTER TABLE sessions_meta_v2 RENAME COLUMN api_error_count TO claude_code_api_error_count");
+  }
+}
+
 export function initDigestSchema(): void {
   const db = getDb();
   db.exec(`

@@ -8,8 +8,9 @@ import {
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import { AppModule } from "./src/app.module.ts";
-import { checkDbHealth, initDb } from "./src/db.ts";
-import { runSync, startAutoSync } from "./src/sync.ts";
+import { checkDbHealth, initDb, initV2Schema } from "./src/db.ts";
+import { runSync, startAutoSync, discoverFiles } from "./src/sync.ts";
+import { startAutoSyncV2 } from "./src/sync-v2.ts";
 
 // ── Load .env (then .env.local overrides) ────────────────────────────────────
 function loadEnvFile(path: string) {
@@ -53,8 +54,12 @@ if (health.status === "missing") {
   initDb();
 }
 
-// ── Background sync ───────────────────────────────────────────────────────────
-startAutoSync();
+// ── Background sync (v1 + v2 share one discoverFiles() call per cycle) ───────
+const _initialFiles = discoverFiles();
+startAutoSync(_initialFiles);
+
+initV2Schema();
+startAutoSyncV2(_initialFiles);
 
 // ── Proxy traffic workers ────────────────────────────────────────────────────
 {

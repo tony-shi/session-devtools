@@ -78,7 +78,7 @@ async function syncFile(
 
 // ── Incremental sync ──────────────────────────────────────────────────────────
 
-export async function runSync(): Promise<{
+export async function runSync(files?: { tool: string; path: string }[]): Promise<{
   synced: number;
   skipped: number;
   errors: number;
@@ -86,10 +86,10 @@ export async function runSync(): Promise<{
   duration_ms: number;
 }> {
   const start = performance.now();
-  const files = discoverFiles();
+  const fileList = files ?? discoverFiles();
   let synced = 0, skipped = 0, errors = 0;
 
-  for (const { tool, path } of files) {
+  for (const { tool, path } of fileList) {
     if (!fileChanged(path)) {
       skipped++;
       continue;
@@ -103,7 +103,7 @@ export async function runSync(): Promise<{
     synced,
     skipped,
     errors,
-    total_files: files.length,
+    total_files: fileList.length,
     duration_ms: Math.round(performance.now() - start),
   };
 }
@@ -155,9 +155,9 @@ export async function runSyncForDate(date: string): Promise<{
 const SYNC_INTERVAL = parseInt(process.env.SESSION_SYNC_INTERVAL ?? "300") * 1000;
 let _syncTimer: ReturnType<typeof setTimeout> | null = null;
 
-async function backgroundSync() {
+async function backgroundSync(initialFiles?: { tool: string; path: string }[]) {
   try {
-    const result = await runSync();
+    const result = await runSync(initialFiles);
     if (result.synced > 0) {
       console.log(
         `[sync] synced=${result.synced} skipped=${result.skipped} errors=${result.errors} (${result.duration_ms}ms)`,
@@ -182,17 +182,12 @@ async function backgroundSync() {
     console.warn(`[digest] Backfill failed: ${e?.message}`);
   }
 
-  scheduleNextSync();
-}
-
-function scheduleNextSync() {
   _syncTimer = setTimeout(backgroundSync, SYNC_INTERVAL);
 }
 
-export function startAutoSync(): void {
+export function startAutoSync(initialFiles?: { tool: string; path: string }[]): void {
   console.log(`[sync] Auto-sync enabled, interval=${SYNC_INTERVAL / 1000}s`);
-  // Run immediately, then schedule
-  backgroundSync();
+  backgroundSync(initialFiles);
 }
 
 export function stopAutoSync(): void {

@@ -5,13 +5,9 @@ import { basename, dirname, join } from "node:path";
 import { getDb } from "./db.ts";
 import { backfillDigests, findDatesMissingDigest, generateDigest } from "./digest.ts";
 import { runSync, runSyncForDate } from "./sync.ts";
+import { parseJsonField } from "./parser-utils.ts";
 
 type SqlParam = string | number | bigint | boolean | null | Uint8Array;
-
-function parseJsonField<T>(value: string | null | undefined, fallback: T): T {
-  if (!value) return fallback;
-  try { return JSON.parse(value) as T; } catch { return fallback; }
-}
 
 // Track dates currently being generated to avoid duplicate LLM calls
 const _generatingDates = new Set<string>();
