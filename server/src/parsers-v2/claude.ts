@@ -37,7 +37,7 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
   let toolCallCount = 0;
   let humanInputCount = 0;
   let apiErrorCount = 0;
-  const modelSet = new Set<string>();
+  const modelCounts = new Map<string, number>();
   const eventTypeSet = new Set<string>();
   const unknownTypes = new Set<string>();
 
@@ -82,7 +82,9 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
     if (t === "assistant" && !rec.isSidechain) { // Claude Code wrapper field — best-effort; may drift silently
       const msg = rec.message;
       if (!msg) continue;
-      if (msg.model) modelSet.add(msg.model);
+      if (msg.model && msg.model !== "<synthetic>") {
+        modelCounts.set(msg.model, (modelCounts.get(msg.model) ?? 0) + 1);
+      }
       const usage = msg.usage ?? {};
       inputTokens += usage.input_tokens ?? 0;
       outputTokens += usage.output_tokens ?? 0;
@@ -115,7 +117,7 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
     output_tokens: outputTokens,
     cache_creation_tokens: cacheCreationTokens,
     cache_read_tokens: cacheReadTokens,
-    models: Array.from(modelSet),
+    models: Array.from(modelCounts.entries()).sort((a, b) => b[1] - a[1]).map(([m]) => m),
     tool_call_count: toolCallCount,
     human_input_count: humanInputCount,
     claude_code_api_error_count: apiErrorCount,

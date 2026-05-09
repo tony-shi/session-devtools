@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { apiV2 } from "./v2/api";
 import { Header } from "./components/Header";
 import { ProxyV2Setup } from "./components/ProxyV2Setup";
 import { SessionList } from "./components/SessionList";
 import { SummaryCards } from "./components/SummaryCards";
+import { SummaryCardsV2 } from "./v2/SummaryCardsV2";
+import { SessionListV2 } from "./v2/SessionListV2";
 import type { SessionsResponse, SummaryData } from "./types";
+import type { DashboardV2, SessionsV2Response } from "./v2/types";
 
 function getInitialDate(): string {
   const hash = window.location.hash.slice(1);
@@ -12,7 +16,7 @@ function getInitialDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-type Tab = "sessions" | "proxy-v2";
+type Tab = "sessions" | "sessions-v2" | "proxy-v2";
 
 export default function App() {
   const [date, setDate] = useState(getInitialDate);
@@ -21,6 +25,12 @@ export default function App() {
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [sessions, setSessions] = useState<SessionsResponse | null>(null);
   const [sessionsLoading, setSessionsLoading] = useState(true);
+
+  // v2 state
+  const [dashboardV2, setDashboardV2] = useState<DashboardV2 | null>(null);
+  const [dashboardV2Loading, setDashboardV2Loading] = useState(true);
+  const [sessionsV2, setSessionsV2] = useState<SessionsV2Response | null>(null);
+  const [sessionsV2Loading, setSessionsV2Loading] = useState(true);
 
   function handleDateChange(newDate: string) {
     setDate(newDate);
@@ -44,6 +54,23 @@ export default function App() {
       .finally(() => setSessionsLoading(false));
   }, [date]);
 
+  useEffect(() => {
+    setDashboardV2Loading(true);
+    setSessionsV2Loading(true);
+    setDashboardV2(null);
+    setSessionsV2(null);
+
+    apiV2.dashboard(date)
+      .then(setDashboardV2)
+      .catch(console.error)
+      .finally(() => setDashboardV2Loading(false));
+
+    apiV2.sessions(date)
+      .then(setSessionsV2)
+      .catch(console.error)
+      .finally(() => setSessionsV2Loading(false));
+  }, [date]);
+
   const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode }[] = [
     {
       id: "sessions",
@@ -52,6 +79,16 @@ export default function App() {
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
             d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+        </svg>
+      ),
+    },
+    {
+      id: "sessions-v2",
+      label: "会话 v2",
+      icon: (
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
         </svg>
       ),
     },
@@ -118,14 +155,19 @@ export default function App() {
           gap: 16,
           minWidth: 0,
         }}>
-          {tab === "sessions" ? (
+          {tab === "sessions" && (
             <>
               <SummaryCards data={summary} loading={summaryLoading} />
               <SessionList data={sessions} loading={sessionsLoading} date={date} />
             </>
-          ) : (
-            <ProxyV2Setup />
           )}
+          {tab === "sessions-v2" && (
+            <>
+              <SummaryCardsV2 data={dashboardV2} loading={dashboardV2Loading} />
+              <SessionListV2 data={sessionsV2} loading={sessionsV2Loading} date={date} />
+            </>
+          )}
+          {tab === "proxy-v2" && <ProxyV2Setup />}
         </main>
       </div>
     </div>
