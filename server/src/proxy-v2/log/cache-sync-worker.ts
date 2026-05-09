@@ -32,8 +32,11 @@ async function insertRecords(records: Array<Record<string, unknown>>): Promise<v
     INSERT INTO proxy_requests
       (ts, started_at, sni, method, url, status, bytes_in, bytes_out, duration_ms,
        req_headers, res_headers, sse_event_count, is_stream,
-       jsonl_file, jsonl_byte_offset)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       jsonl_file, jsonl_byte_offset,
+       session_id, cli_tool, model, req_message_count, req_has_tools,
+       res_input_tokens, res_output_tokens, res_cache_creation_tokens, res_cache_read_tokens,
+       res_stop_reason, error_class)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (let i = 0; i < records.length; i += SYNC_BATCH_RECORDS) {
     const batch = records.slice(i, i + SYNC_BATCH_RECORDS);
@@ -46,6 +49,11 @@ async function insertRecords(records: Array<Record<string, unknown>>): Promise<v
             r.req_headers, r.res_headers,
             r.sse_event_count, r.is_stream ? 1 : 0,
             r.jsonl_file, r.jsonl_byte_offset,
+            r.session_id ?? null, r.cli_tool ?? null, r.model ?? null,
+            r.req_message_count ?? null, r.req_has_tools ?? null,
+            r.res_input_tokens ?? null, r.res_output_tokens ?? null,
+            r.res_cache_creation_tokens ?? null, r.res_cache_read_tokens ?? null,
+            r.res_stop_reason ?? null, r.error_class ?? null,
           );
         }
       })();

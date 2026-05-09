@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from "@nestjs/common";
+import { Controller, Get, Param, Query } from "@nestjs/common";
 import { getDb } from "./db.ts";
 import { runSyncV2 } from "./sync-v2.ts";
 import { getDaySlice, type DaySliceValue } from "./day-slice.ts";
@@ -53,7 +53,9 @@ export class SessionsV2Controller {
       .get(params) as { cnt: number }).cnt;
 
     const rows = db.prepare(
-      `SELECT * FROM sessions_meta_v2 ${where} ORDER BY last_event_at DESC LIMIT ? OFFSET ?`,
+      `SELECT s.*,
+         (SELECT COUNT(*) FROM proxy_requests p WHERE p.session_id = s.session_id) AS proxy_count
+       FROM sessions_meta_v2 s ${where} ORDER BY last_event_at DESC LIMIT ? OFFSET ?`,
     ).all([...params, limit, offset]) as Record<string, unknown>[];
 
     const sessions = rows.map((r) => ({
@@ -110,5 +112,20 @@ export class SessionsV2Controller {
     }
 
     return { date, session_count: rows.length, by_tool: byTool, ...totals };
+  }
+
+  @Get("sessions/:id/proxy")
+  sessionProxy(@Param("id") id: string) {
+    const rows = getDb().prepare(`
+      SELECT id, started_at, method, url, status,
+             model, req_message_count, req_has_tools,
+             res_input_tokens, res_output_tokens,
+             res_cache_creation_tokens, res_cache_read_tokens,
+             res_stop_reason, error_class, duration_ms, is_stream, sse_event_count
+      FROM proxy_requests
+      WHERE session_id = ?
+      ORDER BY started_at
+    `).all(id);
+    return { session_id: id, requests: rows, total: (rows as unknown[]).length };
   }
 }

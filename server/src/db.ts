@@ -217,6 +217,24 @@ export function initProxySchema(): void {
     db.exec("ALTER TABLE proxy_requests ADD COLUMN jsonl_byte_offset INTEGER NOT NULL DEFAULT 0");
   }
   db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_file ON proxy_requests(jsonl_file)");
+
+  // §5 meta columns (idempotent)
+  const colSet = new Set(columns.map((c) => c.name));
+  if (!colSet.has("session_id"))                db.exec("ALTER TABLE proxy_requests ADD COLUMN session_id                TEXT");
+  if (!colSet.has("cli_tool"))                  db.exec("ALTER TABLE proxy_requests ADD COLUMN cli_tool                  TEXT");
+  if (!colSet.has("model"))                     db.exec("ALTER TABLE proxy_requests ADD COLUMN model                     TEXT");
+  if (!colSet.has("req_message_count"))         db.exec("ALTER TABLE proxy_requests ADD COLUMN req_message_count         INTEGER");
+  if (!colSet.has("req_has_tools"))             db.exec("ALTER TABLE proxy_requests ADD COLUMN req_has_tools             INTEGER");
+  if (!colSet.has("res_input_tokens"))          db.exec("ALTER TABLE proxy_requests ADD COLUMN res_input_tokens          INTEGER");
+  if (!colSet.has("res_output_tokens"))         db.exec("ALTER TABLE proxy_requests ADD COLUMN res_output_tokens         INTEGER");
+  if (!colSet.has("res_cache_creation_tokens")) db.exec("ALTER TABLE proxy_requests ADD COLUMN res_cache_creation_tokens INTEGER");
+  if (!colSet.has("res_cache_read_tokens"))     db.exec("ALTER TABLE proxy_requests ADD COLUMN res_cache_read_tokens     INTEGER");
+  if (!colSet.has("res_stop_reason"))           db.exec("ALTER TABLE proxy_requests ADD COLUMN res_stop_reason           TEXT");
+  if (!colSet.has("error_class"))               db.exec("ALTER TABLE proxy_requests ADD COLUMN error_class               TEXT");
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_session ON proxy_requests(session_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_cli     ON proxy_requests(cli_tool)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_model   ON proxy_requests(model)");
   // 旧的 body 列（仅存量 DB 可能有，不在新表里 — 留给迁移脚本处理，这里不删）
 }
 
