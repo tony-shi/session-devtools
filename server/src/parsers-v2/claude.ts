@@ -82,6 +82,11 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
     if (t === "assistant" && !rec.isSidechain) { // Claude Code wrapper field — best-effort; may drift silently
       const msg = rec.message;
       if (!msg) continue;
+      // SYNTHETIC_MODEL = "<synthetic>" is a Claude Code internal constant (messages.ts:300).
+      // It marks locally-generated assistant messages (API errors, interrupts, compaction
+      // placeholders) that never went through the Anthropic API. Filtering by string literal
+      // is intentional — we depend on this Claude Code implementation detail for now.
+      // TODO: replace with Anthropic API contract check (msg.id?.startsWith("msg_")) once validated.
       if (msg.model && msg.model !== "<synthetic>") {
         modelCounts.set(msg.model, (modelCounts.get(msg.model) ?? 0) + 1);
       }
