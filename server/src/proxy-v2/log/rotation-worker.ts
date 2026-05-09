@@ -6,7 +6,7 @@ import { PROXY_SERVER_PATHS as PATHS } from "../paths";
 import { ROTATION_WORKER_INTERVAL_MS } from "./config";
 
 // 匹配中间态文件：traffic.jsonl.<ISO_TS>.<NNNN>（无 .gz 后缀）
-const INTERMEDIATE_RE = /^traffic\.jsonl\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z?\.\d{4}$/;
+const INTERMEDIATE_RE = /^traffic\.jsonl\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\.\d{4}$/;
 
 function listIntermediateFiles(): string[] {
   const dir = dirname(PATHS.trafficLog);

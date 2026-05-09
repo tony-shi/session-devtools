@@ -6,8 +6,8 @@ import { parseTrafficLine } from "../../parsers/proxy-traffic";
 import { getDb, serializeWrite } from "../../db";
 import { indexNow } from "./cold-indexer";
 
-// 匹配中间态和冷文件（用于 inode 查找）
-const ROTATED_RE = /^traffic\.jsonl\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z?\.\d{4}(\.gz)?$/;
+// 匹配旋转后的文件（中间态或已压缩），用于 inode 查找
+const ROTATED_RE = /^traffic\.jsonl\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z\.\d{4}(\.gz)?$/;
 
 // 通过 inode 在目录下找出 proxy 刚 rename 的中间态文件路径
 function findRotatedByInode(ino: number): string | null {

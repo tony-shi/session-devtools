@@ -12,7 +12,7 @@
 import { appendFileSync, existsSync, mkdirSync, statSync, renameSync } from "node:fs";
 import { dirname } from "node:path";
 import { PROXY_SERVER_PATHS as PATHS } from "../paths";
-import { TRAFFIC_CACHE_MAX_BYTES } from "./config";
+import { TRAFFIC_ROTATE_BYTES } from "./config";
 
 export type TrafficRecord = {
   ts: string; // ISO
@@ -81,7 +81,7 @@ function maybeRotate(): void {
   if (!existsSync(PATHS.trafficLog)) return;
   try {
     const stat = statSync(PATHS.trafficLog);
-    if (stat.size < TRAFFIC_CACHE_MAX_BYTES) return;
+    if (stat.size < TRAFFIC_ROTATE_BYTES) return;
     // 去掉毫秒，生成 "2026-05-09T12-34-56Z" 形式，与 rotation-worker/cache-sync 正则匹配
     const ts = new Date().toISOString().replace(/\.\d{3}Z$/, "Z").replace(/[:.]/g, "-");
     let shard = 1;
