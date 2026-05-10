@@ -4,7 +4,6 @@ import type { SessionV2 } from "./types";
 import type { DiffEntry, LlmCall, ModelStats, SessionDrilldown, UserTurn } from "./drilldown-types";
 import { apiV2 } from "./api";
 import {
-  buildMockAgentLoop as _buildMockAgentLoop,
   buildMockAttributedDiff,
   buildMockPayloadSegments, buildMockCallResponse,
   buildMockBridgeEvents, buildTrustMode,
@@ -629,6 +628,30 @@ function SessionOverviewPanel({
       {(() => {
         const sas = drilldown?.subAgents ?? (isMock ? MOCK_SUB_AGENTS : []);
         if (sas.length === 0) return null;
+
+        // Derive spawn/merge context from turns for each sub agent
+        // spawnCall = the LlmCall that has call.subAgent.toolUseId === sa.toolUseId
+        // mergeCall = the call immediately after the spawn call in the same turn
+        interface SAContext {
+          spawnedAt?: { turnId: number; callId: number; callIndex: number };
+          mergedBefore?: { callId: number; callIndex: number };
+          mergeContextDelta?: number;
+        }
+        const saContextMap = new Map<string, SAContext>();
+        for (const turn of turns) {
+          for (let ci = 0; ci < turn.calls.length; ci++) {
+            const call = turn.calls[ci];
+            if (!call.subAgent) continue;
+            const sa = call.subAgent;
+            const mergeCall = turn.calls[ci + 1] ?? null;
+            saContextMap.set(sa.toolUseId, {
+              spawnedAt: { turnId: turn.id, callId: call.id, callIndex: call.indexInTurn },
+              mergedBefore: mergeCall ? { callId: mergeCall.id, callIndex: mergeCall.indexInTurn } : undefined,
+              mergeContextDelta: mergeCall ? mergeCall.significantDelta : undefined,
+            });
+          }
+        }
+
         return (
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
@@ -639,9 +662,18 @@ function SessionOverviewPanel({
               {isMock && <MockBadge />}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {sas.map(sa => (
-                <SubAgentCard key={sa.agentFileId} sa={sa} />
-              ))}
+              {sas.map(sa => {
+                const ctx = saContextMap.get(sa.toolUseId);
+                return (
+                  <SubAgentCard
+                    key={sa.agentFileId}
+                    sa={sa}
+                    spawnedAt={ctx?.spawnedAt}
+                    mergedBefore={ctx?.mergedBefore}
+                    mergeContextDelta={ctx?.mergeContextDelta}
+                  />
+                );
+              })}
             </div>
           </div>
         );
@@ -728,7 +760,12 @@ function ModelBreakdownBlock({
 
 // ─── SubAgentCard ─────────────────────────────────────────────────────────────
 
-function SubAgentCard({ sa }: { sa: SubAgentSummary }) {
+function SubAgentCard({ sa, spawnedAt, mergedBefore, mergeContextDelta }: {
+  sa: SubAgentSummary;
+  spawnedAt?: { turnId: number; callId: number; callIndex: number };
+  mergedBefore?: { callId: number; callIndex: number };
+  mergeContextDelta?: number;
+}) {
   const [expanded, setExpanded] = useState(false);
   const dur = fmtDuration(sa.durationMs);
   return (
@@ -750,6 +787,24 @@ function SubAgentCard({ sa }: { sa: SubAgentSummary }) {
           <div style={{ fontSize: 11, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {sa.description}
           </div>
+          {/* Spawn / merge context */}
+          {(spawnedAt || mergedBefore) && (
+            <div style={{ display: "flex", gap: 8, marginTop: 3, flexWrap: "wrap" }}>
+              {spawnedAt && (
+                <span style={{ fontSize: 9, color: "#6366f1", background: "#eff6ff", borderRadius: 3, padding: "1px 5px", border: "1px solid #c7d2fe" }}>
+                  spawned Turn {spawnedAt.turnId} / Call #{spawnedAt.callIndex}
+                </span>
+              )}
+              {mergedBefore && (
+                <span style={{ fontSize: 9, color: "#059669", background: "#f0fdf4", borderRadius: 3, padding: "1px 5px", border: "1px solid #a7f3d0" }}>
+                  merged before Call #{mergedBefore.callIndex}
+                  {mergeContextDelta !== undefined && mergeContextDelta !== 0 && (
+                    <> · {mergeContextDelta > 0 ? "+" : ""}{fmtK(mergeContextDelta)} ctx</>
+                  )}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", gap: 12, flexShrink: 0 }}>
           {[
@@ -1119,10 +1174,46 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
   );
 }
 
-// ─── Agent Loop mock data types ──────────────────────────────────────────────
+// ─── Agent Loop data types ────────────────────────────────────────────────────
 
-const buildMockAgentLoop = _buildMockAgentLoop;
+// Derives real agent loop data from actual LlmCall fields.
+// Tool names and details require proxy data; tool counts come from real JSONL.
+function buildRealAgentLoop(turn: MockUserTurn): MockAgentLoopData {
+  const toolGroups: MockToolGroup[] = [];
+  const transitions: MockAgentLoopData["transitions"] = [];
 
+  for (let i = 0; i < turn.calls.length; i++) {
+    const c = turn.calls[i];
+    if (c.isCompaction) continue;
+    // We know how many tool calls happened after each LLM call from indexInTurn sequencing,
+    // but tool names are not in the data model without proxy. Emit an opaque group per call
+    // that had tool use (stop_reason === "tool_use").
+    if (c.stopReason === "tool_use" && c.toolCallCount === undefined) {
+      // toolCallCount is a turn-level field, not call-level — skip if unavailable
+    }
+  }
+
+  for (let i = 0; i < turn.calls.length - 1; i++) {
+    const c = turn.calls[i];
+    const next = turn.calls[i + 1];
+    const delta = next.contextSize - c.contextSize;
+    if (Math.abs(delta) < 500) continue;
+    let cause = "incremental";
+    if (c.isCompaction) cause = "Compaction";
+    else if (Math.abs(delta) > 5000) cause = "large tool output";
+    else if (delta > 0) cause = "tool result";
+    transitions.push({ fromCallId: c.id, toCallId: next.id, contextDelta: delta, dominantCause: cause });
+  }
+
+  const lastCall = turn.calls[turn.calls.length - 1];
+  const status: MockAgentLoopData["status"] =
+    !lastCall ? "completed"
+    : lastCall.stopReason === "max_tokens" ? "interrupted"
+    : lastCall.stopReason === "tool_use" ? "continued"
+    : "completed";
+
+  return { toolGroups, transitions, toolSummary: [], status };
+}
 
 // ─── Agent Loop Timeline component ───────────────────────────────────────────
 
@@ -1504,7 +1595,11 @@ function AgentLoopFlow({
 
       {/* ── Lane 2: main agent loop flow ───────────────────── */}
       <div style={{ overflowX: "auto", padding: "0 12px" }}>
-        <div style={{ display: "flex", alignItems: "flex-end", paddingTop: LABEL_H, paddingBottom: 16, gap: 0, minWidth: "fit-content" }}>
+        {/* Outer column: stacks main flow row + per-spawn subagent branch rows */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 0, minWidth: "fit-content" }}>
+
+        {/* ── Main flow row ────────────────────────────────── */}
+        <div style={{ display: "flex", alignItems: "flex-end", paddingTop: LABEL_H, paddingBottom: 8, gap: 0 }}>
 
           {/* User input node */}
           <FlowCallNode kind="user" label="User"
@@ -1516,36 +1611,59 @@ function AgentLoopFlow({
             const isLast = idx === checkpoints.length - 1;
             const isSelectedTrans = selectedTransitionIdx === idx;
             const prevH = idx === 0 ? 48 : checkpoints[idx - 1].callH;
+            // Does the PREVIOUS call have a subagent whose merge lands here?
+            const prevCall = idx > 0 ? checkpoints[idx - 1].call : null;
+            const isMergeTarget = prevCall?.subAgent != null;
 
             return (
               <React.Fragment key={call.id}>
-                {/* D3 bezier arrow */}
+                {/* D3 bezier arrow — tinted green when carrying a merge */}
                 <D3FlowArrow
                   delta={ctxDelta}
                   significant={cp.isSignificant}
                   fromH={prevH}
                   toH={callH}
                   width={CONN_W}
+                  mergeIn={isMergeTarget}
                 />
 
-                {/* Call checkpoint node */}
-                <FlowCallNode
-                  kind={call.isCompaction ? "compaction" : cp.nearLimit ? "danger" : cp.isSignificant ? "significant" : "normal"}
-                  label={`#${call.id}`}
-                  subLabel={fmtK(call.contextSize)}
-                  width={CALL_W}
-                  height={callH}
-                  cacheReadPct={call.contextSize > 0 ? call.cacheRead / call.contextSize : 0}
-                  cacheWritePct={call.contextSize > 0 ? call.cacheWrite / call.contextSize : 0}
-                  stopReason={call.stopReason}
-                  ctxDelta={ctxDelta}
-                  onClick={() => onSelectCall(call)}
-                />
-
-                {/* Sub agent node — shown when this call triggered an Agent tool_use */}
-                {call.subAgent && (
-                  <SubAgentFlowNode sa={call.subAgent} />
-                )}
+                {/* Call checkpoint node — fork badge when spawning a subagent */}
+                <div style={{ position: "relative" }}>
+                  <FlowCallNode
+                    kind={call.isCompaction ? "compaction" : cp.nearLimit ? "danger" : cp.isSignificant ? "significant" : "normal"}
+                    label={`#${call.id}`}
+                    subLabel={fmtK(call.contextSize)}
+                    width={CALL_W}
+                    height={callH}
+                    cacheReadPct={call.contextSize > 0 ? call.cacheRead / call.contextSize : 0}
+                    cacheWritePct={call.contextSize > 0 ? call.cacheWrite / call.contextSize : 0}
+                    stopReason={call.stopReason}
+                    ctxDelta={ctxDelta}
+                    onClick={() => onSelectCall(call)}
+                  />
+                  {/* Fork indicator: small badge on bottom-right of spawn call */}
+                  {call.subAgent && (
+                    <div style={{
+                      position: "absolute", bottom: -2, right: -2,
+                      width: 14, height: 14, borderRadius: "50%",
+                      background: "#6366f1", border: "2px solid #fff",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <span style={{ fontSize: 7, color: "#fff", lineHeight: 1 }}>↓</span>
+                    </div>
+                  )}
+                  {/* Merge indicator: small badge on bottom-left of merge-target call */}
+                  {isMergeTarget && (
+                    <div style={{
+                      position: "absolute", bottom: -2, left: -2,
+                      width: 14, height: 14, borderRadius: "50%",
+                      background: "#059669", border: "2px solid #fff",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <span style={{ fontSize: 7, color: "#fff", lineHeight: 1 }}>↑</span>
+                    </div>
+                  )}
+                </div>
 
                 {/* Transition bridge — height/width from D3 sqrt/linear scales */}
                 {tg && !isLast && (
@@ -1581,7 +1699,84 @@ function AgentLoopFlow({
             subLabel={agentLoop.status}
             width={TERM_W} height={44}
           />
-        </div>
+        </div>{/* end main flow row */}
+
+        {/* ── Sub-agent branch rows (one per spawn call) ──────── */}
+        {checkpoints.map((cp, idx) => {
+          const sa = cp.call.subAgent;
+          if (!sa) return null;
+          const mergeCall = checkpoints[idx + 1]?.call ?? null;
+          // x-offset to align branch start under the spawn call
+          // Each checkpoint consumes: CONN_W + CALL_W (and USER_W for the first).
+          // We accumulate widths up to (but not including) the spawn call.
+          let xOffset = USER_W; // user node width
+          for (let k = 0; k < idx; k++) {
+            xOffset += CONN_W + CALL_W;
+            // add bridge/spacer width
+            const prevTG = agentLoop.toolGroups.find(g => g.afterCallId === checkpoints[k].call.id);
+            const isLastK = k === checkpoints.length - 1;
+            if (!isLastK) {
+              xOffset += prevTG ? Math.round(bridgeWidthScale(prevTG.totalOutputSize)) : 10;
+            }
+          }
+          xOffset += CONN_W; // arrow before the spawn call itself
+
+          return (
+            <div key={`sa-branch-${cp.call.id}`} style={{ display: "flex", alignItems: "center", paddingBottom: 10, marginLeft: xOffset }}>
+              {/* Fork line down from spawn call */}
+              <div style={{ width: CALL_W / 2, display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+                <div style={{ width: 1.5, height: 10, background: "#6366f1", opacity: 0.5 }} />
+              </div>
+              {/* Branch track */}
+              <div style={{
+                border: "1.5px solid #6366f1", borderRadius: 8,
+                background: "#fafafe", padding: "5px 10px",
+                display: "flex", alignItems: "center", gap: 8,
+                minWidth: 0,
+              }}>
+                {/* Lane label */}
+                <span style={{ fontSize: 9, fontWeight: 700, color: "#4338ca", whiteSpace: "nowrap" }}>
+                  {sa.agentType}
+                </span>
+                {/* Run summary */}
+                <span style={{ fontSize: 9, color: "#6366f1", whiteSpace: "nowrap" }}>
+                  {sa.llmCallCount} calls · {sa.toolCallCount} tools
+                </span>
+                <span style={{ fontSize: 9, color: "#9ca3af", whiteSpace: "nowrap" }}>
+                  {fmtDuration(sa.durationMs)}
+                </span>
+                {/* Description */}
+                <span style={{ fontSize: 9, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+                  {sa.description}
+                </span>
+                {/* Result output size */}
+                <span style={{ fontSize: 9, color: "#6366f1", background: "#eff6ff", borderRadius: 3, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
+                  out +{fmtK(sa.totalOutputTokens)}
+                </span>
+              </div>
+              {/* Merge connector back to main lane */}
+              {mergeCall && (
+                <>
+                  <div style={{ width: 20, height: 1.5, background: "#059669", opacity: 0.6, flexShrink: 0 }} />
+                  <div style={{
+                    fontSize: 9, fontWeight: 700, color: "#059669",
+                    background: "#f0fdf4", border: "1px solid #a7f3d0",
+                    borderRadius: 5, padding: "2px 7px", whiteSpace: "nowrap", flexShrink: 0,
+                  }}>
+                    merge → Call #{mergeCall.indexInTurn}
+                    {mergeCall.significantDelta !== 0 && (
+                      <span style={{ marginLeft: 4, color: "#6b7280" }}>
+                        {mergeCall.significantDelta > 0 ? "+" : ""}{fmtK(mergeCall.significantDelta)}
+                      </span>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })}
+
+        </div>{/* end outer column */}
       </div>
 
       {/* ── Transition detail drawer ────────────────────────── */}
@@ -1717,53 +1912,6 @@ function D3ContextStrip({ calls, checkpoints, onSelectCall }: D3ContextStripProp
   );
 }
 
-// ─── SubAgentFlowNode (shown in AgentLoopFlow between call and next bridge) ───
-
-function SubAgentFlowNode({ sa }: { sa: SubAgentSummary }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div style={{ alignSelf: "flex-end", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, marginBottom: 4 }}>
-      {/* Vertical drop line */}
-      <div style={{ width: 2, height: 16, background: "#6366f1", opacity: 0.4 }} />
-      {/* Node */}
-      <div
-        onClick={() => setExpanded(v => !v)}
-        style={{
-          width: 130, borderRadius: 8, cursor: "pointer",
-          background: expanded ? "#e0e7ff" : "#eff6ff",
-          border: "1.5px solid #6366f1",
-          padding: "5px 8px",
-          boxShadow: expanded ? "0 0 0 2px #6366f140" : "none",
-          transition: "box-shadow 0.12s",
-        }}
-        onMouseEnter={e => (e.currentTarget.style.background = "#e0e7ff")}
-        onMouseLeave={e => (e.currentTarget.style.background = expanded ? "#e0e7ff" : "#eff6ff")}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
-          <span style={{ fontSize: 11 }}>🤖</span>
-          <span style={{ fontSize: 9, fontWeight: 700, color: "#4338ca" }}>Sub Agent</span>
-          <span style={{ fontSize: 9, color: "#6366f1", background: "#c7d2fe", borderRadius: 2, padding: "0 3px" }}>{sa.agentType}</span>
-        </div>
-        <div style={{ fontSize: 9, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {sa.description.slice(0, 30)}{sa.description.length > 30 ? "…" : ""}
-        </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 3 }}>
-          <span style={{ fontSize: 8, color: "#9ca3af" }}>{sa.llmCallCount} calls</span>
-          <span style={{ fontSize: 8, color: "#9ca3af" }}>{fmtDuration(sa.durationMs)}</span>
-          <span style={{ fontSize: 8, color: "#9ca3af" }}>+{fmtK(sa.totalOutputTokens)} out</span>
-        </div>
-        {expanded && sa.resultPreview && (
-          <div style={{ marginTop: 6, fontSize: 9, color: "#374151", lineHeight: 1.5, borderTop: "1px solid #c7d2fe", paddingTop: 4, maxHeight: 60, overflow: "hidden" }}>
-            {sa.resultPreview.slice(0, 120)}…
-          </div>
-        )}
-      </div>
-      {/* Return arrow */}
-      <div style={{ width: 2, height: 12, background: "#6366f1", opacity: 0.4 }} />
-    </div>
-  );
-}
-
 // ─── Flow sub-components ──────────────────────────────────────────────────────
 
 type FlowNodeKind = "user" | "normal" | "significant" | "danger" | "compaction" | "terminal-ok" | "terminal-warn" | "terminal-info";
@@ -1848,8 +1996,8 @@ function FlowCallNode({
 }
 
 // D3-powered bezier arrow using linkHorizontal for smooth S-curve transitions
-function D3FlowArrow({ delta, significant, fromH, toH, width }: {
-  delta: number; significant: boolean; fromH: number; toH: number; width: number;
+function D3FlowArrow({ delta, significant, fromH, toH, width, mergeIn = false }: {
+  delta: number; significant: boolean; fromH: number; toH: number; width: number; mergeIn?: boolean;
 }) {
   const H = Math.max(fromH, toH, 20);
   // Anchor midpoints: bottom-center of each node
@@ -1860,10 +2008,12 @@ function D3FlowArrow({ delta, significant, fromH, toH, width }: {
   const mx = width / 2;
   const path = `M 0,${y0} C ${mx},${y0} ${mx},${y1} ${width},${y1}`;
 
-  const color = significant
-    ? (delta > 0 ? "#93c5fd" : "#86efac")
-    : "#e5e7eb";
-  const strokeW = significant ? 2 : 1;
+  const color = mergeIn
+    ? "#4ade80"
+    : significant
+      ? (delta > 0 ? "#93c5fd" : "#86efac")
+      : "#e5e7eb";
+  const strokeW = (significant || mergeIn) ? 2 : 1;
 
   // Arrowhead at target
   const arrowSize = 5;
@@ -2049,16 +2199,16 @@ function TurnViewToggle({ view, onChange }: { view: TurnView; onChange: (v: Turn
 }
 
 function UserTurnDetailPanel({
-  turn, onSelectCall,
-}: { turn: MockUserTurn; onSelectCall: (c: MockLlmCall) => void }) {
+  turn, onSelectCall, isMockSession = false,
+}: { turn: MockUserTurn; onSelectCall: (c: MockLlmCall) => void; isMockSession?: boolean }) {
   const [turnView, setTurnView] = useState<TurnView>("flow");
-  // Inject mock sub agents when calls have none (for UI demo)
+  // Only inject mock sub-agents when we have no real drilldown data at all
   const callsWithSubAgents = turn.calls.map((c, ci) => ({
     ...c,
-    subAgent: c.subAgent ?? attachMockSubAgents(c, turn.id, ci),
+    subAgent: c.subAgent ?? (isMockSession ? attachMockSubAgents(c, turn.id, ci) : null),
   }));
   const enrichedTurn = { ...turn, calls: callsWithSubAgents };
-  const agentLoop = buildMockAgentLoop(enrichedTurn);
+  const agentLoop = buildRealAgentLoop(enrichedTurn);
   const maxCtx = Math.max(...enrichedTurn.calls.map(c => c.contextSize), 1);
   const dur = fmtDuration(turn.durationMs);
 
@@ -2276,9 +2426,20 @@ function UserTurnDetailPanel({
             </span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {turnSubAgents.map(sa => (
-              <SubAgentCard key={sa.agentFileId} sa={sa} />
-            ))}
+            {callsWithSubAgents.map((c, ci) => {
+              if (!c.subAgent) return null;
+              const sa = c.subAgent;
+              const mergeCall = callsWithSubAgents[ci + 1] ?? null;
+              return (
+                <SubAgentCard
+                  key={sa.agentFileId}
+                  sa={sa}
+                  spawnedAt={{ turnId: turn.id, callId: c.id, callIndex: c.indexInTurn }}
+                  mergedBefore={mergeCall ? { callId: mergeCall.id, callIndex: mergeCall.indexInTurn } : undefined}
+                  mergeContextDelta={mergeCall ? mergeCall.significantDelta : undefined}
+                />
+              );
+            })}
           </div>
         </div>
       )}
@@ -2699,9 +2860,24 @@ function LlmCallDetailPanel({
   const [tab, setTab] = useState<CallTab>("incoming");
 
   // Attributed diff ranges (new model)
-  const attrRanges = buildMockAttributedDiff(call);
+  const attrRanges = call.incomingDiff.length > 0 ? call.incomingDiff.map(d => ({
+    id: d.id,
+    changeType: d.changeType as ChangeType,
+    textPreview: d.label,
+    tokens: d.delta,
+    category: d.category,
+    cause: d.cause,
+    confidence: (d.confidence === "High" ? "high" : d.confidence === "Medium" ? "medium" : d.confidence === "Low" ? "low" : "unknown") as ConfidenceLevel,
+    evidenceRefs: d.evidence ? [{ kind: "jsonl" as const, label: d.evidence, detail: d.evidence }] : [],
+  })) : buildMockAttributedDiff(call);
   const payloadSegs = buildMockPayloadSegments(call);
-  const response = buildMockCallResponse(call);
+  const response: import("./drilldown-mock-fill").CallResponse = {
+    textOutput: call.stopReason === "end_turn" || call.stopReason === "stop_sequence" ? "" : "",
+    toolUseBlocks: [],
+    stopReason: call.stopReason ?? "end_turn",
+    outputTokens: call.outputTokens,
+    hasThinking: false,
+  };
   const bridges = buildMockBridgeEvents(call);
   const trustMode = buildTrustMode(call);
 
@@ -3153,7 +3329,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
               <SessionOverviewPanel turns={turns} drilldown={drilldown} onSelectTurn={handleSelectTurn} />
             )}
             {navLevel === "turn" && selectedTurn && !selectedCall && (
-              <UserTurnDetailPanel turn={selectedTurn} onSelectCall={handleSelectCall} />
+              <UserTurnDetailPanel turn={selectedTurn} onSelectCall={handleSelectCall} isMockSession={isMockData} />
             )}
             {navLevel === "call" && selectedCall && (
               <LlmCallDetailPanel call={selectedCall} onSelectEntry={handleSelectEntry} />
