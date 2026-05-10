@@ -91,6 +91,9 @@ export interface SessionDrilldown {
   peakContext: number;
   totalCacheRead: number;
   totalCacheWrite: number;
+  totalFreshIn: number;
+  totalFreshOut: number;
+  systemErrorCount: number;
 
   // true if at least one proxy_requests row is linked to this session
   hasProxyData: boolean;

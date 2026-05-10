@@ -1,0 +1,299 @@
+import { readFileSync, existsSync } from "fs";
+import type { Database } from "better-sqlite3";
+import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData } from "./session-drilldown-types.ts";
+
+// ─── JSONL record shapes (loose, best-effort) ────────────────────────────────
+
+interface JUserEvent {
+  type: "user";
+  isMeta?: boolean;
+  isSidechain?: boolean;
+  message?: { content?: unknown };
+  timestamp?: string;
+  ts?: string;
+  cwd?: string;
+}
+
+interface JAssistantEvent {
+  type: "assistant";
+  isSidechain?: boolean;
+  message?: {
+    id?: string;
+    model?: string;
+    stop_reason?: string;
+    content?: Array<{ type?: string; text?: string }>;
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
+  };
+  timestamp?: string;
+  ts?: string;
+}
+
+interface JSystemEvent {
+  type: "system";
+  subtype?: string;
+  durationMs?: number;
+  timestamp?: string;
+  ts?: string;
+}
+
+type JEvent = JUserEvent | JAssistantEvent | JSystemEvent | { type: string; [k: string]: unknown };
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function isToolResultOnly(content: unknown): boolean {
+  if (!Array.isArray(content)) return false;
+  return content.length > 0 && (content as Array<{ type?: string }>).every(b => b?.type === "tool_result");
+}
+
+function isCommandContent(content: unknown): boolean {
+  if (typeof content !== "string") return false;
+  return content.trimStart().startsWith("<command-name>");
+}
+
+function isHumanInput(ev: JUserEvent): boolean {
+  if (ev.isMeta || ev.isSidechain) return false;
+  const content = ev.message?.content;
+  if (isToolResultOnly(content)) return false;
+  if (isCommandContent(content)) return false;
+  return true;
+}
+
+function extractUserText(content: unknown): string {
+  if (typeof content === "string") return content.slice(0, 200);
+  if (!Array.isArray(content)) return "";
+  return (content as Array<{ type?: string; text?: string }>)
+    .filter(b => b?.type !== "thinking" && b?.type !== "redacted_thinking" && b?.type !== "tool_result")
+    .map(b => {
+      if (typeof b === "string") return b;
+      if (b?.type === "text") return (b.text ?? "").slice(0, 200);
+      return "";
+    })
+    .join(" ")
+    .trim()
+    .slice(0, 200);
+}
+
+function tsOf(ev: JEvent): string {
+  const ts = ("timestamp" in ev ? (ev as { timestamp?: string }).timestamp : undefined)
+    ?? ("ts" in ev ? (ev as { ts?: string }).ts : undefined);
+  return ts ?? "";
+}
+
+// ─── Core parser ─────────────────────────────────────────────────────────────
+
+export function parseSessionDrilldown(
+  sourceFile: string,
+  sessionId: string,
+  sessionRow: Record<string, unknown>,
+  db: Database,
+): SessionDrilldown {
+  // ── 1. Title (same multi-fallback as SessionListV2) ──────────────────────
+  const title = (sessionRow.custom_title as string | null)
+    ?? (sessionRow.ai_title as string | null)
+    ?? null;
+
+  // ── 2. Parse JSONL ───────────────────────────────────────────────────────
+  if (!existsSync(sourceFile)) {
+    throw Object.assign(new Error("source file not found"), { status: 404 });
+  }
+
+  const lines = readFileSync(sourceFile, "utf-8").trim().split("\n").filter(Boolean);
+  const events: JEvent[] = [];
+  for (const line of lines) {
+    try { events.push(JSON.parse(line)); } catch { /* skip malformed */ }
+  }
+
+  // ── 3. Deduplicate assistant events (same msg.id → keep the LAST one) ───
+  // Claude Code writes two events per assistant message when extended thinking
+  // is enabled: one with content=['thinking'] and one with content=['tool_use'/'text'].
+  // Both share the same msg.id. We keep the last occurrence which has the
+  // actionable content (tool calls / text) and the definitive stop_reason.
+  const lastAssistantByMsgId = new Map<string, number>();
+  events.forEach((ev, idx) => {
+    if (ev.type !== "assistant" || (ev as JAssistantEvent).isSidechain) return;
+    const msgId = (ev as JAssistantEvent).message?.id;
+    if (msgId) lastAssistantByMsgId.set(msgId, idx);
+  });
+
+  // ── 4. Identify all system errors ────────────────────────────────────────
+  let systemErrorCount = 0;
+  for (const ev of events) {
+    if (ev.type === "system") {
+      const sub = (ev as JSystemEvent).subtype ?? "";
+      // api_error = Claude Code's own retry signal (network/rate-limit); treat as error
+      if (sub === "api_error") systemErrorCount++;
+    }
+  }
+
+  // ── 5. Build turns ───────────────────────────────────────────────────────
+  // Algorithm:
+  //   - Scan forward; when we find a human-input user event, start a new turn
+  //   - Accumulate all subsequent (deduplicated) assistant events until one has
+  //     stop_reason !== "tool_use" (i.e. end_turn / max_tokens / stop_sequence)
+  //   - If another human-input event appears BEFORE the turn ends (user typed while
+  //     LLM was running), we do NOT split the turn; per spec, turns end at LLM stop.
+
+  const turns: UserTurn[] = [];
+  let globalCallIndex = 0; // 1-based across the whole session
+
+  let i = 0;
+  while (i < events.length) {
+    const ev = events[i];
+    if (ev.type !== "user" || !isHumanInput(ev as JUserEvent)) { i++; continue; }
+
+    const userEv = ev as JUserEvent;
+    const userText = extractUserText(userEv.message?.content);
+    const turnStartTs = tsOf(ev);
+
+    // Collect deduplicated assistant events until end_turn
+    const rawCalls: Array<{ ev: JAssistantEvent; lineIdx: number }> = [];
+    let j = i + 1;
+    while (j < events.length) {
+      const jev = events[j];
+      if (jev.type === "assistant" && !(jev as JAssistantEvent).isSidechain) {
+        const aev = jev as JAssistantEvent;
+        const msgId = aev.message?.id;
+        const isCanonical = msgId
+          ? lastAssistantByMsgId.get(msgId) === j
+          : true; // no id → always include
+        if (isCanonical) {
+          rawCalls.push({ ev: aev, lineIdx: j });
+          const stopReason = aev.message?.stop_reason ?? "";
+          if (stopReason && stopReason !== "tool_use") break; // turn ends
+        }
+      }
+      j++;
+    }
+
+    const turnEndTs = rawCalls.length
+      ? tsOf(rawCalls[rawCalls.length - 1].ev)
+      : turnStartTs;
+
+    // Build LlmCall objects
+    const calls: LlmCall[] = rawCalls.map(({ ev: aev }, callIdx) => {
+      globalCallIndex++;
+      const usage = aev.message?.usage ?? {};
+      const freshIn   = usage.input_tokens ?? 0;
+      const freshOut  = usage.output_tokens ?? 0;
+      const cacheRead = usage.cache_read_input_tokens ?? 0;
+      const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+      const stopReason = aev.message?.stop_reason ?? null;
+      const model = aev.message?.model ?? "";
+
+      // isCompaction: heuristic — assistant content is only a compaction summary
+      // (Claude Code inserts a <compaction_summary> block when context is trimmed)
+      const content = aev.message?.content ?? [];
+      const isCompaction = content.some(b =>
+        b.type === "text" && (b.text ?? "").includes("<compaction_summary>")
+      );
+
+      // Context size proxy: sum of all token sources at this call
+      const contextSize = freshIn + cacheRead + cacheWrite;
+      // Delta vs previous call in turn
+      const prevCall = callIdx > 0 ? rawCalls[callIdx - 1].ev : null;
+      const prevUsage = prevCall?.message?.usage ?? {};
+      const prevContext = (prevUsage.input_tokens ?? 0)
+        + (prevUsage.cache_read_input_tokens ?? 0)
+        + (prevUsage.cache_creation_input_tokens ?? 0);
+      const significantDelta = contextSize - prevContext;
+
+      return {
+        id: globalCallIndex,
+        indexInTurn: callIdx + 1,
+        contextSize,
+        outputTokens: freshOut,
+        cacheRead,
+        cacheWrite,
+        timestamp: tsOf(aev),
+        model: model === "<synthetic>" ? "" : model,
+        stopReason,
+        isCompaction,
+        isUnknownHeavy: false, // not computed in v1
+        isSignificant: Math.abs(significantDelta) > 2000,
+        significantDelta,
+        proxy: null, // proxy join deferred
+        incomingDiff: [],
+      };
+    });
+
+    // Turn-level aggregates
+    const llmCallCount = calls.length;
+    // Tool calls = assistant events with tool_use content blocks
+    let toolCallCount = 0;
+    for (const { ev: aev } of rawCalls) {
+      for (const b of aev.message?.content ?? []) {
+        if (b.type === "tool_use") toolCallCount++;
+      }
+    }
+    const totalCacheRead = calls.reduce((s, c) => s + c.cacheRead, 0);
+    const totalCacheWrite = calls.reduce((s, c) => s + c.cacheWrite, 0);
+    const peakContext = calls.length ? Math.max(...calls.map(c => c.contextSize)) : 0;
+    const firstContext = calls.length ? calls[0].contextSize : 0;
+    const lastContext = calls.length ? calls[calls.length - 1].contextSize : 0;
+    const netContextDelta = lastContext - firstContext;
+
+    turns.push({
+      id: turns.length + 1,
+      userInput: userText,
+      startedAt: turnStartTs,
+      endedAt: turnEndTs,
+      llmCallCount,
+      toolCallCount,
+      netContextDelta,
+      peakContext,
+      cacheRead: totalCacheRead,
+      cacheWrite: totalCacheWrite,
+      unknownDelta: 0,
+      hasCompaction: calls.some(c => c.isCompaction),
+      hasUnknownSpike: false,
+      calls,
+    });
+
+    i = j + 1;
+  }
+
+  // ── 6. Session-level aggregates ──────────────────────────────────────────
+  const allCalls = turns.flatMap(t => t.calls);
+  const totalLlmCalls = allCalls.length;
+  const totalToolCalls = turns.reduce((s, t) => s + t.toolCallCount, 0);
+  const peakContext = allCalls.length ? Math.max(...allCalls.map(c => c.contextSize)) : 0;
+  const totalCacheRead = allCalls.reduce((s, c) => s + c.cacheRead, 0);
+  const totalCacheWrite = allCalls.reduce((s, c) => s + c.cacheWrite, 0);
+  const totalFreshIn = allCalls.reduce((s, c) => s + c.contextSize - c.cacheRead - c.cacheWrite, 0);
+  const totalFreshOut = allCalls.reduce((s, c) => s + c.outputTokens, 0);
+
+  // ── 7. Proxy data availability ───────────────────────────────────────────
+  const proxyRow = db.prepare(
+    "SELECT COUNT(*) as cnt FROM proxy_requests WHERE session_id = ?",
+  ).get(sessionId) as { cnt: number };
+  const hasProxyData = proxyRow.cnt > 0;
+
+  return {
+    sessionId,
+    tool: (sessionRow.tool as string) ?? "claude",
+    project: (sessionRow.project as string) ?? "",
+    cwd: (sessionRow.cwd as string) ?? "",
+    title,
+    firstEventAt: (sessionRow.first_event_at as string) ?? "",
+    lastEventAt: (sessionRow.last_event_at as string) ?? "",
+
+    totalLlmCalls,
+    totalToolCalls,
+    peakContext,
+    totalCacheRead,
+    totalCacheWrite,
+    totalFreshIn,
+    totalFreshOut,
+    systemErrorCount,
+
+    hasProxyData,
+    hasJsonlSource: true,
+
+    turns,
+  };
+}

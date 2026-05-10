@@ -74,6 +74,9 @@ export interface SessionDrilldown {
   peakContext: number;
   totalCacheRead: number;
   totalCacheWrite: number;
+  totalFreshIn: number;
+  totalFreshOut: number;
+  systemErrorCount: number;
   hasProxyData: boolean;
   hasJsonlSource: boolean;
   turns: UserTurn[];

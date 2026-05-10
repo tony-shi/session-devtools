@@ -461,44 +461,112 @@ function CallDiffSummaryPanel({ call }: { call: MockLlmCall }) {
 // ─── Main Canvas Panels ───────────────────────────────────────────────────────
 
 function SessionOverviewPanel({
-  turns, onSelectTurn,
-}: { turns: MockUserTurn[]; onSelectTurn: (t: MockUserTurn) => void }) {
-  const totalCalls = turns.reduce((s, t) => s + t.llmCallCount, 0);
-  const totalToolCalls = turns.reduce((s, t) => s + t.toolCallCount, 0);
-  const peakContext = Math.max(...turns.map(t => t.peakContext));
-  const totalCacheRead = turns.reduce((s, t) => s + t.cacheRead, 0);
+  turns, drilldown, onSelectTurn,
+}: {
+  turns: MockUserTurn[];
+  drilldown: SessionDrilldown | null;
+  onSelectTurn: (t: MockUserTurn) => void;
+}) {
+  // Prefer real drilldown data for metrics; fallback to turn-computed values
+  const totalCalls = drilldown?.totalLlmCalls ?? turns.reduce((s, t) => s + t.llmCallCount, 0);
+  const totalToolCalls = drilldown?.totalToolCalls ?? turns.reduce((s, t) => s + t.toolCallCount, 0);
+  const peakContext = drilldown?.peakContext ?? (turns.length ? Math.max(...turns.map(t => t.peakContext)) : 0);
+  const totalCacheRead = drilldown?.totalCacheRead ?? turns.reduce((s, t) => s + t.cacheRead, 0);
+  const totalCacheWrite = drilldown?.totalCacheWrite ?? turns.reduce((s, t) => s + t.cacheWrite, 0);
+  const totalFreshIn = drilldown?.totalFreshIn ?? null;
+  const totalFreshOut = drilldown?.totalFreshOut ?? null;
+  const systemErrors = drilldown?.systemErrorCount ?? null;
+  const isMock = drilldown === null;
+
+  // Duration from session metadata
+  let durationStr = "—";
+  if (drilldown?.firstEventAt && drilldown?.lastEventAt) {
+    const ms = new Date(drilldown.lastEventAt).getTime() - new Date(drilldown.firstEventAt).getTime();
+    if (ms > 0) durationStr = ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`;
+  }
+
+  // Cache ratio
+  const totalInput = (totalFreshIn ?? 0) + totalCacheRead;
+  const cacheRatio = totalInput > 0 ? Math.round((totalCacheRead / totalInput) * 100) : null;
+
+  // Largest growth turn (for hotspot)
+  const largestGrowthTurn = turns.length ? [...turns].sort((a, b) => b.netContextDelta - a.netContextDelta)[0] : null;
+  const compactionTurns = turns.filter(t => t.hasCompaction || t.calls.some(c => c.isCompaction));
 
   return (
     <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
       {/* Metric Strip */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
         {[
-          { label: "User Turns", value: String(turns.length), mock: false },
-          { label: "LLM Calls", value: String(totalCalls), mock: false },
-          { label: "Tool Calls", value: String(totalToolCalls), mock: false },
-          { label: "Peak Context", value: fmtK(peakContext), mock: false },
-          { label: "Cache Read", value: fmtK(totalCacheRead), mock: false },
-          { label: "Cache Write", value: fmtK(turns.reduce((s, t) => s + t.cacheWrite, 0)), mock: false },
-          { label: "Unknown %", value: "5.2%", mock: true },
-          { label: "Net Context", value: `+${fmtK(turns.reduce((s, t) => s + t.netContextDelta, 0))}`, mock: false },
-        ].map(({ label, value, mock }) => (
-          <div key={label} style={{ background: "#f9fafb", borderRadius: 8, padding: "10px 12px", border: "1px solid #e5e7eb" }}>
+          { label: "User Turns", value: String(turns.length), mock: isMock },
+          { label: "LLM Calls", value: String(totalCalls), mock: isMock },
+          { label: "Tool Calls", value: String(totalToolCalls), mock: isMock },
+          { label: "Duration", value: durationStr, mock: isMock },
+          { label: "Cache Read", value: fmtK(totalCacheRead), mock: isMock },
+          { label: "Cache Write", value: fmtK(totalCacheWrite), mock: isMock },
+          { label: "Fresh In", value: totalFreshIn !== null ? fmtK(totalFreshIn) : "—", mock: isMock },
+          { label: "Fresh Out", value: totalFreshOut !== null ? fmtK(totalFreshOut) : "—", mock: isMock },
+          { label: "Cache Ratio", value: cacheRatio !== null ? `${cacheRatio}%` : "—", mock: isMock },
+          { label: "Peak Context", value: fmtK(peakContext), mock: isMock },
+          { label: "Errors", value: systemErrors !== null ? String(systemErrors) : "0", mock: isMock, alert: systemErrors !== null && systemErrors > 0 },
+          { label: "Net Context", value: "—", mock: true, tooltip: "Last call context minus first call context across the session" },
+        ].map(({ label, value, mock, alert: isAlert, tooltip }) => (
+          <div key={label} title={tooltip} style={{
+            background: isAlert ? "#fef2f2" : "#f9fafb",
+            borderRadius: 8, padding: "10px 12px",
+            border: `1px solid ${isAlert ? "#fecaca" : "#e5e7eb"}`,
+          }}>
             <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 4 }}>{label}{mock && <MockBadge />}</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: "#111827" }}>{value}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: isAlert ? "#dc2626" : "#111827" }}>{value}</div>
           </div>
         ))}
       </div>
 
-      {/* Context Overview Timeline (mock) */}
+      {/* Hotspot summary row */}
+      {!isMock && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+          {largestGrowthTurn && (
+            <HotspotChip icon="↑" label={`Turn ${largestGrowthTurn.id} largest growth`} value={`+${fmtK(largestGrowthTurn.netContextDelta)}`} color="#d97706" />
+          )}
+          {compactionTurns.length > 0 && (
+            <HotspotChip icon="◆" label="Compaction" value={compactionTurns.map(t => `Turn ${t.id}`).join(", ")} color="#ef4444" />
+          )}
+          {peakContext > 150000 && (
+            <HotspotChip icon="⚠" label="Peak context" value={`${fmtK(peakContext)} (high)`} color="#ea580c" />
+          )}
+        </div>
+      )}
+
+      {/* Context Overview Timeline */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
-          Context Overview Timeline <MockBadge />
+          Context Timeline {isMock && <MockBadge />}
         </div>
-        <div style={{
-          border: "1px dashed #d1d5db", borderRadius: 8, padding: "16px",
-          background: "#fafafa", height: 120, position: "relative", overflow: "hidden",
-        }}>
-          <MockContextTimeline turns={turns} />
+        <ContextTimelineChart turns={turns} isMock={isMock} />
+      </div>
+
+      {/* Top context contributors (mock) */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
+          Top Context Contributors <MockBadge />
+        </div>
+        <div style={{ border: "1px dashed #d1d5db", borderRadius: 8, padding: "10px 14px", background: "#fafafa" }}>
+          {[
+            { label: "Tool Output", pct: 42 },
+            { label: "Assistant History", pct: 28 },
+            { label: "System", pct: 18 },
+            { label: "Unknown", pct: 7 },
+            { label: "Other", pct: 5 },
+          ].map(item => (
+            <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <div style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: CATEGORY_COLORS[item.label] ?? "#e5e7eb" }} />
+              <span style={{ fontSize: 11, color: "#374151", flex: 1 }}>{item.label}</span>
+              <div style={{ width: 80, height: 5, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
+                <div style={{ width: `${item.pct}%`, height: "100%", background: CATEGORY_COLORS[item.label] ?? "#e5e7eb" }} />
+              </div>
+              <span style={{ fontSize: 10, color: "#9ca3af", width: 28, textAlign: "right" }}>{item.pct}%</span>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -513,33 +581,111 @@ function SessionOverviewPanel({
   );
 }
 
-function MockContextTimeline({ turns }: { turns: MockUserTurn[] }) {
-  const maxContext = Math.max(...turns.map(t => t.peakContext));
-  const barColors = ["#6366f1", "#3b82f6", "#22c55e", "#f59e0b", "#a855f7"];
+function HotspotChip({ icon, label, value, color }: { icon: string; label: string; value: string; color: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6 }}>
+      <span style={{ color, fontSize: 12 }}>{icon}</span>
+      <span style={{ fontSize: 11, color: "#6b7280" }}>{label}:</span>
+      <span style={{ fontSize: 11, fontWeight: 600, color }}>{value}</span>
+    </div>
+  );
+}
+
+function ContextTimelineChart({ turns, isMock }: { turns: MockUserTurn[]; isMock: boolean }) {
+  if (!turns.length) return null;
+
+  // Collect all LLM calls across turns with their call index and context size
+  const allPoints: Array<{ turnId: number; callId: number; contextSize: number; isCompaction: boolean }> = [];
+  for (const turn of turns) {
+    for (const call of turn.calls) {
+      allPoints.push({
+        turnId: turn.id,
+        callId: call.id,
+        contextSize: call.contextSize,
+        isCompaction: call.isCompaction,
+      });
+    }
+  }
+
+  if (allPoints.length === 0) {
+    // Fallback: turn-level bar chart
+    const maxCtx = Math.max(...turns.map(t => t.peakContext));
+    const barColors = ["#6366f1", "#3b82f6", "#22c55e", "#f59e0b", "#a855f7"];
+    return (
+      <div style={{ border: isMock ? "1px dashed #d1d5db" : "1px solid #e5e7eb", borderRadius: 8, padding: "16px", background: "#fafafa", height: 120, position: "relative", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: "80%", paddingBottom: 4 }}>
+          {turns.map((t, i) => {
+            const h = Math.round((t.peakContext / maxCtx) * 100);
+            return (
+              <div key={t.id} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
+                <div style={{ width: "100%", height: `${Math.max(h, 4)}%`, background: barColors[i % barColors.length], borderRadius: "3px 3px 0 0", opacity: 0.7 }} />
+                <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 2 }}>T{t.id}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // SVG line chart
+  const W = 600, H = 100, PAD = { t: 8, b: 20, l: 8, r: 8 };
+  const chartW = W - PAD.l - PAD.r;
+  const chartH = H - PAD.t - PAD.b;
+  const maxCtx = Math.max(...allPoints.map(p => p.contextSize));
+  const minCtx = Math.min(...allPoints.map(p => p.contextSize));
+  const range = maxCtx - minCtx || 1;
+
+  const xs = allPoints.map((_, i) => PAD.l + (i / Math.max(allPoints.length - 1, 1)) * chartW);
+  const ys = allPoints.map(p => PAD.t + chartH - ((p.contextSize - minCtx) / range) * chartH);
+
+  const pathD = xs.map((x, i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
+
+  // Turn boundary x positions
+  const turnBoundaries: number[] = [];
+  let idx = 0;
+  for (const turn of turns) {
+    if (idx > 0) turnBoundaries.push(xs[idx]);
+    idx += turn.calls.length;
+  }
+
+  // Y-axis labels
+  const yLabels = [maxCtx, (maxCtx + minCtx) / 2, minCtx].map((v, i) => ({
+    y: PAD.t + (i * chartH) / 2,
+    label: fmtK(v),
+  }));
 
   return (
-    <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: "100%", paddingBottom: 20, position: "relative" }}>
-      {turns.map((turn, i) => {
-        const heightPct = (turn.peakContext / maxContext) * 100;
-        return (
-          <div key={turn.id} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, height: "100%", justifyContent: "flex-end" }}>
-            <div style={{
-              width: "100%", background: barColors[i % barColors.length],
-              height: `${heightPct}%`, borderRadius: "3px 3px 0 0", opacity: 0.7,
-              minHeight: 4, position: "relative",
-            }}>
-              {(turn.hasCompaction || turn.calls.some(c => c.isCompaction)) && (
-                <div style={{ position: "absolute", top: -8, left: "50%", transform: "translateX(-50%)", fontSize: 10, color: "#ef4444" }}>◆</div>
-              )}
-              {turn.hasUnknownSpike && (
-                <div style={{ position: "absolute", top: -8, right: 0, fontSize: 10, color: "#94a3b8" }}>?</div>
-              )}
-            </div>
-            <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 2 }}>T{turn.id}</div>
-          </div>
-        );
-      })}
-      <div style={{ position: "absolute", bottom: 18, left: 0, right: 0, borderBottom: "1px dashed #e5e7eb" }} />
+    <div style={{ border: isMock ? "1px dashed #d1d5db" : "1px solid #e5e7eb", borderRadius: 8, padding: "8px", background: "#fafafa", overflow: "hidden" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 110, display: "block" }}>
+        {/* Turn boundary lines */}
+        {turnBoundaries.map((x, i) => (
+          <line key={i} x1={x} y1={PAD.t} x2={x} y2={PAD.t + chartH} stroke="#e5e7eb" strokeWidth={1} strokeDasharray="3,3" />
+        ))}
+        {/* Turn labels at top */}
+        {turns.map((turn, ti) => {
+          const startIdx = turns.slice(0, ti).reduce((s, t) => s + t.calls.length, 0);
+          const midIdx = startIdx + Math.floor(turn.calls.length / 2);
+          const x = xs[Math.min(midIdx, xs.length - 1)] ?? 0;
+          return (
+            <text key={turn.id} x={x} y={H - 4} textAnchor="middle" fontSize={9} fill="#9ca3af">T{turn.id}</text>
+          );
+        })}
+        {/* Y-axis labels */}
+        {yLabels.map(({ y, label }) => (
+          <text key={label} x={W - PAD.r} y={y + 3} textAnchor="end" fontSize={8} fill="#d1d5db">{label}</text>
+        ))}
+        {/* Line */}
+        <path d={pathD} fill="none" stroke="#6366f1" strokeWidth={1.5} />
+        {/* Compaction markers */}
+        {allPoints.map((p, i) => p.isCompaction ? (
+          <text key={i} x={xs[i]} y={ys[i] - 4} textAnchor="middle" fontSize={9} fill="#ef4444">◆</text>
+        ) : null)}
+        {/* Call dots (only for small datasets) */}
+        {allPoints.length <= 30 && allPoints.map((p, i) => (
+          <circle key={i} cx={xs[i]} cy={ys[i]} r={2.5} fill={p.isCompaction ? "#ef4444" : "#6366f1"} opacity={0.8} />
+        ))}
+      </svg>
     </div>
   );
 }
@@ -1052,7 +1198,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
           {/* Main Canvas */}
           <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", minWidth: 0 }}>
             {navLevel === "session" && (
-              <SessionOverviewPanel turns={turns} onSelectTurn={handleSelectTurn} />
+              <SessionOverviewPanel turns={turns} drilldown={drilldown} onSelectTurn={handleSelectTurn} />
             )}
             {navLevel === "turn" && selectedTurn && !selectedCall && (
               <UserTurnDetailPanel turn={selectedTurn} onSelectCall={handleSelectCall} />

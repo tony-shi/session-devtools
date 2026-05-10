@@ -3,6 +3,7 @@ import { getDb } from "./db.ts";
 import { runSyncV2 } from "./sync-v2.ts";
 import { parseJsonField } from "./parser-utils.ts";
 import { buildMockDrilldown } from "./session-drilldown-mock.ts";
+import { parseSessionDrilldown } from "./session-drilldown-parser.ts";
 
 type SqlParam = string | number | bigint | boolean | null | Uint8Array;
 
@@ -115,9 +116,18 @@ export class SessionsV2Controller {
   @Get("sessions/:id/drilldown")
   sessionDrilldown(@Param("id") id: string) {
     const db = getDb();
-    const row = db.prepare(`SELECT session_id FROM sessions_meta_v2 WHERE session_id = ?`).get(id);
+    const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
-    return buildMockDrilldown(id);
+
+    const sourceFile = row.source_file as string;
+    try {
+      return parseSessionDrilldown(sourceFile, id, row, db);
+    } catch (err: unknown) {
+      // Fallback to mock if JSONL is missing/corrupt — surface the error in response
+      const msg = err instanceof Error ? err.message : String(err);
+      const mock = buildMockDrilldown(id);
+      return { ...mock, _parseError: msg };
+    }
   }
 
   @Get("sessions/:id/proxy")
