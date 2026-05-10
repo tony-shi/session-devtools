@@ -1422,9 +1422,359 @@ function SectionLabel({ children, mock }: { children: React.ReactNode; mock?: bo
 
 // ─── User Turn Detail Panel ───────────────────────────────────────────────────
 
+// ─── Agent Loop Flow (horizontal trace view) ─────────────────────────────────
+
+function AgentLoopFlow({
+  turn, agentLoop, onSelectCall,
+}: { turn: MockUserTurn; agentLoop: MockAgentLoopData; onSelectCall: (c: MockLlmCall) => void }) {
+  const [hoveredCallId, setHoveredCallId] = useState<number | null>(null);
+  const maxCtx = Math.max(...turn.calls.map(c => c.contextSize), 1);
+  const maxToolOutput = Math.max(...agentLoop.toolGroups.map(g => g.totalOutputSize), 1);
+
+  // Build the sequence: [UserInput, Call, ToolGroup?, Call, ToolGroup?, ..., Terminal]
+  type FlowItem =
+    | { kind: "user" }
+    | { kind: "call"; call: MockLlmCall; delta: number }
+    | { kind: "tools"; group: MockToolGroup; toCallId: number }
+    | { kind: "terminal"; status: MockAgentLoopData["status"] };
+
+  const items: FlowItem[] = [{ kind: "user" }];
+  turn.calls.forEach(call => {
+    const prevCtx = items.findLast(i => i.kind === "call")
+      ? (items.findLast(i => i.kind === "call") as { kind: "call"; call: MockLlmCall; delta: number }).call.contextSize
+      : 0;
+    const delta = call.contextSize - prevCtx;
+    items.push({ kind: "call", call, delta });
+
+    const tg = agentLoop.toolGroups.find(g => g.afterCallId === call.id);
+    if (tg) {
+      const nextCallIdx = turn.calls.findIndex(c => c.id === call.id) + 1;
+      const nextCall = turn.calls[nextCallIdx];
+      items.push({ kind: "tools", group: tg, toCallId: nextCall?.id ?? -1 });
+    }
+  });
+  items.push({ kind: "terminal", status: agentLoop.status });
+
+  const CALL_W = 88;    // LLM call node base width
+  const TOOL_W = 110;   // tool group node base width
+  const USER_W = 70;
+  const TERM_W = 70;
+  const ARROW_W = 28;
+  const NODE_H = 120;
+  const LABEL_H = 28;
+
+  return (
+    <div style={{ overflowX: "auto", paddingBottom: 8 }}>
+      <div style={{
+        display: "flex", alignItems: "stretch", gap: 0,
+        minHeight: NODE_H + LABEL_H + 24,
+        padding: "4px 2px 8px",
+      }}>
+        {items.map((item, idx) => {
+          const isLast = idx === items.length - 1;
+
+          // ── Arrow connector ────────────────────────────────
+          const Arrow = idx > 0 ? (
+            <div style={{
+              width: ARROW_W, flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              paddingTop: 0, alignSelf: "center",
+              marginTop: -LABEL_H / 2,
+            }}>
+              <div style={{ width: "100%", height: 2, background: "#e5e7eb", position: "relative" }}>
+                <div style={{
+                  position: "absolute", right: -1, top: -4,
+                  borderTop: "5px solid transparent",
+                  borderBottom: "5px solid transparent",
+                  borderLeft: "7px solid #d1d5db",
+                }} />
+              </div>
+            </div>
+          ) : null;
+
+          if (item.kind === "user") {
+            return (
+              <div key="user" style={{ display: "flex", alignItems: "center" }}>
+                <div style={{
+                  width: USER_W, display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                }}>
+                  <div style={{
+                    width: USER_W - 8, padding: "8px 6px", borderRadius: 8,
+                    background: "#f5f3ff", border: "2px solid #6366f1",
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                    minHeight: 60,
+                  }}>
+                    <span style={{ fontSize: 16 }}>👤</span>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#6366f1" }}>User</span>
+                  </div>
+                  <span style={{ fontSize: 9, color: "#9ca3af", textAlign: "center", maxWidth: USER_W }}>
+                    {turn.userInput.slice(0, 20)}{turn.userInput.length > 20 ? "…" : ""}
+                  </span>
+                </div>
+              </div>
+            );
+          }
+
+          if (item.kind === "terminal") {
+            const cfg = {
+              completed: { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0", icon: "✓" },
+              interrupted: { color: "#d97706", bg: "#fffbeb", border: "#fde68a", icon: "⚠" },
+              continued: { color: "#6366f1", bg: "#eff6ff", border: "#c7d2fe", icon: "→" },
+            }[item.status];
+            return (
+              <div key="terminal" style={{ display: "flex", alignItems: "center", gap: 0 }}>
+                {Arrow}
+                <div style={{
+                  width: TERM_W - 8, padding: "8px 6px", borderRadius: 8,
+                  background: cfg.bg, border: `2px solid ${cfg.border}`,
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
+                  minHeight: 60, alignSelf: "center", marginTop: -LABEL_H / 2,
+                }}>
+                  <span style={{ fontSize: 18 }}>{cfg.icon}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: cfg.color }}>{item.status}</span>
+                </div>
+              </div>
+            );
+          }
+
+          if (item.kind === "call") {
+            const { call, delta } = item;
+            // Height encodes context size relative to max
+            const ctxPct = Math.max(call.contextSize / maxCtx, 0.15);
+            const nodeH = Math.round(40 + ctxPct * 60); // 40–100px
+            const isHovered = hoveredCallId === call.id;
+            const isComp = call.isCompaction;
+            const nearLimit = call.contextSize > call.contextWindowSize * 0.85;
+
+            const border = isComp ? "#ef4444"
+              : nearLimit ? "#ea580c"
+              : call.isSignificant ? "#3b82f6"
+              : "#e5e7eb";
+            const bg = isComp ? "#fef2f2"
+              : nearLimit ? "#fff7ed"
+              : isHovered ? "#eff6ff"
+              : "#f9fafb";
+
+            return (
+              <div key={call.id} style={{ display: "flex", alignItems: "center", gap: 0 }}>
+                {Arrow}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  {/* Context delta annotation above */}
+                  <div style={{ height: LABEL_H, display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 2 }}>
+                    {Math.abs(delta) > 500 && (
+                      <span style={{
+                        fontSize: 10, fontWeight: 700,
+                        color: delta > 2000 ? "#d97706" : delta < -2000 ? "#16a34a" : "#9ca3af",
+                      }}>
+                        {delta > 0 ? "+" : ""}{fmtK(delta)}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Main call node */}
+                  <div
+                    onClick={() => onSelectCall(call)}
+                    onMouseEnter={() => setHoveredCallId(call.id)}
+                    onMouseLeave={() => setHoveredCallId(null)}
+                    style={{
+                      width: CALL_W, height: nodeH, borderRadius: 8,
+                      background: bg, border: `2px solid ${border}`,
+                      cursor: "pointer", display: "flex", flexDirection: "column",
+                      alignItems: "center", justifyContent: "space-between",
+                      padding: "6px 4px 5px", gap: 3,
+                      boxShadow: isHovered ? "0 2px 8px rgba(99,102,241,0.18)" : undefined,
+                      transition: "box-shadow 0.12s",
+                    }}
+                  >
+                    <span style={{ fontSize: 10, fontWeight: 700, color: isComp ? "#ef4444" : "#374151" }}>
+                      #{call.id}
+                    </span>
+
+                    {/* Context bar inside node */}
+                    <div style={{ width: "80%", display: "flex", flexDirection: "column", gap: 2, flex: 1, justifyContent: "center" }}>
+                      {/* Cache read fill */}
+                      <div style={{ width: "100%", height: 6, background: "#f3f4f6", borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{
+                          width: `${Math.min(call.cacheRead / call.contextSize * 100, 100)}%`,
+                          height: "100%", background: "#a5b4fc", borderRadius: 3,
+                        }} title="cache read" />
+                      </div>
+                      {/* Cache write fill */}
+                      <div style={{ width: "100%", height: 6, background: "#f3f4f6", borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{
+                          width: `${Math.min(call.cacheWrite / call.contextSize * 100, 100)}%`,
+                          height: "100%", background: "#6366f1", borderRadius: 3, opacity: 0.5,
+                        }} title="cache write" />
+                      </div>
+                    </div>
+
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: "#374151" }}>{fmtK(call.contextSize)}</div>
+                      <div style={{ fontSize: 9, color: "#9ca3af" }}>ctx</div>
+                    </div>
+
+                    {/* Stop reason pill */}
+                    {call.stopReason && call.stopReason !== "tool_use" && (
+                      <div style={{
+                        fontSize: 8, fontWeight: 700, color: "#16a34a",
+                        background: "#f0fdf4", borderRadius: 3, padding: "1px 4px",
+                      }}>
+                        end_turn
+                      </div>
+                    )}
+                    {isComp && (
+                      <div style={{ fontSize: 9, color: "#ef4444", fontWeight: 700 }}>◆</div>
+                    )}
+                  </div>
+
+                  {/* Call id label below */}
+                  <span style={{ fontSize: 9, color: "#9ca3af" }}>Call #{call.indexInTurn}</span>
+                </div>
+              </div>
+            );
+          }
+
+          if (item.kind === "tools") {
+            const { group } = item;
+            const outputPct = group.totalOutputSize / maxToolOutput;
+            // Tool group height encodes output tokens (thickness = output size)
+            const toolNodeH = Math.round(28 + outputPct * 60); // 28–88px
+            const hasError = group.tools.some(t => t.status !== "ok");
+            const border = hasError ? "#fca5a5" : group.isParallel ? "#c4b5fd" : "#e5e7eb";
+            const bg = hasError ? "#fef2f2" : group.isParallel ? "#f5f3ff" : "#fffbeb";
+            const durationTotal = group.tools.reduce((s, t) => s + t.durationMs, 0);
+
+            return (
+              <div key={group.id} style={{ display: "flex", alignItems: "center", gap: 0 }}>
+                {Arrow}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  {/* Duration label above */}
+                  <div style={{ height: LABEL_H, display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 2 }}>
+                    <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtDuration(durationTotal)}</span>
+                  </div>
+
+                  {/* Tool group node */}
+                  <div style={{
+                    width: TOOL_W, height: toolNodeH, borderRadius: 8,
+                    background: bg, border: `2px solid ${border}`,
+                    padding: "5px 6px", display: "flex", flexDirection: "column", gap: 3,
+                  }}>
+                    {/* Header */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                      {group.isParallel && (
+                        <span style={{ fontSize: 9, fontWeight: 800, color: "#7c3aed" }}>∥</span>
+                      )}
+                      <span style={{ fontSize: 10, fontWeight: 700, color: hasError ? "#dc2626" : "#374151" }}>
+                        {group.tools.length} tool{group.tools.length > 1 ? "s" : ""}
+                      </span>
+                      {hasError && <span style={{ fontSize: 10, color: "#dc2626" }}>✗</span>}
+                    </div>
+
+                    {/* Tool pills */}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 2, flex: 1, alignContent: "flex-start" }}>
+                      {/* Group by tool type */}
+                      {Object.entries(
+                        group.tools.reduce((acc, t) => {
+                          acc[t.tool] = (acc[t.tool] ?? 0) + 1;
+                          return acc;
+                        }, {} as Record<string, number>)
+                      ).map(([toolName, count]) => (
+                        <span key={toolName} style={{
+                          fontSize: 9, fontWeight: 600,
+                          color: toolName === "Bash" ? "#d97706"
+                            : toolName === "Read" ? "#3b82f6"
+                            : toolName === "Write" || toolName === "Edit" ? "#16a34a"
+                            : "#6b7280",
+                          background: toolName === "Bash" ? "#fffbeb"
+                            : toolName === "Read" ? "#eff6ff"
+                            : toolName === "Write" || toolName === "Edit" ? "#f0fdf4"
+                            : "#f9fafb",
+                          borderRadius: 3, padding: "1px 4px",
+                          border: "1px solid currentColor",
+                          opacity: 0.9,
+                        }}>
+                          {toolName}{count > 1 ? ` ×${count}` : ""}
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Output size annotation */}
+                    <div style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>
+                      +{fmtK(group.totalOutputSize)} out
+                    </div>
+                  </div>
+
+                  {/* Group label below */}
+                  <span style={{ fontSize: 9, color: "#9ca3af" }}>
+                    {group.isParallel ? "parallel" : "sequential"}
+                  </span>
+                </div>
+              </div>
+            );
+          }
+
+          return null;
+        })}
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", padding: "4px 2px", borderTop: "1px solid #f3f4f6", marginTop: 4 }}>
+        {[
+          { color: "#a5b4fc", label: "Cache read (in ctx)" },
+          { color: "#6366f1", label: "Cache write" },
+          { color: "#7c3aed", label: "∥ parallel tools" },
+          { color: "#d97706", label: "Bash" },
+          { color: "#3b82f6", label: "Read" },
+          { color: "#16a34a", label: "Write/Edit" },
+          { color: "#ef4444", label: "◆ compaction" },
+        ].map(({ color, label }) => (
+          <div key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
+            <span style={{ fontSize: 9, color: "#9ca3af" }}>{label}</span>
+          </div>
+        ))}
+        <span style={{ fontSize: 9, color: "#d1d5db", marginLeft: "auto" }}>
+          Node height ∝ context size · Node thickness ∝ tool output <MockBadge />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+type TurnView = "classic" | "flow";
+
+function TurnViewToggle({ view, onChange }: { view: TurnView; onChange: (v: TurnView) => void }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
+      <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.05em" }}>VIEW</span>
+      {(["classic", "flow"] as TurnView[]).map(v => {
+        const active = view === v;
+        const label = v === "classic" ? "Classic" : "Flow";
+        const desc  = v === "classic" ? "Context strip + vertical timeline" : "Horizontal trace · LLM ↔ Tool causality";
+        return (
+          <button key={v} onClick={() => onChange(v)} title={desc} style={{
+            padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: active ? 700 : 400,
+            cursor: "pointer",
+            background: active ? "#6366f1" : "#f9fafb",
+            color:  active ? "#fff" : "#6b7280",
+            border: `1px solid ${active ? "#6366f1" : "#e5e7eb"}`,
+            transition: "all 0.12s",
+          }}>
+            {label}
+          </button>
+        );
+      })}
+      <span style={{ fontSize: 10, color: "#d1d5db", marginLeft: 4 }}>
+        {view === "classic" ? "Context strip + vertical timeline" : "Horizontal trace · LLM ↔ Tool causality"}
+      </span>
+    </div>
+  );
+}
+
 function UserTurnDetailPanel({
   turn, onSelectCall,
 }: { turn: MockUserTurn; onSelectCall: (c: MockLlmCall) => void }) {
+  const [turnView, setTurnView] = useState<TurnView>("classic");
   const agentLoop = buildMockAgentLoop(turn);
   const maxCtx = Math.max(...turn.calls.map(c => c.contextSize), 1);
   const dur = fmtDuration(turn.durationMs);
@@ -1541,37 +1891,51 @@ function UserTurnDetailPanel({
         </div>
       )}
 
-      {/* ── Context Trend (compact call-level sparkline) ─────────── */}
-      <div style={{ marginBottom: 20 }}>
-        <SectionLabel>Context Trend</SectionLabel>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 44, background: "#f9fafb", borderRadius: 6, padding: "6px 8px 0", border: "1px solid #f3f4f6" }}>
-          {turn.calls.map(c => {
-            const h = Math.round((c.contextSize / maxCtx) * 100);
-            return (
-              <div key={c.id} title={`#${c.id}: ${fmtK(c.contextSize)}`}
-                style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", cursor: "pointer" }}
-                onClick={() => onSelectCall(c)}>
-                <div style={{
-                  width: "100%", height: `${Math.max(h, 5)}%`,
-                  background: c.isCompaction ? "#ef4444" : c.isSignificant ? "#3b82f6" : "#6366f140",
-                  borderRadius: "2px 2px 0 0",
-                }} />
-              </div>
-            );
-          })}
-        </div>
-        <div style={{ display: "flex", gap: 2, marginTop: 2 }}>
-          {turn.calls.map(c => (
-            <div key={c.id} style={{ flex: 1, textAlign: "center", fontSize: 8, color: "#d1d5db" }}>#{c.id}</div>
-          ))}
-        </div>
-      </div>
+      {/* ── View toggle ───────────────────────────────────────────── */}
+      <TurnViewToggle view={turnView} onChange={setTurnView} />
 
-      {/* ── Agent Loop Timeline ───────────────────────────────────── */}
-      <div style={{ marginBottom: 20 }}>
-        <SectionLabel mock>Agent Loop</SectionLabel>
-        <AgentLoopTimeline turn={turn} agentLoop={agentLoop} onSelectCall={onSelectCall} />
-      </div>
+      {/* ── View A: Classic (context strip + vertical timeline) ───── */}
+      {turnView === "classic" && (
+        <>
+          {/* Compact context strip */}
+          <div style={{ marginBottom: 20 }}>
+            <SectionLabel>Context Strip</SectionLabel>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 44, background: "#f9fafb", borderRadius: 6, padding: "6px 8px 0", border: "1px solid #f3f4f6" }}>
+              {turn.calls.map(c => {
+                const h = Math.round((c.contextSize / maxCtx) * 100);
+                return (
+                  <div key={c.id} title={`#${c.id}: ${fmtK(c.contextSize)}`}
+                    style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", cursor: "pointer" }}
+                    onClick={() => onSelectCall(c)}>
+                    <div style={{
+                      width: "100%", height: `${Math.max(h, 5)}%`,
+                      background: c.isCompaction ? "#ef4444" : c.isSignificant ? "#3b82f6" : "#6366f140",
+                      borderRadius: "2px 2px 0 0",
+                    }} />
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: 2, marginTop: 2 }}>
+              {turn.calls.map(c => (
+                <div key={c.id} style={{ flex: 1, textAlign: "center", fontSize: 8, color: "#d1d5db" }}>#{c.id}</div>
+              ))}
+            </div>
+          </div>
+          <div style={{ marginBottom: 20 }}>
+            <SectionLabel mock>Agent Loop</SectionLabel>
+            <AgentLoopTimeline turn={turn} agentLoop={agentLoop} onSelectCall={onSelectCall} />
+          </div>
+        </>
+      )}
+
+      {/* ── View B: Flow (horizontal trace-like agent loop flow) ──── */}
+      {turnView === "flow" && (
+        <div style={{ marginBottom: 20 }}>
+          <SectionLabel mock>Agent Loop Flow</SectionLabel>
+          <AgentLoopFlow turn={turn} agentLoop={agentLoop} onSelectCall={onSelectCall} />
+        </div>
+      )}
 
       {/* ── Tool Summary ──────────────────────────────────────────── */}
       {agentLoop.toolSummary.length > 0 && (
@@ -1615,135 +1979,647 @@ function UserTurnDetailPanel({
   );
 }
 
-type DiffTab = "incoming" | "next" | "snapshot" | "evidence";
+// ─── Mock payload / response data for Call Detail ────────────────────────────
+
+interface MockPayloadSegment {
+  id: string;
+  category: string;
+  label: string;
+  tokens: number;
+  source: string;     // "system" | "user_message" | "tool_result" | "assistant_history" | "tool_schema" | "unknown"
+  content?: string;   // preview text
+}
+
+interface MockCallResponse {
+  textOutput: string;
+  toolUseBlocks: Array<{ id: string; name: string; input: string }>;
+  stopReason: string;
+  outputTokens: number;
+  hasThinking: boolean;
+  thinkingPreview?: string;
+}
+
+function buildMockPayload(call: MockLlmCall): MockPayloadSegment[] {
+  const ctx = call.contextSize;
+  const cacheR = call.cacheRead;
+  const cacheW = call.cacheWrite;
+  const fresh = ctx - cacheR - cacheW;
+  // Simulate a realistic payload breakdown
+  const systemTokens = Math.round(ctx * 0.22);
+  const schemaTokens = Math.round(ctx * 0.18);
+  const historyTokens = Math.round(ctx * 0.15);
+  const toolOutTokens = Math.round(ctx * 0.28);
+  const userTokens = Math.round(ctx * 0.08);
+  const unknownTokens = ctx - systemTokens - schemaTokens - historyTokens - toolOutTokens - userTokens;
+
+  return [
+    { id: "seg-sys",    category: "System",                 label: "system prompt",            tokens: systemTokens,  source: "system",           content: "You are Claude Code, Anthropic's official CLI…" },
+    { id: "seg-schema", category: "Tool Schemas",           label: "tool definitions (12)",    tokens: schemaTokens,  source: "tool_schema",      content: "Read, Write, Edit, Bash, Glob, Grep, WebFetch…" },
+    { id: "seg-hist",   category: "Assistant History",      label: "prior assistant turns",    tokens: historyTokens, source: "assistant_history", content: "Previous assistant responses in this session…" },
+    { id: "seg-tool",   category: "Tool Output",            label: "tool results (recent)",    tokens: toolOutTokens, source: "tool_result",       content: "Read(server/src/parser.ts): export function parse…" },
+    { id: "seg-user",   category: "User Messages",          label: "current user input",       tokens: userTokens,    source: "user_message",      content: "请帮我分析这个 session 的数据结构…" },
+    { id: "seg-unk",    category: "Unknown",                label: "unattributed",             tokens: Math.max(unknownTokens, 0), source: "unknown" },
+  ].filter(s => s.tokens > 0);
+}
+
+function buildMockResponse(call: MockLlmCall): MockCallResponse {
+  const hasTools = call.stopReason === "tool_use" || (call.stopReason !== "end_turn");
+  return {
+    textOutput: call.stopReason === "end_turn"
+      ? "根据分析，当前 session 的 context 结构主要由 Tool Output 主导（约 28%），系统提示占 22%，工具定义占 18%。建议关注 Tool Output 的累积增长，考虑在必要时触发 compaction 以控制 context 规模。"
+      : "",
+    toolUseBlocks: hasTools ? [
+      { id: "toolu_mock_01", name: "Read", input: JSON.stringify({ file_path: "server/src/session-drilldown-parser.ts" }, null, 2) },
+    ] : [],
+    stopReason: call.stopReason ?? "end_turn",
+    outputTokens: call.outputTokens,
+    hasThinking: call.id % 4 === 0,
+    thinkingPreview: call.id % 4 === 0 ? "Let me think through this carefully. The session has multiple turns…" : undefined,
+  };
+}
+
+// ─── Sankey mini overview ─────────────────────────────────────────────────────
+
+function IncomingDiffSankey({
+  segments, diff,
+}: { segments: MockPayloadSegment[]; diff: MockDiffEntry[] }) {
+  const total = segments.reduce((s, seg) => s + seg.tokens, 0) || 1;
+  const netDelta = diff.reduce((s, e) => s + e.delta, 0);
+  const added   = diff.filter(e => e.changeType === "added");
+  const removed = diff.filter(e => e.changeType === "removed");
+  const retained = diff.filter(e => e.changeType === "retained" || (e.changeType !== "added" && e.changeType !== "removed" && e.changeType !== "changed"));
+
+  const addedTotal   = added.reduce((s, e) => s + e.delta, 0);
+  const removedTotal = Math.abs(removed.reduce((s, e) => s + e.delta, 0));
+  const retainedTotal = Math.max(total - addedTotal, 0);
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      {/* Header metrics */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 12 }}>
+        {[
+          { label: "Net Δ", value: `${netDelta >= 0 ? "+" : ""}${fmtK(netDelta)}`, color: netDelta > 0 ? "#d97706" : "#16a34a" },
+          { label: "Added",   value: `+${fmtK(addedTotal)}`,   color: "#16a34a" },
+          { label: "Removed", value: removedTotal > 0 ? `−${fmtK(removedTotal)}` : "—", color: "#dc2626" },
+          { label: "Retained", value: fmtK(retainedTotal),     color: "#9ca3af" },
+        ].map(({ label, value, color }) => (
+          <div key={label} style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, padding: "6px 10px" }}>
+            <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 2 }}>{label}</div>
+            <div style={{ fontSize: 13, fontWeight: 700, color }}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Sankey-like flow bars */}
+      <div style={{ background: "#f9fafb", borderRadius: 8, padding: "12px", border: "1px solid #f3f4f6" }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", marginBottom: 8, letterSpacing: "0.05em" }}>
+          PREVIOUS → CURRENT PAYLOAD <MockBadge />
+        </div>
+        <div style={{ display: "flex", gap: 12, alignItems: "stretch" }}>
+          {/* Left: previous payload bar */}
+          <div style={{ width: 80, flexShrink: 0 }}>
+            <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 4, textAlign: "center" }}>Previous</div>
+            <div style={{ height: 80, display: "flex", flexDirection: "column", borderRadius: 4, overflow: "hidden", gap: 1 }}>
+              {segments.map(seg => {
+                const h = Math.round((seg.tokens / total) * 100);
+                return h > 0 ? (
+                  <div key={seg.id} title={`${seg.category}: ${fmtK(seg.tokens)}`} style={{
+                    height: `${h}%`, minHeight: 2,
+                    background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb",
+                    opacity: 0.6,
+                  }} />
+                ) : null;
+              })}
+            </div>
+            <div style={{ fontSize: 9, color: "#9ca3af", textAlign: "center", marginTop: 4 }}>{fmtK(total - netDelta)}</div>
+          </div>
+
+          {/* Middle: flow arrows */}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 4, paddingTop: 16 }}>
+            {/* Retained band */}
+            {retainedTotal > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ flex: 1, height: 10, background: "#e5e7eb", borderRadius: 2, opacity: 0.7 }} title={`Retained: ${fmtK(retainedTotal)}`} />
+                <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>retained</span>
+              </div>
+            )}
+            {/* Added band */}
+            {addedTotal > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ flex: 1, height: Math.max(6, Math.round(addedTotal / total * 40)), background: "#16a34a", borderRadius: 2, opacity: 0.5 }} title={`Added: ${fmtK(addedTotal)}`} />
+                <span style={{ fontSize: 9, color: "#16a34a", flexShrink: 0 }}>+{fmtK(addedTotal)}</span>
+              </div>
+            )}
+            {/* Removed band */}
+            {removedTotal > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ flex: 1, height: Math.max(4, Math.round(removedTotal / total * 30)), background: "#ef4444", borderRadius: 2, opacity: 0.4 }} title={`Removed: ${fmtK(removedTotal)}`} />
+                <span style={{ fontSize: 9, color: "#ef4444", flexShrink: 0 }}>−{fmtK(removedTotal)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Right: current payload bar */}
+          <div style={{ width: 80, flexShrink: 0 }}>
+            <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 4, textAlign: "center" }}>Current</div>
+            <div style={{ height: 80, display: "flex", flexDirection: "column", borderRadius: 4, overflow: "hidden", gap: 1 }}>
+              {segments.map(seg => {
+                const h = Math.round((seg.tokens / total) * 100);
+                return h > 0 ? (
+                  <div key={seg.id} title={`${seg.category}: ${fmtK(seg.tokens)}`} style={{
+                    height: `${h}%`, minHeight: 2,
+                    background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb",
+                  }} />
+                ) : null;
+              })}
+            </div>
+            <div style={{ fontSize: 9, color: "#9ca3af", textAlign: "center", marginTop: 4 }}>{fmtK(total)}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── LLM Call Detail Panel (v2) ───────────────────────────────────────────────
+
+type CallTab = "incoming" | "response" | "payload" | "next" | "raw";
 
 function LlmCallDetailPanel({
   call, onSelectEntry,
 }: { call: MockLlmCall; onSelectEntry: (e: MockDiffEntry) => void }) {
-  const [tab, setTab] = useState<DiffTab>("incoming");
-  const netDelta = call.incomingDiff.reduce((s, e) => s + e.delta, 0);
-  const added = call.incomingDiff.filter(e => e.changeType === "added");
-  const removed = call.incomingDiff.filter(e => e.changeType === "removed");
-  const changed = call.incomingDiff.filter(e => e.changeType === "changed");
-  const retained = call.incomingDiff.filter(e => e.changeType === "retained");
+  const [tab, setTab] = useState<CallTab>("incoming");
+  const [selectedEvidenceEntry, setSelectedEvidenceEntry] = useState<MockDiffEntry | null>(null);
+
+  const diff = call.incomingDiff;
+  const netDelta = diff.reduce((s, e) => s + e.delta, 0);
+  const added   = diff.filter(e => e.changeType === "added");
+  const removed = diff.filter(e => e.changeType === "removed");
+  const changed = diff.filter(e => e.changeType === "changed");
+  const retained = diff.filter(e => e.changeType === "retained");
+
+  const segments = buildMockPayload(call);
+  const response = buildMockResponse(call);
+
+  const freshIn  = call.contextSize - call.cacheRead - call.cacheWrite;
+  const cacheRatio = call.contextSize > 0
+    ? Math.round(call.cacheRead / call.contextSize * 100)
+    : 0;
+  const nearLimit = call.contextSize > call.contextWindowSize * 0.85;
+
+  function handleSelectEntry(entry: MockDiffEntry) {
+    setSelectedEvidenceEntry(entry);
+    onSelectEntry(entry);
+    setTab("incoming"); // stay on incoming diff tab, evidence shows in inspector
+  }
+
+  const TAB_DEFS: Array<{ id: CallTab; label: string; badge?: string }> = [
+    { id: "incoming", label: "Incoming Diff" },
+    { id: "response", label: "Response" },
+    { id: "payload",  label: "Payload Map" },
+    { id: "next",     label: "Next Diff" },
+    { id: "raw",      label: "Raw" },
+  ];
 
   return (
-    <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
-      {/* Call Header */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>Call #{call.id}</div>
-          {call.isCompaction && <RiskBadge type="compaction" />}
-          {call.isSignificant && <RiskBadge type="large-growth" />}
-        </div>
-        <div style={{ fontSize: 11, color: "#6b7280" }}>{call.timestamp}</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: 10 }}>
-          {[
-            { label: "Context", value: fmtK(call.contextSize) },
-            { label: "Output", value: fmtK(call.outputTokens) },
-            { label: "Cache R", value: fmtK(call.cacheRead) },
-            { label: "Cache W", value: fmtK(call.cacheWrite) },
-          ].map(({ label, value }) => (
-            <div key={label} style={{ background: "#f9fafb", borderRadius: 6, padding: "8px 10px", border: "1px solid #e5e7eb" }}>
-              <div style={{ fontSize: 10, color: "#9ca3af" }}>{label}</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>{value}</div>
-            </div>
-          ))}
-        </div>
-      </div>
+    <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      {/* ── Main area ─────────────────────────────────────────── */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px 20px 24px", minWidth: 0 }}>
 
-      {/* Snapshot Overview */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
-          Snapshot Overview <MockBadge />
-        </div>
-        <div style={{ border: "1px dashed #d1d5db", borderRadius: 8, padding: "10px 12px", background: "#fafafa" }}>
-          <div style={{ display: "flex", gap: 4, height: 12, borderRadius: 4, overflow: "hidden", marginBottom: 8 }}>
-            {[
-              { cat: "System", w: 22 },
-              { cat: "Tool Schemas", w: 18 },
-              { cat: "User Messages", w: 8 },
-              { cat: "Assistant History", w: 15 },
-              { cat: "Tool Output", w: 28 },
-              { cat: "Unknown", w: 9 },
-            ].map(({ cat, w }) => (
-              <div key={cat} style={{ width: `${w}%`, height: "100%", background: CATEGORY_COLORS[cat] ?? "#e5e7eb" }} title={`${cat} ~${w}%`} />
-            ))}
+        {/* ── Call Header ──────────────────────────────────── */}
+        <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid #f3f4f6" }}>
+          {/* Title + badges */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: "#111827" }}>Call #{call.id}</span>
+            <span style={{ fontSize: 10, color: "#9ca3af" }}>#{call.indexInTurn} in turn</span>
+            {call.isCompaction && <RiskBadge type="compaction" />}
+            {nearLimit && <RiskBadge type="near-limit" />}
+            {call.isSignificant && !nearLimit && <RiskBadge type="large-growth" />}
+            <span style={{ marginLeft: "auto", fontSize: 10, color: "#9ca3af" }}>
+              {call.model && <span style={{ fontWeight: 600, color: "#374151" }}>{shortModelName(call.model)} · </span>}
+              {call.timestamp ? new Date(call.timestamp).toLocaleTimeString() : call.timestamp}
+            </span>
           </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px" }}>
-            {[
-              { cat: "System", w: 22 }, { cat: "Tool Output", w: 28 },
-              { cat: "Tool Schemas", w: 18 }, { cat: "Assistant History", w: 15 },
-              { cat: "User Messages", w: 8 }, { cat: "Unknown", w: 9 },
-            ].map(({ cat, w }) => (
-              <div key={cat} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <div style={{ width: 6, height: 6, borderRadius: 1, background: CATEGORY_COLORS[cat] ?? "#e5e7eb" }} />
-                <span style={{ fontSize: 10, color: "#6b7280" }}>{cat} {w}%</span>
-              </div>
-            ))}
+
+          {/* Data source banner */}
+          <div style={{
+            fontSize: 10, color: "#6b7280", background: "#fffbeb",
+            border: "1px solid #fde68a", borderRadius: 5, padding: "5px 10px",
+            marginBottom: 10, display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <span style={{ fontWeight: 600, color: "#d97706" }}>⚠ Observed from JSONL</span>
+            <span>· Estimated attribution · No exact request payload available · </span>
+            <span style={{ color: "#9ca3af" }}>Proxy data: {call.proxy ? "available" : "not linked"}</span>
+          </div>
+
+          {/* Metric strip: 3 rows same language as session/turn */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {/* Row 1: identity */}
+            <SummaryMetricStrip columns={4} cards={[
+              { label: "Context Size",  value: fmtK(call.contextSize), color: nearLimit ? "#ea580c" : undefined },
+              { label: "Context Δ",     value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`,
+                color: call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : undefined },
+              { label: "Stop Reason",   value: call.stopReason ?? "—" },
+              { label: "Window Used",   value: `${Math.round(call.contextSize / call.contextWindowSize * 100)}%`,
+                color: nearLimit ? "#ea580c" : undefined },
+            ]} />
+            {/* Row 2: tokens */}
+            <SummaryMetricStrip columns={5} cards={[
+              { label: "Cache Read",    value: fmtK(call.cacheRead) },
+              { label: "Cache Write",   value: fmtK(call.cacheWrite) },
+              { label: "Fresh In",      value: fmtK(freshIn) },
+              { label: "Fresh Out",     value: fmtK(call.outputTokens) },
+              { label: "Cache %",       value: `${cacheRatio}%`, tooltip: "cache_read / context_size" },
+            ]} />
           </div>
         </div>
-      </div>
 
-      {/* Diff Tabs */}
-      <div>
-        <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", marginBottom: 12 }}>
-          {(["incoming", "next", "snapshot", "evidence"] as DiffTab[]).map(t => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              style={{
-                padding: "7px 14px", fontSize: 12, fontWeight: tab === t ? 600 : 400,
-                color: tab === t ? "#6366f1" : "#6b7280",
-                background: "transparent", border: "none", borderBottom: tab === t ? "2px solid #6366f1" : "2px solid transparent",
-                cursor: "pointer", marginBottom: -1,
-              }}
-            >
-              {t === "incoming" ? "Incoming Diff" : t === "next" ? "Next Diff" : t === "snapshot" ? "Snapshot" : "Evidence"}
+        {/* ── Tabs ───────────────────────────────────────────── */}
+        <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", marginBottom: 16, gap: 0 }}>
+          {TAB_DEFS.map(({ id, label, badge }) => (
+            <button key={id} onClick={() => setTab(id)} style={{
+              padding: "7px 13px", fontSize: 11, fontWeight: tab === id ? 700 : 400,
+              color: tab === id ? "#6366f1" : "#6b7280",
+              background: "transparent", border: "none",
+              borderBottom: tab === id ? "2px solid #6366f1" : "2px solid transparent",
+              cursor: "pointer", marginBottom: -1, display: "flex", alignItems: "center", gap: 4,
+            }}>
+              {label}
+              {badge && <span style={{ fontSize: 9, background: "#fef2f2", color: "#dc2626", borderRadius: 3, padding: "1px 4px", fontWeight: 700 }}>{badge}</span>}
             </button>
           ))}
         </div>
 
+        {/* ── Tab: Incoming Diff ─────────────────────────────── */}
         {tab === "incoming" && (
           <div>
-            {/* Summary line */}
-            <div style={{ background: "#f9fafb", borderRadius: 6, padding: "8px 12px", fontSize: 11, color: "#374151", marginBottom: 10, display: "flex", gap: 16 }}>
-              <span><span style={{ fontWeight: 600, color: netDelta >= 0 ? "#16a34a" : "#dc2626" }}>{netDelta >= 0 ? "+" : ""}{fmtK(netDelta)}</span> net</span>
-              <span>{added.length} added · {removed.length} removed · {changed.length} changed · {retained.length} retained</span>
-            </div>
-            {[
-              { label: "Added", entries: added, color: "#16a34a" },
-              { label: "Changed", entries: changed, color: "#d97706" },
-              { label: "Removed", entries: removed, color: "#dc2626" },
-              { label: "Retained", entries: retained, color: "#9ca3af" },
-            ].filter(g => g.entries.length > 0).map(group => (
-              <div key={group.label} style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: group.color, marginBottom: 4 }}>{group.label}</div>
-                {group.entries.map(entry => (
-                  <DiffRow key={entry.id} entry={entry} onSelect={onSelectEntry} />
+            {/* Sankey mini overview */}
+            <IncomingDiffSankey segments={segments} diff={diff} />
+
+            {/* Diff table */}
+            {diff.length > 0 ? (
+              <>
+                {[
+                  { label: "Added",    entries: added,    color: "#16a34a" },
+                  { label: "Changed",  entries: changed,  color: "#d97706" },
+                  { label: "Removed",  entries: removed,  color: "#dc2626" },
+                  { label: "Retained", entries: retained, color: "#9ca3af" },
+                ].filter(g => g.entries.length > 0).map(group => (
+                  <div key={group.label} style={{ marginBottom: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: 2, background: group.color }} />
+                      <span style={{ fontSize: 11, fontWeight: 700, color: group.color }}>{group.label}</span>
+                      <span style={{ fontSize: 10, color: "#9ca3af" }}>{group.entries.length} entries</span>
+                    </div>
+                    <div style={{ border: "1px solid #f3f4f6", borderRadius: 6, overflow: "hidden" }}>
+                      {group.entries.map((entry, i) => (
+                        <EnrichedDiffRow
+                          key={entry.id} entry={entry}
+                          selected={selectedEvidenceEntry?.id === entry.id}
+                          onSelect={handleSelectEntry}
+                          isLast={i === group.entries.length - 1}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <div style={{ padding: "24px", textAlign: "center", color: "#9ca3af", border: "1px dashed #e5e7eb", borderRadius: 8 }}>
+                <div style={{ fontSize: 13, marginBottom: 4 }}>No diff data available</div>
+                <div style={{ fontSize: 11 }}>Incoming diff is not yet computed for this call.</div>
+                <div style={{ marginTop: 8 }}><MockBadge /></div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Tab: Response ──────────────────────────────────── */}
+        {tab === "response" && (
+          <div>
+            {/* Thinking block */}
+            {response.hasThinking && (
+              <div style={{ marginBottom: 12 }}>
+                <SectionLabel>Extended Thinking</SectionLabel>
+                <div style={{ background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: 8, padding: "10px 14px", fontSize: 11, color: "#7c3aed", lineHeight: 1.6, fontStyle: "italic" }}>
+                  {response.thinkingPreview}
+                  <span style={{ color: "#c4b5fd" }}> … [redacted]</span>
+                  <div style={{ marginTop: 4 }}><MockBadge /></div>
+                </div>
+              </div>
+            )}
+
+            {/* Text output */}
+            {response.textOutput && (
+              <div style={{ marginBottom: 12 }}>
+                <SectionLabel>Text Output</SectionLabel>
+                <div style={{
+                  background: "#f0fdf4", border: "1px solid #bbf7d0",
+                  borderLeft: "3px solid #16a34a",
+                  borderRadius: 8, padding: "10px 14px",
+                  fontSize: 12, color: "#14532d", lineHeight: 1.65, whiteSpace: "pre-wrap",
+                }}>
+                  {response.textOutput}
+                </div>
+              </div>
+            )}
+
+            {/* Tool use blocks */}
+            {response.toolUseBlocks.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <SectionLabel>Tool Use Requests</SectionLabel>
+                {response.toolUseBlocks.map(tu => (
+                  <div key={tu.id} style={{
+                    border: "1px solid #fde68a", borderLeft: "3px solid #d97706",
+                    background: "#fffbeb", borderRadius: 8, padding: "10px 14px", marginBottom: 8,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#d97706" }}>{tu.name}</span>
+                      <code style={{ fontSize: 10, color: "#9ca3af" }}>{tu.id}</code>
+                    </div>
+                    <pre style={{ fontSize: 11, color: "#374151", margin: 0, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                      {tu.input}
+                    </pre>
+                  </div>
                 ))}
               </div>
-            ))}
+            )}
+
+            {/* No output case */}
+            {!response.textOutput && response.toolUseBlocks.length === 0 && (
+              <div style={{ padding: "20px", textAlign: "center", color: "#9ca3af", border: "1px dashed #e5e7eb", borderRadius: 8 }}>
+                No response content captured. <MockBadge />
+              </div>
+            )}
+
+            {/* Output stats */}
+            <div style={{ marginTop: 8 }}>
+              <SummaryMetricStrip columns={3} cards={[
+                { label: "Output Tokens", value: fmtK(response.outputTokens) },
+                { label: "Stop Reason",   value: response.stopReason },
+                { label: "Thinking",      value: response.hasThinking ? "enabled" : "off", mock: true },
+              ]} />
+            </div>
           </div>
         )}
 
+        {/* ── Tab: Payload Map ───────────────────────────────── */}
+        {tab === "payload" && (
+          <div>
+            <SectionLabel mock>Estimated Payload Breakdown</SectionLabel>
+            <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "8px 12px", fontSize: 11, color: "#92400e", marginBottom: 12 }}>
+              Estimated from JSONL usage tokens. No exact request payload available without proxy dump.
+            </div>
+
+            {/* Stacked bar */}
+            <div style={{ display: "flex", height: 20, borderRadius: 6, overflow: "hidden", gap: 1, marginBottom: 8 }}>
+              {segments.map(seg => {
+                const total = segments.reduce((s, g) => s + g.tokens, 0) || 1;
+                const w = Math.max(seg.tokens / total * 100, 0.5);
+                return (
+                  <div key={seg.id} title={`${seg.category}: ${fmtK(seg.tokens)} (${Math.round(w)}%)`}
+                    style={{ width: `${w}%`, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb" }} />
+                );
+              })}
+            </div>
+
+            {/* Segment rows */}
+            <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+              {/* Header */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 60px 60px 100px", gap: 0, padding: "5px 12px", background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+                {["Segment", "Tokens", "%", "Source"].map(h => (
+                  <span key={h} style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600 }}>{h}</span>
+                ))}
+              </div>
+              {segments.map((seg, i) => {
+                const total = segments.reduce((s, g) => s + g.tokens, 0) || 1;
+                const pct = Math.round(seg.tokens / total * 100);
+                return (
+                  <div key={seg.id} style={{
+                    display: "grid", gridTemplateColumns: "1fr 60px 60px 100px",
+                    gap: 0, padding: "8px 12px",
+                    borderBottom: i < segments.length - 1 ? "1px solid #f3f4f6" : "none",
+                    alignItems: "center",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
+                      <div style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb" }} />
+                      <div>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{seg.label}</div>
+                        {seg.content && (
+                          <div style={{ fontSize: 10, color: "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {seg.content.slice(0, 60)}…
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 11, color: "#374151" }}>{fmtK(seg.tokens)}</span>
+                    <span style={{ fontSize: 11, color: "#9ca3af" }}>{pct}%</span>
+                    <span style={{ fontSize: 10, color: "#6b7280", fontFamily: "monospace" }}>{seg.source}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── Tab: Next Diff ─────────────────────────────────── */}
         {tab === "next" && (
-          <div style={{ padding: "20px", textAlign: "center", color: "#9ca3af", fontSize: 12, border: "1px dashed #e5e7eb", borderRadius: 8 }}>
-            Next Diff shows how the following call's context changed.<br /><MockBadge /><span style={{ marginLeft: 4 }}>Not yet implemented</span>
+          <div style={{ padding: "32px 16px", textAlign: "center", border: "1px dashed #e5e7eb", borderRadius: 8 }}>
+            <div style={{ fontSize: 14, color: "#374151", marginBottom: 8 }}>Next Diff</div>
+            <div style={{ fontSize: 12, color: "#9ca3af", lineHeight: 1.6 }}>
+              Shows how <strong>this call's response + tool results</strong> changed the following call's payload.
+              <br />Requires both JSONL events for this call and the next call.
+            </div>
+            <div style={{ marginTop: 12 }}><MockBadge /></div>
           </div>
         )}
 
-        {tab === "snapshot" && (
-          <div style={{ padding: "20px", textAlign: "center", color: "#9ca3af", fontSize: 12, border: "1px dashed #e5e7eb", borderRadius: 8 }}>
-            Full snapshot of context at Call #{call.id}.<br /><MockBadge /><span style={{ marginLeft: 4 }}>Not yet implemented</span>
+        {/* ── Tab: Raw ───────────────────────────────────────── */}
+        {tab === "raw" && (
+          <div>
+            <SectionLabel>Raw JSONL Events</SectionLabel>
+            <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "8px 12px", fontSize: 11, color: "#92400e", marginBottom: 12 }}>
+              Request payload not available — proxy data not linked. Showing estimated token usage from JSONL.
+            </div>
+            <pre style={{
+              fontSize: 11, fontFamily: "monospace", color: "#374151",
+              background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8,
+              padding: "12px 14px", overflowX: "auto", whiteSpace: "pre-wrap",
+              wordBreak: "break-all", lineHeight: 1.5,
+            }}>
+              {JSON.stringify({
+                _note: "Observed from JSONL — no proxy dump available",
+                call_id: call.id,
+                model: call.model,
+                timestamp: call.timestamp,
+                usage: {
+                  input_tokens: call.contextSize - call.cacheRead - call.cacheWrite,
+                  cache_read_input_tokens: call.cacheRead,
+                  cache_creation_input_tokens: call.cacheWrite,
+                  output_tokens: call.outputTokens,
+                },
+                stop_reason: call.stopReason,
+                context_size_estimated: call.contextSize,
+              }, null, 2)}
+            </pre>
           </div>
         )}
+      </div>
 
-        {tab === "evidence" && (
-          <div style={{ padding: "20px", textAlign: "center", color: "#9ca3af", fontSize: 12, border: "1px dashed #e5e7eb", borderRadius: 8 }}>
-            Click a diff row to view its evidence.<br /><MockBadge /><span style={{ marginLeft: 4 }}>Select a diff row above</span>
-          </div>
+      {/* ── Right evidence panel ──────────────────────────────── */}
+      <div style={{ width: 220, borderLeft: "1px solid #f3f4f6", overflowY: "auto", flexShrink: 0, background: "#fafafa", padding: "16px 14px" }}>
+        {selectedEvidenceEntry ? (
+          <EvidenceSidePanel entry={selectedEvidenceEntry} onClear={() => setSelectedEvidenceEntry(null)} />
+        ) : (
+          <CallContextSummaryPanel call={call} segments={segments} />
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Enriched Diff Row ────────────────────────────────────────────────────────
+
+function EnrichedDiffRow({
+  entry, selected, onSelect, isLast,
+}: { entry: MockDiffEntry; selected: boolean; onSelect: (e: MockDiffEntry) => void; isLast: boolean }) {
+  const confidenceColors = { High: "#16a34a", Medium: "#d97706", Low: "#dc2626", Unknown: "#6b7280" };
+  const confidenceLabels = { High: "✓", Medium: "~", Low: "!", Unknown: "?" };
+
+  return (
+    <div
+      onClick={() => onSelect(entry)}
+      style={{
+        display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 10px",
+        cursor: "pointer", background: selected ? "#eff6ff" : "transparent",
+        borderBottom: isLast ? "none" : "1px solid #f9fafb",
+        borderLeft: selected ? "2px solid #6366f1" : "2px solid transparent",
+        transition: "background 0.1s",
+      }}
+      onMouseEnter={e => { if (!selected) e.currentTarget.style.background = "#f9fafb"; }}
+      onMouseLeave={e => { if (!selected) e.currentTarget.style.background = "transparent"; }}
+    >
+      {/* Change type icon */}
+      <ChangeTypeIcon type={entry.changeType} />
+
+      {/* Category dot */}
+      <div style={{ width: 6, height: 6, borderRadius: 1, flexShrink: 0, marginTop: 3,
+        background: CATEGORY_COLORS[entry.category] ?? "#e5e7eb" }} />
+
+      {/* Main content */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 11, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+            {entry.label}
+          </span>
+          <span style={{ fontSize: 10, color: confidenceColors[entry.confidence], flexShrink: 0 }}
+            title={`${entry.confidence} confidence`}>
+            {confidenceLabels[entry.confidence]}
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+          <span style={{ fontSize: 10, color: CATEGORY_COLORS[entry.category] ?? "#9ca3af" }}>{entry.category}</span>
+          <span style={{ fontSize: 10, color: "#9ca3af" }}>·</span>
+          <span style={{ fontSize: 10, color: "#9ca3af" }}>{entry.cause}</span>
+        </div>
+      </div>
+
+      {/* Delta */}
+      <span style={{
+        fontSize: 12, fontWeight: 700, flexShrink: 0,
+        color: entry.delta >= 0 ? "#16a34a" : "#dc2626",
+        minWidth: 44, textAlign: "right",
+      }}>
+        {entry.delta >= 0 ? "+" : ""}{fmtK(entry.delta)}
+      </span>
+    </div>
+  );
+}
+
+// ─── Evidence Side Panel ──────────────────────────────────────────────────────
+
+function EvidenceSidePanel({ entry, onClear }: { entry: MockDiffEntry; onClear: () => void }) {
+  const confidenceColors = { High: "#16a34a", Medium: "#d97706", Low: "#dc2626", Unknown: "#6b7280" };
+  const confidenceNotes = {
+    High: "Exact content matched from event record.",
+    Medium: "Structural match; segment boundary is inferred.",
+    Low: "Inferred from token gap only. Weak heuristic.",
+    Unknown: "Cannot attribute. Only token gap observed.",
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>Evidence</span>
+        <button onClick={onClear} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, color: "#9ca3af", padding: 0 }}>×</button>
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#111827", marginBottom: 10, lineHeight: 1.4, wordBreak: "break-word" }}>
+        {entry.label}
+      </div>
+
+      {[
+        { label: "Category", value: <span style={{ color: CATEGORY_COLORS[entry.category] ?? "#374151" }}>{entry.category}</span> },
+        { label: "Change",   value: entry.changeType },
+        { label: "Delta",    value: <span style={{ color: entry.delta >= 0 ? "#16a34a" : "#dc2626", fontWeight: 700 }}>{entry.delta >= 0 ? "+" : ""}{fmtK(entry.delta)}</span> },
+        { label: "Cause",    value: entry.cause },
+        { label: "Confidence", value: <span style={{ color: confidenceColors[entry.confidence], fontWeight: 700 }}>{entry.confidence}</span> },
+      ].map(({ label, value }) => (
+        <div key={label} style={{ display: "flex", gap: 8, padding: "5px 0", borderBottom: "1px solid #f3f4f6" }}>
+          <span style={{ width: 72, flexShrink: 0, fontSize: 10, color: "#9ca3af" }}>{label}</span>
+          <span style={{ fontSize: 11, color: "#374151" }}>{value}</span>
+        </div>
+      ))}
+
+      {entry.evidence && (
+        <div style={{ marginTop: 10, padding: "8px 10px", background: "#f9fafb", borderRadius: 6, fontSize: 10, fontFamily: "monospace", color: "#374151", lineHeight: 1.6, wordBreak: "break-all" }}>
+          {entry.evidence}
+        </div>
+      )}
+      {!entry.evidence && (
+        <div style={{ marginTop: 10, padding: "8px 10px", background: "#f9fafb", borderRadius: 6, fontSize: 11, color: "#9ca3af", fontStyle: "italic" }}>
+          No source reference. <MockBadge />
+        </div>
+      )}
+
+      <div style={{ marginTop: 10, fontSize: 10, color: "#9ca3af", fontStyle: "italic", lineHeight: 1.5 }}>
+        {confidenceNotes[entry.confidence]}
+      </div>
+    </div>
+  );
+}
+
+// ─── Call Context Summary (right panel default) ───────────────────────────────
+
+function CallContextSummaryPanel({ call, segments }: { call: MockLlmCall; segments: MockPayloadSegment[] }) {
+  const total = segments.reduce((s, seg) => s + seg.tokens, 0) || 1;
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
+        Context Composition <MockBadge />
+      </div>
+      {/* Mini stacked bar */}
+      <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", gap: 0.5, marginBottom: 10 }}>
+        {segments.map(seg => (
+          <div key={seg.id} title={seg.category}
+            style={{ width: `${seg.tokens / total * 100}%`, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb" }} />
+        ))}
+      </div>
+      {segments.map(seg => {
+        const pct = Math.round(seg.tokens / total * 100);
+        return (
+          <div key={seg.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+            <div style={{ width: 7, height: 7, borderRadius: 1, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb", flexShrink: 0 }} />
+            <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seg.category}</span>
+            <div style={{ width: 36, height: 3, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: `${pct}%`, height: "100%", background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb" }} />
+            </div>
+            <span style={{ fontSize: 10, color: "#9ca3af", width: 24, textAlign: "right" }}>{pct}%</span>
+          </div>
+        );
+      })}
+      <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #f3f4f6", fontSize: 10, color: "#9ca3af", lineHeight: 1.5 }}>
+        Click a diff row to see its evidence and source reference.
       </div>
     </div>
   );
