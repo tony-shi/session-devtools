@@ -1,38 +1,44 @@
 import { useEffect, useState } from "react";
 import type { SessionV2 } from "./types";
-import type { DiffEntry, LlmCall, SessionDrilldown, UserTurn } from "./drilldown-types";
+import type { DiffEntry, LlmCall, ModelStats, SessionDrilldown, UserTurn } from "./drilldown-types";
 import { apiV2 } from "./api";
 
 // Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
 type MockDiffEntry = DiffEntry;
-// LlmCall fields added in drilldown-types (indexInTurn, model, stopReason, proxy)
-// are optional in the raw fallback data below; normalizeTurns() fills them in.
-type RawMockCall = Omit<LlmCall, "indexInTurn" | "model" | "stopReason" | "proxy"> & {
+// LlmCall fields added in drilldown-types are optional in the raw fallback
+// data below; normalizeTurns() fills them in.
+type RawMockCall = Omit<LlmCall,
+  "indexInTurn" | "model" | "contextWindowSize" | "stopReason" | "proxy" |
+  "isCompaction" | "isUnknownHeavy" | "isSignificant" | "significantDelta"
+> & {
   isCompaction?: boolean; isUnknownHeavy?: boolean; isSignificant?: boolean; significantDelta?: number;
 };
-type RawMockTurn = Omit<UserTurn, "startedAt" | "endedAt" | "hasCompaction" | "hasUnknownSpike" | "calls"> & {
+type RawMockTurn = Omit<UserTurn, "startedAt" | "endedAt" | "hasCompaction" | "hasUnknownSpike" | "finalOutput" | "durationMs" | "calls"> & {
   hasCompaction?: boolean; hasUnknownSpike?: boolean; calls: RawMockCall[];
 };
 type MockLlmCall = LlmCall;
 type MockUserTurn = UserTurn;
 
 function normalizeTurns(raw: RawMockTurn[]): UserTurn[] {
-  return raw.map((t, ti) => ({
+  return raw.map((t) => ({
     startedAt: "",
     endedAt: "",
+    finalOutput: null,
+    durationMs: 0,
     hasCompaction: t.hasCompaction ?? false,
     hasUnknownSpike: t.hasUnknownSpike ?? false,
     ...t,
     calls: t.calls.map((c, ci) => ({
+      ...c,
       indexInTurn: ci + 1,
       model: "claude-opus-4-7",
+      contextWindowSize: 200_000,
       stopReason: "end_turn" as const,
       proxy: null,
       isCompaction: c.isCompaction ?? false,
       isUnknownHeavy: c.isUnknownHeavy ?? false,
       isSignificant: c.isSignificant ?? false,
       significantDelta: c.significantDelta ?? 0,
-      ...c,
     })),
   }));
 }
@@ -489,51 +495,135 @@ function SessionOverviewPanel({
   const totalInput = (totalFreshIn ?? 0) + totalCacheRead;
   const cacheRatio = totalInput > 0 ? Math.round((totalCacheRead / totalInput) * 100) : null;
 
-  // Largest growth turn (for hotspot)
-  const largestGrowthTurn = turns.length ? [...turns].sort((a, b) => b.netContextDelta - a.netContextDelta)[0] : null;
+  const modelBreakdown = drilldown?.modelBreakdown ?? null;
+  const contextWindowSize = drilldown?.contextWindowSize ?? 200_000;
+
+  // Net Context = last call's context size minus first call's context size across the whole session
+  // Semantics: how much did the total context window usage grow from session start to end?
+  // This reflects the net accumulation after all tool results, compactions, and assistant history.
+  const allCallsFlat = turns.flatMap(t => t.calls);
+  const netContext = allCallsFlat.length >= 2
+    ? allCallsFlat[allCallsFlat.length - 1].contextSize - allCallsFlat[0].contextSize
+    : null;
+  const netContextStr = netContext !== null
+    ? `${netContext >= 0 ? "+" : ""}${fmtK(netContext)}`
+    : "—";
+
   const compactionTurns = turns.filter(t => t.hasCompaction || t.calls.some(c => c.isCompaction));
 
   return (
     <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
-      {/* Metric Strip */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
-        {[
-          { label: "User Turns", value: String(turns.length), mock: isMock },
-          { label: "LLM Calls", value: String(totalCalls), mock: isMock },
-          { label: "Tool Calls", value: String(totalToolCalls), mock: isMock },
-          { label: "Duration", value: durationStr, mock: isMock },
-          { label: "Cache Read", value: fmtK(totalCacheRead), mock: isMock },
-          { label: "Cache Write", value: fmtK(totalCacheWrite), mock: isMock },
-          { label: "Fresh In", value: totalFreshIn !== null ? fmtK(totalFreshIn) : "—", mock: isMock },
-          { label: "Fresh Out", value: totalFreshOut !== null ? fmtK(totalFreshOut) : "—", mock: isMock },
-          { label: "Cache Ratio", value: cacheRatio !== null ? `${cacheRatio}%` : "—", mock: isMock },
-          { label: "Peak Context", value: fmtK(peakContext), mock: isMock },
-          { label: "Errors", value: systemErrors !== null ? String(systemErrors) : "0", mock: isMock, alert: systemErrors !== null && systemErrors > 0 },
-          { label: "Net Context", value: "—", mock: true, tooltip: "Last call context minus first call context across the session" },
-        ].map(({ label, value, mock, alert: isAlert, tooltip }) => (
-          <div key={label} title={tooltip} style={{
-            background: isAlert ? "#fef2f2" : "#f9fafb",
-            borderRadius: 8, padding: "10px 12px",
-            border: `1px solid ${isAlert ? "#fecaca" : "#e5e7eb"}`,
-          }}>
-            <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 4 }}>{label}{mock && <MockBadge />}</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: isAlert ? "#dc2626" : "#111827" }}>{value}</div>
+      {/* ── Token / call metrics ───────────────────────────────────── */}
+      <div style={{ marginBottom: 16 }}>
+        {/* Row 1: Model + LLM Calls combined */}
+        {modelBreakdown && (() => {
+          const entries = Object.entries(modelBreakdown).sort((a, b) => b[1].calls - a[1].calls);
+          const singleModel = entries.length === 1;
+          return (
+            <div style={{ display: "grid", gridTemplateColumns: singleModel ? "auto 1fr" : "1fr 1fr", gap: 10, marginBottom: 10 }}>
+              {/* Model identity */}
+              <div style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+                {entries.map(([m, s]) => {
+                  const color = modelColor(m);
+                  return (
+                    <div key={m} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: 2, background: color }} />
+                      <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{shortModelName(m)}</span>
+                      {!singleModel && <span style={{ fontSize: 10, color: "#9ca3af" }}>{s.calls} calls</span>}
+                    </div>
+                  );
+                })}
+                <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: 4 }}>
+                  {contextWindowSize.toLocaleString()} ctx window
+                </span>
+              </div>
+              {/* LLM / Tool Calls + Duration */}
+              <div style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 14px", display: "flex", gap: 20, alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 2 }}>LLM Calls</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{totalCalls}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 2 }}>Tool Calls</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{totalToolCalls}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 2 }}>Turns</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{turns.length}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 2 }}>Duration</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{durationStr}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Row 2: Token breakdown — Cache Read/Write, Fresh In/Out, Ratio */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 10 }}>
+          {[
+            { label: "Cache Read", value: fmtK(totalCacheRead) },
+            { label: "Cache Write", value: fmtK(totalCacheWrite) },
+            { label: "Fresh In", value: totalFreshIn !== null ? fmtK(totalFreshIn) : "—" },
+            { label: "Fresh Out", value: totalFreshOut !== null ? fmtK(totalFreshOut) : "—" },
+            { label: "Cache Ratio", value: cacheRatio !== null ? `${cacheRatio}%` : "—", tooltip: "cache_read / (cache_read + fresh_in)" },
+          ].map(({ label, value, tooltip }) => (
+            <div key={label} title={tooltip} style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 12px" }}>
+              <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 3 }}>{label}{isMock && <MockBadge />}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>{value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Row 3: Context stats — Peak, Net Context, Errors */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+          <div style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 12px" }}>
+            <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 3 }}>Peak Context{isMock && <MockBadge />}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>{fmtK(peakContext)}</div>
           </div>
-        ))}
+          <div
+            title="从 session 第一个 LLM call 到最后一个 call，context size 的净变化。正值表示整体增长；compaction 会压低这个数字。"
+            style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 12px", cursor: "help" }}
+          >
+            <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 3 }}>
+              Net Context
+              {netContext === null && <MockBadge />}
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: netContext !== null && netContext < 0 ? "#16a34a" : "#111827" }}>
+              {netContextStr}
+            </div>
+          </div>
+          <div style={{
+            background: systemErrors !== null && systemErrors > 0 ? "#fef2f2" : "#f9fafb",
+            border: `1px solid ${systemErrors !== null && systemErrors > 0 ? "#fecaca" : "#e5e7eb"}`,
+            borderRadius: 8, padding: "8px 12px",
+          }}>
+            <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 3 }}>Errors{isMock && <MockBadge />}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: systemErrors !== null && systemErrors > 0 ? "#dc2626" : "#111827" }}>
+              {systemErrors ?? 0}
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Hotspot summary row */}
-      {!isMock && (
-        <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
-          {largestGrowthTurn && (
-            <HotspotChip icon="↑" label={`Turn ${largestGrowthTurn.id} largest growth`} value={`+${fmtK(largestGrowthTurn.netContextDelta)}`} color="#d97706" />
-          )}
+      {/* Compaction / Near-limit hotspot chips — only meaningful info */}
+      {!isMock && (compactionTurns.length > 0 || peakContext > 150000) && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
           {compactionTurns.length > 0 && (
             <HotspotChip icon="◆" label="Compaction" value={compactionTurns.map(t => `Turn ${t.id}`).join(", ")} color="#ef4444" />
           )}
           {peakContext > 150000 && (
-            <HotspotChip icon="⚠" label="Peak context" value={`${fmtK(peakContext)} (high)`} color="#ea580c" />
+            <HotspotChip icon="⚠" label="Peak context" value={`${fmtK(peakContext)} (${Math.round(peakContext / contextWindowSize * 100)}%)`} color="#ea580c" />
           )}
+        </div>
+      )}
+
+      {/* Model Breakdown — only show when there are multiple models */}
+      {modelBreakdown && Object.keys(modelBreakdown).length > 1 && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Models</div>
+          <ModelBreakdownBlock breakdown={modelBreakdown} contextWindowSize={contextWindowSize} />
         </div>
       )}
 
@@ -541,8 +631,13 @@ function SessionOverviewPanel({
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
           Context Timeline {isMock && <MockBadge />}
+          {!isMock && (
+            <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 400, marginLeft: 6 }}>
+              ceiling = {fmtK(contextWindowSize)} ({contextWindowSize.toLocaleString()} tokens)
+            </span>
+          )}
         </div>
-        <ContextTimelineChart turns={turns} isMock={isMock} />
+        <ContextTimelineChart turns={turns} isMock={isMock} contextWindowSize={contextWindowSize} />
       </div>
 
       {/* Top context contributors (mock) */}
@@ -581,6 +676,74 @@ function SessionOverviewPanel({
   );
 }
 
+// Model name display: strip provider prefix, keep version suffix
+function shortModelName(m: string): string {
+  return m.replace(/^(aws|gcp|azure)\./i, "").replace("claude-", "");
+}
+
+const MODEL_COLORS: Record<string, string> = {
+  "opus":    "#6366f1",
+  "sonnet":  "#3b82f6",
+  "haiku":   "#22c55e",
+};
+function modelColor(m: string): string {
+  const lower = m.toLowerCase();
+  for (const [key, color] of Object.entries(MODEL_COLORS)) {
+    if (lower.includes(key)) return color;
+  }
+  return "#94a3b8";
+}
+
+function ModelBreakdownBlock({
+  breakdown, contextWindowSize,
+}: { breakdown: Record<string, ModelStats>; contextWindowSize: number }) {
+  const entries = Object.entries(breakdown).sort((a, b) => b[1].calls - a[1].calls);
+  const totalCalls = entries.reduce((s, [, v]) => s + v.calls, 0);
+
+  return (
+    <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+      {/* Global header row */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr repeat(4, auto)", gap: 0, background: "#f9fafb", padding: "6px 12px", borderBottom: "1px solid #e5e7eb" }}>
+        {["Model", "Calls", "Out", "Cache R", "Cache W"].map(h => (
+          <span key={h} style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", textAlign: "right", paddingLeft: 12 }}>{h}</span>
+        ))}
+      </div>
+      {entries.map(([model, stats]) => {
+        const pct = totalCalls > 0 ? Math.round((stats.calls / totalCalls) * 100) : 0;
+        const color = modelColor(model);
+        return (
+          <div key={model} style={{ display: "grid", gridTemplateColumns: "1fr repeat(4, auto)", gap: 0, padding: "7px 12px", borderBottom: "1px solid #f3f4f6", alignItems: "center" }}>
+            {/* Model name + bar */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{shortModelName(model)}</span>
+                <span style={{ fontSize: 10, color: "#9ca3af" }}>{pct}%</span>
+              </div>
+              {/* Usage bar against context window */}
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ flex: 1, height: 3, background: "#f3f4f6", borderRadius: 2, overflow: "hidden", maxWidth: 120 }}>
+                  <div style={{ width: `${pct}%`, height: "100%", background: color }} />
+                </div>
+              </div>
+            </div>
+            <span style={{ fontSize: 11, color: "#374151", textAlign: "right", paddingLeft: 12 }}>{stats.calls}</span>
+            <span style={{ fontSize: 11, color: "#374151", textAlign: "right", paddingLeft: 12 }}>{fmtK(stats.outputTokens)}</span>
+            <span style={{ fontSize: 11, color: "#374151", textAlign: "right", paddingLeft: 12 }}>{fmtK(stats.cacheRead)}</span>
+            <span style={{ fontSize: 11, color: "#374151", textAlign: "right", paddingLeft: 12 }}>{fmtK(stats.cacheWrite)}</span>
+          </div>
+        );
+      })}
+      {/* Footer: context window */}
+      <div style={{ padding: "6px 12px", background: "#f9fafb", borderTop: "1px solid #e5e7eb" }}>
+        <span style={{ fontSize: 10, color: "#9ca3af" }}>
+          Context window ceiling: <strong style={{ color: "#374151" }}>{contextWindowSize.toLocaleString()} tokens</strong>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function HotspotChip({ icon, label, value, color }: { icon: string; label: string; value: string; color: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6 }}>
@@ -591,28 +754,35 @@ function HotspotChip({ icon, label, value, color }: { icon: string; label: strin
   );
 }
 
-function ContextTimelineChart({ turns, isMock }: { turns: MockUserTurn[]; isMock: boolean }) {
+type TimelineXMode = "linear" | "time";
+
+function ContextTimelineChart({
+  turns, isMock, contextWindowSize = 200_000,
+}: { turns: MockUserTurn[]; isMock: boolean; contextWindowSize?: number }) {
+  const [xMode, setXMode] = useState<TimelineXMode>("linear");
+
   if (!turns.length) return null;
 
-  // Collect all LLM calls across turns with their call index and context size
-  const allPoints: Array<{ turnId: number; callId: number; contextSize: number; isCompaction: boolean }> = [];
+  // Collect all LLM calls with timestamps
+  const allPoints: Array<{
+    turnId: number; callId: number; contextSize: number;
+    isCompaction: boolean; timestamp: string;
+  }> = [];
   for (const turn of turns) {
     for (const call of turn.calls) {
       allPoints.push({
-        turnId: turn.id,
-        callId: call.id,
-        contextSize: call.contextSize,
-        isCompaction: call.isCompaction,
+        turnId: turn.id, callId: call.id,
+        contextSize: call.contextSize, isCompaction: call.isCompaction,
+        timestamp: call.timestamp,
       });
     }
   }
 
   if (allPoints.length === 0) {
-    // Fallback: turn-level bar chart
-    const maxCtx = Math.max(...turns.map(t => t.peakContext));
+    const maxCtx = Math.max(...turns.map(t => t.peakContext), 1);
     const barColors = ["#6366f1", "#3b82f6", "#22c55e", "#f59e0b", "#a855f7"];
     return (
-      <div style={{ border: isMock ? "1px dashed #d1d5db" : "1px solid #e5e7eb", borderRadius: 8, padding: "16px", background: "#fafafa", height: 120, position: "relative", overflow: "hidden" }}>
+      <div style={{ border: isMock ? "1px dashed #d1d5db" : "1px solid #e5e7eb", borderRadius: 8, padding: "16px", background: "#fafafa", height: 120, overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: "80%", paddingBottom: 4 }}>
           {turns.map((t, i) => {
             const h = Math.round((t.peakContext / maxCtx) * 100);
@@ -628,41 +798,120 @@ function ContextTimelineChart({ turns, isMock }: { turns: MockUserTurn[]; isMock
     );
   }
 
-  // SVG line chart
-  const W = 600, H = 100, PAD = { t: 8, b: 20, l: 8, r: 8 };
+  // ── SVG dimensions ──────────────────────────────────────────────
+  const W = 600, H = 110, PAD = { t: 10, b: 22, l: 6, r: 36 };
   const chartW = W - PAD.l - PAD.r;
   const chartH = H - PAD.t - PAD.b;
-  const maxCtx = Math.max(...allPoints.map(p => p.contextSize));
-  const minCtx = Math.min(...allPoints.map(p => p.contextSize));
-  const range = maxCtx - minCtx || 1;
 
-  const xs = allPoints.map((_, i) => PAD.l + (i / Math.max(allPoints.length - 1, 1)) * chartW);
-  const ys = allPoints.map(p => PAD.t + chartH - ((p.contextSize - minCtx) / range) * chartH);
+  // ── Y axis: 0 → context window ceiling ─────────────────────────
+  const toY = (v: number) => PAD.t + chartH - (v / contextWindowSize) * chartH;
+  const ceilingY = toY(contextWindowSize);
+  const warningY = toY(contextWindowSize * 0.9); // top-10% danger zone starts here
 
-  const pathD = xs.map((x, i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
+  // ── X axis: two modes ───────────────────────────────────────────
+  // Mode A (linear): equal spacing per call index
+  // Mode B (time): spacing proportional to wall-clock time between calls
+  let xs: number[];
+  const n = allPoints.length;
 
-  // Turn boundary x positions
-  const turnBoundaries: number[] = [];
-  let idx = 0;
-  for (const turn of turns) {
-    if (idx > 0) turnBoundaries.push(xs[idx]);
-    idx += turn.calls.length;
+  if (xMode === "linear" || n <= 1) {
+    xs = allPoints.map((_, i) => PAD.l + (i / Math.max(n - 1, 1)) * chartW);
+  } else {
+    // Parse timestamps to ms; fall back to linear if timestamps are missing/identical
+    const tms = allPoints.map(p => {
+      const t = p.timestamp ? new Date(p.timestamp).getTime() : NaN;
+      return isNaN(t) ? null : t;
+    });
+    const hasAllTimestamps = tms.every(t => t !== null);
+    if (!hasAllTimestamps) {
+      xs = allPoints.map((_, i) => PAD.l + (i / Math.max(n - 1, 1)) * chartW);
+    } else {
+      const tFirst = tms[0]!;
+      const tLast = tms[n - 1]!;
+      const tRange = tLast - tFirst || 1;
+      xs = tms.map(t => PAD.l + ((t! - tFirst) / tRange) * chartW);
+    }
   }
 
-  // Y-axis labels
-  const yLabels = [maxCtx, (maxCtx + minCtx) / 2, minCtx].map((v, i) => ({
-    y: PAD.t + (i * chartH) / 2,
-    label: fmtK(v),
-  }));
+  const ys = allPoints.map(p => toY(p.contextSize));
+  const pathD = xs.map((x, i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
+
+  // Turn boundary x positions (first call of each turn except T1)
+  const turnBoundaries: number[] = [];
+  let cumIdx = 0;
+  for (const turn of turns) {
+    if (cumIdx > 0) turnBoundaries.push(xs[cumIdx]);
+    cumIdx += turn.calls.length;
+  }
+
+  // Peak
+  const peakCtx = Math.max(...allPoints.map(p => p.contextSize));
+  const peakPct = peakCtx / contextWindowSize;
+  const lineColor = peakPct > 0.9 ? "#ea580c" : "#6366f1";
+
+  // Y-axis ticks: 200k ceiling + 50k increments
+  const tickStep = contextWindowSize <= 200_000 ? 50_000 : 100_000;
+  const yTicks = Array.from({ length: Math.floor(contextWindowSize / tickStep) + 1 }, (_, i) => i * tickStep)
+    .filter(v => v <= contextWindowSize);
 
   return (
-    <div style={{ border: isMock ? "1px dashed #d1d5db" : "1px solid #e5e7eb", borderRadius: 8, padding: "8px", background: "#fafafa", overflow: "hidden" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 110, display: "block" }}>
-        {/* Turn boundary lines */}
-        {turnBoundaries.map((x, i) => (
-          <line key={i} x1={x} y1={PAD.t} x2={x} y2={PAD.t + chartH} stroke="#e5e7eb" strokeWidth={1} strokeDasharray="3,3" />
+    <div style={{ border: isMock ? "1px dashed #d1d5db" : "1px solid #e5e7eb", borderRadius: 8, background: "#fafafa", overflow: "hidden" }}>
+      {/* Mode toggle */}
+      <div style={{ display: "flex", justifyContent: "flex-end", padding: "6px 10px 0", gap: 4 }}>
+        {(["linear", "time"] as TimelineXMode[]).map(mode => (
+          <button
+            key={mode}
+            onClick={() => setXMode(mode)}
+            style={{
+              fontSize: 10, padding: "2px 8px", borderRadius: 4, cursor: "pointer",
+              background: xMode === mode ? "#6366f1" : "transparent",
+              color: xMode === mode ? "#fff" : "#9ca3af",
+              border: `1px solid ${xMode === mode ? "#6366f1" : "#e5e7eb"}`,
+            }}
+          >
+            {mode === "linear" ? "Linear" : "Time"}
+          </button>
         ))}
-        {/* Turn labels at top */}
+      </div>
+
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: 130, display: "block" }}>
+        {/* Y-axis grid lines + labels */}
+        {yTicks.map(v => {
+          const y = toY(v);
+          const isCeiling = v === contextWindowSize;
+          return (
+            <g key={v}>
+              <line x1={PAD.l} y1={y} x2={PAD.l + chartW} y2={y}
+                stroke={isCeiling ? "#ef4444" : "#f3f4f6"}
+                strokeWidth={isCeiling ? 1 : 0.75}
+                strokeDasharray={isCeiling ? "4,3" : undefined}
+                opacity={isCeiling ? 0.7 : 1}
+              />
+              <text x={W - PAD.r + 2} y={y + 3} fontSize={8}
+                fill={isCeiling ? "#ef4444" : "#d1d5db"} opacity={isCeiling ? 0.85 : 1}>
+                {fmtK(v)}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Danger zone fill: top 10% of context window
+            toY(ceiling) is the TOP of the chart (smaller Y value),
+            toY(90%) is BELOW the ceiling (larger Y value).
+            Height = toY(90%) - toY(ceiling) = positive number. */}
+        <rect
+          x={PAD.l} y={ceilingY}
+          width={chartW} height={warningY - ceilingY}
+          fill="#fef3c7" opacity={0.6}
+        />
+
+        {/* Turn boundary vertical lines */}
+        {turnBoundaries.map((x, i) => (
+          <line key={i} x1={x} y1={PAD.t} x2={x} y2={PAD.t + chartH}
+            stroke="#e5e7eb" strokeWidth={1} strokeDasharray="3,3" />
+        ))}
+
+        {/* Turn labels at bottom */}
         {turns.map((turn, ti) => {
           const startIdx = turns.slice(0, ti).reduce((s, t) => s + t.calls.length, 0);
           const midIdx = startIdx + Math.floor(turn.calls.length / 2);
@@ -671,71 +920,154 @@ function ContextTimelineChart({ turns, isMock }: { turns: MockUserTurn[]; isMock
             <text key={turn.id} x={x} y={H - 4} textAnchor="middle" fontSize={9} fill="#9ca3af">T{turn.id}</text>
           );
         })}
-        {/* Y-axis labels */}
-        {yLabels.map(({ y, label }) => (
-          <text key={label} x={W - PAD.r} y={y + 3} textAnchor="end" fontSize={8} fill="#d1d5db">{label}</text>
-        ))}
-        {/* Line */}
-        <path d={pathD} fill="none" stroke="#6366f1" strokeWidth={1.5} />
+
+        {/* Time labels on X axis (Time mode only) */}
+        {xMode === "time" && allPoints.map((p, i) => {
+          if (!p.timestamp) return null;
+          // Only label first + last + turn starts
+          const isTurnStart = turnBoundaries.includes(xs[i]) || i === 0;
+          if (!isTurnStart && i !== n - 1) return null;
+          const label = p.timestamp.length >= 19
+            ? p.timestamp.slice(11, 16)
+            : p.timestamp.slice(0, 5);
+          return (
+            <text key={i} x={xs[i]} y={H - 4} textAnchor="middle" fontSize={8} fill="#c4b5d5">{label}</text>
+          );
+        })}
+
+        {/* Area fill */}
+        <path
+          d={`${pathD} L${xs[n - 1].toFixed(1)},${(PAD.t + chartH).toFixed(1)} L${PAD.l.toFixed(1)},${(PAD.t + chartH).toFixed(1)} Z`}
+          fill={lineColor} opacity={0.06}
+        />
+
+        {/* Main line */}
+        <path d={pathD} fill="none" stroke={lineColor} strokeWidth={1.5} />
+
         {/* Compaction markers */}
         {allPoints.map((p, i) => p.isCompaction ? (
-          <text key={i} x={xs[i]} y={ys[i] - 4} textAnchor="middle" fontSize={9} fill="#ef4444">◆</text>
+          <text key={i} x={xs[i]} y={ys[i] - 5} textAnchor="middle" fontSize={9} fill="#ef4444">◆</text>
         ) : null)}
-        {/* Call dots (only for small datasets) */}
-        {allPoints.length <= 30 && allPoints.map((p, i) => (
-          <circle key={i} cx={xs[i]} cy={ys[i]} r={2.5} fill={p.isCompaction ? "#ef4444" : "#6366f1"} opacity={0.8} />
+
+        {/* Call dots */}
+        {n <= 40 && allPoints.map((p, i) => (
+          <circle key={i} cx={xs[i]} cy={ys[i]} r={2.5}
+            fill={p.isCompaction ? "#ef4444" : lineColor} opacity={0.85} />
         ))}
       </svg>
+
+      {/* Footer annotation */}
+      {!isMock && (
+        <div style={{ padding: "2px 10px 6px", fontSize: 10, color: "#9ca3af", display: "flex", gap: 16 }}>
+          <span>
+            Peak: <strong style={{ color: peakPct > 0.9 ? "#ea580c" : "#374151" }}>{fmtK(peakCtx)}</strong>
+            {" "}({Math.round(peakPct * 100)}% of window)
+          </span>
+          {xMode === "time" && <span style={{ color: "#c4b5d5" }}>X axis = wall-clock time</span>}
+          <span style={{ color: "#fde68a" }}>
+            ░ danger zone = top 10% ({fmtK(contextWindowSize * 0.9)}+)
+          </span>
+        </div>
+      )}
     </div>
   );
 }
 
+const INPUT_PREVIEW_CHARS = 120;
+const OUTPUT_PREVIEW_CHARS = 200;
+
+function fmtDuration(ms: number): string {
+  if (ms <= 0) return "";
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
 function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const inputFull = turn.userInput;
+  const inputPreview = inputFull.length > INPUT_PREVIEW_CHARS
+    ? inputFull.slice(0, INPUT_PREVIEW_CHARS) + "…"
+    : inputFull;
+
+  const outputFull = turn.finalOutput ?? null;
+  const outputPreview = outputFull
+    ? outputFull.length > OUTPUT_PREVIEW_CHARS
+      ? outputFull.slice(0, OUTPUT_PREVIEW_CHARS) + "…"
+      : outputFull
+    : null;
+
+  const needsExpand = inputFull.length > INPUT_PREVIEW_CHARS
+    || (outputFull !== null && outputFull.length > OUTPUT_PREVIEW_CHARS);
+
+  const dur = fmtDuration(turn.durationMs);
+
   return (
-    <div
-      onClick={onClick}
-      style={{
-        border: "1px solid #e5e7eb", borderRadius: 8, padding: "12px 14px",
-        cursor: "pointer", background: "#fff", transition: "border-color 0.15s",
-      }}
-      onMouseEnter={e => (e.currentTarget.style.borderColor = "#6366f1")}
-      onMouseLeave={e => (e.currentTarget.style.borderColor = "#e5e7eb")}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280" }}>Turn {turn.id}</div>
-        <div style={{ display: "flex", gap: 4 }}>
-          {turn.hasCompaction && <RiskBadge type="compaction" />}
-          {turn.hasUnknownSpike && <RiskBadge type="unknown-spike" />}
-          {turn.peakContext > 130000 && <RiskBadge type="near-limit" />}
-        </div>
-      </div>
-      <div style={{ fontSize: 12, color: "#374151", marginBottom: 8, lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        "{turn.userInput}"
-      </div>
-      <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>
-        {turn.llmCallCount} LLM calls · {turn.toolCallCount} tool calls ·{" "}
-        <span style={{ color: turn.netContextDelta > 0 ? "#16a34a" : "#dc2626", fontWeight: 600 }}>
-          {turn.netContextDelta > 0 ? "+" : ""}{fmtK(turn.netContextDelta)}
+    <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, background: "#fff", overflow: "hidden" }}>
+      {/* Header row — always visible, click to drilldown */}
+      <div
+        onClick={onClick}
+        style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", cursor: "pointer", borderBottom: expanded ? "1px solid #f3f4f6" : "none" }}
+        onMouseEnter={e => (e.currentTarget.style.background = "#fafafa")}
+        onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+      >
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", flexShrink: 0 }}>Turn {turn.id}</span>
+        {dur && <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>{dur}</span>}
+        <span style={{ fontSize: 11, color: "#9ca3af", flexShrink: 0 }}>
+          {turn.llmCallCount} calls · {turn.toolCallCount} tools
         </span>
-        {" "}context
+        <span style={{ flex: 1 }} />
+        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+          {turn.hasCompaction && <RiskBadge type="compaction" />}
+          {turn.peakContext > 150000 && <RiskBadge type="near-limit" />}
+        </div>
+        <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>›</span>
       </div>
-      <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 8 }}>
-        Peak {fmtK(turn.peakContext)} · Cache read {fmtK(turn.cacheRead)} · Unknown +{fmtK(turn.unknownDelta)}
-      </div>
-      <div style={{ fontSize: 11, color: "#9ca3af" }}>
-        {turn.calls
-          .filter(c => c.isSignificant || c.isCompaction)
-          .slice(0, 3)
-          .map((c, i) => (
-            <span key={c.id}>
-              {i > 0 && " · "}
-              {c.isCompaction
-                ? <span style={{ color: "#ef4444" }}>Compaction −{fmtK(Math.abs(c.incomingDiff.filter(d => d.changeType === "removed").reduce((s, d) => s + d.delta, 0)))}</span>
-                : <span style={{ color: "#d97706" }}>+{fmtK(c.significantDelta ?? 0)} at #{c.id}</span>
-              }
-            </span>
-          ))
-        }
+
+      {/* Body: input + output */}
+      <div style={{ padding: "10px 14px" }}>
+        {/* User input */}
+        <div style={{ marginBottom: outputFull ? 10 : 0 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", letterSpacing: "0.05em", marginBottom: 4 }}>USER</div>
+          <div style={{
+            fontSize: 12, color: "#374151", lineHeight: 1.55,
+            background: "#f9fafb", borderRadius: 6, padding: "8px 10px",
+            whiteSpace: "pre-wrap", wordBreak: "break-word",
+          }}>
+            {expanded ? inputFull : inputPreview}
+          </div>
+        </div>
+
+        {/* Model output */}
+        {outputFull && (
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", letterSpacing: "0.05em", marginBottom: 4 }}>ASSISTANT</div>
+            <div style={{
+              fontSize: 12, color: "#374151", lineHeight: 1.55,
+              background: "#eff6ff", borderRadius: 6, padding: "8px 10px",
+              whiteSpace: "pre-wrap", wordBreak: "break-word",
+              borderLeft: "3px solid #6366f1",
+            }}>
+              {expanded ? outputFull : outputPreview}
+            </div>
+          </div>
+        )}
+
+        {/* Expand / collapse toggle */}
+        {needsExpand && (
+          <button
+            onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
+            style={{
+              marginTop: 8, fontSize: 11, color: "#6366f1", background: "none",
+              border: "none", cursor: "pointer", padding: 0,
+            }}
+          >
+            {expanded ? "Show less ↑" : "Show more ↓"}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1208,13 +1540,15 @@ export function SessionDetailV2({ session, onClose }: Props) {
             )}
           </div>
 
-          {/* Inspector */}
-          <div style={{ width: 240, borderLeft: "1px solid #e5e7eb", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
-            {inspector.type === "hotspots" && <SessionHotspotsPanel turns={turns} />}
-            {inspector.type === "turn-rollup" && <TurnRollupPanel turn={inspector.turn} />}
-            {inspector.type === "call-diff" && <CallDiffSummaryPanel call={inspector.call} />}
-            {inspector.type === "evidence" && <DiffEvidencePanel entry={inspector.entry} />}
-          </div>
+          {/* Inspector — only shown for Turn/Call detail, not Session Overview */}
+          {navLevel !== "session" && (
+            <div style={{ width: 240, borderLeft: "1px solid #e5e7eb", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
+              {inspector.type === "hotspots" && <SessionHotspotsPanel turns={turns} />}
+              {inspector.type === "turn-rollup" && <TurnRollupPanel turn={inspector.turn} />}
+              {inspector.type === "call-diff" && <CallDiffSummaryPanel call={inspector.call} />}
+              {inspector.type === "evidence" && <DiffEvidencePanel entry={inspector.entry} />}
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -21,7 +21,7 @@
 
 import { useState } from "react";
 import type { ContextSnapshot } from "./types";
-import { ALL_CATEGORIES_WITH_OVERHEAD, CATEGORY_COLORS, CATEGORY_LABELS } from "./types";
+import { CATEGORY_COLORS, CATEGORY_LABELS } from "./types";
 
 interface Props {
   snapshot: ContextSnapshot;

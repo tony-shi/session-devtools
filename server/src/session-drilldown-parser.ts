@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from "fs";
 import type { Database } from "better-sqlite3";
-import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData } from "./session-drilldown-types.ts";
+import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData, ModelStats } from "./session-drilldown-types.ts";
+import { getContextWindowSize, normaliseModelName } from "./model-info.ts";
 
 // ─── JSONL record shapes (loose, best-effort) ────────────────────────────────
 
@@ -183,7 +184,8 @@ export function parseSessionDrilldown(
       const cacheRead = usage.cache_read_input_tokens ?? 0;
       const cacheWrite = usage.cache_creation_input_tokens ?? 0;
       const stopReason = aev.message?.stop_reason ?? null;
-      const model = aev.message?.model ?? "";
+      const rawModel = aev.message?.model ?? "";
+      const model = rawModel === "<synthetic>" ? "" : normaliseModelName(rawModel);
 
       // isCompaction: heuristic — assistant content is only a compaction summary
       // (Claude Code inserts a <compaction_summary> block when context is trimmed)
@@ -194,6 +196,7 @@ export function parseSessionDrilldown(
 
       // Context size proxy: sum of all token sources at this call
       const contextSize = freshIn + cacheRead + cacheWrite;
+      const contextWindowSize = getContextWindowSize(model);
       // Delta vs previous call in turn
       const prevCall = callIdx > 0 ? rawCalls[callIdx - 1].ev : null;
       const prevUsage = prevCall?.message?.usage ?? {};
@@ -206,17 +209,18 @@ export function parseSessionDrilldown(
         id: globalCallIndex,
         indexInTurn: callIdx + 1,
         contextSize,
+        contextWindowSize,
         outputTokens: freshOut,
         cacheRead,
         cacheWrite,
         timestamp: tsOf(aev),
-        model: model === "<synthetic>" ? "" : model,
+        model,
         stopReason,
         isCompaction,
-        isUnknownHeavy: false, // not computed in v1
+        isUnknownHeavy: false,
         isSignificant: Math.abs(significantDelta) > 2000,
         significantDelta,
-        proxy: null, // proxy join deferred
+        proxy: null,
         incomingDiff: [],
       };
     });
@@ -237,11 +241,30 @@ export function parseSessionDrilldown(
     const lastContext = calls.length ? calls[calls.length - 1].contextSize : 0;
     const netContextDelta = lastContext - firstContext;
 
+    // finalOutput: text from the last end_turn assistant message
+    // The canonical end_turn event is the last entry in rawCalls (stop_reason != tool_use).
+    const finalCall = rawCalls.length > 0 ? rawCalls[rawCalls.length - 1].ev : null;
+    let finalOutput: string | null = null;
+    if (finalCall && finalCall.message?.stop_reason !== "tool_use") {
+      const textBlocks = (finalCall.message?.content ?? [])
+        .filter(b => b.type === "text" && typeof b.text === "string" && b.text.trim().length > 0);
+      if (textBlocks.length > 0) {
+        finalOutput = textBlocks.map(b => b.text ?? "").join("\n").trim();
+      }
+    }
+
+    // durationMs: wall-clock from first user event to last assistant event
+    const durationMs = (turnStartTs && turnEndTs)
+      ? Math.max(0, new Date(turnEndTs).getTime() - new Date(turnStartTs).getTime())
+      : 0;
+
     turns.push({
       id: turns.length + 1,
       userInput: userText,
+      finalOutput,
       startedAt: turnStartTs,
       endedAt: turnEndTs,
+      durationMs,
       llmCallCount,
       toolCallCount,
       netContextDelta,
@@ -267,6 +290,27 @@ export function parseSessionDrilldown(
   const totalFreshIn = allCalls.reduce((s, c) => s + c.contextSize - c.cacheRead - c.cacheWrite, 0);
   const totalFreshOut = allCalls.reduce((s, c) => s + c.outputTokens, 0);
 
+  // Per-model breakdown
+  const modelBreakdown: Record<string, ModelStats> = {};
+  for (const call of allCalls) {
+    const m = call.model || "unknown";
+    if (!modelBreakdown[m]) {
+      modelBreakdown[m] = { calls: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0, freshIn: 0 };
+    }
+    const s = modelBreakdown[m];
+    s.calls++;
+    s.outputTokens += call.outputTokens;
+    s.cacheRead += call.cacheRead;
+    s.cacheWrite += call.cacheWrite;
+    s.freshIn += call.contextSize - call.cacheRead - call.cacheWrite;
+  }
+
+  // Session context window = the ceiling of the most-used model
+  // (if multiple models, pick the one with most calls)
+  const dominantModel = Object.entries(modelBreakdown)
+    .sort((a, b) => b[1].calls - a[1].calls)[0]?.[0] ?? "";
+  const contextWindowSize = getContextWindowSize(dominantModel);
+
   // ── 7. Proxy data availability ───────────────────────────────────────────
   const proxyRow = db.prepare(
     "SELECT COUNT(*) as cnt FROM proxy_requests WHERE session_id = ?",
@@ -290,6 +334,8 @@ export function parseSessionDrilldown(
     totalFreshIn,
     totalFreshOut,
     systemErrorCount,
+    modelBreakdown,
+    contextWindowSize,
 
     hasProxyData,
     hasJsonlSource: true,

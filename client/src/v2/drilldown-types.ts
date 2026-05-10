@@ -26,6 +26,14 @@ export interface ProxyCallData {
   durationMs: number | null;
 }
 
+export interface ModelStats {
+  calls: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheWrite: number;
+  freshIn: number;
+}
+
 export interface LlmCall {
   // Position within the session (1-based, globally across all turns)
   id: number;
@@ -33,6 +41,7 @@ export interface LlmCall {
   indexInTurn: number;
 
   contextSize: number;
+  contextWindowSize: number;
   outputTokens: number;
   cacheRead: number;
   cacheWrite: number;
@@ -57,8 +66,12 @@ export interface UserTurn {
   // 1-based index within the session
   id: number;
   userInput: string;
+  // Full text of the model's final end_turn response (null if not available)
+  finalOutput: string | null;
   startedAt: string;
   endedAt: string;
+  // Wall-clock ms from first user event to last assistant end_turn
+  durationMs: number;
 
   llmCallCount: number;
   toolCallCount: number;
@@ -94,6 +107,8 @@ export interface SessionDrilldown {
   totalFreshIn: number;
   totalFreshOut: number;
   systemErrorCount: number;
+  modelBreakdown: Record<string, ModelStats>;
+  contextWindowSize: number;
 
   // true if at least one proxy_requests row is linked to this session
   hasProxyData: boolean;

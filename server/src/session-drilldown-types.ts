@@ -30,6 +30,7 @@ export interface LlmCall {
   id: number;
   indexInTurn: number;
   contextSize: number;
+  contextWindowSize: number;   // model's max context window, for ceiling line
   outputTokens: number;
   cacheRead: number;
   cacheWrite: number;
@@ -47,8 +48,10 @@ export interface LlmCall {
 export interface UserTurn {
   id: number;
   userInput: string;
+  finalOutput: string | null;
   startedAt: string;
   endedAt: string;
+  durationMs: number;
   llmCallCount: number;
   toolCallCount: number;
   netContextDelta: number;
@@ -77,7 +80,19 @@ export interface SessionDrilldown {
   totalFreshIn: number;
   totalFreshOut: number;
   systemErrorCount: number;
+  // Per-model breakdown: model name → { calls, outputTokens, cacheRead, cacheWrite }
+  modelBreakdown: Record<string, ModelStats>;
+  // The dominant context window ceiling across all calls (for chart Y-axis)
+  contextWindowSize: number;
   hasProxyData: boolean;
   hasJsonlSource: boolean;
   turns: UserTurn[];
+}
+
+export interface ModelStats {
+  calls: number;
+  outputTokens: number;
+  cacheRead: number;
+  cacheWrite: number;
+  freshIn: number;
 }

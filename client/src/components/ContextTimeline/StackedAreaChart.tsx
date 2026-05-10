@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useCallback } from "react";
 import type { ContextSnapshot } from "./types";
 import { ALL_CATEGORIES, ALL_CATEGORIES_WITH_OVERHEAD, CATEGORY_COLORS, CATEGORY_LABELS } from "./types";
 
