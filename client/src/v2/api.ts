@@ -1,4 +1,5 @@
 import type { SessionProxyResponse, SessionsV2Response, SummaryV2 } from "./types";
+import type { SessionDrilldown } from "./drilldown-types";
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -21,6 +22,9 @@ export const apiV2 = {
 
   sessionProxy: (sessionId: string) =>
     get<SessionProxyResponse>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/proxy`),
+
+  sessionDrilldown: (sessionId: string) =>
+    get<SessionDrilldown>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/drilldown`),
 
   sync: () =>
     get<{ synced: number; skipped: number; errors: number }>("/api/v2/sessions/sync"),

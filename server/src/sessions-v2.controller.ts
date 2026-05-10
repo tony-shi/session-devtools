@@ -2,6 +2,7 @@ import { Controller, Get, Param, Query } from "@nestjs/common";
 import { getDb } from "./db.ts";
 import { runSyncV2 } from "./sync-v2.ts";
 import { parseJsonField } from "./parser-utils.ts";
+import { buildMockDrilldown } from "./session-drilldown-mock.ts";
 
 type SqlParam = string | number | bigint | boolean | null | Uint8Array;
 
@@ -109,6 +110,14 @@ export class SessionsV2Controller {
     for (const r of toolRows) byTool[r.tool] = r.cnt;
 
     return { ...totals, by_tool: byTool };
+  }
+
+  @Get("sessions/:id/drilldown")
+  sessionDrilldown(@Param("id") id: string) {
+    const db = getDb();
+    const row = db.prepare(`SELECT session_id FROM sessions_meta_v2 WHERE session_id = ?`).get(id);
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+    return buildMockDrilldown(id);
   }
 
   @Get("sessions/:id/proxy")

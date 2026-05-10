@@ -1,52 +1,46 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { SessionV2 } from "./types";
+import type { DiffEntry, LlmCall, SessionDrilldown, UserTurn } from "./drilldown-types";
+import { apiV2 } from "./api";
 
-// ─── Mock Data Types ────────────────────────────────────────────────────────
+// Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
+type MockDiffEntry = DiffEntry;
+// LlmCall fields added in drilldown-types (indexInTurn, model, stopReason, proxy)
+// are optional in the raw fallback data below; normalizeTurns() fills them in.
+type RawMockCall = Omit<LlmCall, "indexInTurn" | "model" | "stopReason" | "proxy"> & {
+  isCompaction?: boolean; isUnknownHeavy?: boolean; isSignificant?: boolean; significantDelta?: number;
+};
+type RawMockTurn = Omit<UserTurn, "startedAt" | "endedAt" | "hasCompaction" | "hasUnknownSpike" | "calls"> & {
+  hasCompaction?: boolean; hasUnknownSpike?: boolean; calls: RawMockCall[];
+};
+type MockLlmCall = LlmCall;
+type MockUserTurn = UserTurn;
 
-interface MockDiffEntry {
-  id: string;
-  category: string;
-  label: string;
-  delta: number;
-  changeType: "added" | "removed" | "changed" | "retained";
-  cause: string;
-  confidence: "High" | "Medium" | "Low" | "Unknown";
-  evidence?: string;
+function normalizeTurns(raw: RawMockTurn[]): UserTurn[] {
+  return raw.map((t, ti) => ({
+    startedAt: "",
+    endedAt: "",
+    hasCompaction: t.hasCompaction ?? false,
+    hasUnknownSpike: t.hasUnknownSpike ?? false,
+    ...t,
+    calls: t.calls.map((c, ci) => ({
+      indexInTurn: ci + 1,
+      model: "claude-opus-4-7",
+      stopReason: "end_turn" as const,
+      proxy: null,
+      isCompaction: c.isCompaction ?? false,
+      isUnknownHeavy: c.isUnknownHeavy ?? false,
+      isSignificant: c.isSignificant ?? false,
+      significantDelta: c.significantDelta ?? 0,
+      ...c,
+    })),
+  }));
 }
 
-interface MockLlmCall {
-  id: number;
-  contextSize: number;
-  outputTokens: number;
-  cacheRead: number;
-  cacheWrite: number;
-  timestamp: string;
-  isCompaction?: boolean;
-  isUnknownHeavy?: boolean;
-  isSignificant?: boolean;
-  significantDelta?: number;
-  incomingDiff: MockDiffEntry[];
-}
+// ─── Fallback Mock Data (used when API is unavailable) ───────────────────────
 
-interface MockUserTurn {
-  id: number;
-  userInput: string;
-  llmCallCount: number;
-  toolCallCount: number;
-  netContextDelta: number;
-  peakContext: number;
-  cacheRead: number;
-  cacheWrite: number;
-  unknownDelta: number;
-  hasCompaction?: boolean;
-  hasUnknownSpike?: boolean;
-  calls: MockLlmCall[];
-}
-
-// ─── Mock Data ───────────────────────────────────────────────────────────────
-
-function buildMockTurns(): MockUserTurn[] {
-  return [
+function buildFallbackTurns(): UserTurn[] {
+  const raw: RawMockTurn[] = [
     {
       id: 1,
       userInput: "初始化项目，帮我搭一个 Express + TypeScript 的后端框架",
@@ -220,6 +214,7 @@ function buildMockTurns(): MockUserTurn[] {
       ],
     },
   ];
+  return normalizeTurns(raw);
 }
 
 // ─── Category Colors ─────────────────────────────────────────────────────────
@@ -908,13 +903,25 @@ interface Props {
 }
 
 export function SessionDetailV2({ session, onClose }: Props) {
-  const turns = buildMockTurns();
+  const [drilldown, setDrilldown] = useState<SessionDrilldown | null>(null);
+  const [loadState, setLoadState] = useState<"loading" | "ok" | "error">("loading");
+
+  useEffect(() => {
+    setLoadState("loading");
+    apiV2.sessionDrilldown(session.session_id)
+      .then(data => { setDrilldown(data); setLoadState("ok"); })
+      .catch(() => setLoadState("error"));
+  }, [session.session_id]);
+
+  const turns: UserTurn[] = drilldown?.turns ?? buildFallbackTurns();
+  const isMockData = drilldown === null;
+
   const [navLevel, setNavLevel] = useState<NavLevel>("session");
   const [selectedTurn, setSelectedTurn] = useState<MockUserTurn | null>(null);
   const [selectedCall, setSelectedCall] = useState<MockLlmCall | null>(null);
   const [inspector, setInspector] = useState<InspectorState>({ type: "hotspots" });
 
-  const title = session.custom_title ?? session.ai_title ?? session.session_id.slice(0, 16);
+  const title = (drilldown?.title ?? session.custom_title ?? session.ai_title ?? session.session_id.slice(0, 16)) as string;
 
   function handleSelectTurn(turn: MockUserTurn) {
     setSelectedTurn(turn);
@@ -980,7 +987,20 @@ export function SessionDetailV2({ session, onClose }: Props) {
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 10, color: "#9ca3af", background: "#f9fafb", border: "1px dashed #d1d5db", borderRadius: 4, padding: "2px 6px" }}>All mock data</span>
+            {loadState === "loading" && (
+              <span style={{ fontSize: 10, color: "#6366f1", background: "#eff6ff", borderRadius: 4, padding: "2px 8px" }}>loading…</span>
+            )}
+            {loadState === "error" && (
+              <span style={{ fontSize: 10, color: "#dc2626", background: "#fef2f2", borderRadius: 4, padding: "2px 8px" }}>API error — showing mock</span>
+            )}
+            {loadState === "ok" && isMockData && (
+              <span style={{ fontSize: 10, color: "#9ca3af", background: "#f9fafb", border: "1px dashed #d1d5db", borderRadius: 4, padding: "2px 6px" }}>mock data</span>
+            )}
+            {loadState === "ok" && !isMockData && (
+              <span style={{ fontSize: 10, color: "#16a34a", background: "#f0fdf4", borderRadius: 4, padding: "2px 8px" }}>
+                {drilldown!.hasProxyData ? "real + proxy" : "real · no proxy"}
+              </span>
+            )}
             <button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer", color: "#9ca3af", fontSize: 20, lineHeight: 1, padding: 4 }}>×</button>
           </div>
         </div>
