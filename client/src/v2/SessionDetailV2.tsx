@@ -515,96 +515,52 @@ function SessionOverviewPanel({
     <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
       {/* ── Token / call metrics ───────────────────────────────────── */}
       <div style={{ marginBottom: 16 }}>
-        {/* Row 1: Model + LLM Calls combined */}
-        {modelBreakdown && (() => {
-          const entries = Object.entries(modelBreakdown).sort((a, b) => b[1].calls - a[1].calls);
-          const singleModel = entries.length === 1;
+        {/* Row 0: Model chip (when single model — multi-model uses ModelBreakdownBlock below) */}
+        {modelBreakdown && Object.keys(modelBreakdown).length === 1 && (() => {
+          const [[m]] = Object.entries(modelBreakdown);
+          const color = modelColor(m);
           return (
-            <div style={{ display: "grid", gridTemplateColumns: singleModel ? "auto 1fr" : "1fr 1fr", gap: 10, marginBottom: 10 }}>
-              {/* Model identity */}
-              <div style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
-                {entries.map(([m, s]) => {
-                  const color = modelColor(m);
-                  return (
-                    <div key={m} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <div style={{ width: 8, height: 8, borderRadius: 2, background: color }} />
-                      <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{shortModelName(m)}</span>
-                      {!singleModel && <span style={{ fontSize: 10, color: "#9ca3af" }}>{s.calls} calls</span>}
-                    </div>
-                  );
-                })}
-                <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: 4 }}>
-                  {contextWindowSize.toLocaleString()} ctx window
-                </span>
-              </div>
-              {/* LLM / Tool Calls + Duration */}
-              <div style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 14px", display: "flex", gap: 20, alignItems: "center" }}>
-                <div>
-                  <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 2 }}>LLM Calls</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{totalCalls}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 2 }}>Tool Calls</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{totalToolCalls}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 2 }}>Turns</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{turns.length}</div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 2 }}>Duration</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{durationStr}</div>
-                </div>
-              </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, marginBottom: 8 }}>
+              <div style={{ width: 8, height: 8, borderRadius: 2, background: color }} />
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{shortModelName(m)}</span>
+              <span style={{ fontSize: 10, color: "#9ca3af" }}>·</span>
+              <span style={{ fontSize: 10, color: "#9ca3af" }}>{contextWindowSize.toLocaleString()} ctx window</span>
             </div>
           );
         })()}
 
-        {/* Row 2: Token breakdown — Cache Read/Write, Fresh In/Out, Ratio */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 10 }}>
-          {[
-            { label: "Cache Read", value: fmtK(totalCacheRead) },
-            { label: "Cache Write", value: fmtK(totalCacheWrite) },
-            { label: "Fresh In", value: totalFreshIn !== null ? fmtK(totalFreshIn) : "—" },
-            { label: "Fresh Out", value: totalFreshOut !== null ? fmtK(totalFreshOut) : "—" },
-            { label: "Cache Ratio", value: cacheRatio !== null ? `${cacheRatio}%` : "—", tooltip: "cache_read / (cache_read + fresh_in)" },
-          ].map(({ label, value, tooltip }) => (
-            <div key={label} title={tooltip} style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 12px" }}>
-              <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 3 }}>{label}{isMock && <MockBadge />}</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>{value}</div>
-            </div>
-          ))}
+        {/* Row 1: Call & turn counts — 4-col, same structure as Turn Row 1 */}
+        <div style={{ marginBottom: 8 }}>
+          <SummaryMetricStrip columns={4} cards={[
+            { label: "User Turns",  value: String(turns.length),      mock: isMock },
+            { label: "LLM Calls",   value: String(totalCalls),        mock: isMock },
+            { label: "Tool Calls",  value: String(totalToolCalls),    mock: isMock },
+            { label: "Duration",    value: durationStr,               mock: isMock },
+          ]} />
         </div>
 
-        {/* Row 3: Context stats — Peak, Net Context, Errors */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-          <div style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 12px" }}>
-            <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 3 }}>Peak Context{isMock && <MockBadge />}</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>{fmtK(peakContext)}</div>
-          </div>
-          <div
-            title="从 session 第一个 LLM call 到最后一个 call，context size 的净变化。正值表示整体增长；compaction 会压低这个数字。"
-            style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "8px 12px", cursor: "help" }}
-          >
-            <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 3 }}>
-              Net Context
-              {netContext === null && <MockBadge />}
-            </div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: netContext !== null && netContext < 0 ? "#16a34a" : "#111827" }}>
-              {netContextStr}
-            </div>
-          </div>
-          <div style={{
-            background: systemErrors !== null && systemErrors > 0 ? "#fef2f2" : "#f9fafb",
-            border: `1px solid ${systemErrors !== null && systemErrors > 0 ? "#fecaca" : "#e5e7eb"}`,
-            borderRadius: 8, padding: "8px 12px",
-          }}>
-            <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 3 }}>Errors{isMock && <MockBadge />}</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: systemErrors !== null && systemErrors > 0 ? "#dc2626" : "#111827" }}>
-              {systemErrors ?? 0}
-            </div>
-          </div>
+        {/* Row 2: Token breakdown — same 5-col layout as Turn */}
+        <div style={{ marginBottom: 8 }}>
+          <SummaryMetricStrip columns={5} cards={[
+            { label: "Cache Read",  value: fmtK(totalCacheRead),  mock: isMock },
+            { label: "Cache Write", value: fmtK(totalCacheWrite), mock: isMock },
+            { label: "Fresh In",    value: totalFreshIn !== null ? fmtK(totalFreshIn) : "—", mock: isMock },
+            { label: "Fresh Out",   value: totalFreshOut !== null ? fmtK(totalFreshOut) : "—", mock: isMock },
+            { label: "Cache Ratio", value: cacheRatio !== null ? `${cacheRatio}%` : "—",
+              tooltip: "cache_read / (cache_read + fresh_in)", mock: isMock },
+          ]} />
         </div>
+
+        {/* Row 3: Context stats — same 3-col layout as Turn */}
+        <SummaryMetricStrip columns={3} cards={[
+          { label: "Peak Context", value: fmtK(peakContext), mock: isMock },
+          { label: "Net Context",  value: netContextStr,
+            color: netContext !== null && netContext < 0 ? "#16a34a" : undefined,
+            mock: netContext === null,
+            tooltip: "从 session 第一个 LLM call 到最后一个 call，context size 的净变化。compaction 会压低这个数字。" },
+          { label: "Errors",       value: String(systemErrors ?? 0),
+            alert: systemErrors !== null && systemErrors > 0, mock: isMock },
+        ]} />
       </div>
 
       {/* Compaction / Near-limit hotspot chips — only meaningful info */}
@@ -633,7 +589,7 @@ function SessionOverviewPanel({
           Context Timeline {isMock && <MockBadge />}
           {!isMock && (
             <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 400, marginLeft: 6 }}>
-              ceiling = {fmtK(contextWindowSize)} ({contextWindowSize.toLocaleString()} tokens)
+              model window = {fmtK(contextWindowSize)}
             </span>
           )}
         </div>
@@ -803,10 +759,19 @@ function ContextTimelineChart({
   const chartW = W - PAD.l - PAD.r;
   const chartH = H - PAD.t - PAD.b;
 
-  // ── Y axis: 0 → context window ceiling ─────────────────────────
-  const toY = (v: number) => PAD.t + chartH - (v / contextWindowSize) * chartH;
-  const ceilingY = toY(contextWindowSize);
-  const warningY = toY(contextWindowSize * 0.9); // top-10% danger zone starts here
+  // ── Y axis ──────────────────────────────────────────────────────
+  // Peak context can exceed the nominal context window when the
+  // context-management beta is active (extended cache). In that case,
+  // scale Y up to fit the actual peak, and annotate the model ceiling
+  // as a reference line rather than the hard top of the chart.
+  const peakCtxRaw = Math.max(...allPoints.map(p => p.contextSize), contextWindowSize);
+  // Round up to next 50k for a clean axis
+  const yMax = Math.ceil(peakCtxRaw / 50_000) * 50_000;
+  const exceedsWindow = peakCtxRaw > contextWindowSize;
+
+  const toY = (v: number) => PAD.t + chartH - (v / yMax) * chartH;
+  const ceilingY = toY(contextWindowSize);         // model limit line (may not be at top)
+  const warningY = toY(contextWindowSize * 0.9);   // 90% of model limit
 
   // ── X axis: two modes ───────────────────────────────────────────
   // Mode A (linear): equal spacing per call index
@@ -845,14 +810,14 @@ function ContextTimelineChart({
   }
 
   // Peak
-  const peakCtx = Math.max(...allPoints.map(p => p.contextSize));
+  const peakCtx = peakCtxRaw;
   const peakPct = peakCtx / contextWindowSize;
   const lineColor = peakPct > 0.9 ? "#ea580c" : "#6366f1";
 
-  // Y-axis ticks: 200k ceiling + 50k increments
-  const tickStep = contextWindowSize <= 200_000 ? 50_000 : 100_000;
-  const yTicks = Array.from({ length: Math.floor(contextWindowSize / tickStep) + 1 }, (_, i) => i * tickStep)
-    .filter(v => v <= contextWindowSize);
+  // Y-axis ticks: cover full yMax range at 50k steps
+  const tickStep = 50_000;
+  const yTicks = Array.from({ length: Math.floor(yMax / tickStep) + 1 }, (_, i) => i * tickStep)
+    .filter(v => v <= yMax);
 
   return (
     <div style={{ border: isMock ? "1px dashed #d1d5db" : "1px solid #e5e7eb", borderRadius: 8, background: "#fafafa", overflow: "hidden" }}>
@@ -878,32 +843,32 @@ function ContextTimelineChart({
         {/* Y-axis grid lines + labels */}
         {yTicks.map(v => {
           const y = toY(v);
-          const isCeiling = v === contextWindowSize;
           return (
             <g key={v}>
               <line x1={PAD.l} y1={y} x2={PAD.l + chartW} y2={y}
-                stroke={isCeiling ? "#ef4444" : "#f3f4f6"}
-                strokeWidth={isCeiling ? 1 : 0.75}
-                strokeDasharray={isCeiling ? "4,3" : undefined}
-                opacity={isCeiling ? 0.7 : 1}
+                stroke="#f3f4f6" strokeWidth={0.75}
               />
-              <text x={W - PAD.r + 2} y={y + 3} fontSize={8}
-                fill={isCeiling ? "#ef4444" : "#d1d5db"} opacity={isCeiling ? 0.85 : 1}>
+              <text x={W - PAD.r + 2} y={y + 3} fontSize={8} fill="#d1d5db">
                 {fmtK(v)}
               </text>
             </g>
           );
         })}
 
-        {/* Danger zone fill: top 10% of context window
-            toY(ceiling) is the TOP of the chart (smaller Y value),
-            toY(90%) is BELOW the ceiling (larger Y value).
-            Height = toY(90%) - toY(ceiling) = positive number. */}
-        <rect
-          x={PAD.l} y={ceilingY}
-          width={chartW} height={warningY - ceilingY}
-          fill="#fef3c7" opacity={0.6}
+        {/* Model context window ceiling line (always drawn, may be below chart top if exceeded) */}
+        <line x1={PAD.l} y1={ceilingY} x2={PAD.l + chartW} y2={ceilingY}
+          stroke="#ef4444" strokeWidth={1} strokeDasharray="4,3" opacity={0.7}
         />
+        <text x={W - PAD.r + 2} y={ceilingY + 3} fontSize={8} fill="#ef4444" opacity={0.85}>
+          {fmtK(contextWindowSize)}
+        </text>
+
+        {/* Danger zone: 90-100% of the model context window */}
+        {warningY > ceilingY && (
+          <rect x={PAD.l} y={ceilingY} width={chartW} height={warningY - ceilingY}
+            fill="#fef3c7" opacity={0.6}
+          />
+        )}
 
         {/* Turn boundary vertical lines */}
         {turnBoundaries.map((x, i) => (
@@ -958,15 +923,17 @@ function ContextTimelineChart({
 
       {/* Footer annotation */}
       {!isMock && (
-        <div style={{ padding: "2px 10px 6px", fontSize: 10, color: "#9ca3af", display: "flex", gap: 16 }}>
+        <div style={{ padding: "2px 10px 6px", fontSize: 10, color: "#9ca3af", display: "flex", gap: 16, flexWrap: "wrap" }}>
           <span>
             Peak: <strong style={{ color: peakPct > 0.9 ? "#ea580c" : "#374151" }}>{fmtK(peakCtx)}</strong>
-            {" "}({Math.round(peakPct * 100)}% of window)
+            {" "}({Math.round(peakPct * 100)}% of {fmtK(contextWindowSize)} window)
           </span>
+          {exceedsWindow && (
+            <span style={{ color: "#ea580c" }}>
+              ⚠ exceeds nominal window — context-management beta active
+            </span>
+          )}
           {xMode === "time" && <span style={{ color: "#c4b5d5" }}>X axis = wall-clock time</span>}
-          <span style={{ color: "#fde68a" }}>
-            ░ danger zone = top 10% ({fmtK(contextWindowSize * 0.9)}+)
-          </span>
         </div>
       )}
     </div>
@@ -1073,135 +1040,577 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
   );
 }
 
+// ─── Agent Loop mock data types ──────────────────────────────────────────────
+
+interface MockToolCall {
+  id: string;
+  tool: string;          // "Read" | "Bash" | "Write" | "Edit" | "WebFetch" | ...
+  input: string;         // short description of the input
+  outputSize: number;    // tokens
+  durationMs: number;
+  status: "ok" | "error" | "timeout";
+  isParallel?: boolean;  // part of a parallel group
+}
+
+interface MockToolGroup {
+  id: string;
+  afterCallId: number;   // which LLM call issued these tools
+  tools: MockToolCall[];
+  totalOutputSize: number;
+  isParallel: boolean;
+}
+
+interface MockTransition {
+  fromCallId: number;
+  toCallId: number;
+  contextDelta: number;
+  dominantCause: string; // "Tool Output: Read x6" | "Compaction" | etc.
+}
+
+interface MockAgentLoopData {
+  toolGroups: MockToolGroup[];
+  transitions: MockTransition[];
+  toolSummary: Array<{ tool: string; calls: number; totalOutput: number; failed: number }>;
+  status: "completed" | "interrupted" | "continued";
+}
+
+// Build mock agent loop data from existing call list
+function buildMockAgentLoop(turn: MockUserTurn): MockAgentLoopData {
+  // Generate realistic-looking tool groups for each call that has tool_use
+  const toolGroups: MockToolGroup[] = [];
+  const toolCounts: Record<string, { calls: number; totalOutput: number; failed: number }> = {};
+
+  const toolPatterns: Record<number, MockToolCall[]> = {
+    // Per call index → what tools it issues (0-indexed within turn)
+    0: [
+      { id: "t1a", tool: "Read", input: "src/index.ts", outputSize: 2800, durationMs: 45, status: "ok" },
+      { id: "t1b", tool: "Read", input: "tsconfig.json", outputSize: 1200, durationMs: 38, status: "ok" },
+      { id: "t1c", tool: "Bash", input: "ls -la src/", outputSize: 340, durationMs: 120, status: "ok" },
+    ],
+    1: [
+      { id: "t2a", tool: "Read", input: "package.json", outputSize: 980, durationMs: 40, status: "ok", isParallel: true },
+      { id: "t2b", tool: "Read", input: "src/routes/index.ts", outputSize: 3400, durationMs: 42, status: "ok", isParallel: true },
+      { id: "t2c", tool: "Read", input: "src/middleware/auth.ts", outputSize: 2100, durationMs: 41, status: "ok", isParallel: true },
+      { id: "t2d", tool: "Read", input: "src/db/connection.ts", outputSize: 1800, durationMs: 39, status: "ok", isParallel: true },
+    ],
+    2: [
+      { id: "t3a", tool: "Edit", input: "src/routes/index.ts", outputSize: 180, durationMs: 55, status: "ok" },
+      { id: "t3b", tool: "Edit", input: "src/middleware/auth.ts", outputSize: 220, durationMs: 52, status: "ok" },
+    ],
+    3: [
+      { id: "t4a", tool: "Bash", input: "npm run build", outputSize: 4200, durationMs: 8400, status: "ok" },
+    ],
+    4: [
+      { id: "t5a", tool: "Bash", input: "npm test", outputSize: 6800, durationMs: 12300, status: "error" },
+    ],
+    5: [
+      { id: "t6a", tool: "Read", input: "src/routes/__tests__/index.test.ts", outputSize: 5200, durationMs: 44, status: "ok" },
+      { id: "t6b", tool: "Bash", input: "npx jest --testPathPattern=routes", outputSize: 3100, durationMs: 9800, status: "ok" },
+    ],
+  };
+
+  turn.calls.forEach((call, i) => {
+    const pattern = toolPatterns[i % Object.keys(toolPatterns).length];
+    if (!pattern || call.isCompaction) return;
+    const tools: MockToolCall[] = pattern.map(t => ({ ...t, id: `${call.id}-${t.id}` }));
+    const totalOutput = tools.reduce((s, t) => s + t.outputSize, 0);
+    const isParallel = tools.some(t => t.isParallel);
+
+    toolGroups.push({
+      id: `tg-${call.id}`,
+      afterCallId: call.id,
+      tools,
+      totalOutputSize: totalOutput,
+      isParallel,
+    });
+
+    tools.forEach(t => {
+      if (!toolCounts[t.tool]) toolCounts[t.tool] = { calls: 0, totalOutput: 0, failed: 0 };
+      toolCounts[t.tool].calls++;
+      toolCounts[t.tool].totalOutput += t.outputSize;
+      if (t.status !== "ok") toolCounts[t.tool].failed++;
+    });
+  });
+
+  // Transitions between consecutive calls
+  const transitions: MockTransition[] = [];
+  for (let i = 0; i < turn.calls.length - 1; i++) {
+    const c = turn.calls[i];
+    const next = turn.calls[i + 1];
+    const delta = next.contextSize - c.contextSize;
+    if (Math.abs(delta) < 500) continue; // skip tiny changes
+
+    const tg = toolGroups.find(g => g.afterCallId === c.id);
+    let cause = "incremental";
+    if (c.isCompaction) cause = "Compaction";
+    else if (tg) {
+      const topTool = [...tg.tools].sort((a, b) => b.outputSize - a.outputSize)[0];
+      const toolName = topTool?.tool ?? "tool";
+      const toolCount = tg.tools.filter(t => t.tool === topTool?.tool).length;
+      cause = toolCount > 1 ? `${toolName} ×${toolCount}` : `${toolName}: ${topTool?.input ?? ""}`;
+    }
+    transitions.push({ fromCallId: c.id, toCallId: next.id, contextDelta: delta, dominantCause: cause });
+  }
+
+  const toolSummary = Object.entries(toolCounts)
+    .sort((a, b) => b[1].calls - a[1].calls)
+    .map(([tool, s]) => ({ tool, ...s }));
+
+  return { toolGroups, transitions, toolSummary, status: "completed" };
+}
+
+// ─── Agent Loop Timeline component ───────────────────────────────────────────
+
+function AgentLoopTimeline({
+  turn, agentLoop, onSelectCall,
+}: { turn: MockUserTurn; agentLoop: MockAgentLoopData; onSelectCall: (c: MockLlmCall) => void }) {
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const maxCtx = Math.max(...turn.calls.map(c => c.contextSize), 1);
+
+  return (
+    <div style={{ position: "relative" }}>
+      {/* Vertical spine */}
+      <div style={{
+        position: "absolute", left: 16, top: 0, bottom: 0,
+        width: 2, background: "#e5e7eb", zIndex: 0,
+      }} />
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+        {/* User Input node */}
+        <AgentLoopNode icon="👤" color="#6366f1" label="User Input" secondary={fmtDuration(turn.durationMs) || undefined}>
+          <div style={{ fontSize: 12, color: "#374151", lineHeight: 1.5, background: "#f5f3ff", borderRadius: 6, padding: "8px 10px" }}>
+            {turn.userInput.length > 150 ? turn.userInput.slice(0, 150) + "…" : turn.userInput}
+          </div>
+        </AgentLoopNode>
+
+        {/* For each call: Call node → Tool Group (if any) */}
+        {turn.calls.map((call, idx) => {
+          const tg = agentLoop.toolGroups.find(g => g.afterCallId === call.id);
+          const isLast = idx === turn.calls.length - 1;
+          const ctxPct = Math.round((call.contextSize / maxCtx) * 100);
+          const transition = agentLoop.transitions.find(t => t.fromCallId === call.id);
+          const isGroupExpanded = expandedGroup === (tg?.id ?? "");
+
+          return (
+            <div key={call.id}>
+              {/* LLM Call node */}
+              <AgentLoopNode
+                icon={call.isCompaction ? "◆" : "⬡"}
+                color={call.isCompaction ? "#ef4444" : call.isSignificant ? "#3b82f6" : "#6b7280"}
+                label={`Call #${call.id}`}
+                secondary={`${fmtK(call.contextSize)} ctx`}
+                badge={call.significantDelta > 0 ? `+${fmtK(call.significantDelta)}` : call.significantDelta < 0 ? fmtK(call.significantDelta) : undefined}
+                badgeColor={call.significantDelta > 2000 ? "#d97706" : call.significantDelta < 0 ? "#16a34a" : "#9ca3af"}
+                onClick={() => onSelectCall(call)}
+                interactive
+              >
+                {/* Mini context bar */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                  <div style={{ flex: 1, height: 3, background: "#f3f4f6", borderRadius: 2, overflow: "hidden", maxWidth: 120 }}>
+                    <div style={{ width: `${ctxPct}%`, height: "100%", background: call.isCompaction ? "#ef4444" : "#6366f1", opacity: 0.6 }} />
+                  </div>
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>
+                    {Math.round(call.cacheRead / (call.contextSize || 1) * 100)}% cached
+                  </span>
+                  {call.stopReason && call.stopReason !== "tool_use" && (
+                    <span style={{ fontSize: 10, color: "#16a34a", fontWeight: 600 }}>
+                      {call.stopReason === "end_turn" ? "✓ end_turn" : call.stopReason}
+                    </span>
+                  )}
+                  {call.isCompaction && <span style={{ fontSize: 10, color: "#ef4444", fontWeight: 600 }}>compaction</span>}
+                </div>
+              </AgentLoopNode>
+
+              {/* Tool Group node (between calls) */}
+              {tg && !isLast && (
+                <AgentLoopNode
+                  icon="⚙"
+                  color={tg.tools.some(t => t.status !== "ok") ? "#dc2626" : tg.isParallel ? "#8b5cf6" : "#f59e0b"}
+                  label={
+                    tg.isParallel
+                      ? `${tg.tools.length}× parallel tool calls`
+                      : `${tg.tools.length} tool call${tg.tools.length > 1 ? "s" : ""}`
+                  }
+                  secondary={`+${fmtK(tg.totalOutputSize)} output`}
+                  badge={tg.tools.some(t => t.status !== "ok") ? "error" : undefined}
+                  badgeColor="#dc2626"
+                  expandable
+                  expanded={isGroupExpanded}
+                  onToggle={() => setExpandedGroup(isGroupExpanded ? null : tg.id)}
+                  mock
+                >
+                  {isGroupExpanded && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 6 }}>
+                      {tg.tools.map(t => (
+                        <div key={t.id} style={{
+                          display: "flex", alignItems: "center", gap: 8,
+                          padding: "4px 8px", borderRadius: 5,
+                          background: t.status !== "ok" ? "#fef2f2" : "#fafafa",
+                          border: `1px solid ${t.status !== "ok" ? "#fecaca" : "#f3f4f6"}`,
+                        }}>
+                          {tg.isParallel && (
+                            <span style={{ fontSize: 9, color: "#8b5cf6", fontWeight: 700 }}>∥</span>
+                          )}
+                          <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", width: 44, flexShrink: 0 }}>{t.tool}</span>
+                          <span style={{ fontSize: 11, color: "#6b7280", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.input}</span>
+                          <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtK(t.outputSize)}</span>
+                          <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtDuration(t.durationMs)}</span>
+                          {t.status !== "ok" && (
+                            <span style={{ fontSize: 10, color: "#dc2626", fontWeight: 700 }}>✗ {t.status}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </AgentLoopNode>
+              )}
+
+              {/* Transition annotation — only for significant deltas */}
+              {transition && Math.abs(transition.contextDelta) > 2000 && (
+                <div style={{ marginLeft: 40, marginBottom: 4, padding: "3px 8px", fontSize: 10, color: "#9ca3af", display: "flex", gap: 6 }}>
+                  <span style={{ color: transition.contextDelta > 0 ? "#d97706" : "#16a34a", fontWeight: 600 }}>
+                    {transition.contextDelta > 0 ? "+" : ""}{fmtK(transition.contextDelta)}
+                  </span>
+                  <span>from {transition.dominantCause}</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        {/* Terminal node */}
+        <AgentLoopNode
+          icon={agentLoop.status === "completed" ? "✓" : agentLoop.status === "interrupted" ? "⚠" : "→"}
+          color={agentLoop.status === "completed" ? "#16a34a" : agentLoop.status === "interrupted" ? "#d97706" : "#6366f1"}
+          label={agentLoop.status === "completed" ? "Completed" : agentLoop.status === "interrupted" ? "Interrupted" : "Continued"}
+          isTerminal
+        />
+      </div>
+    </div>
+  );
+}
+
+function AgentLoopNode({
+  icon, color, label, secondary, badge, badgeColor,
+  onClick, interactive, expandable, expanded, onToggle,
+  isTerminal, mock, children,
+}: {
+  icon: string; color: string; label: string; secondary?: string;
+  badge?: string; badgeColor?: string;
+  onClick?: () => void; interactive?: boolean;
+  expandable?: boolean; expanded?: boolean; onToggle?: () => void;
+  isTerminal?: boolean; mock?: boolean;
+  children?: React.ReactNode;
+}) {
+  const handleClick = onClick || onToggle;
+
+  return (
+    <div style={{ display: "flex", gap: 0, alignItems: "flex-start", position: "relative", zIndex: 1 }}>
+      {/* Spine dot */}
+      <div style={{ width: 32, flexShrink: 0, display: "flex", justifyContent: "center", paddingTop: 10 }}>
+        <div style={{
+          width: isTerminal ? 20 : 24, height: isTerminal ? 20 : 24,
+          borderRadius: "50%", background: color, opacity: 0.15,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          position: "relative",
+        }}>
+          <div style={{
+            width: isTerminal ? 10 : 14, height: isTerminal ? 10 : 14,
+            borderRadius: "50%", background: color,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <span style={{ fontSize: isTerminal ? 7 : 9, lineHeight: 1 }}>{icon}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div
+        onClick={handleClick}
+        style={{
+          flex: 1, paddingTop: 6, paddingBottom: 10, paddingRight: 4, minWidth: 0,
+          cursor: handleClick ? "pointer" : "default",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: children ? 2 : 0 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>{label}</span>
+          {secondary && <span style={{ fontSize: 11, color: "#9ca3af" }}>{secondary}</span>}
+          {badge && (
+            <span style={{
+              fontSize: 10, fontWeight: 700, color: badgeColor ?? "#d97706",
+              background: badgeColor ? `${badgeColor}18` : "#fff7ed",
+              borderRadius: 4, padding: "1px 5px",
+            }}>{badge}</span>
+          )}
+          {mock && <MockBadge />}
+          {expandable && (
+            <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: "auto" }}>
+              {expanded ? "▲" : "▼"}
+            </span>
+          )}
+          {interactive && !expandable && (
+            <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: "auto" }}>›</span>
+          )}
+        </div>
+        {children && <div>{children}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Shared SummaryMetricStrip ────────────────────────────────────────────────
+// Used by both Session Overview and Turn Detail for consistent metric language.
+
+interface MetricCard {
+  label: string;
+  value: string;
+  sub?: string;          // small secondary value below main number
+  color?: string;        // override value text color
+  alert?: boolean;       // red background
+  mock?: boolean;
+  tooltip?: string;
+}
+
+function SummaryMetricStrip({ cards, columns = 4 }: { cards: MetricCard[]; columns?: number }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${columns}, 1fr)`, gap: 8 }}>
+      {cards.map(({ label, value, sub, color, alert, mock, tooltip }) => (
+        <div key={label} title={tooltip} style={{
+          background: alert ? "#fef2f2" : "#f9fafb",
+          border: `1px solid ${alert ? "#fecaca" : "#e5e7eb"}`,
+          borderRadius: 8, padding: "8px 12px",
+        }}>
+          <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 3 }}>
+            {label}{mock && <MockBadge />}
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: alert ? "#dc2626" : (color ?? "#111827"), lineHeight: 1.2 }}>
+            {value}
+            {sub && <span style={{ fontSize: 10, fontWeight: 400, color: "#9ca3af", marginLeft: 5 }}>{sub}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Status Badge ─────────────────────────────────────────────────────────────
+
+function StatusBadge({ status }: { status: "completed" | "interrupted" | "continued" }) {
+  const cfg = {
+    completed:   { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0", label: "Completed" },
+    interrupted: { color: "#d97706", bg: "#fffbeb", border: "#fde68a", label: "Interrupted" },
+    continued:   { color: "#6366f1", bg: "#eff6ff", border: "#c7d2fe", label: "Continued" },
+  }[status];
+  return (
+    <span style={{
+      fontSize: 11, fontWeight: 600, color: cfg.color,
+      background: cfg.bg, border: `1px solid ${cfg.border}`,
+      borderRadius: 4, padding: "2px 7px",
+    }}>{cfg.label}</span>
+  );
+}
+
+// ─── Section heading ──────────────────────────────────────────────────────────
+
+function SectionLabel({ children, mock }: { children: React.ReactNode; mock?: boolean }) {
+  return (
+    <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
+      {children}{mock && <MockBadge />}
+    </div>
+  );
+}
+
+// ─── User Turn Detail Panel ───────────────────────────────────────────────────
+
 function UserTurnDetailPanel({
   turn, onSelectCall,
 }: { turn: MockUserTurn; onSelectCall: (c: MockLlmCall) => void }) {
-  const significantChanges = turn.calls.flatMap(c =>
-    c.isSignificant || c.isCompaction
-      ? c.incomingDiff
-          .filter(d => Math.abs(d.delta) > 1000 || d.category === "Unknown" || d.changeType === "removed")
-          .map(d => ({ call: c, entry: d }))
-      : []
-  );
-  const maxContext = Math.max(...turn.calls.map(c => c.contextSize));
+  const agentLoop = buildMockAgentLoop(turn);
+  const maxCtx = Math.max(...turn.calls.map(c => c.contextSize), 1);
+  const dur = fmtDuration(turn.durationMs);
+
+  // Net context for this turn: last call ctx − first call ctx
+  const firstCtx = turn.calls[0]?.contextSize ?? 0;
+  const lastCtx  = turn.calls[turn.calls.length - 1]?.contextSize ?? 0;
+  const netCtx   = lastCtx - firstCtx;
+  const netCtxStr = `${netCtx >= 0 ? "+" : ""}${fmtK(netCtx)}`;
+
+  // Cache ratio for this turn
+  const cacheRatio = turn.cacheRead + turn.cacheWrite > 0
+    ? Math.round(turn.cacheRead / (turn.cacheRead + turn.cacheWrite) * 100)
+    : null;
+
+  // Top transitions
+  const topTransitions = agentLoop.transitions
+    .filter(t => Math.abs(t.contextDelta) > 2000)
+    .sort((a, b) => Math.abs(b.contextDelta) - Math.abs(a.contextDelta))
+    .slice(0, 4);
+
+  // Risk badges for this turn
+  const risks: Array<{ type: "compaction" | "unknown-spike" | "large-growth" | "near-limit" | "tool-heavy" }> = [];
+  if (turn.hasCompaction) risks.push({ type: "compaction" });
+  if (turn.hasUnknownSpike) risks.push({ type: "unknown-spike" });
+  if (turn.peakContext > 150_000) risks.push({ type: "near-limit" });
+  const toolHeavy = agentLoop.toolSummary.reduce((s, t) => s + t.totalOutput, 0) > 20_000;
+  if (toolHeavy) risks.push({ type: "tool-heavy" });
 
   return (
     <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
-      {/* Turn Header */}
-      <div style={{ marginBottom: 18 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#111827", marginBottom: 4 }}>Turn {turn.id}</div>
-        <div style={{ fontSize: 12, color: "#4b5563", lineHeight: 1.5, background: "#f9fafb", padding: "8px 12px", borderRadius: 6, marginBottom: 8 }}>
-          "{turn.userInput}"
+
+      {/* ── Turn Header ───────────────────────────────────────────── */}
+      <div style={{ marginBottom: 20, paddingBottom: 18, borderBottom: "1px solid #f3f4f6" }}>
+        {/* Title row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>Turn {turn.id}</span>
+          <StatusBadge status={agentLoop.status} />
+          {dur && <span style={{ fontSize: 11, color: "#9ca3af" }}>{dur}</span>}
+          {risks.length > 0 && (
+            <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+              {risks.map(r => <RiskBadge key={r.type} type={r.type} />)}
+            </div>
+          )}
         </div>
-        <div style={{ fontSize: 11, color: "#6b7280" }}>
-          {turn.llmCallCount} LLM calls · {turn.toolCallCount} tool calls ·{" "}
-          <span style={{ fontWeight: 600, color: turn.netContextDelta > 0 ? "#16a34a" : "#dc2626" }}>
-            {turn.netContextDelta > 0 ? "+" : ""}{fmtK(turn.netContextDelta)} context
-          </span>
-          {" "}· Peak {fmtK(turn.peakContext)}
+
+        {/* User input */}
+        <div style={{
+          fontSize: 12, color: "#374151", lineHeight: 1.55,
+          background: "#f5f3ff", borderRadius: 6, padding: "8px 12px",
+          borderLeft: "3px solid #6366f1", marginBottom: 14,
+          whiteSpace: "pre-wrap", wordBreak: "break-word",
+        }}>
+          {turn.userInput}
+        </div>
+
+        {/* ── Metric Strip — same visual language as Session ─────── */}
+        {/* Row 1: Call & loop counts */}
+        <div style={{ marginBottom: 8 }}>
+          <SummaryMetricStrip columns={4} cards={[
+            { label: "LLM Calls",   value: String(turn.llmCallCount) },
+            { label: "Tool Calls",  value: String(turn.toolCallCount), sub: `${agentLoop.toolGroups.length} groups`, mock: true },
+            { label: "Duration",    value: dur || "—" },
+            { label: "Tool Errors", value: String(agentLoop.toolSummary.reduce((s, t) => s + t.failed, 0)),
+              alert: agentLoop.toolSummary.some(t => t.failed > 0), mock: true },
+          ]} />
+        </div>
+        {/* Row 2: Token accounting */}
+        <div style={{ marginBottom: 8 }}>
+          <SummaryMetricStrip columns={5} cards={[
+            { label: "Cache Read",  value: fmtK(turn.cacheRead) },
+            { label: "Cache Write", value: fmtK(turn.cacheWrite) },
+            { label: "Fresh In",    value: fmtK(turn.calls.reduce((s, c) => s + c.contextSize - c.cacheRead - c.cacheWrite, 0)) },
+            { label: "Fresh Out",   value: fmtK(turn.calls.reduce((s, c) => s + c.outputTokens, 0)) },
+            { label: "Cache Ratio", value: cacheRatio !== null ? `${cacheRatio}%` : "—",
+              tooltip: "cache_read / (cache_read + cache_write)" },
+          ]} />
+        </div>
+        {/* Row 3: Context accounting */}
+        <div style={{ marginBottom: 0 }}>
+          <SummaryMetricStrip columns={3} cards={[
+            { label: "Peak Context", value: fmtK(turn.peakContext) },
+            { label: "Net Context",  value: netCtxStr,
+              color: netCtx < 0 ? "#16a34a" : undefined,
+              tooltip: "Last call context minus first call context in this turn" },
+            { label: "Unknown Δ",    value: turn.unknownDelta > 0 ? `+${fmtK(turn.unknownDelta)}` : "0",
+              color: turn.unknownDelta > 1000 ? "#dc2626" : undefined },
+          ]} />
         </div>
       </div>
 
-      {/* Call Trend */}
-      <div style={{ marginBottom: 18 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
-          Call Trend <MockBadge />
-        </div>
-        <div style={{ border: "1px dashed #d1d5db", borderRadius: 8, padding: "12px 16px", background: "#fafafa" }}>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 64, marginBottom: 8 }}>
-            {turn.calls.map(c => {
-              const h = Math.round((c.contextSize / maxContext) * 100);
-              const isComp = c.isCompaction;
-              const isSig = c.isSignificant;
-              return (
-                <div
-                  key={c.id}
-                  onClick={() => onSelectCall(c)}
-                  title={`Call #${c.id}: ${fmtK(c.contextSize)}`}
-                  style={{
-                    flex: 1, height: `${Math.max(h, 5)}%`, minHeight: 4,
-                    background: isComp ? "#ef4444" : isSig ? "#3b82f6" : "#cbd5e1",
-                    borderRadius: "2px 2px 0 0", cursor: "pointer", opacity: 0.85,
-                    transition: "opacity 0.1s",
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.opacity = "1")}
-                  onMouseLeave={e => (e.currentTarget.style.opacity = "0.85")}
-                />
-              );
-            })}
-          </div>
-          <div style={{ display: "flex", gap: 3 }}>
-            {turn.calls.map(c => (
-              <div key={c.id} style={{ flex: 1, textAlign: "center" }}>
-                <span style={{ fontSize: 9, color: "#9ca3af" }}>#{c.id}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Significant Changes */}
-      {significantChanges.length > 0 && (
-        <div style={{ marginBottom: 18 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Significant Changes</div>
+      {/* ── Top Transitions (summary before deep-dive) ────────────── */}
+      {topTransitions.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          <SectionLabel mock>Top Transitions</SectionLabel>
           <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
-            {significantChanges.map(({ call: c, entry: e }, i) => (
-              <div
-                key={`${c.id}-${e.id}`}
-                onClick={() => onSelectCall(c)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
-                  borderBottom: i < significantChanges.length - 1 ? "1px solid #f3f4f6" : "none",
-                  cursor: "pointer", background: "#fff",
-                }}
-                onMouseEnter={e2 => (e2.currentTarget.style.background = "#f9fafb")}
-                onMouseLeave={e2 => (e2.currentTarget.style.background = "#fff")}
-              >
-                <span style={{ fontSize: 11, color: "#9ca3af", width: 52, flexShrink: 0 }}>#{c.id}→</span>
-                <ChangeTypeIcon type={e.changeType} />
-                <span style={{ fontSize: 11, color: CATEGORY_COLORS[e.category] ?? "#6b7280", width: 80, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {e.category}
+            {topTransitions.map((tr, i) => (
+              <div key={`${tr.fromCallId}-${tr.toCallId}`} style={{
+                display: "grid", gridTemplateColumns: "80px 52px 1fr",
+                alignItems: "center", gap: 10, padding: "8px 12px",
+                borderBottom: i < topTransitions.length - 1 ? "1px solid #f3f4f6" : "none",
+                background: "#fff",
+              }}>
+                <span style={{ fontSize: 11, color: "#9ca3af" }}>
+                  #{tr.fromCallId} → #{tr.toCallId}
                 </span>
-                <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.label}</span>
-                <span style={{ fontSize: 11, fontWeight: 600, color: e.delta >= 0 ? "#16a34a" : "#dc2626", flexShrink: 0 }}>
-                  {e.delta >= 0 ? "+" : ""}{fmtK(e.delta)}
+                <span style={{ fontSize: 12, fontWeight: 700, color: tr.contextDelta > 0 ? "#d97706" : "#16a34a" }}>
+                  {tr.contextDelta > 0 ? "+" : ""}{fmtK(tr.contextDelta)}
                 </span>
-                <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>
-                  {e.confidence === "High" ? "✓" : e.confidence === "Unknown" ? "?" : "~"}
-                </span>
+                <span style={{ fontSize: 11, color: "#4b5563" }}>{tr.dominantCause}</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Compact Call Strip */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>All Calls</div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      {/* ── Context Trend (compact call-level sparkline) ─────────── */}
+      <div style={{ marginBottom: 20 }}>
+        <SectionLabel>Context Trend</SectionLabel>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 44, background: "#f9fafb", borderRadius: 6, padding: "6px 8px 0", border: "1px solid #f3f4f6" }}>
+          {turn.calls.map(c => {
+            const h = Math.round((c.contextSize / maxCtx) * 100);
+            return (
+              <div key={c.id} title={`#${c.id}: ${fmtK(c.contextSize)}`}
+                style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", cursor: "pointer" }}
+                onClick={() => onSelectCall(c)}>
+                <div style={{
+                  width: "100%", height: `${Math.max(h, 5)}%`,
+                  background: c.isCompaction ? "#ef4444" : c.isSignificant ? "#3b82f6" : "#6366f140",
+                  borderRadius: "2px 2px 0 0",
+                }} />
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 2, marginTop: 2 }}>
           {turn.calls.map(c => (
-            <div
-              key={c.id}
-              onClick={() => onSelectCall(c)}
-              title={`Call #${c.id} · ${fmtK(c.contextSize)}${c.isCompaction ? " · compaction" : c.isSignificant ? ` · +${fmtK(c.significantDelta ?? 0)}` : ""}`}
-              style={{
-                display: "flex", alignItems: "center", gap: 4, padding: "4px 8px",
-                borderRadius: 6, border: "1px solid #e5e7eb", cursor: "pointer",
-                background: c.isCompaction ? "#fef2f2" : c.isSignificant ? "#eff6ff" : "#f9fafb",
-                fontSize: 11,
-              }}
-              onMouseEnter={e => (e.currentTarget.style.borderColor = "#6366f1")}
-              onMouseLeave={e => (e.currentTarget.style.borderColor = "#e5e7eb")}
-            >
-              <CallNodeIcon call={c} />
-              <span style={{ color: "#374151" }}>#{c.id}</span>
-              {c.isSignificant && <span style={{ color: "#3b82f6" }}>+{fmtK(c.significantDelta ?? 0)}</span>}
-              {c.isCompaction && <span style={{ color: "#ef4444" }}>C</span>}
-              {c.isUnknownHeavy && <span style={{ color: "#94a3b8" }}>?</span>}
-            </div>
+            <div key={c.id} style={{ flex: 1, textAlign: "center", fontSize: 8, color: "#d1d5db" }}>#{c.id}</div>
           ))}
         </div>
       </div>
+
+      {/* ── Agent Loop Timeline ───────────────────────────────────── */}
+      <div style={{ marginBottom: 20 }}>
+        <SectionLabel mock>Agent Loop</SectionLabel>
+        <AgentLoopTimeline turn={turn} agentLoop={agentLoop} onSelectCall={onSelectCall} />
+      </div>
+
+      {/* ── Tool Summary ──────────────────────────────────────────── */}
+      {agentLoop.toolSummary.length > 0 && (
+        <div style={{ marginBottom: 4 }}>
+          <SectionLabel mock>Tool Summary</SectionLabel>
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+            {/* Header */}
+            <div style={{ display: "grid", gridTemplateColumns: "60px 1fr 72px 72px 52px", gap: 0, padding: "5px 12px", background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+              {["Tool", "Top input", "Calls", "Output", "Failed"].map(h => (
+                <span key={h} style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600 }}>{h}</span>
+              ))}
+            </div>
+            {agentLoop.toolSummary.map((ts, i) => {
+              // Find the largest single tool call for this tool type
+              const allCallsForTool = agentLoop.toolGroups
+                .flatMap(tg => tg.tools)
+                .filter(t => t.tool === ts.tool)
+                .sort((a, b) => b.outputSize - a.outputSize);
+              const topInput = allCallsForTool[0]?.input ?? "—";
+
+              return (
+                <div key={ts.tool} style={{
+                  display: "grid", gridTemplateColumns: "60px 1fr 72px 72px 52px",
+                  alignItems: "center", gap: 0, padding: "7px 12px",
+                  borderBottom: i < agentLoop.toolSummary.length - 1 ? "1px solid #f3f4f6" : "none",
+                }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>{ts.tool}</span>
+                  <span style={{ fontSize: 11, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 8 }}>{topInput}</span>
+                  <span style={{ fontSize: 11, color: "#374151" }}>{ts.calls}</span>
+                  <span style={{ fontSize: 11, color: "#374151" }}>+{fmtK(ts.totalOutput)}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: ts.failed > 0 ? "#dc2626" : "#9ca3af" }}>
+                    {ts.failed > 0 ? ts.failed : "—"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
