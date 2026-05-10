@@ -10,7 +10,7 @@ import {
 import fastifyStatic from "@fastify/static";
 import { AppModule } from "./src/app.module.ts";
 import { checkDbHealth, initDb, initV2Schema } from "./src/db.ts";
-import { runSync, startAutoSync, discoverFiles } from "./src/sync.ts";
+import { startAutoSync, discoverFiles } from "./src/sync.ts";
 import { startAutoSyncV2 } from "./src/sync-v2.ts";
 
 // ── Load .env (then .env.local overrides) ────────────────────────────────────
@@ -36,12 +36,8 @@ loadEnvFile(join(ROOT, ".env.local"));
 // ── DB health check ───────────────────────────────────────────────────────────
 const health = checkDbHealth();
 if (health.status === "missing") {
-  console.log("[db] No database found — initializing and running full sync...");
+  console.log("[db] No database found — initializing; initial sync will run in background...");
   initDb();
-  const result = await runSync();
-  console.log(
-    `[db] Full sync complete: ${result.synced} sessions synced, ${result.errors} errors (${result.duration_ms}ms)`,
-  );
 } else if (health.status === "incomplete") {
   console.error("[db] ERROR: Database exists but schema is incomplete.");
   console.error(`[db] Missing: ${health.missing.join(", ")}`);
@@ -55,60 +51,10 @@ if (health.status === "missing") {
   initDb();
 }
 
-// ── Background sync (v1 + v2 share one discoverFiles() call per cycle) ───────
-const _initialFiles = discoverFiles();
-startAutoSync(_initialFiles);
-
 initV2Schema();
-startAutoSyncV2(_initialFiles);
-
-// ── Proxy traffic workers ────────────────────────────────────────────────────
-{
-  const { PROXY_SERVER_PATHS } = await import("./src/proxy-v2/paths.ts");
-  const { getDb } = await import("./src/db.ts");
-
-  // Step 2: 清理 cache 历史记录（上次关机时 sync 状态已丢失，cache 必须重新同步）
-  // 只删 jsonl_file = trafficLog（确定是 cache 阶段的实时预览），不删 jsonl_file=''
-  // （那是未迁移的存量数据，body 接口会优雅返回 file_deleted，不应在此一刀砍掉）
-  try {
-    const db = getDb();
-    getDb().prepare("DELETE FROM proxy_requests WHERE jsonl_file = ?")
-      .run(PROXY_SERVER_PATHS.trafficLog);
-    // 提示：如果存量数据的 jsonl_file='' 且 indexed_cold_files 为空，说明用户未跑迁移脚本
-    const legacyCount = (db.prepare("SELECT COUNT(*) as n FROM proxy_requests WHERE jsonl_file = ''").get() as { n: number }).n;
-    const coldIndexed = (db.prepare("SELECT COUNT(*) as n FROM indexed_cold_files").get() as { n: number }).n;
-    if (legacyCount > 0 && coldIndexed === 0) {
-      console.warn(`[proxy] ${legacyCount} legacy records with empty jsonl_file — body fetch will return file_deleted. Run "npm run migrate:proxy-traffic" to rebuild.`);
-    }
-  } catch { /* 表可能还未建，忽略 */ }
-
-  // Step 3: 启动 RotationWorker（先处理未压缩中间态）
-  const { startRotationWorker } = await import("./src/proxy-v2/log/rotation-worker.ts");
-  startRotationWorker();
-
-  // Step 4: 启动 CacheSyncWorker
-  const { startCacheSyncWorker } = await import("./src/proxy-v2/log/cache-sync-worker.ts");
-  startCacheSyncWorker();
-
-  // Step 5: 启动 ColdIndexerWorker
-  const { startColdIndexer } = await import("./src/proxy-v2/log/cold-indexer.ts");
-  startColdIndexer();
-
-  // Step 6: 启动 FilesystemDiffWorker
-  const { startFilesystemDiffWorker } = await import("./src/proxy-v2/log/filesystem-diff.ts");
-  startFilesystemDiffWorker();
-}
-
-// ── Proxy v2 boot reconcile ───────────────────────────────────────────────────
-try {
-  const { proxyV2Controller } = await import("./src/proxy-v2/controller.ts");
-  await proxyV2Controller.reconcileOnBoot();
-} catch (err) {
-  console.error("[proxy-v2] boot reconcile fatal:", err);
-}
 
 // ── NestJS + Fastify ──────────────────────────────────────────────────────────
-const PORT = parseInt(process.env.PORT ?? "5173");
+const PORT = parseInt(process.env.PORT ?? "5051");
 const app = await NestFactory.create<NestFastifyApplication>(
   AppModule,
   new FastifyAdapter({ logger: false }),
@@ -157,6 +103,57 @@ await app.listen(PORT, "0.0.0.0");
 console.log(
   `[server] Session Dashboard (Node) running at http://localhost:${PORT}`,
 );
+
+// ── Background services ──────────────────────────────────────────────────────
+// Keep the HTTP server responsive first; sync/reconcile can take tens of
+// seconds on large local session stores and should not block dev-server startup.
+setTimeout(() => {
+  void startBackgroundServices();
+}, 0);
+
+async function startBackgroundServices() {
+  // Background sync (v1 + v2 share one discoverFiles() call per cycle)
+  const initialFiles = discoverFiles();
+  startAutoSync(initialFiles);
+  startAutoSyncV2(initialFiles);
+
+  // Proxy traffic workers
+  {
+    const { PROXY_SERVER_PATHS } = await import("./src/proxy-v2/paths.ts");
+    const { getDb } = await import("./src/db.ts");
+
+    try {
+      const db = getDb();
+      getDb().prepare("DELETE FROM proxy_requests WHERE jsonl_file = ?")
+        .run(PROXY_SERVER_PATHS.trafficLog);
+      const legacyCount = (db.prepare("SELECT COUNT(*) as n FROM proxy_requests WHERE jsonl_file = ''").get() as { n: number }).n;
+      const coldIndexed = (db.prepare("SELECT COUNT(*) as n FROM indexed_cold_files").get() as { n: number }).n;
+      if (legacyCount > 0 && coldIndexed === 0) {
+        console.warn(`[proxy] ${legacyCount} legacy records with empty jsonl_file — body fetch will return file_deleted. Run "npm run migrate:proxy-traffic" to rebuild.`);
+      }
+    } catch { /* 表可能还未建，忽略 */ }
+
+    const { startRotationWorker } = await import("./src/proxy-v2/log/rotation-worker.ts");
+    startRotationWorker();
+
+    const { startCacheSyncWorker } = await import("./src/proxy-v2/log/cache-sync-worker.ts");
+    startCacheSyncWorker();
+
+    const { startColdIndexer } = await import("./src/proxy-v2/log/cold-indexer.ts");
+    startColdIndexer();
+
+    const { startFilesystemDiffWorker } = await import("./src/proxy-v2/log/filesystem-diff.ts");
+    startFilesystemDiffWorker();
+  }
+
+  // Proxy v2 boot reconcile
+  try {
+    const { proxyV2Controller } = await import("./src/proxy-v2/controller.ts");
+    await proxyV2Controller.reconcileOnBoot();
+  } catch (err) {
+    console.error("[proxy-v2] boot reconcile fatal:", err);
+  }
+}
 
 // ── Shutdown hooks ────────────────────────────────────────────────────────────
 let stopping = false;

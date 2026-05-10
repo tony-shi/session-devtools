@@ -6,7 +6,7 @@ import { resolve } from "path";
 export default defineConfig(({ mode }) => {
   // Load .env from repo root (one level up from client/)
   const env = loadEnv(mode, resolve(__dirname, ".."), "");
-  const SERVER_PORT = env.PORT ?? "5173";
+  const SERVER_PORT = env.PORT ?? "5051";
   const CLIENT_PORT = parseInt(env.VITE_PORT ?? "5173");
 
   return {
