@@ -8,10 +8,17 @@ import http from "node:http";
 import type { Readable } from "node:stream";
 import { readSettings } from "./settings";
 
+// When bundled (dist/server.js), import.meta.dirname = <package-root>/dist/
+// When running via tsx (dev), import.meta.dirname = server/src/proxy-v2/
+//
+// In bundled mode: proxy-server.js lives alongside server.js in dist/
+// In dev mode: proxy TS source is at server/src/proxy-v2/server/start.ts
+const PROXY_BUNDLE = join(import.meta.dirname, "proxy-server.js");
+// Dev mode paths (two levels up from server/src/proxy-v2/ → server/)
 const SERVER_ROOT = join(import.meta.dirname, "../..");
-const SERVER_ENTRY = join(import.meta.dirname, "server/start.ts");
 const TSX_BIN = join(SERVER_ROOT, "node_modules/.bin/tsx");
 const TSCONFIG = join(SERVER_ROOT, "tsconfig.node.json");
+const SERVER_ENTRY = join(import.meta.dirname, "server/start.ts");
 const AMBIENT_PROXY_ENV_KEYS = [
   "HTTP_PROXY",
   "HTTPS_PROXY",
@@ -42,20 +49,8 @@ export interface SpawnedProxy {
 }
 
 export async function spawnProxy(port: number, log: (msg: string) => void): Promise<SpawnedProxy> {
-  log("[runner] spawning proxy server via tsx...");
-
-  if (!existsSync(TSX_BIN)) {
-    throw new Error(`tsx binary not found at ${TSX_BIN}. Run "cd server && npm install" before starting proxy-v2.`);
-  }
-  if (!existsSync(TSCONFIG)) {
-    throw new Error(`tsconfig not found at ${TSCONFIG}`);
-  }
-
   // settings.json 的 env 块需要传给 proxy 子进程，否则它读不到 ANTHROPIC_BASE_URL 等业务配置。
   // 但标准代理变量不能传给 proxy 自己：它们是给 Claude 客户端消费的，不是给本地 proxy server 消费的。
-  // 一旦子进程继承 HTTP_PROXY=http://127.0.0.1:<ourPort>，任何运行时/库若按环境变量出站，
-  // 都可能把 proxy 的上游请求回打到自己。proxy server 的出站链路只允许通过
-  // API_DASHBOARD_PROXY_UPSTREAM 显式控制。
   const settingsEnv = readSettings().env;
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -66,7 +61,23 @@ export async function spawnProxy(port: number, log: (msg: string) => void): Prom
     delete childEnv[key];
   }
 
-  const child = spawn(TSX_BIN, ["--tsconfig", TSCONFIG, SERVER_ENTRY, "--port", String(port)], {
+  let spawnArgs: [string, string[]];
+  if (existsSync(PROXY_BUNDLE)) {
+    // Published package: run pre-compiled JS bundle
+    log("[runner] spawning proxy server via node (compiled bundle)...");
+    spawnArgs = [process.execPath, [PROXY_BUNDLE, "--port", String(port)]];
+  } else if (existsSync(TSX_BIN) && existsSync(TSCONFIG)) {
+    // Dev mode: run TypeScript source via tsx
+    log("[runner] spawning proxy server via tsx (dev mode)...");
+    spawnArgs = [TSX_BIN, ["--tsconfig", TSCONFIG, SERVER_ENTRY, "--port", String(port)]];
+  } else {
+    throw new Error(
+      `Proxy bundle not found at ${PROXY_BUNDLE} and tsx not found at ${TSX_BIN}.\n` +
+      `Run "npm run build" to compile the proxy bundle, or "cd server && npm install" for dev mode.`,
+    );
+  }
+
+  const child = spawn(spawnArgs[0], spawnArgs[1], {
     cwd: SERVER_ROOT,
     env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],

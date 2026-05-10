@@ -1,11 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  TraceViewer,
-  claudeJsonlToTraceViewerData,
-} from "@session-dashboard/agent-viz";
-import type { AgentSpan, TraceViewerData } from "@session-dashboard/agent-viz";
-import "@session-dashboard/agent-viz/prism.css";
+import type { AgentSpan } from "../types/agent-span";
 import { api } from "../api";
 import type { StatsResponse, Turn, TurnsResponse } from "../types";
 import { TraceTimeline } from "./TraceTimeline";
@@ -182,8 +177,7 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
   const { t } = useTranslation();
   const [turnsData, setTurnsData] = useState<TurnsResponse | null>(null);
   const [stats, setStats] = useState<StatsResponse | null>(null);
-  const [traceData, setTraceData] = useState<TraceViewerData[]>([]);
-  const [irSpans, setIrSpans] = useState<AgentSpan[]>([]);
+  const [irSpans] = useState<AgentSpan[]>([]);
   const [contextTraces, setContextTraces] = useState<AgentContextTrace[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -194,32 +188,16 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
   useEffect(() => {
     setLoading(true);
     setError("");
-    setTraceData([]);
 
     Promise.all([
       api.stats(sessionId, date),
       api.turns(sessionId, date),
-      api.raw(sessionId),
       api.context(sessionId),
     ])
-      .then(([s, t, r, ctx]) => {
+      .then(([s, t, ctx]) => {
         setStats(s);
         setTurnsData(t);
         setContextTraces(ctx.traces ?? []);
-        const tool = (t.session.tool ?? "claude") as "claude" | "codex" | "gemini";
-        if (tool === "claude") {
-          const { traceRecord, spans, irSpans } = claudeJsonlToTraceViewerData(
-            r.raw,
-            {
-              sessionId,
-              sessionName: t.session.project ?? sessionId.slice(0, 8),
-              agentDescription: t.session.project ?? "claude-code",
-              subagents: r.subagents,
-            },
-          );
-          setTraceData([{ traceRecord, spans }]);
-          setIrSpans(irSpans);
-        }
       })
       .catch((e) => setError(String(e?.message)))
       .finally(() => setLoading(false));
@@ -380,13 +358,9 @@ export function SessionDetail({ sessionId, date, onClose }: Props) {
 
           {!loading && !error && tab === "spans" && (
             <div className="h-full overflow-hidden">
-              {traceData.length > 0 ? (
-                <TraceViewer data={traceData} />
-              ) : (
-                <p className="p-5 text-sm text-gray-400">
-                  {t("sessionDetail.notSupported", { view: "Span Tree", tool: turnsData?.session.tool ?? "CLI" })}
-                </p>
-              )}
+              <p className="p-5 text-sm text-gray-400">
+                {t("sessionDetail.notSupported", { view: "Span Tree", tool: turnsData?.session.tool ?? "CLI" })}
+              </p>
             </div>
           )}
 

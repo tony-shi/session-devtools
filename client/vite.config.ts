@@ -6,23 +6,11 @@ import { resolve } from "path";
 export default defineConfig(({ mode }) => {
   // Load .env from repo root (one level up from client/)
   const env = loadEnv(mode, resolve(__dirname, ".."), "");
-  const SERVER_PORT = env.PORT ?? "5051";
+  const SERVER_PORT = env.PORT ?? "5173";
   const CLIENT_PORT = parseInt(env.VITE_PORT ?? "5173");
 
   return {
     plugins: [react(), tailwindcss()],
-    resolve: {
-      alias: [
-        {
-          find: "@session-dashboard/agent-viz/prism.css",
-          replacement: resolve(__dirname, "../packages/agent-viz/src/prism/prism.css"),
-        },
-        {
-          find: "@session-dashboard/agent-viz",
-          replacement: resolve(__dirname, "../packages/agent-viz/src/index.ts"),
-        },
-      ],
-    },
     server: {
       port: CLIENT_PORT,
       open: true,

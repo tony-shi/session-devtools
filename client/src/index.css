@@ -1,10 +1,4 @@
 @import "tailwindcss";
-@import "@session-dashboard/agent-viz/prism.css";
-
-/* Tell Tailwind to scan agent-prism components so `bg-agentprism-*`
-   utilities are generated. (The package lives outside client/src, so
-   the Vite plugin won't auto-discover it from relative imports alone.) */
-@source "../../packages/agent-viz/src/prism/**/*.{ts,tsx}";
 
 html {
   font-size: 14px;

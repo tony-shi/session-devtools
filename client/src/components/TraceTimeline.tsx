@@ -6,7 +6,7 @@
 // a shared horizontal time axis makes parallelism obvious at a glance.
 
 import { useMemo, useState } from "react";
-import type { AgentSpan } from "@session-dashboard/agent-viz";
+import type { AgentSpan } from "../types/agent-span";
 
 interface Props {
   spans: AgentSpan[];

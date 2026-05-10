@@ -5,7 +5,7 @@ import type { DiffEntry, LlmCall, ModelStats, SessionDrilldown, UserTurn } from 
 import { apiV2 } from "./api";
 import {
   buildMockAttributedDiff,
-  buildMockPayloadSegments, buildMockCallResponse,
+  buildMockPayloadSegments,
   buildMockBridgeEvents, buildTrustMode,
   MOCK_SUB_AGENTS, attachMockSubAgents,
   type AttributedDiffRange, type PayloadSegment,
@@ -1188,7 +1188,7 @@ function buildRealAgentLoop(turn: MockUserTurn): MockAgentLoopData {
     // We know how many tool calls happened after each LLM call from indexInTurn sequencing,
     // but tool names are not in the data model without proxy. Emit an opaque group per call
     // that had tool use (stop_reason === "tool_use").
-    if (c.stopReason === "tool_use" && c.toolCallCount === undefined) {
+    if (c.stopReason === "tool_use") {
       // toolCallCount is a turn-level field, not call-level — skip if unavailable
     }
   }

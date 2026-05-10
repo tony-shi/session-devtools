@@ -10,7 +10,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@session-dashboard/agent-viz": "workspace:*",
     "@tailwindcss/vite": "^4.2.2",
     "@types/d3": "^7.4.3",
     "d3": "^7.9.0",

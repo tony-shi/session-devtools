@@ -7,6 +7,7 @@ import {
   FastifyAdapter,
   NestFastifyApplication,
 } from "@nestjs/platform-fastify";
+import fastifyStatic from "@fastify/static";
 import { AppModule } from "./src/app.module.ts";
 import { checkDbHealth, initDb, initV2Schema } from "./src/db.ts";
 import { runSync, startAutoSync, discoverFiles } from "./src/sync.ts";
@@ -107,7 +108,7 @@ try {
 }
 
 // ── NestJS + Fastify ──────────────────────────────────────────────────────────
-const PORT = parseInt(process.env.PORT ?? "5051");
+const PORT = parseInt(process.env.PORT ?? "5173");
 const app = await NestFactory.create<NestFastifyApplication>(
   AppModule,
   new FastifyAdapter({ logger: false }),
@@ -117,6 +118,14 @@ await app.register(
   (await import("@fastify/cors")).default,
   { origin: "*", methods: ["GET", "POST", "PUT", "OPTIONS"] },
 );
+
+const PUBLIC_DIR = join(__dirname, "public");
+if (existsSync(join(PUBLIC_DIR, "index.html"))) {
+  await app.register(fastifyStatic, {
+    root: PUBLIC_DIR,
+    wildcard: false,
+  });
+}
 
 const SILENT_PATHS = new Set([
   "/api/proxy-v2/status",
@@ -133,6 +142,17 @@ fastify.addHook("onResponse", (request: any, reply: any, done: () => void) => {
 });
 
 await app.init();
+
+// SPA fallback: serve index.html for any non-API GET that doesn't match a static file.
+const INDEX_HTML = join(PUBLIC_DIR, "index.html");
+if (existsSync(INDEX_HTML)) {
+  const indexHtml = readFileSync(INDEX_HTML, "utf8");
+  const instance = app.getHttpAdapter().getInstance() as any;
+  instance.get("/*", (_req: any, reply: any) => {
+    reply.type("text/html").send(indexHtml);
+  });
+}
+
 await app.listen(PORT, "0.0.0.0");
 console.log(
   `[server] Session Dashboard (Node) running at http://localhost:${PORT}`,

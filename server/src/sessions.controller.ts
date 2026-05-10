@@ -296,7 +296,7 @@ export class SessionsController {
       }
     } catch { /* no subagents */ }
 
-    const { computeAgentContextTraces } = await import("../../packages/agent-viz/src/ir/context.ts");
+    const { computeAgentContextTraces } = await import("./context.ts");
     const tracesMap = computeAgentContextTraces(
       raw,
       subagents as Record<string, { jsonl: string; meta: { agentType?: string; description?: string; name?: string } | null }>,

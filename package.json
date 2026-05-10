@@ -5,18 +5,36 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tony-shi/session-dashboard"
+    "url": "https://github.com/tony-shi/session-devtools"
   },
-  "workspaces": ["packages/*", "client"],
+  "homepage": "https://github.com/tony-shi/session-devtools#readme",
+  "keywords": ["claude-code", "ai", "devtools", "sessions", "dashboard"],
+  "type": "module",
+  "bin": {
+    "session-devtools": "./bin/session-devtools.js"
+  },
+  "files": [
+    "bin/",
+    "dist/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "workspaces": ["client"],
   "scripts": {
     "dev": "bash scripts/setup-env.sh && concurrently \"npm run server:dev\" \"npm run client:dev\"",
     "server:dev": "server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json server/main.ts",
     "client:dev": "bash scripts/wait-server.sh",
-    "build": "cd client && bun run build",
-    "start": "bash scripts/setup-env.sh && server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json server/main.ts",
+    "build": "npm run build:server && npm run build:client",
+    "build:client": "cd client && npm run build && rm -rf ../dist/public && cp -r ../server/public ../dist/public",
+    "build:server": "tsup",
+    "prepack": "npm run build",
+    "start": "node bin/session-devtools.js",
     "test": "cd server && npm test",
     "env:init": "[ -f .env ] || cp .env.example .env && echo 'Created .env from .env.example'",
-"context:audit": "server/node_modules/.bin/tsx scripts/context-audit.ts",
+    "context:audit": "server/node_modules/.bin/tsx scripts/context-audit.ts",
     "context:audit:since-last": "server/node_modules/.bin/tsx scripts/context-audit.ts --since-last",
     "context:audit:fixtures": "server/node_modules/.bin/tsx scripts/context-audit.ts --fixtures",
     "context:audit:mark-baseline": "server/node_modules/.bin/tsx scripts/context-audit.ts mark-baseline",
@@ -30,12 +48,27 @@
     "migrate:proxy-traffic": "server/node_modules/.bin/tsx scripts/migrate-proxy-traffic.ts"
   },
   "dependencies": {
+    "@fastify/cors": "^9.0.1",
+    "@fastify/static": "^7.0.4",
+    "@nestjs/common": "^10.4.15",
+    "@nestjs/config": "^3.3.0",
+    "@nestjs/core": "^10.4.15",
+    "@nestjs/platform-fastify": "^10.4.15",
     "better-sqlite3": "^12.9.0",
-    "node-forge": "^1.3.1"
+    "fastify": "^4.29.0",
+    "node-forge": "^1.3.1",
+    "open": "^10.1.0",
+    "reflect-metadata": "^0.2.2",
+    "update-notifier": "^7.3.1"
   },
   "devDependencies": {
+    "@swc/core": "^1.15.0",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.3",
     "@types/node-forge": "^1.3.11",
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "esbuild-plugin-swc": "^1.0.1",
+    "tsup": "^8.4.0",
+    "typescript": "~5.8.3"
   }
 }
