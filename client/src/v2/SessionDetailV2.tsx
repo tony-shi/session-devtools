@@ -17,6 +17,7 @@ import {
   deriveSessionMetrics, deriveSessionHotspots,
   type SessionMetrics,
 } from "./drilldown-real-fill";
+import { getSessionDisplayName } from "./session-display";
 
 // Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
 type MockDiffEntry = DiffEntry;
@@ -260,6 +261,12 @@ function fmtK(n: number): string {
   if (abs >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
   if (abs >= 1_000) return (n / 1_000).toFixed(1) + "k";
   return String(n);
+}
+
+function fmtPct(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return "—";
+  if (n >= 99.95 && n < 100) return "99.9%";
+  return n >= 10 ? `${n.toFixed(1)}%` : `${n.toFixed(2)}%`;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -530,34 +537,21 @@ function SessionOverviewPanel({
           );
         })()}
 
-        {/* Row 1: Call & turn counts */}
-        <div style={{ marginBottom: 8 }}>
-          <SummaryMetricStrip columns={5} cards={[
-            { label: "User Turns",  value: String(turns.length),                  mock: isMock },
-            { label: "LLM Calls",   value: String(totalCalls),                    mock: isMock },
-            { label: "Tool Calls",  value: String(totalToolCalls),                mock: isMock },
-            { label: "Sub Agents",  value: String(sm?.subAgentCount ?? 0),        mock: isMock,
-              color: (sm?.subAgentCount ?? 0) > 0 ? "#6366f1" : undefined },
-            { label: "Duration",    value: durationStr,                           mock: isMock },
-          ]} />
-        </div>
-
-        {/* Row 2: Token breakdown — same 5-col layout as Turn */}
-        <div style={{ marginBottom: 8 }}>
-          <SummaryMetricStrip columns={5} cards={[
-            { label: "Cache Read",  value: fmtK(totalCacheRead),  mock: isMock },
-            { label: "Cache Write", value: fmtK(totalCacheWrite), mock: isMock },
-            { label: "Fresh In",    value: totalFreshIn !== null ? fmtK(totalFreshIn) : "—", mock: isMock },
-            { label: "Fresh Out",   value: totalFreshOut !== null ? fmtK(totalFreshOut) : "—", mock: isMock },
-            { label: "Cache Ratio", value: cacheRatio !== null ? `${cacheRatio}%` : "—",
-              tooltip: "cache_read / (cache_read + fresh_in)", mock: isMock },
-          ]} />
-        </div>
-
-        {/* Row 3: Context stats — same 3-col layout as Turn */}
-        <SummaryMetricStrip columns={3} cards={[
+        <SummaryMetricStrip columns={7} cards={[
+          { label: "User Turns",  value: String(turns.length),                  mock: isMock },
+          { label: "LLM Calls",   value: String(totalCalls),                    mock: isMock },
+          { label: "Tool Calls",  value: String(totalToolCalls),                mock: isMock },
+          { label: "Sub Agents",  value: String(sm?.subAgentCount ?? 0),        mock: isMock,
+            color: (sm?.subAgentCount ?? 0) > 0 ? "#6366f1" : undefined },
+          { label: "Duration",    value: durationStr,                           mock: isMock },
+          { label: "Cache Read",  value: fmtK(totalCacheRead),  mock: isMock },
+          { label: "Cache Write", value: fmtK(totalCacheWrite), mock: isMock },
+          { label: "Fresh In",    value: totalFreshIn !== null ? fmtK(totalFreshIn) : "—", mock: isMock },
+          { label: "Fresh Out",   value: totalFreshOut !== null ? fmtK(totalFreshOut) : "—", mock: isMock },
+          { label: "Cache Ratio", value: fmtPct(cacheRatio),
+            tooltip: "cache_read / (cache_read + cache_write + fresh_in)", mock: isMock },
           { label: "Peak Context", value: fmtK(peakContext), mock: isMock },
-          { label: "Net Context",  value: netContextStr,
+          { label: "Net Context Δ",  value: netContextStr,
             color: netContext !== null && netContext < 0 ? "#16a34a" : undefined,
             mock: netContext === null,
             tooltip: "从 session 第一个 LLM call 到最后一个 call，context size 的净变化。compaction 会压低这个数字。" },
@@ -567,12 +561,12 @@ function SessionOverviewPanel({
       </div>
 
       {/* Compaction / Near-limit hotspot chips — only meaningful info */}
-      {!isMock && (compactionTurns.length > 0 || peakContext > 150000) && (
+      {!isMock && (compactionTurns.length > 0 || peakContext > contextWindowSize * 0.85) && (
         <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
           {compactionTurns.length > 0 && (
             <HotspotChip icon="◆" label="Compaction" value={compactionTurns.map(t => `Turn ${t.id}`).join(", ")} color="#ef4444" />
           )}
-          {peakContext > 150000 && (
+          {peakContext > contextWindowSize * 0.85 && (
             <HotspotChip icon="⚠" label="Peak context" value={`${fmtK(peakContext)} (${Math.round(peakContext / contextWindowSize * 100)}%)`} color="#ea580c" />
           )}
         </div>
@@ -599,29 +593,35 @@ function SessionOverviewPanel({
         <ContextTimelineChart turns={turns} isMock={isMock} contextWindowSize={contextWindowSize} />
       </div>
 
-      {/* Top context contributors (mock) */}
+      {/* Top context contributors */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
-          Top Context Contributors <MockBadge />
+          Top Context Contributors {isMock && <MockBadge />}
         </div>
-        <div style={{ border: "1px dashed #d1d5db", borderRadius: 8, padding: "10px 14px", background: "#fafafa" }}>
-          {[
-            { label: "Tool Output", pct: 42 },
-            { label: "Assistant History", pct: 28 },
-            { label: "System", pct: 18 },
-            { label: "Unknown", pct: 7 },
-            { label: "Other", pct: 5 },
-          ].map(item => (
-            <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <div style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: CATEGORY_COLORS[item.label] ?? "#e5e7eb" }} />
-              <span style={{ fontSize: 11, color: "#374151", flex: 1 }}>{item.label}</span>
-              <div style={{ width: 80, height: 5, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
-                <div style={{ width: `${item.pct}%`, height: "100%", background: CATEGORY_COLORS[item.label] ?? "#e5e7eb" }} />
+        {isMock ? (
+          <div style={{ border: "1px dashed #d1d5db", borderRadius: 8, padding: "10px 14px", background: "#fafafa" }}>
+            {[
+              { label: "Tool Output", pct: 42 },
+              { label: "Assistant History", pct: 28 },
+              { label: "System", pct: 18 },
+              { label: "Unknown", pct: 7 },
+              { label: "Other", pct: 5 },
+            ].map(item => (
+              <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <div style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: CATEGORY_COLORS[item.label] ?? "#e5e7eb" }} />
+                <span style={{ fontSize: 11, color: "#374151", flex: 1 }}>{item.label}</span>
+                <div style={{ width: 80, height: 5, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
+                  <div style={{ width: `${item.pct}%`, height: "100%", background: CATEGORY_COLORS[item.label] ?? "#e5e7eb" }} />
+                </div>
+                <span style={{ fontSize: 10, color: "#9ca3af", width: 28, textAlign: "right" }}>{item.pct}%</span>
               </div>
-              <span style={{ fontSize: 10, color: "#9ca3af", width: 28, textAlign: "right" }}>{item.pct}%</span>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ border: "1px dashed #d1d5db", borderRadius: 8, padding: "10px 14px", background: "#fafafa", fontSize: 11, color: "#9ca3af" }}>
+            Attribution is not computed yet. {drilldown?.hasProxyData ? "Proxy data is available, but request-payload attribution still needs block matching." : "Enable proxy capture to compute this later."}
+          </div>
+        )}
       </div>
 
       {/* Sub Agents section */}
@@ -894,10 +894,9 @@ function ContextTimelineChart({
   const chartH = H - PAD.t - PAD.b;
 
   // ── Y axis ──────────────────────────────────────────────────────
-  // Peak context can exceed the nominal context window when the
-  // context-management beta is active (extended cache). In that case,
-  // scale Y up to fit the actual peak, and annotate the model ceiling
-  // as a reference line rather than the hard top of the chart.
+  // If local model-window metadata is stale or the API reports a larger
+  // effective window, scale Y up to fit the actual peak and keep the configured
+  // ceiling as a reference line rather than the hard top of the chart.
   const peakCtxRaw = Math.max(...allPoints.map(p => p.contextSize), contextWindowSize);
   // Round up to next 50k for a clean axis
   const yMax = Math.ceil(peakCtxRaw / 50_000) * 50_000;
@@ -1064,7 +1063,7 @@ function ContextTimelineChart({
           </span>
           {exceedsWindow && (
             <span style={{ color: "#ea580c" }}>
-              ⚠ exceeds nominal window — context-management beta active
+              ⚠ exceeds configured window — verify model window metadata
             </span>
           )}
           {xMode === "time" && <span style={{ color: "#c4b5d5" }}>X axis = wall-clock time</span>}
@@ -1105,6 +1104,7 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
     || (outputFull !== null && outputFull.length > OUTPUT_PREVIEW_CHARS);
 
   const dur = fmtDuration(turn.durationMs);
+  const contextWindowSize = turn.calls[0]?.contextWindowSize ?? 200_000;
 
   return (
     <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, background: "#fff", overflow: "hidden" }}>
@@ -1123,7 +1123,7 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
         <span style={{ flex: 1 }} />
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
           {turn.hasCompaction && <RiskBadge type="compaction" />}
-          {turn.peakContext > 150000 && <RiskBadge type="near-limit" />}
+          {turn.peakContext > contextWindowSize * 0.85 && <RiskBadge type="near-limit" />}
         </div>
         <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>›</span>
       </div>
@@ -1434,12 +1434,12 @@ function SummaryMetricStrip({ cards, columns = 4 }: { cards: MetricCard[]; colum
         <div key={label} title={tooltip} style={{
           background: alert ? "#fef2f2" : "#f9fafb",
           border: `1px solid ${alert ? "#fecaca" : "#e5e7eb"}`,
-          borderRadius: 8, padding: "8px 12px",
+          borderRadius: 8, padding: "7px 10px", minWidth: 0,
         }}>
-          <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 3 }}>
+          <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {label}{mock && <MockBadge />}
           </div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: alert ? "#dc2626" : (color ?? "#111827"), lineHeight: 1.2 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: alert ? "#dc2626" : (color ?? "#111827"), lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {value}
             {sub && <span style={{ fontSize: 10, fontWeight: 400, color: "#9ca3af", marginLeft: 5 }}>{sub}</span>}
           </div>
@@ -2224,8 +2224,10 @@ function UserTurnDetailPanel({
   const netCtxStr = `${netCtx >= 0 ? "+" : ""}${fmtK(netCtx)}`;
 
   // Cache ratio for this turn
-  const cacheRatio = turn.cacheRead + turn.cacheWrite > 0
-    ? Math.round(turn.cacheRead / (turn.cacheRead + turn.cacheWrite) * 100)
+  const freshIn = turn.calls.reduce((s, c) => s + Math.max(c.contextSize - c.cacheRead - c.cacheWrite, 0), 0);
+  const cacheInputTotal = turn.cacheRead + turn.cacheWrite + freshIn;
+  const cacheRatio = cacheInputTotal > 0
+    ? turn.cacheRead / cacheInputTotal * 100
     : null;
 
   // Top transitions
@@ -2238,7 +2240,7 @@ function UserTurnDetailPanel({
   const risks: Array<{ type: "compaction" | "unknown-spike" | "large-growth" | "near-limit" | "tool-heavy" }> = [];
   if (turn.hasCompaction) risks.push({ type: "compaction" });
   if (turn.hasUnknownSpike) risks.push({ type: "unknown-spike" });
-  if (turn.peakContext > 150_000) risks.push({ type: "near-limit" });
+  if (turn.peakContext > (turn.calls[0]?.contextWindowSize ?? 200_000) * 0.85) risks.push({ type: "near-limit" });
   const toolHeavy = agentLoop.toolSummary.reduce((s, t) => s + t.totalOutput, 0) > 20_000;
   if (toolHeavy) risks.push({ type: "tool-heavy" });
 
@@ -2287,17 +2289,17 @@ function UserTurnDetailPanel({
           <SummaryMetricStrip columns={5} cards={[
             { label: "Cache Read",  value: fmtK(turn.cacheRead) },
             { label: "Cache Write", value: fmtK(turn.cacheWrite) },
-            { label: "Fresh In",    value: fmtK(turn.calls.reduce((s, c) => s + c.contextSize - c.cacheRead - c.cacheWrite, 0)) },
+            { label: "Fresh In",    value: fmtK(freshIn) },
             { label: "Fresh Out",   value: fmtK(turn.calls.reduce((s, c) => s + c.outputTokens, 0)) },
-            { label: "Cache Ratio", value: cacheRatio !== null ? `${cacheRatio}%` : "—",
-              tooltip: "cache_read / (cache_read + cache_write)" },
+            { label: "Cache Ratio", value: fmtPct(cacheRatio),
+              tooltip: "cache_read / (cache_read + cache_write + fresh_in)" },
           ]} />
         </div>
         {/* Row 3: Context accounting */}
         <div style={{ marginBottom: 0 }}>
           <SummaryMetricStrip columns={3} cards={[
             { label: "Peak Context", value: fmtK(turn.peakContext) },
-            { label: "Net Context",  value: netCtxStr,
+            { label: "Net Context Δ",  value: netCtxStr,
               color: netCtx < 0 ? "#16a34a" : undefined,
               tooltip: "Last call context minus first call context in this turn" },
             { label: "Unknown Δ",    value: turn.unknownDelta > 0 ? `+${fmtK(turn.unknownDelta)}` : "0",
@@ -3195,7 +3197,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
   const [selectedCall, setSelectedCall] = useState<MockLlmCall | null>(null);
   const [inspector, setInspector] = useState<InspectorState>({ type: "hotspots" });
 
-  const title = (drilldown?.title ?? session.custom_title ?? session.ai_title ?? session.session_id.slice(0, 16)) as string;
+  const title = getSessionDisplayName(session, drilldown?.title);
 
   function handleSelectTurn(turn: MockUserTurn) {
     setSelectedTurn(turn);

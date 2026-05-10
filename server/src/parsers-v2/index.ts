@@ -36,4 +36,4 @@ export const PARSERS_V2: Record<string, ParserV2> = {
   claude: parseClaudeSessionV2,
 };
 
-export const PARSER_VERSION = 2;
+export const PARSER_VERSION = 3;

@@ -53,8 +53,9 @@ function isToolResultOnly(content: unknown): boolean {
 }
 
 function isCommandContent(content: unknown): boolean {
-  if (typeof content !== "string") return false;
-  return content.trimStart().startsWith("<command-name>");
+  const text = typeof content === "string" ? content : extractUserText(content);
+  const trimmed = text.trimStart();
+  return trimmed.startsWith("<command-name>") || trimmed.startsWith("<local-command-caveat>");
 }
 
 function isHumanInput(ev: JUserEvent): boolean {

@@ -9,8 +9,14 @@ const KNOWN_TYPES = new Set([
   "worktree-state", "ai-title", "custom-title",
 ]);
 
+function isCommandContent(content: unknown): boolean {
+  const text = extractText(content).trimStart();
+  return text.startsWith("<command-name>") || text.startsWith("<local-command-caveat>");
+}
+
 function isHumanInput(content: unknown): boolean {
-  if (!Array.isArray(content)) return true;
+  if (isCommandContent(content)) return false;
+  if (!Array.isArray(content)) return typeof content === "string" && content.trim().length > 0;
   return !content.some((b: any) => b?.type === "tool_result");
 }
 

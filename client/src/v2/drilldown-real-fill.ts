@@ -41,7 +41,7 @@ export interface SessionMetrics {
   durationStr: string;
 
   // ~ estimated
-  cacheRatio: number | null;    // ~ cache_read / (cache_read + fresh_in)
+  cacheRatio: number | null;    // ~ cache_read / total input tokens
   netContext: number | null;    // ✓ last call ctx - first call ctx
 
   // Model info
@@ -55,8 +55,8 @@ export function deriveSessionMetrics(d: SessionDrilldown): SessionMetrics {
     ? Math.max(0, new Date(d.lastEventAt).getTime() - new Date(d.firstEventAt).getTime())
     : 0;
 
-  const totalInput = d.totalFreshIn + d.totalCacheRead;
-  const cacheRatio = totalInput > 0 ? Math.round(d.totalCacheRead / totalInput * 100) : null;
+  const totalInput = d.totalFreshIn + d.totalCacheWrite + d.totalCacheRead;
+  const cacheRatio = totalInput > 0 ? d.totalCacheRead / totalInput * 100 : null;
 
   // Net context: last call in last turn → first call in first turn
   const allCalls = d.turns.flatMap(t => t.calls);
@@ -129,8 +129,8 @@ export function deriveTurnMetrics(turn: UserTurn, contextWindowSize: number): Tu
 
   const freshIn  = calls.reduce((s, c) => s + Math.max(c.contextSize - c.cacheRead - c.cacheWrite, 0), 0);
   const freshOut = calls.reduce((s, c) => s + c.outputTokens, 0);
-  const totalInput = turn.cacheRead + freshIn;
-  const cacheRatio = totalInput > 0 ? Math.round(turn.cacheRead / totalInput * 100) : null;
+  const totalInput = freshIn + turn.cacheWrite + turn.cacheRead;
+  const cacheRatio = totalInput > 0 ? turn.cacheRead / totalInput * 100 : null;
 
   const isNearLimit = turn.peakContext > contextWindowSize * 0.85;
   const riskFlags: TurnMetrics["riskFlags"] = [];

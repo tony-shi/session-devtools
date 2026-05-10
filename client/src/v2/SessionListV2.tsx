@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { SessionDetailV2 } from "./SessionDetailV2";
 import type { SessionV2, SessionsV2Response } from "./types";
+import { cleanSessionText, getSessionDisplayName } from "./session-display";
 
 const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
   claude: { bg: "#f3e8ff", color: "#7c3aed" },
@@ -51,11 +52,11 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
   const [hovered, setHovered] = useState(false);
   const badge = TOOL_BADGE[session.tool] ?? { bg: "#f3f4f6", color: "#374151" };
 
-  const displayName = session.custom_title ?? session.ai_title ?? session.project ?? session.session_id.slice(0, 8);
+  const displayName = getSessionDisplayName(session);
   const cwdLabel = session.cwd
     ? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd
     : session.project?.split("/").pop() ?? "—";
-  const preview = session.first_user_message?.trim() ?? "";
+  const preview = cleanSessionText(session.first_user_message, 140) ?? "";
 
   // Detect cross-day: first and last event are on different dates
   const firstDate = session.first_event_at?.slice(0, 10);

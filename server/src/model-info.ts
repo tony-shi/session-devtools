@@ -4,10 +4,13 @@
 // Source: Anthropic docs as of 2026-05.
 
 const MODEL_CONTEXT_WINDOWS: Array<{ match: string; contextWindow: number }> = [
-  // Claude 4 family
-  { match: "claude-opus-4-7",    contextWindow: 200_000 },
-  { match: "claude-opus-4-6",    contextWindow: 200_000 },
-  { match: "claude-sonnet-4-6",  contextWindow: 200_000 },
+  // Claude 4.6+ long-context family
+  { match: "claude-mythos",      contextWindow: 1_000_000 },
+  { match: "claude-opus-4-7",    contextWindow: 1_000_000 },
+  { match: "claude-opus-4-6",    contextWindow: 1_000_000 },
+  { match: "claude-sonnet-4-6",  contextWindow: 1_000_000 },
+  // Claude 4 200k family
+  { match: "claude-sonnet-4-5",  contextWindow: 200_000 },
   { match: "claude-haiku-4-5",   contextWindow: 200_000 },
   // Claude 3.7 / 3.5 family
   { match: "claude-3-7-sonnet",  contextWindow: 200_000 },
