@@ -1,4 +1,4 @@
-import type { DashboardV2, SessionProxyResponse, SessionsV2Response } from "./types";
+import type { SessionProxyResponse, SessionsV2Response, SummaryV2 } from "./types";
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -7,13 +7,17 @@ async function get<T>(path: string): Promise<T> {
 }
 
 export const apiV2 = {
-  dashboard: (date: string) =>
-    get<DashboardV2>(`/api/v2/dashboard?date=${date}`),
+  summary: () =>
+    get<SummaryV2>("/api/v2/summary"),
 
-  sessions: (date: string, tool?: string) =>
-    get<SessionsV2Response>(
-      `/api/v2/sessions?date=${date}&limit=100${tool ? `&tool=${tool}` : ""}`,
-    ),
+  sessions: (opts?: { lastActiveDate?: string; activeSinceHours?: number; limit?: number; offset?: number }) => {
+    const params = new URLSearchParams();
+    params.set("limit", String(opts?.limit ?? 50));
+    if (opts?.offset) params.set("offset", String(opts.offset));
+    if (opts?.lastActiveDate) params.set("last_active_date", opts.lastActiveDate);
+    if (opts?.activeSinceHours != null) params.set("active_since_hours", String(opts.activeSinceHours));
+    return get<SessionsV2Response>(`/api/v2/sessions?${params}`);
+  },
 
   sessionProxy: (sessionId: string) =>
     get<SessionProxyResponse>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/proxy`),

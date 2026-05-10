@@ -11,7 +11,8 @@ export interface SessionV2 {
   last_event_at: string;
   cwd: string;
   project: string;
-  title: string | null;
+  custom_title: string | null;
+  ai_title: string | null;
   first_user_message: string;
   event_count: number;
   input_tokens: number;
@@ -33,17 +34,16 @@ export interface SessionsV2Response {
   offset: number;
 }
 
-export interface DashboardV2 {
-  date: string;
-  session_count: number;
-  by_tool: Record<string, number>;
-  events: number;
+export interface SummaryV2 {
+  total_sessions: number;
+  active_24h: number;
   input_tokens: number;
   output_tokens: number;
   cache_creation_tokens: number;
   cache_read_tokens: number;
   tool_call_count: number;
   human_input_count: number;
+  by_tool: Record<string, number>;
 }
 
 export interface ProxyRequestV2 {

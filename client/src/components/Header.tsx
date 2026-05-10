@@ -6,6 +6,8 @@ import i18n from "../i18n";
 interface Props {
   date: string;
   onDateChange: (date: string) => void;
+  onSync?: () => Promise<{ synced: number; skipped: number; errors: number }>;
+  showDatePicker?: boolean;
 }
 
 function addDays(date: string, n: number): string {
@@ -14,7 +16,7 @@ function addDays(date: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-export function Header({ date, onDateChange }: Props) {
+export function Header({ date, onDateChange, onSync, showDatePicker = true }: Props) {
   const { t } = useTranslation();
   const today = new Date().toISOString().slice(0, 10);
   const isToday = date === today;
@@ -32,7 +34,7 @@ export function Header({ date, onDateChange }: Props) {
     setSyncing(true);
     setSyncMsg("");
     try {
-      const r = await api.sync();
+      const r = await (onSync ? onSync() : api.sync());
       setSyncMsg(`synced ${r.synced}, skipped ${r.skipped}`);
       setTimeout(() => setSyncMsg(""), 4000);
     } catch {
@@ -70,8 +72,8 @@ export function Header({ date, onDateChange }: Props) {
         <span style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>session-devtools</span>
       </div>
 
-      {/* Date nav — center */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      {/* Date nav — center; hidden for lifecycle tabs */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, visibility: showDatePicker ? "visible" : "hidden" }}>
         <button onClick={() => onDateChange(addDays(date, -1))} style={navBtnStyle} title={t("header.prevDay")}>
           <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />

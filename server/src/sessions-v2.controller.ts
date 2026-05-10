@@ -1,20 +1,9 @@
 import { Controller, Get, Param, Query } from "@nestjs/common";
 import { getDb } from "./db.ts";
 import { runSyncV2 } from "./sync-v2.ts";
-import { getDaySlice, type DaySliceValue } from "./day-slice.ts";
 import { parseJsonField } from "./parser-utils.ts";
 
 type SqlParam = string | number | bigint | boolean | null | Uint8Array;
-
-async function pMap<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
-  const results: PromiseSettledResult<R>[] = [];
-  for (let i = 0; i < items.length; i += concurrency) {
-    const batch = items.slice(i, i + concurrency);
-    const settled = await Promise.allSettled(batch.map(fn));
-    results.push(...settled);
-  }
-  return results;
-}
 
 @Controller("api/v2")
 export class SessionsV2Controller {
@@ -26,7 +15,8 @@ export class SessionsV2Controller {
   @Get("sessions")
   sessionList(
     @Query("tool") tool?: string,
-    @Query("date") date?: string,
+    @Query("last_active_date") lastActiveDate?: string,
+    @Query("active_since_hours") activeSinceHoursParam?: string,
     @Query("project") project?: string,
     @Query("limit") limitParam?: string,
     @Query("offset") offsetParam?: string,
@@ -42,9 +32,21 @@ export class SessionsV2Controller {
     if (includeDeleted !== "1") conds.push("source_present = 1");
     if (tool) { conds.push("tool = ?"); params.push(tool); }
     if (project) { conds.push("project = ?"); params.push(project); }
-    if (date) {
-      conds.push("first_event_at <= ? AND last_event_at >= ?");
-      params.push(`${date}T23:59:59`, `${date}T00:00:00`);
+
+    // Optional: filter by last active date (date the session was last active)
+    if (lastActiveDate) {
+      conds.push("date(last_event_at) = ?");
+      params.push(lastActiveDate);
+    }
+
+    // Optional: filter sessions active within the last N hours
+    if (activeSinceHoursParam) {
+      const hours = parseInt(activeSinceHoursParam);
+      if (!isNaN(hours)) {
+        const since = new Date(Date.now() - hours * 3_600_000).toISOString();
+        conds.push("last_event_at >= ?");
+        params.push(since);
+      }
     }
 
     const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
@@ -67,51 +69,46 @@ export class SessionsV2Controller {
     return { sessions, total, limit, offset };
   }
 
-  @Get("dashboard")
-  async dashboard(@Query("date") dateParam?: string) {
-    const date = dateParam ?? new Date().toISOString().slice(0, 10);
+  @Get("summary")
+  summary() {
     const db = getDb();
 
-    const rows = db.prepare(`
-      SELECT session_id, source_file, file_mtime, tool
+    const since24h = new Date(Date.now() - 24 * 3_600_000).toISOString();
+
+    const totals = db.prepare(`
+      SELECT
+        COUNT(*) AS total_sessions,
+        COALESCE(SUM(CASE WHEN last_event_at >= ? THEN 1 ELSE 0 END), 0) AS active_24h,
+        COALESCE(SUM(input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
+        COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+        COALESCE(SUM(tool_call_count), 0) AS tool_call_count,
+        COALESCE(SUM(human_input_count), 0) AS human_input_count
       FROM sessions_meta_v2
       WHERE source_present = 1
-        AND first_event_at <= ?
-        AND last_event_at  >= ?
-    `).all(`${date}T23:59:59`, `${date}T00:00:00`) as {
-      session_id: string;
-      source_file: string;
-      file_mtime: number;
-      tool: string;
-    }[];
-
-    const byTool: Record<string, number> = {};
-    for (const r of rows) byTool[r.tool] = (byTool[r.tool] ?? 0) + 1;
-
-    const totals: DaySliceValue = {
-      events: 0, input_tokens: 0, output_tokens: 0,
-      cache_creation_tokens: 0, cache_read_tokens: 0,
-      tool_call_count: 0, human_input_count: 0,
+    `).get(since24h) as {
+      total_sessions: number;
+      active_24h: number;
+      input_tokens: number;
+      output_tokens: number;
+      cache_creation_tokens: number;
+      cache_read_tokens: number;
+      tool_call_count: number;
+      human_input_count: number;
     };
 
-    // Cap concurrent JSONL file opens to avoid fd/memory spikes on cache-cold requests
-    const sliceResults = await pMap(rows, 12, (r) =>
-      getDaySlice(date, r.session_id, r.source_file, r.file_mtime),
-    );
+    const toolRows = db.prepare(`
+      SELECT tool, COUNT(*) as cnt
+      FROM sessions_meta_v2
+      WHERE source_present = 1
+      GROUP BY tool
+    `).all() as { tool: string; cnt: number }[];
 
-    for (const result of sliceResults) {
-      if (result.status !== "fulfilled") continue;
-      const s = result.value;
-      totals.events += s.events;
-      totals.input_tokens += s.input_tokens;
-      totals.output_tokens += s.output_tokens;
-      totals.cache_creation_tokens += s.cache_creation_tokens;
-      totals.cache_read_tokens += s.cache_read_tokens;
-      totals.tool_call_count += s.tool_call_count;
-      totals.human_input_count += s.human_input_count;
-    }
+    const byTool: Record<string, number> = {};
+    for (const r of toolRows) byTool[r.tool] = r.cnt;
 
-    return { date, session_count: rows.length, by_tool: byTool, ...totals };
+    return { ...totals, by_tool: byTool };
   }
 
   @Get("sessions/:id/proxy")

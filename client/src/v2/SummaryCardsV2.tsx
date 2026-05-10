@@ -1,4 +1,4 @@
-import type { DashboardV2 } from "./types";
+import type { SummaryV2 } from "./types";
 
 const TOOL_COLORS: Record<string, { bg: string; color: string }> = {
   claude: { bg: "#f3e8ff", color: "#7c3aed" },
@@ -37,7 +37,7 @@ function TokenRow({ label, value, color }: { label: string; value: number; color
 }
 
 interface Props {
-  data: DashboardV2 | null;
+  data: SummaryV2 | null;
   loading: boolean;
 }
 
@@ -46,19 +46,49 @@ export function SummaryCardsV2({ data, loading }: Props) {
 
   return (
     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-      {/* 今日会话 */}
+      {/* 总会话 */}
       <div style={card}>
-        <p style={labelStyle}>今日会话</p>
-        {loading ? <Skeleton /> : <p style={bigNum}>{data?.session_count ?? 0}</p>}
+        <p style={labelStyle}>总会话</p>
+        {loading ? <Skeleton /> : <p style={bigNum}>{data?.total_sessions ?? 0}</p>}
       </div>
 
-      {/* 人工交互 */}
+      {/* 最近 24h 活跃 */}
       <div style={card}>
-        <p style={labelStyle}>人工交互</p>
-        {loading ? <Skeleton /> : <p style={bigNum}>{data?.human_input_count ?? 0}</p>}
+        <p style={labelStyle}>最近 24h 活跃</p>
+        {loading ? <Skeleton /> : <p style={bigNum}>{data?.active_24h ?? 0}</p>}
       </div>
 
-      {/* 活跃工具 + proxy 请求数 */}
+      {/* 累计人工输入 */}
+      <div style={card}>
+        <p style={labelStyle}>累计人工输入</p>
+        {loading ? <Skeleton /> : <p style={bigNum}>{data ? fmt(data.human_input_count) : 0}</p>}
+      </div>
+
+      {/* 累计工具调用 */}
+      <div style={card}>
+        <p style={labelStyle}>累计工具调用</p>
+        {loading ? <Skeleton /> : <p style={bigNum}>{data ? fmt(data.tool_call_count) : 0}</p>}
+      </div>
+
+      {/* 累计 Tokens */}
+      <div style={card}>
+        <p style={labelStyle}>
+          累计 Tokens
+          <span style={{ marginLeft: 5, color: "#d1d5db", fontWeight: 400, fontSize: 10 }} title="lifecycle snapshot — model usage tokens, not char count">lifecycle</span>
+        </p>
+        {loading ? <Skeleton /> : !data ? (
+          <p style={{ fontSize: 14, color: "#9ca3af" }}>—</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 2 }}>
+            <TokenRow label="input"        value={data.input_tokens}          color="#6366f1" />
+            <TokenRow label="output"       value={data.output_tokens}         color="#7c3aed" />
+            <TokenRow label="cache write"  value={data.cache_creation_tokens} color="#d97706" />
+            <TokenRow label="cache read"   value={data.cache_read_tokens}     color="#059669" />
+          </div>
+        )}
+      </div>
+
+      {/* 活跃工具 */}
       <div style={card}>
         <p style={labelStyle}>活跃工具</p>
         {loading ? <Skeleton /> : tools.length === 0 ? (
@@ -76,45 +106,6 @@ export function SummaryCardsV2({ data, loading }: Props) {
                 </span>
               );
             })}
-          </div>
-        )}
-      </div>
-
-      {/* Cache Tokens (day-slice) */}
-      <div style={card}>
-        <p style={labelStyle}>Cache Tokens <span style={{ color: "#d1d5db", fontWeight: 400 }}>(今日)</span></p>
-        {loading ? <Skeleton /> : !data ? (
-          <p style={{ fontSize: 14, color: "#9ca3af" }}>—</p>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 2 }}>
-            <TokenRow label="cache write" value={data.cache_creation_tokens} color="#d97706" />
-            <TokenRow label="cache read"  value={data.cache_read_tokens}     color="#059669" />
-          </div>
-        )}
-      </div>
-
-      {/* All Tokens (day-slice) */}
-      <div style={card}>
-        <p style={labelStyle}>All Tokens <span style={{ color: "#d1d5db", fontWeight: 400 }}>(今日)</span></p>
-        {loading ? <Skeleton /> : !data ? (
-          <p style={{ fontSize: 14, color: "#9ca3af" }}>—</p>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 2 }}>
-            <TokenRow label="read (input)"   value={data.input_tokens}  color="#6366f1" />
-            <TokenRow label="write (output)" value={data.output_tokens} color="#7c3aed" />
-          </div>
-        )}
-      </div>
-
-      {/* 工具调用 + Events */}
-      <div style={card}>
-        <p style={labelStyle}>工具调用 / 事件</p>
-        {loading ? <Skeleton /> : !data ? (
-          <p style={{ fontSize: 14, color: "#9ca3af" }}>—</p>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 2 }}>
-            <TokenRow label="tool calls" value={data.tool_call_count} color="#0891b2" />
-            <TokenRow label="events"     value={data.events}          color="#6b7280" />
           </div>
         )}
       </div>

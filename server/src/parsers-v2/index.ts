@@ -8,7 +8,8 @@ export interface SessionMetaV2 {
 
   cwd: string;
   project: string;
-  title: string | null;
+  custom_title: string | null;
+  ai_title: string | null;
   first_user_message: string;
 
   event_count: number;
@@ -35,4 +36,4 @@ export const PARSERS_V2: Record<string, ParserV2> = {
   claude: parseClaudeSessionV2,
 };
 
-export const PARSER_VERSION = 1;
+export const PARSER_VERSION = 2;

@@ -8,7 +8,7 @@ import { SummaryCards } from "./components/SummaryCards";
 import { SummaryCardsV2 } from "./v2/SummaryCardsV2";
 import { SessionListV2 } from "./v2/SessionListV2";
 import type { SessionsResponse, SummaryData } from "./types";
-import type { DashboardV2, SessionsV2Response } from "./v2/types";
+import type { SessionsV2Response, SummaryV2 } from "./v2/types";
 
 function getInitialDate(): string {
   const hash = window.location.hash.slice(1);
@@ -16,19 +16,19 @@ function getInitialDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-type Tab = "sessions" | "sessions-v2" | "proxy-v2";
+type Tab = "sessions" | "sessions-v2" | "proxy-v2" | "daily-analysis";
 
 export default function App() {
   const [date, setDate] = useState(getInitialDate);
-  const [tab, setTab] = useState<Tab>("sessions");
+  const [tab, setTab] = useState<Tab>("sessions-v2");
   const [summary, setSummary] = useState<SummaryData | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [sessions, setSessions] = useState<SessionsResponse | null>(null);
   const [sessionsLoading, setSessionsLoading] = useState(true);
 
-  // v2 state
-  const [dashboardV2, setDashboardV2] = useState<DashboardV2 | null>(null);
-  const [dashboardV2Loading, setDashboardV2Loading] = useState(true);
+  // v2 state — not date-driven
+  const [summaryV2, setSummaryV2] = useState<SummaryV2 | null>(null);
+  const [summaryV2Loading, setSummaryV2Loading] = useState(true);
   const [sessionsV2, setSessionsV2] = useState<SessionsV2Response | null>(null);
   const [sessionsV2Loading, setSessionsV2Loading] = useState(true);
 
@@ -37,6 +37,7 @@ export default function App() {
     window.location.hash = newDate;
   }
 
+  // V1: re-fetch on date change
   useEffect(() => {
     setSummaryLoading(true);
     setSessionsLoading(true);
@@ -54,41 +55,58 @@ export default function App() {
       .finally(() => setSessionsLoading(false));
   }, [date]);
 
-  useEffect(() => {
-    setDashboardV2Loading(true);
+  function fetchV2() {
+    setSummaryV2Loading(true);
     setSessionsV2Loading(true);
-    setDashboardV2(null);
-    setSessionsV2(null);
 
-    apiV2.dashboard(date)
-      .then(setDashboardV2)
+    apiV2.summary()
+      .then(setSummaryV2)
       .catch(console.error)
-      .finally(() => setDashboardV2Loading(false));
+      .finally(() => setSummaryV2Loading(false));
 
-    apiV2.sessions(date)
+    apiV2.sessions({ limit: 50 })
       .then(setSessionsV2)
       .catch(console.error)
       .finally(() => setSessionsV2Loading(false));
-  }, [date]);
+  }
+
+  // V2: fetch once on mount (lifecycle view, not date-driven)
+  useEffect(() => { fetchV2(); }, []);
+
+  async function handleSyncV2() {
+    const result = await apiV2.sync();
+    fetchV2();
+    return result;
+  }
 
   const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode }[] = [
     {
-      id: "sessions",
-      label: "会话",
-      icon: (
-        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-        </svg>
-      ),
-    },
-    {
       id: "sessions-v2",
-      label: "会话 v2",
+      label: "Sessions",
       icon: (
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
             d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+      ),
+    },
+    {
+      id: "daily-analysis",
+      label: "Daily Analysis",
+      icon: (
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+        </svg>
+      ),
+    },
+    {
+      id: "sessions",
+      label: "会话 (v1)",
+      icon: (
+        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
         </svg>
       ),
     },
@@ -107,7 +125,12 @@ export default function App() {
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "#f0f2f5" }}>
       {/* Topbar */}
-      <Header date={date} onDateChange={handleDateChange} />
+      <Header
+        date={date}
+        onDateChange={handleDateChange}
+        onSync={tab === "sessions-v2" || tab === "daily-analysis" ? handleSyncV2 : undefined}
+        showDatePicker={tab === "sessions"}
+      />
 
       {/* Body: sidebar + content */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
@@ -155,16 +178,25 @@ export default function App() {
           gap: 16,
           minWidth: 0,
         }}>
+          {tab === "sessions-v2" && (
+            <>
+              <SummaryCardsV2 data={summaryV2} loading={summaryV2Loading} />
+              <SessionListV2 data={sessionsV2} loading={sessionsV2Loading} />
+            </>
+          )}
+          {tab === "daily-analysis" && (
+            <div style={{
+              background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb",
+              padding: "40px", textAlign: "center",
+            }}>
+              <p style={{ fontSize: 16, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Daily Analysis</p>
+              <p style={{ fontSize: 13, color: "#9ca3af" }}>Working on it — day-level token and event breakdown coming soon.</p>
+            </div>
+          )}
           {tab === "sessions" && (
             <>
               <SummaryCards data={summary} loading={summaryLoading} />
               <SessionList data={sessions} loading={sessionsLoading} date={date} />
-            </>
-          )}
-          {tab === "sessions-v2" && (
-            <>
-              <SummaryCardsV2 data={dashboardV2} loading={dashboardV2Loading} />
-              <SessionListV2 data={sessionsV2} loading={sessionsV2Loading} date={date} />
             </>
           )}
           {tab === "proxy-v2" && <ProxyV2Setup />}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { SessionDetail } from "../components/SessionDetail";
+import { SessionDetailV2 } from "./SessionDetailV2";
 import type { SessionV2, SessionsV2Response } from "./types";
 
 const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
@@ -8,11 +8,6 @@ const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
   gemini: { bg: "#d1fae5", color: "#065f46" },
 };
 
-const STOP_COLORS: Record<string, string> = {
-  end_turn:  "#059669",
-  tool_use:  "#0891b2",
-  max_tokens:"#d97706",
-};
 
 function fmtTime(ts: string) {
   if (!ts) return "—";
@@ -52,11 +47,11 @@ function StatusDot({ lastEventAt }: { lastEventAt: string }) {
   );
 }
 
-function SessionRowV2({ session, date, onClick }: { session: SessionV2; date: string; onClick: () => void }) {
+function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () => void }) {
   const [hovered, setHovered] = useState(false);
   const badge = TOOL_BADGE[session.tool] ?? { bg: "#f3f4f6", color: "#374151" };
 
-  const displayName = session.title || session.project || session.session_id.slice(0, 8);
+  const displayName = session.custom_title ?? session.ai_title ?? session.project ?? session.session_id.slice(0, 8);
   const cwdLabel = session.cwd
     ? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd
     : session.project?.split("/").pop() ?? "—";
@@ -160,7 +155,7 @@ function SessionRowV2({ session, date, onClick }: { session: SessionV2; date: st
         </span>
         <br />
         <span style={{ fontSize: 10, color: "#d1d5db" }}>
-          {fmtTime(session.first_event_at)}
+          {fmtTime(session.last_event_at)}
         </span>
       </td>
 
@@ -177,11 +172,11 @@ function SessionRowV2({ session, date, onClick }: { session: SessionV2; date: st
 interface Props {
   data: SessionsV2Response | null;
   loading: boolean;
-  date: string;
 }
 
-export function SessionListV2({ data, loading, date }: Props) {
+export function SessionListV2({ data, loading }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedSession = selectedId ? (data?.sessions.find((s) => s.session_id === selectedId) ?? null) : null;
 
   return (
     <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb", overflow: "hidden" }}>
@@ -214,7 +209,7 @@ export function SessionListV2({ data, loading, date }: Props) {
           <thead>
             <tr style={{ background: "#fafafa" }}>
               <th style={TH}>工具</th>
-              <th style={TH}>会话 / 首条消息</th>
+              <th style={TH}>会话</th>
               <th style={TH}>工作区</th>
               <th style={{ ...TH, textAlign: "right" }}>交互</th>
               <th style={TH}>Tokens (lifetime)</th>
@@ -230,7 +225,6 @@ export function SessionListV2({ data, loading, date }: Props) {
               <SessionRowV2
                 key={s.session_id}
                 session={s}
-                date={date}
                 onClick={() => setSelectedId(s.session_id)}
               />
             ))}
@@ -238,9 +232,8 @@ export function SessionListV2({ data, loading, date }: Props) {
         </table>
       )}
 
-      {/* 复用 v1 SessionDetail — session_id 格式相同，v1 API 仍然可用 */}
-      {selectedId && (
-        <SessionDetail sessionId={selectedId} date={date} onClose={() => setSelectedId(null)} />
+      {selectedSession && (
+        <SessionDetailV2 session={selectedSession} onClose={() => setSelectedId(null)} />
       )}
 
       <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }`}</style>

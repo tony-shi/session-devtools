@@ -283,8 +283,17 @@ export function initV2Schema(): void {
   `);
   // Migrate: rename api_error_count → claude_code_api_error_count (idempotent)
   const v2cols = db.prepare("PRAGMA table_info(sessions_meta_v2)").all() as { name: string }[];
-  if (v2cols.some((c) => c.name === "api_error_count")) {
+  const v2colSet = new Set(v2cols.map((c) => c.name));
+  if (v2colSet.has("api_error_count")) {
     db.exec("ALTER TABLE sessions_meta_v2 RENAME COLUMN api_error_count TO claude_code_api_error_count");
+  }
+  // Migrate: split title → custom_title + ai_title (idempotent)
+  if (!v2colSet.has("custom_title")) {
+    db.exec("ALTER TABLE sessions_meta_v2 ADD COLUMN custom_title TEXT");
+    db.exec("ALTER TABLE sessions_meta_v2 ADD COLUMN ai_title TEXT");
+    // Backfill: existing title is ambiguous (custom or AI) — copy into ai_title as best-effort.
+    // Re-parse will overwrite with correct separation when files change (PARSER_VERSION bump).
+    db.exec("UPDATE sessions_meta_v2 SET ai_title = title WHERE title IS NOT NULL AND ai_title IS NULL");
   }
 }
 
