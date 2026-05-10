@@ -1,14 +1,30 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
+import { scaleLinear, scaleSqrt, scaleOrdinal, line as d3line, curveCatmullRom, schemeTableau10 } from "d3";
 import type { SessionV2 } from "./types";
 import type { DiffEntry, LlmCall, ModelStats, SessionDrilldown, UserTurn } from "./drilldown-types";
 import { apiV2 } from "./api";
+import {
+  buildMockAgentLoop as _buildMockAgentLoop,
+  buildMockAttributedDiff,
+  buildMockPayloadSegments, buildMockCallResponse,
+  buildMockBridgeEvents, buildTrustMode,
+  MOCK_SUB_AGENTS, attachMockSubAgents,
+  type AttributedDiffRange, type PayloadSegment,
+  type MockBridgeEvent, type BridgeEventKind, type ChangeType, type ConfidenceLevel,
+  type TrustMode, type MockToolGroup, type MockAgentLoopData,
+} from "./drilldown-mock-fill";
+import type { SubAgentSummary } from "./drilldown-types";
+import {
+  deriveSessionMetrics, deriveSessionHotspots,
+  type SessionMetrics,
+} from "./drilldown-real-fill";
 
 // Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
 type MockDiffEntry = DiffEntry;
 // LlmCall fields added in drilldown-types are optional in the raw fallback
 // data below; normalizeTurns() fills them in.
 type RawMockCall = Omit<LlmCall,
-  "indexInTurn" | "model" | "contextWindowSize" | "stopReason" | "proxy" |
+  "indexInTurn" | "model" | "contextWindowSize" | "stopReason" | "proxy" | "subAgent" |
   "isCompaction" | "isUnknownHeavy" | "isSignificant" | "significantDelta"
 > & {
   isCompaction?: boolean; isUnknownHeavy?: boolean; isSignificant?: boolean; significantDelta?: number;
@@ -35,6 +51,7 @@ function normalizeTurns(raw: RawMockTurn[]): UserTurn[] {
       contextWindowSize: 200_000,
       stopReason: "end_turn" as const,
       proxy: null,
+      subAgent: null,
       isCompaction: c.isCompaction ?? false,
       isUnknownHeavy: c.isUnknownHeavy ?? false,
       isSignificant: c.isSignificant ?? false,
@@ -285,13 +302,6 @@ function ChangeTypeIcon({ type }: { type: MockDiffEntry["changeType"] }) {
   return <span style={{ color: c.color, fontWeight: 700, fontSize: 13, width: 14, display: "inline-block" }}>{c.symbol}</span>;
 }
 
-function CallNodeIcon({ call }: { call: MockLlmCall }) {
-  if (call.isCompaction) return <span style={{ color: "#ef4444", fontSize: 13 }}>◆</span>;
-  if (call.isUnknownHeavy) return <span style={{ color: "#94a3b8", fontSize: 13 }}>◎</span>;
-  if (call.isSignificant) return <span style={{ color: "#3b82f6", fontSize: 13 }}>●</span>;
-  return <span style={{ color: "#d1d5db", fontSize: 13 }}>○</span>;
-}
-
 // ─── Inspector Panels ─────────────────────────────────────────────────────────
 
 function SessionHotspotsPanel({ turns }: { turns: MockUserTurn[] }) {
@@ -473,43 +483,35 @@ function SessionOverviewPanel({
   drilldown: SessionDrilldown | null;
   onSelectTurn: (t: MockUserTurn) => void;
 }) {
-  // Prefer real drilldown data for metrics; fallback to turn-computed values
-  const totalCalls = drilldown?.totalLlmCalls ?? turns.reduce((s, t) => s + t.llmCallCount, 0);
-  const totalToolCalls = drilldown?.totalToolCalls ?? turns.reduce((s, t) => s + t.toolCallCount, 0);
-  const peakContext = drilldown?.peakContext ?? (turns.length ? Math.max(...turns.map(t => t.peakContext)) : 0);
-  const totalCacheRead = drilldown?.totalCacheRead ?? turns.reduce((s, t) => s + t.cacheRead, 0);
-  const totalCacheWrite = drilldown?.totalCacheWrite ?? turns.reduce((s, t) => s + t.cacheWrite, 0);
-  const totalFreshIn = drilldown?.totalFreshIn ?? null;
-  const totalFreshOut = drilldown?.totalFreshOut ?? null;
-  const systemErrors = drilldown?.systemErrorCount ?? null;
   const isMock = drilldown === null;
 
-  // Duration from session metadata
-  let durationStr = "—";
-  if (drilldown?.firstEventAt && drilldown?.lastEventAt) {
-    const ms = new Date(drilldown.lastEventAt).getTime() - new Date(drilldown.firstEventAt).getTime();
-    if (ms > 0) durationStr = ms >= 60000 ? `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s` : `${Math.round(ms / 1000)}s`;
-  }
+  // Use deriveSessionMetrics when real data available; fallback to turn-computed values
+  const sm: SessionMetrics | null = drilldown ? deriveSessionMetrics(drilldown) : null;
 
-  // Cache ratio
-  const totalInput = (totalFreshIn ?? 0) + totalCacheRead;
-  const cacheRatio = totalInput > 0 ? Math.round((totalCacheRead / totalInput) * 100) : null;
+  const totalCalls       = sm?.totalLlmCalls   ?? turns.reduce((s, t) => s + t.llmCallCount, 0);
+  const totalToolCalls   = sm?.totalToolCalls   ?? turns.reduce((s, t) => s + t.toolCallCount, 0);
+  const peakContext      = sm?.peakContext      ?? (turns.length ? Math.max(...turns.map(t => t.peakContext)) : 0);
+  const totalCacheRead   = sm?.totalCacheRead   ?? turns.reduce((s, t) => s + t.cacheRead, 0);
+  const totalCacheWrite  = sm?.totalCacheWrite  ?? turns.reduce((s, t) => s + t.cacheWrite, 0);
+  const totalFreshIn     = sm?.totalFreshIn     ?? null;
+  const totalFreshOut    = sm?.totalFreshOut    ?? null;
+  const systemErrors     = sm?.systemErrorCount ?? null;
+  const durationStr      = sm?.durationStr      ?? "—";
+  const cacheRatio       = sm?.cacheRatio       ?? null;
+  const contextWindowSize = sm?.contextWindowSize ?? 200_000;
+  const modelBreakdown   = drilldown?.modelBreakdown ?? null;
 
-  const modelBreakdown = drilldown?.modelBreakdown ?? null;
-  const contextWindowSize = drilldown?.contextWindowSize ?? 200_000;
+  // Hotspots from real data
+  const hotspots = drilldown ? deriveSessionHotspots(drilldown) : null;
 
   // Net Context = last call's context size minus first call's context size across the whole session
-  // Semantics: how much did the total context window usage grow from session start to end?
-  // This reflects the net accumulation after all tool results, compactions, and assistant history.
-  const allCallsFlat = turns.flatMap(t => t.calls);
-  const netContext = allCallsFlat.length >= 2
-    ? allCallsFlat[allCallsFlat.length - 1].contextSize - allCallsFlat[0].contextSize
-    : null;
-  const netContextStr = netContext !== null
-    ? `${netContext >= 0 ? "+" : ""}${fmtK(netContext)}`
-    : "—";
+  // Net context from real fill (✓) or fallback from local turns
+  const netContext = sm?.netContext ?? (turns.flatMap(t => t.calls).length >= 2
+    ? (() => { const all = turns.flatMap(t => t.calls); return all[all.length - 1].contextSize - all[0].contextSize; })()
+    : null);
+  const netContextStr = netContext !== null ? `${netContext >= 0 ? "+" : ""}${fmtK(netContext)}` : "—";
 
-  const compactionTurns = turns.filter(t => t.hasCompaction || t.calls.some(c => c.isCompaction));
+  const compactionTurns = hotspots?.compactionTurns ?? turns.filter(t => t.hasCompaction || t.calls.some(c => c.isCompaction));
 
   return (
     <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
@@ -529,13 +531,15 @@ function SessionOverviewPanel({
           );
         })()}
 
-        {/* Row 1: Call & turn counts — 4-col, same structure as Turn Row 1 */}
+        {/* Row 1: Call & turn counts */}
         <div style={{ marginBottom: 8 }}>
-          <SummaryMetricStrip columns={4} cards={[
-            { label: "User Turns",  value: String(turns.length),      mock: isMock },
-            { label: "LLM Calls",   value: String(totalCalls),        mock: isMock },
-            { label: "Tool Calls",  value: String(totalToolCalls),    mock: isMock },
-            { label: "Duration",    value: durationStr,               mock: isMock },
+          <SummaryMetricStrip columns={5} cards={[
+            { label: "User Turns",  value: String(turns.length),                  mock: isMock },
+            { label: "LLM Calls",   value: String(totalCalls),                    mock: isMock },
+            { label: "Tool Calls",  value: String(totalToolCalls),                mock: isMock },
+            { label: "Sub Agents",  value: String(sm?.subAgentCount ?? 0),        mock: isMock,
+              color: (sm?.subAgentCount ?? 0) > 0 ? "#6366f1" : undefined },
+            { label: "Duration",    value: durationStr,                           mock: isMock },
           ]} />
         </div>
 
@@ -621,6 +625,28 @@ function SessionOverviewPanel({
         </div>
       </div>
 
+      {/* Sub Agents section */}
+      {(() => {
+        const sas = drilldown?.subAgents ?? (isMock ? MOCK_SUB_AGENTS : []);
+        if (sas.length === 0) return null;
+        return (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+              Sub Agents
+              <span style={{ fontSize: 10, fontWeight: 400, color: "#6366f1", background: "#eff6ff", borderRadius: 4, padding: "1px 6px" }}>
+                {sas.length} spawned
+              </span>
+              {isMock && <MockBadge />}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {sas.map(sa => (
+                <SubAgentCard key={sa.agentFileId} sa={sa} />
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* User Turn List */}
       <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 10 }}>User Turns</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -696,6 +722,59 @@ function ModelBreakdownBlock({
           Context window ceiling: <strong style={{ color: "#374151" }}>{contextWindowSize.toLocaleString()} tokens</strong>
         </span>
       </div>
+    </div>
+  );
+}
+
+// ─── SubAgentCard ─────────────────────────────────────────────────────────────
+
+function SubAgentCard({ sa }: { sa: SubAgentSummary }) {
+  const [expanded, setExpanded] = useState(false);
+  const dur = fmtDuration(sa.durationMs);
+  return (
+    <div style={{ border: "1px solid #c7d2fe", borderRadius: 8, background: "#fafafa", overflow: "hidden" }}>
+      {/* Header */}
+      <div
+        onClick={() => setExpanded(v => !v)}
+        style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", cursor: "pointer", background: "#eff6ff" }}
+        onMouseEnter={e => (e.currentTarget.style.background = "#e0e7ff")}
+        onMouseLeave={e => (e.currentTarget.style.background = "#eff6ff")}
+      >
+        <span style={{ fontSize: 13 }}>🤖</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#4338ca" }}>Sub Agent</span>
+            <span style={{ fontSize: 10, color: "#6366f1", background: "#e0e7ff", borderRadius: 3, padding: "1px 5px" }}>{sa.agentType}</span>
+            {dur && <span style={{ fontSize: 10, color: "#9ca3af" }}>{dur}</span>}
+          </div>
+          <div style={{ fontSize: 11, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {sa.description}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 12, flexShrink: 0 }}>
+          {[
+            { label: "LLM", value: String(sa.llmCallCount) },
+            { label: "Tools", value: String(sa.toolCallCount) },
+            { label: "Cache R", value: fmtK(sa.totalCacheRead) },
+            { label: "Out", value: fmtK(sa.totalOutputTokens) },
+          ].map(({ label, value }) => (
+            <div key={label} style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 9, color: "#9ca3af" }}>{label}</div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#4338ca" }}>{value}</div>
+            </div>
+          ))}
+        </div>
+        <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>{expanded ? "▲" : "▼"}</span>
+      </div>
+      {/* Expanded: result preview */}
+      {expanded && sa.resultPreview && (
+        <div style={{ padding: "10px 12px", borderTop: "1px solid #c7d2fe" }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", marginBottom: 4 }}>RESULT</div>
+          <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {sa.resultPreview}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1042,122 +1121,8 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
 
 // ─── Agent Loop mock data types ──────────────────────────────────────────────
 
-interface MockToolCall {
-  id: string;
-  tool: string;          // "Read" | "Bash" | "Write" | "Edit" | "WebFetch" | ...
-  input: string;         // short description of the input
-  outputSize: number;    // tokens
-  durationMs: number;
-  status: "ok" | "error" | "timeout";
-  isParallel?: boolean;  // part of a parallel group
-}
+const buildMockAgentLoop = _buildMockAgentLoop;
 
-interface MockToolGroup {
-  id: string;
-  afterCallId: number;   // which LLM call issued these tools
-  tools: MockToolCall[];
-  totalOutputSize: number;
-  isParallel: boolean;
-}
-
-interface MockTransition {
-  fromCallId: number;
-  toCallId: number;
-  contextDelta: number;
-  dominantCause: string; // "Tool Output: Read x6" | "Compaction" | etc.
-}
-
-interface MockAgentLoopData {
-  toolGroups: MockToolGroup[];
-  transitions: MockTransition[];
-  toolSummary: Array<{ tool: string; calls: number; totalOutput: number; failed: number }>;
-  status: "completed" | "interrupted" | "continued";
-}
-
-// Build mock agent loop data from existing call list
-function buildMockAgentLoop(turn: MockUserTurn): MockAgentLoopData {
-  // Generate realistic-looking tool groups for each call that has tool_use
-  const toolGroups: MockToolGroup[] = [];
-  const toolCounts: Record<string, { calls: number; totalOutput: number; failed: number }> = {};
-
-  const toolPatterns: Record<number, MockToolCall[]> = {
-    // Per call index → what tools it issues (0-indexed within turn)
-    0: [
-      { id: "t1a", tool: "Read", input: "src/index.ts", outputSize: 2800, durationMs: 45, status: "ok" },
-      { id: "t1b", tool: "Read", input: "tsconfig.json", outputSize: 1200, durationMs: 38, status: "ok" },
-      { id: "t1c", tool: "Bash", input: "ls -la src/", outputSize: 340, durationMs: 120, status: "ok" },
-    ],
-    1: [
-      { id: "t2a", tool: "Read", input: "package.json", outputSize: 980, durationMs: 40, status: "ok", isParallel: true },
-      { id: "t2b", tool: "Read", input: "src/routes/index.ts", outputSize: 3400, durationMs: 42, status: "ok", isParallel: true },
-      { id: "t2c", tool: "Read", input: "src/middleware/auth.ts", outputSize: 2100, durationMs: 41, status: "ok", isParallel: true },
-      { id: "t2d", tool: "Read", input: "src/db/connection.ts", outputSize: 1800, durationMs: 39, status: "ok", isParallel: true },
-    ],
-    2: [
-      { id: "t3a", tool: "Edit", input: "src/routes/index.ts", outputSize: 180, durationMs: 55, status: "ok" },
-      { id: "t3b", tool: "Edit", input: "src/middleware/auth.ts", outputSize: 220, durationMs: 52, status: "ok" },
-    ],
-    3: [
-      { id: "t4a", tool: "Bash", input: "npm run build", outputSize: 4200, durationMs: 8400, status: "ok" },
-    ],
-    4: [
-      { id: "t5a", tool: "Bash", input: "npm test", outputSize: 6800, durationMs: 12300, status: "error" },
-    ],
-    5: [
-      { id: "t6a", tool: "Read", input: "src/routes/__tests__/index.test.ts", outputSize: 5200, durationMs: 44, status: "ok" },
-      { id: "t6b", tool: "Bash", input: "npx jest --testPathPattern=routes", outputSize: 3100, durationMs: 9800, status: "ok" },
-    ],
-  };
-
-  turn.calls.forEach((call, i) => {
-    const pattern = toolPatterns[i % Object.keys(toolPatterns).length];
-    if (!pattern || call.isCompaction) return;
-    const tools: MockToolCall[] = pattern.map(t => ({ ...t, id: `${call.id}-${t.id}` }));
-    const totalOutput = tools.reduce((s, t) => s + t.outputSize, 0);
-    const isParallel = tools.some(t => t.isParallel);
-
-    toolGroups.push({
-      id: `tg-${call.id}`,
-      afterCallId: call.id,
-      tools,
-      totalOutputSize: totalOutput,
-      isParallel,
-    });
-
-    tools.forEach(t => {
-      if (!toolCounts[t.tool]) toolCounts[t.tool] = { calls: 0, totalOutput: 0, failed: 0 };
-      toolCounts[t.tool].calls++;
-      toolCounts[t.tool].totalOutput += t.outputSize;
-      if (t.status !== "ok") toolCounts[t.tool].failed++;
-    });
-  });
-
-  // Transitions between consecutive calls
-  const transitions: MockTransition[] = [];
-  for (let i = 0; i < turn.calls.length - 1; i++) {
-    const c = turn.calls[i];
-    const next = turn.calls[i + 1];
-    const delta = next.contextSize - c.contextSize;
-    if (Math.abs(delta) < 500) continue; // skip tiny changes
-
-    const tg = toolGroups.find(g => g.afterCallId === c.id);
-    let cause = "incremental";
-    if (c.isCompaction) cause = "Compaction";
-    else if (tg) {
-      const topTool = [...tg.tools].sort((a, b) => b.outputSize - a.outputSize)[0];
-      const toolName = topTool?.tool ?? "tool";
-      const toolCount = tg.tools.filter(t => t.tool === topTool?.tool).length;
-      cause = toolCount > 1 ? `${toolName} ×${toolCount}` : `${toolName}: ${topTool?.input ?? ""}`;
-    }
-    transitions.push({ fromCallId: c.id, toCallId: next.id, contextDelta: delta, dominantCause: cause });
-  }
-
-  const toolSummary = Object.entries(toolCounts)
-    .sort((a, b) => b[1].calls - a[1].calls)
-    .map(([tool, s]) => ({ tool, ...s }));
-
-  return { toolGroups, transitions, toolSummary, status: "completed" };
-}
 
 // ─── Agent Loop Timeline component ───────────────────────────────────────────
 
@@ -1424,319 +1389,631 @@ function SectionLabel({ children, mock }: { children: React.ReactNode; mock?: bo
 
 // ─── Agent Loop Flow (horizontal trace view) ─────────────────────────────────
 
+// ─── Tool chip color helpers ──────────────────────────────────────────────────
+const TOOL_COLOR: Record<string, { fg: string; bg: string; border: string }> = {
+  Read:    { fg: "#3b82f6", bg: "#eff6ff", border: "#bfdbfe" },
+  Bash:    { fg: "#d97706", bg: "#fffbeb", border: "#fde68a" },
+  Write:   { fg: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+  Edit:    { fg: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+  Glob:    { fg: "#6366f1", bg: "#eff6ff", border: "#c7d2fe" },
+  Grep:    { fg: "#6366f1", bg: "#eff6ff", border: "#c7d2fe" },
+  WebFetch:{ fg: "#8b5cf6", bg: "#faf5ff", border: "#ddd6fe" },
+  Task:    { fg: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
+};
+function toolChipStyle(name: string) {
+  return TOOL_COLOR[name] ?? { fg: "#6b7280", bg: "#f9fafb", border: "#e5e7eb" };
+}
+
+// ─── Hybrid Agent Flow (main Turn view) ──────────────────────────────────────
+//
+// Three-lane SVG layout:
+//   Top lane    : compact context strip (all calls, clickable)
+//   Main lane   : User → [Call → Transition Bridge]* → Terminal
+//   Bottom lane : duration / legend
+//
+// Transition Bridge = events between Call i and Call i+1:
+//   tool group chips + duration + context delta arrow
+
+// ─── D3 scales (module-level, shared) ────────────────────────────────────────
+
+// Tool-name → colour  (reuses Tableau-10 palette, maps tool names deterministically)
+const TOOL_NAMES_ORDERED = ["Read", "Bash", "Write", "Edit", "Glob", "Grep", "WebFetch", "Task", "Other"];
+const toolColorScale = scaleOrdinal<string, string>(schemeTableau10).domain(TOOL_NAMES_ORDERED);
+
+// Override the Tableau colours with our brand palette where defined
+function d3ToolColor(name: string): string {
+  const override = TOOL_COLOR[name];
+  return override ? override.fg : toolColorScale(name);
+}
+
+// ─── Hybrid Agent Flow ────────────────────────────────────────────────────────
+
 function AgentLoopFlow({
   turn, agentLoop, onSelectCall,
 }: { turn: MockUserTurn; agentLoop: MockAgentLoopData; onSelectCall: (c: MockLlmCall) => void }) {
-  const [hoveredCallId, setHoveredCallId] = useState<number | null>(null);
-  const maxCtx = Math.max(...turn.calls.map(c => c.contextSize), 1);
-  const maxToolOutput = Math.max(...agentLoop.toolGroups.map(g => g.totalOutputSize), 1);
+  const [selectedTransitionIdx, setSelectedTransitionIdx] = useState<number | null>(null);
 
-  // Build the sequence: [UserInput, Call, ToolGroup?, Call, ToolGroup?, ..., Terminal]
-  type FlowItem =
-    | { kind: "user" }
-    | { kind: "call"; call: MockLlmCall; delta: number }
-    | { kind: "tools"; group: MockToolGroup; toCallId: number }
-    | { kind: "terminal"; status: MockAgentLoopData["status"] };
+  const calls = turn.calls;
+  const maxCtx = Math.max(...calls.map(c => c.contextSize), 1);
+  const maxOutput = Math.max(...agentLoop.toolGroups.map(g => g.totalOutputSize), 1);
 
-  const items: FlowItem[] = [{ kind: "user" }];
-  turn.calls.forEach(call => {
-    const prevCtx = items.findLast(i => i.kind === "call")
-      ? (items.findLast(i => i.kind === "call") as { kind: "call"; call: MockLlmCall; delta: number }).call.contextSize
-      : 0;
-    const delta = call.contextSize - prevCtx;
-    items.push({ kind: "call", call, delta });
+  // ── D3 scales ──────────────────────────────────────────────────────────
+  // Call node height: linear scale ctx → px
+  const callHeightScale = scaleLinear()
+    .domain([0, maxCtx])
+    .range([44, 100])
+    .clamp(true);
 
-    const tg = agentLoop.toolGroups.find(g => g.afterCallId === call.id);
-    if (tg) {
-      const nextCallIdx = turn.calls.findIndex(c => c.id === call.id) + 1;
-      const nextCall = turn.calls[nextCallIdx];
-      items.push({ kind: "tools", group: tg, toCallId: nextCall?.id ?? -1 });
-    }
+  // Bridge (transition) height: sqrt scale so large outputs don't dominate
+  const bridgeHeightScale = scaleSqrt()
+    .domain([0, maxOutput])
+    .range([32, 80])
+    .clamp(true);
+
+  // Bridge width: linear scale so wider = more total output
+  const bridgeWidthScale = scaleLinear()
+    .domain([0, maxOutput])
+    .range([100, 170])
+    .clamp(true);
+
+
+  // ── Build call checkpoints ──────────────────────────────────────────────
+  interface CallCheckpoint {
+    call: MockLlmCall;
+    ctxDelta: number;
+    callH: number;      // D3-computed height
+    isSignificant: boolean;
+    nearLimit: boolean;
+    tg: MockToolGroup | null;
+  }
+
+  const checkpoints: CallCheckpoint[] = calls.map((call, i) => {
+    const prev = calls[i - 1];
+    const ctxDelta = prev ? call.contextSize - prev.contextSize : call.contextSize;
+    return {
+      call,
+      ctxDelta,
+      callH: Math.round(callHeightScale(call.contextSize)),
+      isSignificant: Math.abs(ctxDelta) > 2000,
+      nearLimit: call.contextSize > call.contextWindowSize * 0.85,
+      tg: agentLoop.toolGroups.find(g => g.afterCallId === call.id) ?? null,
+    };
   });
-  items.push({ kind: "terminal", status: agentLoop.status });
 
-  const CALL_W = 88;    // LLM call node base width
-  const TOOL_W = 110;   // tool group node base width
-  const USER_W = 70;
-  const TERM_W = 70;
-  const ARROW_W = 28;
-  const NODE_H = 120;
-  const LABEL_H = 28;
+  // ── Layout constants ────────────────────────────────────────────────────
+  const CALL_W  = 80;
+  const CONN_W  = 20;
+  const USER_W  = 64;
+  const TERM_W  = 54;
+  const LABEL_H = 22;
+
+  // ── Selected transition detail drawer ──────────────────────────────────
+  const selectedTG = selectedTransitionIdx !== null
+    ? checkpoints[selectedTransitionIdx]?.tg
+    : null;
 
   return (
-    <div style={{ overflowX: "auto", paddingBottom: 8 }}>
-      <div style={{
-        display: "flex", alignItems: "stretch", gap: 0,
-        minHeight: NODE_H + LABEL_H + 24,
-        padding: "4px 2px 8px",
-      }}>
-        {items.map((item, idx) => {
-          const isLast = idx === items.length - 1;
+    <div style={{ background: "#fafafa", border: "1px solid #f3f4f6", borderRadius: 10, overflow: "hidden" }}>
 
-          // ── Arrow connector ────────────────────────────────
-          const Arrow = idx > 0 ? (
-            <div style={{
-              width: ARROW_W, flexShrink: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              paddingTop: 0, alignSelf: "center",
-              marginTop: -LABEL_H / 2,
-            }}>
-              <div style={{ width: "100%", height: 2, background: "#e5e7eb", position: "relative" }}>
-                <div style={{
-                  position: "absolute", right: -1, top: -4,
-                  borderTop: "5px solid transparent",
-                  borderBottom: "5px solid transparent",
-                  borderLeft: "7px solid #d1d5db",
-                }} />
-              </div>
-            </div>
-          ) : null;
+      {/* ── Lane 1: context strip (D3 line chart) ──────────── */}
+      <D3ContextStrip
+        calls={calls}
+        checkpoints={checkpoints}
+        onSelectCall={onSelectCall}
+      />
 
-          if (item.kind === "user") {
-            return (
-              <div key="user" style={{ display: "flex", alignItems: "center" }}>
-                <div style={{
-                  width: USER_W, display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-                }}>
-                  <div style={{
-                    width: USER_W - 8, padding: "8px 6px", borderRadius: 8,
-                    background: "#f5f3ff", border: "2px solid #6366f1",
-                    display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-                    minHeight: 60,
-                  }}>
-                    <span style={{ fontSize: 16 }}>👤</span>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#6366f1" }}>User</span>
-                  </div>
-                  <span style={{ fontSize: 9, color: "#9ca3af", textAlign: "center", maxWidth: USER_W }}>
-                    {turn.userInput.slice(0, 20)}{turn.userInput.length > 20 ? "…" : ""}
-                  </span>
-                </div>
-              </div>
-            );
-          }
+      {/* ── Lane 2: main agent loop flow ───────────────────── */}
+      <div style={{ overflowX: "auto", padding: "0 12px" }}>
+        <div style={{ display: "flex", alignItems: "flex-end", paddingTop: LABEL_H, paddingBottom: 16, gap: 0, minWidth: "fit-content" }}>
 
-          if (item.kind === "terminal") {
-            const cfg = {
-              completed: { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0", icon: "✓" },
-              interrupted: { color: "#d97706", bg: "#fffbeb", border: "#fde68a", icon: "⚠" },
-              continued: { color: "#6366f1", bg: "#eff6ff", border: "#c7d2fe", icon: "→" },
-            }[item.status];
-            return (
-              <div key="terminal" style={{ display: "flex", alignItems: "center", gap: 0 }}>
-                {Arrow}
-                <div style={{
-                  width: TERM_W - 8, padding: "8px 6px", borderRadius: 8,
-                  background: cfg.bg, border: `2px solid ${cfg.border}`,
-                  display: "flex", flexDirection: "column", alignItems: "center", gap: 3,
-                  minHeight: 60, alignSelf: "center", marginTop: -LABEL_H / 2,
-                }}>
-                  <span style={{ fontSize: 18 }}>{cfg.icon}</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: cfg.color }}>{item.status}</span>
-                </div>
-              </div>
-            );
-          }
+          {/* User input node */}
+          <FlowCallNode kind="user" label="User"
+            subLabel={turn.userInput.slice(0, 16) + (turn.userInput.length > 16 ? "…" : "")}
+            width={USER_W} height={48} />
 
-          if (item.kind === "call") {
-            const { call, delta } = item;
-            // Height encodes context size relative to max
-            const ctxPct = Math.max(call.contextSize / maxCtx, 0.15);
-            const nodeH = Math.round(40 + ctxPct * 60); // 40–100px
-            const isHovered = hoveredCallId === call.id;
-            const isComp = call.isCompaction;
-            const nearLimit = call.contextSize > call.contextWindowSize * 0.85;
-
-            const border = isComp ? "#ef4444"
-              : nearLimit ? "#ea580c"
-              : call.isSignificant ? "#3b82f6"
-              : "#e5e7eb";
-            const bg = isComp ? "#fef2f2"
-              : nearLimit ? "#fff7ed"
-              : isHovered ? "#eff6ff"
-              : "#f9fafb";
+          {checkpoints.map((cp, idx) => {
+            const { call, ctxDelta, callH, tg } = cp;
+            const isLast = idx === checkpoints.length - 1;
+            const isSelectedTrans = selectedTransitionIdx === idx;
+            const prevH = idx === 0 ? 48 : checkpoints[idx - 1].callH;
 
             return (
-              <div key={call.id} style={{ display: "flex", alignItems: "center", gap: 0 }}>
-                {Arrow}
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                  {/* Context delta annotation above */}
-                  <div style={{ height: LABEL_H, display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 2 }}>
-                    {Math.abs(delta) > 500 && (
-                      <span style={{
-                        fontSize: 10, fontWeight: 700,
-                        color: delta > 2000 ? "#d97706" : delta < -2000 ? "#16a34a" : "#9ca3af",
-                      }}>
-                        {delta > 0 ? "+" : ""}{fmtK(delta)}
-                      </span>
-                    )}
+              <React.Fragment key={call.id}>
+                {/* D3 bezier arrow */}
+                <D3FlowArrow
+                  delta={ctxDelta}
+                  significant={cp.isSignificant}
+                  fromH={prevH}
+                  toH={callH}
+                  width={CONN_W}
+                />
+
+                {/* Call checkpoint node */}
+                <FlowCallNode
+                  kind={call.isCompaction ? "compaction" : cp.nearLimit ? "danger" : cp.isSignificant ? "significant" : "normal"}
+                  label={`#${call.id}`}
+                  subLabel={fmtK(call.contextSize)}
+                  width={CALL_W}
+                  height={callH}
+                  cacheReadPct={call.contextSize > 0 ? call.cacheRead / call.contextSize : 0}
+                  cacheWritePct={call.contextSize > 0 ? call.cacheWrite / call.contextSize : 0}
+                  stopReason={call.stopReason}
+                  ctxDelta={ctxDelta}
+                  onClick={() => onSelectCall(call)}
+                />
+
+                {/* Sub agent node — shown when this call triggered an Agent tool_use */}
+                {call.subAgent && (
+                  <SubAgentFlowNode sa={call.subAgent} />
+                )}
+
+                {/* Transition bridge — height/width from D3 sqrt/linear scales */}
+                {tg && !isLast && (
+                  <TransitionBridge
+                    group={tg}
+                    ctxDelta={checkpoints[idx + 1]?.ctxDelta ?? 0}
+                    selected={isSelectedTrans}
+                    onSelect={() => setSelectedTransitionIdx(isSelectedTrans ? null : idx)}
+                    height={Math.round(bridgeHeightScale(tg.totalOutputSize))}
+                    width={Math.round(bridgeWidthScale(tg.totalOutputSize))}
+                  />
+                )}
+
+                {/* No-tool spacer */}
+                {!tg && !isLast && (
+                  <div style={{ width: 10, alignSelf: "flex-end", height: callH, display: "flex", alignItems: "center" }}>
+                    <div style={{ width: "100%", height: 1, background: "#e5e7eb" }} />
                   </div>
-
-                  {/* Main call node */}
-                  <div
-                    onClick={() => onSelectCall(call)}
-                    onMouseEnter={() => setHoveredCallId(call.id)}
-                    onMouseLeave={() => setHoveredCallId(null)}
-                    style={{
-                      width: CALL_W, height: nodeH, borderRadius: 8,
-                      background: bg, border: `2px solid ${border}`,
-                      cursor: "pointer", display: "flex", flexDirection: "column",
-                      alignItems: "center", justifyContent: "space-between",
-                      padding: "6px 4px 5px", gap: 3,
-                      boxShadow: isHovered ? "0 2px 8px rgba(99,102,241,0.18)" : undefined,
-                      transition: "box-shadow 0.12s",
-                    }}
-                  >
-                    <span style={{ fontSize: 10, fontWeight: 700, color: isComp ? "#ef4444" : "#374151" }}>
-                      #{call.id}
-                    </span>
-
-                    {/* Context bar inside node */}
-                    <div style={{ width: "80%", display: "flex", flexDirection: "column", gap: 2, flex: 1, justifyContent: "center" }}>
-                      {/* Cache read fill */}
-                      <div style={{ width: "100%", height: 6, background: "#f3f4f6", borderRadius: 3, overflow: "hidden" }}>
-                        <div style={{
-                          width: `${Math.min(call.cacheRead / call.contextSize * 100, 100)}%`,
-                          height: "100%", background: "#a5b4fc", borderRadius: 3,
-                        }} title="cache read" />
-                      </div>
-                      {/* Cache write fill */}
-                      <div style={{ width: "100%", height: 6, background: "#f3f4f6", borderRadius: 3, overflow: "hidden" }}>
-                        <div style={{
-                          width: `${Math.min(call.cacheWrite / call.contextSize * 100, 100)}%`,
-                          height: "100%", background: "#6366f1", borderRadius: 3, opacity: 0.5,
-                        }} title="cache write" />
-                      </div>
-                    </div>
-
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: "#374151" }}>{fmtK(call.contextSize)}</div>
-                      <div style={{ fontSize: 9, color: "#9ca3af" }}>ctx</div>
-                    </div>
-
-                    {/* Stop reason pill */}
-                    {call.stopReason && call.stopReason !== "tool_use" && (
-                      <div style={{
-                        fontSize: 8, fontWeight: 700, color: "#16a34a",
-                        background: "#f0fdf4", borderRadius: 3, padding: "1px 4px",
-                      }}>
-                        end_turn
-                      </div>
-                    )}
-                    {isComp && (
-                      <div style={{ fontSize: 9, color: "#ef4444", fontWeight: 700 }}>◆</div>
-                    )}
-                  </div>
-
-                  {/* Call id label below */}
-                  <span style={{ fontSize: 9, color: "#9ca3af" }}>Call #{call.indexInTurn}</span>
-                </div>
-              </div>
+                )}
+              </React.Fragment>
             );
-          }
+          })}
 
-          if (item.kind === "tools") {
-            const { group } = item;
-            const outputPct = group.totalOutputSize / maxToolOutput;
-            // Tool group height encodes output tokens (thickness = output size)
-            const toolNodeH = Math.round(28 + outputPct * 60); // 28–88px
-            const hasError = group.tools.some(t => t.status !== "ok");
-            const border = hasError ? "#fca5a5" : group.isParallel ? "#c4b5fd" : "#e5e7eb";
-            const bg = hasError ? "#fef2f2" : group.isParallel ? "#f5f3ff" : "#fffbeb";
-            const durationTotal = group.tools.reduce((s, t) => s + t.durationMs, 0);
+          {/* Final arrow → terminal */}
+          <D3FlowArrow delta={0} significant={false}
+            fromH={checkpoints[checkpoints.length - 1]?.callH ?? 44}
+            toH={44} width={CONN_W} />
 
-            return (
-              <div key={group.id} style={{ display: "flex", alignItems: "center", gap: 0 }}>
-                {Arrow}
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                  {/* Duration label above */}
-                  <div style={{ height: LABEL_H, display: "flex", alignItems: "flex-end", justifyContent: "center", paddingBottom: 2 }}>
-                    <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtDuration(durationTotal)}</span>
-                  </div>
-
-                  {/* Tool group node */}
-                  <div style={{
-                    width: TOOL_W, height: toolNodeH, borderRadius: 8,
-                    background: bg, border: `2px solid ${border}`,
-                    padding: "5px 6px", display: "flex", flexDirection: "column", gap: 3,
-                  }}>
-                    {/* Header */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                      {group.isParallel && (
-                        <span style={{ fontSize: 9, fontWeight: 800, color: "#7c3aed" }}>∥</span>
-                      )}
-                      <span style={{ fontSize: 10, fontWeight: 700, color: hasError ? "#dc2626" : "#374151" }}>
-                        {group.tools.length} tool{group.tools.length > 1 ? "s" : ""}
-                      </span>
-                      {hasError && <span style={{ fontSize: 10, color: "#dc2626" }}>✗</span>}
-                    </div>
-
-                    {/* Tool pills */}
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 2, flex: 1, alignContent: "flex-start" }}>
-                      {/* Group by tool type */}
-                      {Object.entries(
-                        group.tools.reduce((acc, t) => {
-                          acc[t.tool] = (acc[t.tool] ?? 0) + 1;
-                          return acc;
-                        }, {} as Record<string, number>)
-                      ).map(([toolName, count]) => (
-                        <span key={toolName} style={{
-                          fontSize: 9, fontWeight: 600,
-                          color: toolName === "Bash" ? "#d97706"
-                            : toolName === "Read" ? "#3b82f6"
-                            : toolName === "Write" || toolName === "Edit" ? "#16a34a"
-                            : "#6b7280",
-                          background: toolName === "Bash" ? "#fffbeb"
-                            : toolName === "Read" ? "#eff6ff"
-                            : toolName === "Write" || toolName === "Edit" ? "#f0fdf4"
-                            : "#f9fafb",
-                          borderRadius: 3, padding: "1px 4px",
-                          border: "1px solid currentColor",
-                          opacity: 0.9,
-                        }}>
-                          {toolName}{count > 1 ? ` ×${count}` : ""}
-                        </span>
-                      ))}
-                    </div>
-
-                    {/* Output size annotation */}
-                    <div style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>
-                      +{fmtK(group.totalOutputSize)} out
-                    </div>
-                  </div>
-
-                  {/* Group label below */}
-                  <span style={{ fontSize: 9, color: "#9ca3af" }}>
-                    {group.isParallel ? "parallel" : "sequential"}
-                  </span>
-                </div>
-              </div>
-            );
-          }
-
-          return null;
-        })}
+          {/* Terminal node */}
+          <FlowCallNode
+            kind={agentLoop.status === "completed" ? "terminal-ok" : agentLoop.status === "interrupted" ? "terminal-warn" : "terminal-info"}
+            label={agentLoop.status === "completed" ? "✓" : agentLoop.status === "interrupted" ? "⚠" : "→"}
+            subLabel={agentLoop.status}
+            width={TERM_W} height={44}
+          />
+        </div>
       </div>
 
-      {/* Legend */}
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", padding: "4px 2px", borderTop: "1px solid #f3f4f6", marginTop: 4 }}>
+      {/* ── Transition detail drawer ────────────────────────── */}
+      {selectedTG && selectedTransitionIdx !== null && (
+        <TransitionDrawer
+          group={selectedTG}
+          fromCall={checkpoints[selectedTransitionIdx].call}
+          toCall={checkpoints[selectedTransitionIdx + 1]?.call ?? null}
+          onClose={() => setSelectedTransitionIdx(null)}
+        />
+      )}
+
+      {/* ── Legend ─────────────────────────────────────────── */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "6px 12px", borderTop: "1px solid #f3f4f6", background: "#f9fafb" }}>
         {[
-          { color: "#a5b4fc", label: "Cache read (in ctx)" },
+          { color: "#a5b4fc", label: "Cache read" },
           { color: "#6366f1", label: "Cache write" },
-          { color: "#7c3aed", label: "∥ parallel tools" },
+          { color: "#3b82f6", label: "Significant Δ" },
+          { color: "#ef4444", label: "◆ compaction" },
+          { color: "#7c3aed", label: "∥ parallel" },
           { color: "#d97706", label: "Bash" },
           { color: "#3b82f6", label: "Read" },
           { color: "#16a34a", label: "Write/Edit" },
-          { color: "#ef4444", label: "◆ compaction" },
         ].map(({ color, label }) => (
-          <div key={label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
+          <div key={label} style={{ display: "flex", alignItems: "center", gap: 3 }}>
+            <div style={{ width: 7, height: 7, borderRadius: 1, background: color }} />
             <span style={{ fontSize: 9, color: "#9ca3af" }}>{label}</span>
           </div>
         ))}
         <span style={{ fontSize: 9, color: "#d1d5db", marginLeft: "auto" }}>
-          Node height ∝ context size · Node thickness ∝ tool output <MockBadge />
+          Node height ∝ ctx size · Bridge width ∝ tool output <MockBadge />
         </span>
       </div>
+    </div>
+  );
+}
+
+// ─── D3 Context Strip ─────────────────────────────────────────────────────────
+// Replaces the CSS bar chart with an SVG line chart using d3-shape curveCatmullRom
+
+interface D3ContextStripProps {
+  calls: MockLlmCall[];
+  checkpoints: Array<{ call: MockLlmCall; ctxDelta: number; callH: number; isSignificant: boolean; nearLimit: boolean; tg: MockToolGroup | null }>;
+  onSelectCall: (c: MockLlmCall) => void;
+}
+
+function D3ContextStrip({ calls, checkpoints, onSelectCall }: D3ContextStripProps) {
+  const W = 600;
+  const H = 40;
+  const PAD = { l: 4, r: 4, t: 4, b: 14 };
+  const chartW = W - PAD.l - PAD.r;
+  const chartH = H - PAD.t - PAD.b;
+  const n = calls.length;
+  if (n === 0) return null;
+
+  // x positions: evenly spaced
+  const xScale = scaleLinear().domain([0, n - 1]).range([PAD.l, PAD.l + chartW]);
+  const yScale = scaleLinear()
+    .domain([0, Math.max(...calls.map(c => c.contextSize), 1)])
+    .range([PAD.t + chartH, PAD.t]);
+
+  // D3 line generator with Catmull-Rom curve for smoothness
+  const lineGen = d3line<MockLlmCall>()
+    .x((_, i) => xScale(i))
+    .y(c => yScale(c.contextSize))
+    .curve(curveCatmullRom.alpha(0.5));
+
+  const pathD = lineGen(calls) ?? "";
+
+  // Area fill path (close down to bottom)
+  const areaBottom = PAD.t + chartH;
+  const areaD = `${pathD} L${xScale(n - 1)},${areaBottom} L${xScale(0)},${areaBottom} Z`;
+
+  return (
+    <div style={{ padding: "8px 12px 0", borderBottom: "1px solid #f3f4f6" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+          Context strip — {n} calls
+        </span>
+        <MockBadge />
+      </div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H, display: "block", cursor: "pointer" }}
+        onClick={e => {
+          // Map click x → call index
+          const rect = (e.currentTarget as SVGElement).getBoundingClientRect();
+          const relX = (e.clientX - rect.left) / rect.width * W;
+          const idx = Math.round((relX - PAD.l) / chartW * (n - 1));
+          const c = calls[Math.max(0, Math.min(idx, n - 1))];
+          if (c) onSelectCall(c);
+        }}
+      >
+        {/* Compaction / significant markers */}
+        {checkpoints.map((cp, i) => {
+          if (!cp.call.isCompaction && !cp.isSignificant) return null;
+          const x = xScale(i);
+          return (
+            <line key={cp.call.id} x1={x} y1={PAD.t} x2={x} y2={PAD.t + chartH}
+              stroke={cp.call.isCompaction ? "#ef444450" : "#3b82f630"}
+              strokeWidth={1} strokeDasharray="2,2" />
+          );
+        })}
+
+        {/* Area fill */}
+        <path d={areaD} fill="#6366f1" opacity={0.07} />
+
+        {/* Line */}
+        <path d={pathD} fill="none" stroke="#6366f1" strokeWidth={1.5} />
+
+        {/* Dots at significant points */}
+        {checkpoints.map((cp, i) => {
+          if (!cp.isSignificant && !cp.call.isCompaction) return null;
+          const x = xScale(i);
+          const y = yScale(cp.call.contextSize);
+          return (
+            <circle key={cp.call.id} cx={x} cy={y} r={3}
+              fill={cp.call.isCompaction ? "#ef4444" : "#3b82f6"} />
+          );
+        })}
+
+        {/* Call labels (every Nth to avoid clutter) */}
+        {calls.map((c, i) => {
+          const step = n > 20 ? 4 : n > 10 ? 2 : 1;
+          if (i % step !== 0 && i !== n - 1) return null;
+          return (
+            <text key={c.id} x={xScale(i)} y={H - 2} textAnchor="middle"
+              fontSize={7} fill={c.isCompaction ? "#ef4444" : "#d1d5db"}>
+              {c.isCompaction ? "◆" : `#${c.id}`}
+            </text>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+// ─── SubAgentFlowNode (shown in AgentLoopFlow between call and next bridge) ───
+
+function SubAgentFlowNode({ sa }: { sa: SubAgentSummary }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div style={{ alignSelf: "flex-end", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, marginBottom: 4 }}>
+      {/* Vertical drop line */}
+      <div style={{ width: 2, height: 16, background: "#6366f1", opacity: 0.4 }} />
+      {/* Node */}
+      <div
+        onClick={() => setExpanded(v => !v)}
+        style={{
+          width: 130, borderRadius: 8, cursor: "pointer",
+          background: expanded ? "#e0e7ff" : "#eff6ff",
+          border: "1.5px solid #6366f1",
+          padding: "5px 8px",
+          boxShadow: expanded ? "0 0 0 2px #6366f140" : "none",
+          transition: "box-shadow 0.12s",
+        }}
+        onMouseEnter={e => (e.currentTarget.style.background = "#e0e7ff")}
+        onMouseLeave={e => (e.currentTarget.style.background = expanded ? "#e0e7ff" : "#eff6ff")}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
+          <span style={{ fontSize: 11 }}>🤖</span>
+          <span style={{ fontSize: 9, fontWeight: 700, color: "#4338ca" }}>Sub Agent</span>
+          <span style={{ fontSize: 9, color: "#6366f1", background: "#c7d2fe", borderRadius: 2, padding: "0 3px" }}>{sa.agentType}</span>
+        </div>
+        <div style={{ fontSize: 9, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {sa.description.slice(0, 30)}{sa.description.length > 30 ? "…" : ""}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 3 }}>
+          <span style={{ fontSize: 8, color: "#9ca3af" }}>{sa.llmCallCount} calls</span>
+          <span style={{ fontSize: 8, color: "#9ca3af" }}>{fmtDuration(sa.durationMs)}</span>
+          <span style={{ fontSize: 8, color: "#9ca3af" }}>+{fmtK(sa.totalOutputTokens)} out</span>
+        </div>
+        {expanded && sa.resultPreview && (
+          <div style={{ marginTop: 6, fontSize: 9, color: "#374151", lineHeight: 1.5, borderTop: "1px solid #c7d2fe", paddingTop: 4, maxHeight: 60, overflow: "hidden" }}>
+            {sa.resultPreview.slice(0, 120)}…
+          </div>
+        )}
+      </div>
+      {/* Return arrow */}
+      <div style={{ width: 2, height: 12, background: "#6366f1", opacity: 0.4 }} />
+    </div>
+  );
+}
+
+// ─── Flow sub-components ──────────────────────────────────────────────────────
+
+type FlowNodeKind = "user" | "normal" | "significant" | "danger" | "compaction" | "terminal-ok" | "terminal-warn" | "terminal-info";
+
+const FLOW_NODE_STYLE: Record<FlowNodeKind, { border: string; bg: string; labelColor: string }> = {
+  user:          { border: "#6366f1", bg: "#f5f3ff", labelColor: "#6366f1" },
+  normal:        { border: "#e5e7eb", bg: "#f9fafb", labelColor: "#374151" },
+  significant:   { border: "#93c5fd", bg: "#eff6ff", labelColor: "#2563eb" },
+  danger:        { border: "#fdba74", bg: "#fff7ed", labelColor: "#ea580c" },
+  compaction:    { border: "#fca5a5", bg: "#fef2f2", labelColor: "#dc2626" },
+  "terminal-ok":   { border: "#86efac", bg: "#f0fdf4", labelColor: "#16a34a" },
+  "terminal-warn": { border: "#fde68a", bg: "#fffbeb", labelColor: "#d97706" },
+  "terminal-info": { border: "#c7d2fe", bg: "#eff6ff", labelColor: "#6366f1" },
+};
+
+function FlowCallNode({
+  kind, label, subLabel, width, height,
+  cacheReadPct = 0, cacheWritePct = 0,
+  stopReason, onClick, ctxDelta,
+}: {
+  kind: FlowNodeKind; label: string; subLabel?: string;
+  width: number; height: number;
+  cacheReadPct?: number; cacheWritePct?: number;
+  stopReason?: string | null; onClick?: () => void; ctxDelta?: number;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const s = FLOW_NODE_STYLE[kind];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, alignSelf: "flex-end" }}>
+      {/* Delta label above */}
+      <div style={{ height: 20, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+        {ctxDelta !== undefined && Math.abs(ctxDelta) > 500 && (
+          <span style={{ fontSize: 9, fontWeight: 700, color: ctxDelta > 2000 ? "#d97706" : ctxDelta < -2000 ? "#16a34a" : "#9ca3af" }}>
+            {ctxDelta > 0 ? "+" : ""}{fmtK(ctxDelta)}
+          </span>
+        )}
+      </div>
+
+      {/* Node box */}
+      <div
+        onClick={onClick}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          width, height, borderRadius: 8,
+          background: hovered && onClick ? "#fff" : s.bg,
+          border: `2px solid ${s.border}`,
+          cursor: onClick ? "pointer" : "default",
+          display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "space-between",
+          padding: "5px 4px", gap: 2,
+          boxShadow: hovered && onClick ? "0 2px 10px rgba(99,102,241,0.15)" : "none",
+          transition: "box-shadow 0.12s",
+        }}
+      >
+        <span style={{ fontSize: 10, fontWeight: 800, color: s.labelColor }}>{label}</span>
+
+        {/* Cache bars */}
+        {(cacheReadPct > 0 || cacheWritePct > 0) && (
+          <div style={{ width: "80%", display: "flex", flexDirection: "column", gap: 2, flex: 1, justifyContent: "center" }}>
+            <div style={{ height: 4, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: `${Math.min(cacheReadPct * 100, 100)}%`, height: "100%", background: "#a5b4fc" }} />
+            </div>
+            <div style={{ height: 4, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: `${Math.min(cacheWritePct * 100, 100)}%`, height: "100%", background: "#6366f180" }} />
+            </div>
+          </div>
+        )}
+
+        {subLabel && <span style={{ fontSize: 9, color: "#9ca3af", textAlign: "center" }}>{subLabel}</span>}
+
+        {/* end_turn pill */}
+        {stopReason && stopReason !== "tool_use" && stopReason !== null && (
+          <div style={{ fontSize: 7, fontWeight: 700, color: "#16a34a", background: "#f0fdf4", borderRadius: 3, padding: "1px 3px" }}>
+            end_turn
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// D3-powered bezier arrow using linkHorizontal for smooth S-curve transitions
+function D3FlowArrow({ delta, significant, fromH, toH, width }: {
+  delta: number; significant: boolean; fromH: number; toH: number; width: number;
+}) {
+  const H = Math.max(fromH, toH, 20);
+  // Anchor midpoints: bottom-center of each node
+  const y0 = H - fromH / 2;
+  const y1 = H - toH / 2;
+
+  // Manual cubic bezier (same as D3 linkHorizontal output)
+  const mx = width / 2;
+  const path = `M 0,${y0} C ${mx},${y0} ${mx},${y1} ${width},${y1}`;
+
+  const color = significant
+    ? (delta > 0 ? "#93c5fd" : "#86efac")
+    : "#e5e7eb";
+  const strokeW = significant ? 2 : 1;
+
+  // Arrowhead at target
+  const arrowSize = 5;
+  const tipX = width;
+  const tipY = y1;
+
+  return (
+    <div style={{ width, alignSelf: "flex-end", height: H, flexShrink: 0 }}>
+      <svg width={width} height={H} style={{ overflow: "visible", display: "block" }}>
+        <path d={path} fill="none" stroke={color} strokeWidth={strokeW} />
+        {/* Filled arrowhead */}
+        <polygon
+          points={`${tipX},${tipY} ${tipX - arrowSize},${tipY - arrowSize / 2} ${tipX - arrowSize},${tipY + arrowSize / 2}`}
+          fill={color}
+        />
+      </svg>
+    </div>
+  );
+}
+
+function TransitionBridge({
+  group, ctxDelta, selected, onSelect, width, height,
+}: { group: MockToolGroup; ctxDelta: number; selected: boolean; onSelect: () => void; width: number; height: number }) {
+  const [hovered, setHovered] = useState(false);
+  const hasError   = group.tools.some(t => t.status !== "ok");
+  const durationMs = group.tools.reduce((s, t) => s + t.durationMs, 0);
+  const bridgeH    = height; // D3 sqrt-scale computed by parent
+
+  const border = selected ? "#6366f1" : hasError ? "#fca5a5" : group.isParallel ? "#c4b5fd" : "#fde68a";
+  const bg     = selected ? "#eff6ff" : hasError ? "#fef2f2" : group.isParallel ? "#f5f3ff" : "#fffbeb";
+
+  // Aggregate tool chips
+  const toolCounts = group.tools.reduce((acc, t) => {
+    acc[t.tool] = (acc[t.tool] ?? 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  return (
+    <div style={{ alignSelf: "flex-end", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+      {/* Duration label above */}
+      <div style={{ height: 20, display: "flex", alignItems: "flex-end" }}>
+        <span style={{ fontSize: 9, color: "#9ca3af" }}>{fmtDuration(durationMs)}</span>
+      </div>
+
+      {/* Bridge box */}
+      <div
+        onClick={onSelect}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          width, height: bridgeH, borderRadius: 6,
+          background: hovered ? (selected ? "#dbeafe" : "#fffde7") : bg,
+          border: `1.5px solid ${border}`,
+          cursor: "pointer", padding: "4px 6px",
+          display: "flex", flexDirection: "column", justifyContent: "space-between",
+          boxShadow: selected ? "0 0 0 2px #6366f140" : "none",
+          transition: "box-shadow 0.12s",
+        }}
+      >
+        {/* Header row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+          {group.isParallel && <span style={{ fontSize: 9, fontWeight: 800, color: "#7c3aed" }}>∥</span>}
+          {Object.entries(toolCounts).map(([toolName, count]) => {
+            const tc = toolChipStyle(toolName);
+            // Use D3 ordinal color as accent when brand palette has no entry
+            const accentColor = d3ToolColor(toolName);
+            return (
+              <span key={toolName} style={{
+                fontSize: 9, fontWeight: 700,
+                color: tc.fg, background: tc.bg, borderRadius: 3,
+                padding: "1px 4px",
+                border: `1px solid ${tc.border}`,
+                outline: tc === (TOOL_COLOR[toolName] ?? null) ? "none" : `1px solid ${accentColor}30`,
+              }}>
+                {toolName}{count > 1 ? ` ×${count}` : ""}
+              </span>
+            );
+          })}
+          {hasError && <span style={{ fontSize: 9, color: "#dc2626", fontWeight: 700 }}>✗</span>}
+        </div>
+
+        {/* Output + impact */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
+          <span style={{ fontSize: 9, color: "#9ca3af" }}>+{fmtK(group.totalOutputSize)} out</span>
+          {Math.abs(ctxDelta) > 500 && (
+            <span style={{ fontSize: 9, fontWeight: 700, color: ctxDelta > 0 ? "#d97706" : "#16a34a" }}>
+              ctx {ctxDelta > 0 ? "+" : ""}{fmtK(ctxDelta)}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <span style={{ fontSize: 8, color: "#d1d5db" }}>{group.isParallel ? "∥ parallel" : "sequential"}</span>
+    </div>
+  );
+}
+
+function TransitionDrawer({
+  group, fromCall, toCall, onClose,
+}: { group: MockToolGroup; fromCall: MockLlmCall; toCall: MockLlmCall | null; onClose: () => void }) {
+  const dur = group.tools.reduce((s, t) => s + t.durationMs, 0);
+  return (
+    <div style={{ borderTop: "1px solid #e5e7eb", background: "#fff", padding: "12px 16px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#374151" }}>
+            Transition #{fromCall.id} → #{toCall?.id ?? "?"}
+          </span>
+          <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtDuration(dur)} total</span>
+          <span style={{ fontSize: 10, color: "#9ca3af" }}>+{fmtK(group.totalOutputSize)} output</span>
+          {group.isParallel && <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 700 }}>∥ parallel</span>}
+        </div>
+        <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", color: "#9ca3af", fontSize: 14, padding: 0 }}>×</button>
+      </div>
+
+      {/* Individual tool calls */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {group.tools.map(t => {
+          const tc = toolChipStyle(t.tool);
+          return (
+            <div key={t.id} style={{
+              display: "grid", gridTemplateColumns: "60px 1fr 56px 52px 48px",
+              gap: 8, alignItems: "center",
+              padding: "5px 10px", borderRadius: 6,
+              background: t.status !== "ok" ? "#fef2f2" : "#f9fafb",
+              border: `1px solid ${t.status !== "ok" ? "#fecaca" : "#f3f4f6"}`,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                {group.isParallel && <span style={{ fontSize: 8, color: "#7c3aed", fontWeight: 800 }}>∥</span>}
+                <span style={{ fontSize: 10, fontWeight: 700, color: tc.fg, background: tc.bg, borderRadius: 3, padding: "1px 5px", border: `1px solid ${tc.border}` }}>
+                  {t.tool}
+                </span>
+              </div>
+              <span style={{ fontSize: 11, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.input}</span>
+              <span style={{ fontSize: 10, color: "#9ca3af", textAlign: "right" }}>+{fmtK(t.outputSize)}</span>
+              <span style={{ fontSize: 10, color: "#9ca3af", textAlign: "right" }}>{fmtDuration(t.durationMs)}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, textAlign: "right", color: t.status === "ok" ? "#16a34a" : "#dc2626" }}>
+                {t.status === "ok" ? "✓" : `✗ ${t.status}`}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {toCall && (
+        <div style={{ marginTop: 10, padding: "6px 10px", background: "#f0fdf4", borderRadius: 6, fontSize: 10, color: "#16a34a" }}>
+          → These tool results were injected into <strong>Call #{toCall.id}</strong> context.
+          Context changed by <strong>{toCall.significantDelta > 0 ? "+" : ""}{fmtK(toCall.significantDelta)}</strong>.
+        </div>
+      )}
     </div>
   );
 }
@@ -1749,8 +2026,8 @@ function TurnViewToggle({ view, onChange }: { view: TurnView; onChange: (v: Turn
       <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.05em" }}>VIEW</span>
       {(["classic", "flow"] as TurnView[]).map(v => {
         const active = view === v;
-        const label = v === "classic" ? "Classic" : "Flow";
-        const desc  = v === "classic" ? "Context strip + vertical timeline" : "Horizontal trace · LLM ↔ Tool causality";
+        const label = v === "classic" ? "Classic" : "Hybrid Flow";
+        const desc  = v === "classic" ? "Vertical timeline + context strip" : "Call checkpoints + transition bridges · LLM ↔ Tool causality";
         return (
           <button key={v} onClick={() => onChange(v)} title={desc} style={{
             padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: active ? 700 : 400,
@@ -1765,7 +2042,7 @@ function TurnViewToggle({ view, onChange }: { view: TurnView; onChange: (v: Turn
         );
       })}
       <span style={{ fontSize: 10, color: "#d1d5db", marginLeft: 4 }}>
-        {view === "classic" ? "Context strip + vertical timeline" : "Horizontal trace · LLM ↔ Tool causality"}
+        {view === "classic" ? "Vertical timeline + context strip" : "Call checkpoints + transition bridges"}
       </span>
     </div>
   );
@@ -1774,10 +2051,21 @@ function TurnViewToggle({ view, onChange }: { view: TurnView; onChange: (v: Turn
 function UserTurnDetailPanel({
   turn, onSelectCall,
 }: { turn: MockUserTurn; onSelectCall: (c: MockLlmCall) => void }) {
-  const [turnView, setTurnView] = useState<TurnView>("classic");
-  const agentLoop = buildMockAgentLoop(turn);
-  const maxCtx = Math.max(...turn.calls.map(c => c.contextSize), 1);
+  const [turnView, setTurnView] = useState<TurnView>("flow");
+  // Inject mock sub agents when calls have none (for UI demo)
+  const callsWithSubAgents = turn.calls.map((c, ci) => ({
+    ...c,
+    subAgent: c.subAgent ?? attachMockSubAgents(c, turn.id, ci),
+  }));
+  const enrichedTurn = { ...turn, calls: callsWithSubAgents };
+  const agentLoop = buildMockAgentLoop(enrichedTurn);
+  const maxCtx = Math.max(...enrichedTurn.calls.map(c => c.contextSize), 1);
   const dur = fmtDuration(turn.durationMs);
+
+  // Sub agents in this turn
+  const turnSubAgents = callsWithSubAgents
+    .map(c => c.subAgent)
+    .filter((sa): sa is SubAgentSummary => sa !== null);
 
   // Net context for this turn: last call ctx − first call ctx
   const firstCtx = turn.calls[0]?.contextSize ?? 0;
@@ -1834,9 +2122,11 @@ function UserTurnDetailPanel({
         {/* ── Metric Strip — same visual language as Session ─────── */}
         {/* Row 1: Call & loop counts */}
         <div style={{ marginBottom: 8 }}>
-          <SummaryMetricStrip columns={4} cards={[
+          <SummaryMetricStrip columns={5} cards={[
             { label: "LLM Calls",   value: String(turn.llmCallCount) },
             { label: "Tool Calls",  value: String(turn.toolCallCount), sub: `${agentLoop.toolGroups.length} groups`, mock: true },
+            { label: "Sub Agents",  value: String(turnSubAgents.length),
+              color: turnSubAgents.length > 0 ? "#6366f1" : undefined },
             { label: "Duration",    value: dur || "—" },
             { label: "Tool Errors", value: String(agentLoop.toolSummary.reduce((s, t) => s + t.failed, 0)),
               alert: agentLoop.toolSummary.some(t => t.failed > 0), mock: true },
@@ -1924,7 +2214,7 @@ function UserTurnDetailPanel({
           </div>
           <div style={{ marginBottom: 20 }}>
             <SectionLabel mock>Agent Loop</SectionLabel>
-            <AgentLoopTimeline turn={turn} agentLoop={agentLoop} onSelectCall={onSelectCall} />
+            <AgentLoopTimeline turn={enrichedTurn} agentLoop={agentLoop} onSelectCall={onSelectCall} />
           </div>
         </>
       )}
@@ -1933,7 +2223,7 @@ function UserTurnDetailPanel({
       {turnView === "flow" && (
         <div style={{ marginBottom: 20 }}>
           <SectionLabel mock>Agent Loop Flow</SectionLabel>
-          <AgentLoopFlow turn={turn} agentLoop={agentLoop} onSelectCall={onSelectCall} />
+          <AgentLoopFlow turn={enrichedTurn} agentLoop={agentLoop} onSelectCall={onSelectCall} />
         </div>
       )}
 
@@ -1975,680 +2265,725 @@ function UserTurnDetailPanel({
           </div>
         </div>
       )}
-    </div>
-  );
-}
 
-// ─── Mock payload / response data for Call Detail ────────────────────────────
-
-interface MockPayloadSegment {
-  id: string;
-  category: string;
-  label: string;
-  tokens: number;
-  source: string;     // "system" | "user_message" | "tool_result" | "assistant_history" | "tool_schema" | "unknown"
-  content?: string;   // preview text
-}
-
-interface MockCallResponse {
-  textOutput: string;
-  toolUseBlocks: Array<{ id: string; name: string; input: string }>;
-  stopReason: string;
-  outputTokens: number;
-  hasThinking: boolean;
-  thinkingPreview?: string;
-}
-
-function buildMockPayload(call: MockLlmCall): MockPayloadSegment[] {
-  const ctx = call.contextSize;
-  const cacheR = call.cacheRead;
-  const cacheW = call.cacheWrite;
-  const fresh = ctx - cacheR - cacheW;
-  // Simulate a realistic payload breakdown
-  const systemTokens = Math.round(ctx * 0.22);
-  const schemaTokens = Math.round(ctx * 0.18);
-  const historyTokens = Math.round(ctx * 0.15);
-  const toolOutTokens = Math.round(ctx * 0.28);
-  const userTokens = Math.round(ctx * 0.08);
-  const unknownTokens = ctx - systemTokens - schemaTokens - historyTokens - toolOutTokens - userTokens;
-
-  return [
-    { id: "seg-sys",    category: "System",                 label: "system prompt",            tokens: systemTokens,  source: "system",           content: "You are Claude Code, Anthropic's official CLI…" },
-    { id: "seg-schema", category: "Tool Schemas",           label: "tool definitions (12)",    tokens: schemaTokens,  source: "tool_schema",      content: "Read, Write, Edit, Bash, Glob, Grep, WebFetch…" },
-    { id: "seg-hist",   category: "Assistant History",      label: "prior assistant turns",    tokens: historyTokens, source: "assistant_history", content: "Previous assistant responses in this session…" },
-    { id: "seg-tool",   category: "Tool Output",            label: "tool results (recent)",    tokens: toolOutTokens, source: "tool_result",       content: "Read(server/src/parser.ts): export function parse…" },
-    { id: "seg-user",   category: "User Messages",          label: "current user input",       tokens: userTokens,    source: "user_message",      content: "请帮我分析这个 session 的数据结构…" },
-    { id: "seg-unk",    category: "Unknown",                label: "unattributed",             tokens: Math.max(unknownTokens, 0), source: "unknown" },
-  ].filter(s => s.tokens > 0);
-}
-
-function buildMockResponse(call: MockLlmCall): MockCallResponse {
-  const hasTools = call.stopReason === "tool_use" || (call.stopReason !== "end_turn");
-  return {
-    textOutput: call.stopReason === "end_turn"
-      ? "根据分析，当前 session 的 context 结构主要由 Tool Output 主导（约 28%），系统提示占 22%，工具定义占 18%。建议关注 Tool Output 的累积增长，考虑在必要时触发 compaction 以控制 context 规模。"
-      : "",
-    toolUseBlocks: hasTools ? [
-      { id: "toolu_mock_01", name: "Read", input: JSON.stringify({ file_path: "server/src/session-drilldown-parser.ts" }, null, 2) },
-    ] : [],
-    stopReason: call.stopReason ?? "end_turn",
-    outputTokens: call.outputTokens,
-    hasThinking: call.id % 4 === 0,
-    thinkingPreview: call.id % 4 === 0 ? "Let me think through this carefully. The session has multiple turns…" : undefined,
-  };
-}
-
-// ─── Sankey mini overview ─────────────────────────────────────────────────────
-
-function IncomingDiffSankey({
-  segments, diff,
-}: { segments: MockPayloadSegment[]; diff: MockDiffEntry[] }) {
-  const total = segments.reduce((s, seg) => s + seg.tokens, 0) || 1;
-  const netDelta = diff.reduce((s, e) => s + e.delta, 0);
-  const added   = diff.filter(e => e.changeType === "added");
-  const removed = diff.filter(e => e.changeType === "removed");
-  const retained = diff.filter(e => e.changeType === "retained" || (e.changeType !== "added" && e.changeType !== "removed" && e.changeType !== "changed"));
-
-  const addedTotal   = added.reduce((s, e) => s + e.delta, 0);
-  const removedTotal = Math.abs(removed.reduce((s, e) => s + e.delta, 0));
-  const retainedTotal = Math.max(total - addedTotal, 0);
-
-  return (
-    <div style={{ marginBottom: 16 }}>
-      {/* Header metrics */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 12 }}>
-        {[
-          { label: "Net Δ", value: `${netDelta >= 0 ? "+" : ""}${fmtK(netDelta)}`, color: netDelta > 0 ? "#d97706" : "#16a34a" },
-          { label: "Added",   value: `+${fmtK(addedTotal)}`,   color: "#16a34a" },
-          { label: "Removed", value: removedTotal > 0 ? `−${fmtK(removedTotal)}` : "—", color: "#dc2626" },
-          { label: "Retained", value: fmtK(retainedTotal),     color: "#9ca3af" },
-        ].map(({ label, value, color }) => (
-          <div key={label} style={{ background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, padding: "6px 10px" }}>
-            <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 2 }}>{label}</div>
-            <div style={{ fontSize: 13, fontWeight: 700, color }}>{value}</div>
+      {/* ── Sub Agents spawned in this turn ──────────────────────── */}
+      {turnSubAgents.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+            <SectionLabel>Sub Agents</SectionLabel>
+            <span style={{ fontSize: 10, color: "#6366f1", background: "#eff6ff", borderRadius: 4, padding: "1px 6px", marginLeft: 4 }}>
+              {turnSubAgents.length} spawned in this turn
+            </span>
           </div>
-        ))}
-      </div>
-
-      {/* Sankey-like flow bars */}
-      <div style={{ background: "#f9fafb", borderRadius: 8, padding: "12px", border: "1px solid #f3f4f6" }}>
-        <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", marginBottom: 8, letterSpacing: "0.05em" }}>
-          PREVIOUS → CURRENT PAYLOAD <MockBadge />
-        </div>
-        <div style={{ display: "flex", gap: 12, alignItems: "stretch" }}>
-          {/* Left: previous payload bar */}
-          <div style={{ width: 80, flexShrink: 0 }}>
-            <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 4, textAlign: "center" }}>Previous</div>
-            <div style={{ height: 80, display: "flex", flexDirection: "column", borderRadius: 4, overflow: "hidden", gap: 1 }}>
-              {segments.map(seg => {
-                const h = Math.round((seg.tokens / total) * 100);
-                return h > 0 ? (
-                  <div key={seg.id} title={`${seg.category}: ${fmtK(seg.tokens)}`} style={{
-                    height: `${h}%`, minHeight: 2,
-                    background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb",
-                    opacity: 0.6,
-                  }} />
-                ) : null;
-              })}
-            </div>
-            <div style={{ fontSize: 9, color: "#9ca3af", textAlign: "center", marginTop: 4 }}>{fmtK(total - netDelta)}</div>
-          </div>
-
-          {/* Middle: flow arrows */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 4, paddingTop: 16 }}>
-            {/* Retained band */}
-            {retainedTotal > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <div style={{ flex: 1, height: 10, background: "#e5e7eb", borderRadius: 2, opacity: 0.7 }} title={`Retained: ${fmtK(retainedTotal)}`} />
-                <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>retained</span>
-              </div>
-            )}
-            {/* Added band */}
-            {addedTotal > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <div style={{ flex: 1, height: Math.max(6, Math.round(addedTotal / total * 40)), background: "#16a34a", borderRadius: 2, opacity: 0.5 }} title={`Added: ${fmtK(addedTotal)}`} />
-                <span style={{ fontSize: 9, color: "#16a34a", flexShrink: 0 }}>+{fmtK(addedTotal)}</span>
-              </div>
-            )}
-            {/* Removed band */}
-            {removedTotal > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <div style={{ flex: 1, height: Math.max(4, Math.round(removedTotal / total * 30)), background: "#ef4444", borderRadius: 2, opacity: 0.4 }} title={`Removed: ${fmtK(removedTotal)}`} />
-                <span style={{ fontSize: 9, color: "#ef4444", flexShrink: 0 }}>−{fmtK(removedTotal)}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Right: current payload bar */}
-          <div style={{ width: 80, flexShrink: 0 }}>
-            <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 4, textAlign: "center" }}>Current</div>
-            <div style={{ height: 80, display: "flex", flexDirection: "column", borderRadius: 4, overflow: "hidden", gap: 1 }}>
-              {segments.map(seg => {
-                const h = Math.round((seg.tokens / total) * 100);
-                return h > 0 ? (
-                  <div key={seg.id} title={`${seg.category}: ${fmtK(seg.tokens)}`} style={{
-                    height: `${h}%`, minHeight: 2,
-                    background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb",
-                  }} />
-                ) : null;
-              })}
-            </div>
-            <div style={{ fontSize: 9, color: "#9ca3af", textAlign: "center", marginTop: 4 }}>{fmtK(total)}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {turnSubAgents.map(sa => (
+              <SubAgentCard key={sa.agentFileId} sa={sa} />
+            ))}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
 // ─── LLM Call Detail Panel (v2) ───────────────────────────────────────────────
 
-type CallTab = "incoming" | "response" | "payload" | "next" | "raw";
+// ─── Trust badge ─────────────────────────────────────────────────────────────
 
-function LlmCallDetailPanel({
-  call, onSelectEntry,
-}: { call: MockLlmCall; onSelectEntry: (e: MockDiffEntry) => void }) {
-  const [tab, setTab] = useState<CallTab>("incoming");
-  const [selectedEvidenceEntry, setSelectedEvidenceEntry] = useState<MockDiffEntry | null>(null);
-
-  const diff = call.incomingDiff;
-  const netDelta = diff.reduce((s, e) => s + e.delta, 0);
-  const added   = diff.filter(e => e.changeType === "added");
-  const removed = diff.filter(e => e.changeType === "removed");
-  const changed = diff.filter(e => e.changeType === "changed");
-  const retained = diff.filter(e => e.changeType === "retained");
-
-  const segments = buildMockPayload(call);
-  const response = buildMockResponse(call);
-
-  const freshIn  = call.contextSize - call.cacheRead - call.cacheWrite;
-  const cacheRatio = call.contextSize > 0
-    ? Math.round(call.cacheRead / call.contextSize * 100)
-    : 0;
-  const nearLimit = call.contextSize > call.contextWindowSize * 0.85;
-
-  function handleSelectEntry(entry: MockDiffEntry) {
-    setSelectedEvidenceEntry(entry);
-    onSelectEntry(entry);
-    setTab("incoming"); // stay on incoming diff tab, evidence shows in inspector
-  }
-
-  const TAB_DEFS: Array<{ id: CallTab; label: string; badge?: string }> = [
-    { id: "incoming", label: "Incoming Diff" },
-    { id: "response", label: "Response" },
-    { id: "payload",  label: "Payload Map" },
-    { id: "next",     label: "Next Diff" },
-    { id: "raw",      label: "Raw" },
-  ];
-
-  return (
-    <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-      {/* ── Main area ─────────────────────────────────────────── */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 20px 20px 24px", minWidth: 0 }}>
-
-        {/* ── Call Header ──────────────────────────────────── */}
-        <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid #f3f4f6" }}>
-          {/* Title + badges */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <span style={{ fontSize: 15, fontWeight: 800, color: "#111827" }}>Call #{call.id}</span>
-            <span style={{ fontSize: 10, color: "#9ca3af" }}>#{call.indexInTurn} in turn</span>
-            {call.isCompaction && <RiskBadge type="compaction" />}
-            {nearLimit && <RiskBadge type="near-limit" />}
-            {call.isSignificant && !nearLimit && <RiskBadge type="large-growth" />}
-            <span style={{ marginLeft: "auto", fontSize: 10, color: "#9ca3af" }}>
-              {call.model && <span style={{ fontWeight: 600, color: "#374151" }}>{shortModelName(call.model)} · </span>}
-              {call.timestamp ? new Date(call.timestamp).toLocaleTimeString() : call.timestamp}
-            </span>
-          </div>
-
-          {/* Data source banner */}
-          <div style={{
-            fontSize: 10, color: "#6b7280", background: "#fffbeb",
-            border: "1px solid #fde68a", borderRadius: 5, padding: "5px 10px",
-            marginBottom: 10, display: "flex", alignItems: "center", gap: 6,
-          }}>
-            <span style={{ fontWeight: 600, color: "#d97706" }}>⚠ Observed from JSONL</span>
-            <span>· Estimated attribution · No exact request payload available · </span>
-            <span style={{ color: "#9ca3af" }}>Proxy data: {call.proxy ? "available" : "not linked"}</span>
-          </div>
-
-          {/* Metric strip: 3 rows same language as session/turn */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {/* Row 1: identity */}
-            <SummaryMetricStrip columns={4} cards={[
-              { label: "Context Size",  value: fmtK(call.contextSize), color: nearLimit ? "#ea580c" : undefined },
-              { label: "Context Δ",     value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`,
-                color: call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : undefined },
-              { label: "Stop Reason",   value: call.stopReason ?? "—" },
-              { label: "Window Used",   value: `${Math.round(call.contextSize / call.contextWindowSize * 100)}%`,
-                color: nearLimit ? "#ea580c" : undefined },
-            ]} />
-            {/* Row 2: tokens */}
-            <SummaryMetricStrip columns={5} cards={[
-              { label: "Cache Read",    value: fmtK(call.cacheRead) },
-              { label: "Cache Write",   value: fmtK(call.cacheWrite) },
-              { label: "Fresh In",      value: fmtK(freshIn) },
-              { label: "Fresh Out",     value: fmtK(call.outputTokens) },
-              { label: "Cache %",       value: `${cacheRatio}%`, tooltip: "cache_read / context_size" },
-            ]} />
-          </div>
-        </div>
-
-        {/* ── Tabs ───────────────────────────────────────────── */}
-        <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", marginBottom: 16, gap: 0 }}>
-          {TAB_DEFS.map(({ id, label, badge }) => (
-            <button key={id} onClick={() => setTab(id)} style={{
-              padding: "7px 13px", fontSize: 11, fontWeight: tab === id ? 700 : 400,
-              color: tab === id ? "#6366f1" : "#6b7280",
-              background: "transparent", border: "none",
-              borderBottom: tab === id ? "2px solid #6366f1" : "2px solid transparent",
-              cursor: "pointer", marginBottom: -1, display: "flex", alignItems: "center", gap: 4,
-            }}>
-              {label}
-              {badge && <span style={{ fontSize: 9, background: "#fef2f2", color: "#dc2626", borderRadius: 3, padding: "1px 4px", fontWeight: 700 }}>{badge}</span>}
-            </button>
-          ))}
-        </div>
-
-        {/* ── Tab: Incoming Diff ─────────────────────────────── */}
-        {tab === "incoming" && (
-          <div>
-            {/* Sankey mini overview */}
-            <IncomingDiffSankey segments={segments} diff={diff} />
-
-            {/* Diff table */}
-            {diff.length > 0 ? (
-              <>
-                {[
-                  { label: "Added",    entries: added,    color: "#16a34a" },
-                  { label: "Changed",  entries: changed,  color: "#d97706" },
-                  { label: "Removed",  entries: removed,  color: "#dc2626" },
-                  { label: "Retained", entries: retained, color: "#9ca3af" },
-                ].filter(g => g.entries.length > 0).map(group => (
-                  <div key={group.label} style={{ marginBottom: 14 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                      <div style={{ width: 8, height: 8, borderRadius: 2, background: group.color }} />
-                      <span style={{ fontSize: 11, fontWeight: 700, color: group.color }}>{group.label}</span>
-                      <span style={{ fontSize: 10, color: "#9ca3af" }}>{group.entries.length} entries</span>
-                    </div>
-                    <div style={{ border: "1px solid #f3f4f6", borderRadius: 6, overflow: "hidden" }}>
-                      {group.entries.map((entry, i) => (
-                        <EnrichedDiffRow
-                          key={entry.id} entry={entry}
-                          selected={selectedEvidenceEntry?.id === entry.id}
-                          onSelect={handleSelectEntry}
-                          isLast={i === group.entries.length - 1}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </>
-            ) : (
-              <div style={{ padding: "24px", textAlign: "center", color: "#9ca3af", border: "1px dashed #e5e7eb", borderRadius: 8 }}>
-                <div style={{ fontSize: 13, marginBottom: 4 }}>No diff data available</div>
-                <div style={{ fontSize: 11 }}>Incoming diff is not yet computed for this call.</div>
-                <div style={{ marginTop: 8 }}><MockBadge /></div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Tab: Response ──────────────────────────────────── */}
-        {tab === "response" && (
-          <div>
-            {/* Thinking block */}
-            {response.hasThinking && (
-              <div style={{ marginBottom: 12 }}>
-                <SectionLabel>Extended Thinking</SectionLabel>
-                <div style={{ background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: 8, padding: "10px 14px", fontSize: 11, color: "#7c3aed", lineHeight: 1.6, fontStyle: "italic" }}>
-                  {response.thinkingPreview}
-                  <span style={{ color: "#c4b5fd" }}> … [redacted]</span>
-                  <div style={{ marginTop: 4 }}><MockBadge /></div>
-                </div>
-              </div>
-            )}
-
-            {/* Text output */}
-            {response.textOutput && (
-              <div style={{ marginBottom: 12 }}>
-                <SectionLabel>Text Output</SectionLabel>
-                <div style={{
-                  background: "#f0fdf4", border: "1px solid #bbf7d0",
-                  borderLeft: "3px solid #16a34a",
-                  borderRadius: 8, padding: "10px 14px",
-                  fontSize: 12, color: "#14532d", lineHeight: 1.65, whiteSpace: "pre-wrap",
-                }}>
-                  {response.textOutput}
-                </div>
-              </div>
-            )}
-
-            {/* Tool use blocks */}
-            {response.toolUseBlocks.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <SectionLabel>Tool Use Requests</SectionLabel>
-                {response.toolUseBlocks.map(tu => (
-                  <div key={tu.id} style={{
-                    border: "1px solid #fde68a", borderLeft: "3px solid #d97706",
-                    background: "#fffbeb", borderRadius: 8, padding: "10px 14px", marginBottom: 8,
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: "#d97706" }}>{tu.name}</span>
-                      <code style={{ fontSize: 10, color: "#9ca3af" }}>{tu.id}</code>
-                    </div>
-                    <pre style={{ fontSize: 11, color: "#374151", margin: 0, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
-                      {tu.input}
-                    </pre>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* No output case */}
-            {!response.textOutput && response.toolUseBlocks.length === 0 && (
-              <div style={{ padding: "20px", textAlign: "center", color: "#9ca3af", border: "1px dashed #e5e7eb", borderRadius: 8 }}>
-                No response content captured. <MockBadge />
-              </div>
-            )}
-
-            {/* Output stats */}
-            <div style={{ marginTop: 8 }}>
-              <SummaryMetricStrip columns={3} cards={[
-                { label: "Output Tokens", value: fmtK(response.outputTokens) },
-                { label: "Stop Reason",   value: response.stopReason },
-                { label: "Thinking",      value: response.hasThinking ? "enabled" : "off", mock: true },
-              ]} />
-            </div>
-          </div>
-        )}
-
-        {/* ── Tab: Payload Map ───────────────────────────────── */}
-        {tab === "payload" && (
-          <div>
-            <SectionLabel mock>Estimated Payload Breakdown</SectionLabel>
-            <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "8px 12px", fontSize: 11, color: "#92400e", marginBottom: 12 }}>
-              Estimated from JSONL usage tokens. No exact request payload available without proxy dump.
-            </div>
-
-            {/* Stacked bar */}
-            <div style={{ display: "flex", height: 20, borderRadius: 6, overflow: "hidden", gap: 1, marginBottom: 8 }}>
-              {segments.map(seg => {
-                const total = segments.reduce((s, g) => s + g.tokens, 0) || 1;
-                const w = Math.max(seg.tokens / total * 100, 0.5);
-                return (
-                  <div key={seg.id} title={`${seg.category}: ${fmtK(seg.tokens)} (${Math.round(w)}%)`}
-                    style={{ width: `${w}%`, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb" }} />
-                );
-              })}
-            </div>
-
-            {/* Segment rows */}
-            <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
-              {/* Header */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 60px 60px 100px", gap: 0, padding: "5px 12px", background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
-                {["Segment", "Tokens", "%", "Source"].map(h => (
-                  <span key={h} style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600 }}>{h}</span>
-                ))}
-              </div>
-              {segments.map((seg, i) => {
-                const total = segments.reduce((s, g) => s + g.tokens, 0) || 1;
-                const pct = Math.round(seg.tokens / total * 100);
-                return (
-                  <div key={seg.id} style={{
-                    display: "grid", gridTemplateColumns: "1fr 60px 60px 100px",
-                    gap: 0, padding: "8px 12px",
-                    borderBottom: i < segments.length - 1 ? "1px solid #f3f4f6" : "none",
-                    alignItems: "center",
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-                      <div style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb" }} />
-                      <div>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{seg.label}</div>
-                        {seg.content && (
-                          <div style={{ fontSize: 10, color: "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {seg.content.slice(0, 60)}…
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <span style={{ fontSize: 11, color: "#374151" }}>{fmtK(seg.tokens)}</span>
-                    <span style={{ fontSize: 11, color: "#9ca3af" }}>{pct}%</span>
-                    <span style={{ fontSize: 10, color: "#6b7280", fontFamily: "monospace" }}>{seg.source}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* ── Tab: Next Diff ─────────────────────────────────── */}
-        {tab === "next" && (
-          <div style={{ padding: "32px 16px", textAlign: "center", border: "1px dashed #e5e7eb", borderRadius: 8 }}>
-            <div style={{ fontSize: 14, color: "#374151", marginBottom: 8 }}>Next Diff</div>
-            <div style={{ fontSize: 12, color: "#9ca3af", lineHeight: 1.6 }}>
-              Shows how <strong>this call's response + tool results</strong> changed the following call's payload.
-              <br />Requires both JSONL events for this call and the next call.
-            </div>
-            <div style={{ marginTop: 12 }}><MockBadge /></div>
-          </div>
-        )}
-
-        {/* ── Tab: Raw ───────────────────────────────────────── */}
-        {tab === "raw" && (
-          <div>
-            <SectionLabel>Raw JSONL Events</SectionLabel>
-            <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, padding: "8px 12px", fontSize: 11, color: "#92400e", marginBottom: 12 }}>
-              Request payload not available — proxy data not linked. Showing estimated token usage from JSONL.
-            </div>
-            <pre style={{
-              fontSize: 11, fontFamily: "monospace", color: "#374151",
-              background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8,
-              padding: "12px 14px", overflowX: "auto", whiteSpace: "pre-wrap",
-              wordBreak: "break-all", lineHeight: 1.5,
-            }}>
-              {JSON.stringify({
-                _note: "Observed from JSONL — no proxy dump available",
-                call_id: call.id,
-                model: call.model,
-                timestamp: call.timestamp,
-                usage: {
-                  input_tokens: call.contextSize - call.cacheRead - call.cacheWrite,
-                  cache_read_input_tokens: call.cacheRead,
-                  cache_creation_input_tokens: call.cacheWrite,
-                  output_tokens: call.outputTokens,
-                },
-                stop_reason: call.stopReason,
-                context_size_estimated: call.contextSize,
-              }, null, 2)}
-            </pre>
-          </div>
-        )}
-      </div>
-
-      {/* ── Right evidence panel ──────────────────────────────── */}
-      <div style={{ width: 220, borderLeft: "1px solid #f3f4f6", overflowY: "auto", flexShrink: 0, background: "#fafafa", padding: "16px 14px" }}>
-        {selectedEvidenceEntry ? (
-          <EvidenceSidePanel entry={selectedEvidenceEntry} onClear={() => setSelectedEvidenceEntry(null)} />
-        ) : (
-          <CallContextSummaryPanel call={call} segments={segments} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Enriched Diff Row ────────────────────────────────────────────────────────
-
-function EnrichedDiffRow({
-  entry, selected, onSelect, isLast,
-}: { entry: MockDiffEntry; selected: boolean; onSelect: (e: MockDiffEntry) => void; isLast: boolean }) {
-  const confidenceColors = { High: "#16a34a", Medium: "#d97706", Low: "#dc2626", Unknown: "#6b7280" };
-  const confidenceLabels = { High: "✓", Medium: "~", Low: "!", Unknown: "?" };
-
-  return (
-    <div
-      onClick={() => onSelect(entry)}
-      style={{
-        display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 10px",
-        cursor: "pointer", background: selected ? "#eff6ff" : "transparent",
-        borderBottom: isLast ? "none" : "1px solid #f9fafb",
-        borderLeft: selected ? "2px solid #6366f1" : "2px solid transparent",
-        transition: "background 0.1s",
-      }}
-      onMouseEnter={e => { if (!selected) e.currentTarget.style.background = "#f9fafb"; }}
-      onMouseLeave={e => { if (!selected) e.currentTarget.style.background = "transparent"; }}
-    >
-      {/* Change type icon */}
-      <ChangeTypeIcon type={entry.changeType} />
-
-      {/* Category dot */}
-      <div style={{ width: 6, height: 6, borderRadius: 1, flexShrink: 0, marginTop: 3,
-        background: CATEGORY_COLORS[entry.category] ?? "#e5e7eb" }} />
-
-      {/* Main content */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 11, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-            {entry.label}
-          </span>
-          <span style={{ fontSize: 10, color: confidenceColors[entry.confidence], flexShrink: 0 }}
-            title={`${entry.confidence} confidence`}>
-            {confidenceLabels[entry.confidence]}
-          </span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
-          <span style={{ fontSize: 10, color: CATEGORY_COLORS[entry.category] ?? "#9ca3af" }}>{entry.category}</span>
-          <span style={{ fontSize: 10, color: "#9ca3af" }}>·</span>
-          <span style={{ fontSize: 10, color: "#9ca3af" }}>{entry.cause}</span>
-        </div>
-      </div>
-
-      {/* Delta */}
-      <span style={{
-        fontSize: 12, fontWeight: 700, flexShrink: 0,
-        color: entry.delta >= 0 ? "#16a34a" : "#dc2626",
-        minWidth: 44, textAlign: "right",
-      }}>
-        {entry.delta >= 0 ? "+" : ""}{fmtK(entry.delta)}
-      </span>
-    </div>
-  );
-}
-
-// ─── Evidence Side Panel ──────────────────────────────────────────────────────
-
-function EvidenceSidePanel({ entry, onClear }: { entry: MockDiffEntry; onClear: () => void }) {
-  const confidenceColors = { High: "#16a34a", Medium: "#d97706", Low: "#dc2626", Unknown: "#6b7280" };
-  const confidenceNotes = {
-    High: "Exact content matched from event record.",
-    Medium: "Structural match; segment boundary is inferred.",
-    Low: "Inferred from token gap only. Weak heuristic.",
-    Unknown: "Cannot attribute. Only token gap observed.",
+function TrustBadge({ mode, proxy }: { mode: TrustMode; proxy?: MockLlmCall["proxy"] }) {
+  const cfg: Record<TrustMode, { icon: string; label: string; detail: string; bg: string; border: string; color: string }> = {
+    "proxy-exact": { icon: "✓", label: "Proxy exact",     detail: proxy ? `duration: ${fmtDuration(proxy.durationMs ?? 0)} · stop: ${proxy.resStopReason ?? "—"}` : "", bg: "#f0fdf4", border: "#bbf7d0", color: "#16a34a" },
+    "jsonl-only":  { icon: "⚠", label: "JSONL observed",  detail: "Attribution estimated · No exact request payload · Link proxy to upgrade", bg: "#fffbeb", border: "#fde68a", color: "#d97706" },
+    "mixed":       { icon: "~", label: "Mixed",            detail: "Partial proxy coverage · Some ranges estimated",                           bg: "#f0f9ff", border: "#bae6fd", color: "#0284c7" },
+    "mock":        { icon: "◎", label: "Mock data",        detail: "UI mock — not computed from real session",                                 bg: "#f9fafb", border: "#e5e7eb", color: "#9ca3af" },
   };
+  const c = cfg[mode];
+  return (
+    <div style={{ fontSize: 10, background: c.bg, border: `1px solid ${c.border}`, borderRadius: 5, padding: "5px 10px", marginBottom: 10, display: "flex", gap: 6, alignItems: "center" }}>
+      <span style={{ fontWeight: 700, color: c.color }}>{c.icon} {c.label}</span>
+      {c.detail && <span style={{ color: "#6b7280" }}>· {c.detail}</span>}
+    </div>
+  );
+}
+
+// ─── Confidence level helpers ─────────────────────────────────────────────────
+
+const CONF_COLOR: Record<ConfidenceLevel, string> = {
+  exact: "#16a34a", high: "#16a34a", medium: "#d97706", low: "#dc2626", unknown: "#9ca3af",
+};
+const CONF_ICON: Record<ConfidenceLevel, string> = {
+  exact: "✓✓", high: "✓", medium: "~", low: "!", unknown: "?",
+};
+
+// ─── Attribution Flow (bridge-events overview) ────────────────────────────────
+
+function AttributionFlowOverview({ ranges, bridges, onSelectRange }: {
+  ranges: AttributedDiffRange[];
+  bridges: MockBridgeEvent[];
+  onSelectRange: (r: AttributedDiffRange) => void;
+}) {
+  const BRIDGE_CFG: Record<BridgeEventKind, { color: string; bg: string; icon: string }> = {
+    user_input:         { color: "#6366f1", bg: "#f5f3ff", icon: "👤" },
+    tool_use:           { color: "#d97706", bg: "#fffbeb", icon: "⚙" },
+    tool_result:        { color: "#d97706", bg: "#fffbeb", icon: "📄" },
+    system_injection:   { color: "#6b7280", bg: "#f9fafb", icon: "⚡" },
+    compaction:         { color: "#ef4444", bg: "#fef2f2", icon: "◆" },
+    assistant_response: { color: "#16a34a", bg: "#f0fdf4", icon: "💬" },
+  };
+
+  const addedTotal   = ranges.filter(r => r.changeType === "added").reduce((s, r) => s + r.tokens, 0);
+  const removedTotal = ranges.filter(r => r.changeType === "removed").reduce((s, r) => s + Math.abs(r.tokens), 0);
+  const retainedTotal = ranges.filter(r => r.changeType === "retained").reduce((s, r) => s + r.tokens, 0);
+
+  return (
+    <div style={{ background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 10 }}>
+        Attribution Flow <MockBadge />
+      </div>
+
+      {/* Three-column layout: bridge events → impact → current */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 20px 1fr", gap: 0, alignItems: "start" }}>
+
+        {/* Bridge events column */}
+        <div>
+          <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, marginBottom: 6 }}>BRIDGE EVENTS</div>
+          {bridges.length > 0 ? bridges.map(b => {
+            const cfg = BRIDGE_CFG[b.kind];
+            return (
+              <div key={b.id} style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 5, padding: "5px 8px", background: cfg.bg, border: `1px solid ${cfg.color}25`, borderLeft: `3px solid ${cfg.color}`, borderRadius: 5 }}>
+                <span style={{ fontSize: 11, lineHeight: 1.2, flexShrink: 0 }}>{cfg.icon}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: cfg.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.label}</div>
+                  {b.tokenImpact !== 0 && (
+                    <div style={{ fontSize: 10, fontWeight: 700, color: b.tokenImpact > 0 ? "#d97706" : "#ef4444" }}>
+                      {b.tokenImpact > 0 ? "+" : ""}{fmtK(b.tokenImpact)}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 1 }}>
+                    {CONF_ICON[b.confidence.toLowerCase() as ConfidenceLevel] ?? "~"} {b.confidence}
+                  </div>
+                </div>
+              </div>
+            );
+          }) : (
+            <div style={{ fontSize: 10, color: "#9ca3af", fontStyle: "italic" }}>No bridge events extracted</div>
+          )}
+        </div>
+
+        {/* Arrow */}
+        <div style={{ display: "flex", justifyContent: "center", paddingTop: 20, fontSize: 14, color: "#d1d5db" }}>›</div>
+
+        {/* Impact summary column */}
+        <div>
+          <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, marginBottom: 6 }}>CURRENT PAYLOAD CHANGES</div>
+          {[
+            { label: "Added",    tokens: addedTotal,    color: "#16a34a", changeType: "added"    as ChangeType },
+            { label: "Removed",  tokens: removedTotal,  color: "#dc2626", changeType: "removed"  as ChangeType },
+            { label: "Retained", tokens: retainedTotal, color: "#9ca3af", changeType: "retained" as ChangeType },
+          ].filter(g => g.tokens > 0).map(g => {
+            const entries = ranges.filter(r => r.changeType === g.changeType);
+            return (
+              <div key={g.label} style={{ marginBottom: 6 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: g.color }}>{g.label}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: g.color }}>
+                    {g.changeType === "removed" ? "−" : g.changeType === "added" ? "+" : ""}{fmtK(g.tokens)}
+                  </span>
+                </div>
+                {entries.slice(0, 2).map(r => (
+                  <div key={r.id} onClick={() => onSelectRange(r)} style={{ fontSize: 10, color: "#6b7280", padding: "2px 6px", borderRadius: 3, cursor: "pointer", marginBottom: 2, background: "#fff", border: "1px solid #f3f4f6" }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "#eff6ff"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "#fff"; }}>
+                    <span style={{ color: CATEGORY_COLORS[r.category] ?? "#6b7280" }}>●</span>{" "}
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", maxWidth: "90%" }}>
+                      {r.textPreview.slice(0, 45)}…
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Attributed Diff Entries (main diff table) ────────────────────────────────
+
+function AttributedDiffTable({ ranges, selectedId, onSelect }: {
+  ranges: AttributedDiffRange[];
+  selectedId: string | null;
+  onSelect: (r: AttributedDiffRange) => void;
+}) {
+  const CHANGE_CFG: Record<ChangeType, { color: string; icon: string; bg: string }> = {
+    added:        { color: "#16a34a", icon: "+", bg: "#f0fdf4" },
+    removed:      { color: "#dc2626", icon: "−", bg: "#fef2f2" },
+    changed:      { color: "#d97706", icon: "~", bg: "#fffbeb" },
+    retained:     { color: "#9ca3af", icon: "·", bg: "transparent" },
+    reclassified: { color: "#7c3aed", icon: "⇄", bg: "#faf5ff" },
+    moved:        { color: "#3b82f6", icon: "→", bg: "#eff6ff" },
+  };
+
+  const groups: ChangeType[] = ["added", "changed", "removed", "reclassified", "retained"];
+  const grouped = groups.map(ct => ({ ct, entries: ranges.filter(r => r.changeType === ct) })).filter(g => g.entries.length > 0);
 
   return (
     <div>
+      {grouped.map(({ ct, entries }) => {
+        const cfg = CHANGE_CFG[ct];
+        return (
+          <div key={ct} style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: cfg.color }}>{cfg.icon}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: cfg.color, textTransform: "capitalize" }}>{ct}</span>
+              <span style={{ fontSize: 10, color: "#9ca3af" }}>{entries.length} range{entries.length > 1 ? "s" : ""} · {fmtK(entries.reduce((s, r) => s + Math.abs(r.tokens), 0))} tokens</span>
+            </div>
+            <div style={{ border: "1px solid #f3f4f6", borderRadius: 7, overflow: "hidden" }}>
+              {entries.map((r, i) => {
+                const isSelected = r.id === selectedId;
+                return (
+                  <div key={r.id} onClick={() => onSelect(r)} style={{
+                    padding: "9px 12px",
+                    borderBottom: i < entries.length - 1 ? "1px solid #f9fafb" : "none",
+                    background: isSelected ? "#eff6ff" : cfg.bg,
+                    borderLeft: isSelected ? "3px solid #6366f1" : `3px solid ${cfg.color}40`,
+                    cursor: "pointer",
+                    transition: "background 0.1s",
+                  }}
+                  onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#f9fafb"; }}
+                  onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = isSelected ? "#eff6ff" : cfg.bg; }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                      {/* Category dot */}
+                      <div style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, marginTop: 3, background: CATEGORY_COLORS[r.category] ?? "#e5e7eb" }} />
+
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        {/* Header: category + source */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                          <span style={{ fontSize: 10, color: CATEGORY_COLORS[r.category] ?? "#6b7280", fontWeight: 600 }}>{r.category}</span>
+                          {r.sourceEvent && (
+                            <>
+                              <span style={{ fontSize: 10, color: "#d1d5db" }}>·</span>
+                              <span style={{ fontSize: 10, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.sourceEvent.label}</span>
+                            </>
+                          )}
+                        </div>
+                        {/* Text preview */}
+                        <div style={{ fontSize: 11, color: "#374151", fontFamily: "monospace", lineHeight: 1.5, background: isSelected ? "#dbeafe" : "#f9fafb", borderRadius: 4, padding: "4px 7px", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 72, overflow: "hidden" }}>
+                          {r.textPreview.slice(0, 200)}
+                        </div>
+                        {/* Offset + confidence */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                          {r.currentRange && (
+                            <span style={{ fontSize: 9, color: "#9ca3af", fontFamily: "monospace" }}>
+                              chars {r.currentRange.startChar.toLocaleString()}–{r.currentRange.endChar.toLocaleString()}
+                            </span>
+                          )}
+                          <span style={{ fontSize: 9, color: CONF_COLOR[r.confidence], fontWeight: 600 }}>
+                            {CONF_ICON[r.confidence]} {r.confidence}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Token count */}
+                      <span style={{ fontSize: 12, fontWeight: 700, color: cfg.color, flexShrink: 0 }}>
+                        {r.changeType === "added" ? "+" : r.changeType === "removed" ? "−" : ""}{fmtK(Math.abs(r.tokens))}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Attributed Diff Range Evidence Drawer ────────────────────────────────────
+
+function AttributedRangeEvidenceDrawer({ range, onClear }: { range: AttributedDiffRange; onClear: () => void }) {
+  const CHANGE_CFG: Record<ChangeType, { color: string; icon: string }> = {
+    added: { color: "#16a34a", icon: "+" }, removed: { color: "#dc2626", icon: "−" },
+    changed: { color: "#d97706", icon: "~" }, retained: { color: "#9ca3af", icon: "·" },
+    reclassified: { color: "#7c3aed", icon: "⇄" }, moved: { color: "#3b82f6", icon: "→" },
+  };
+  const cfg = CHANGE_CFG[range.changeType];
+
+  return (
+    <div style={{ padding: "14px" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>Evidence</span>
-        <button onClick={onClear} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, color: "#9ca3af", padding: 0 }}>×</button>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#374151" }}>Evidence</span>
+        <button onClick={onClear} style={{ border: "none", background: "none", cursor: "pointer", color: "#9ca3af", fontSize: 16, padding: 0, lineHeight: 1 }}>×</button>
       </div>
 
-      <div style={{ fontSize: 12, fontWeight: 600, color: "#111827", marginBottom: 10, lineHeight: 1.4, wordBreak: "break-word" }}>
-        {entry.label}
+      {/* Change type + category */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: cfg.color, background: `${cfg.color}18`, borderRadius: 4, padding: "2px 7px" }}>
+          {cfg.icon} {range.changeType}
+        </span>
+        <span style={{ fontSize: 10, fontWeight: 600, color: CATEGORY_COLORS[range.category] ?? "#6b7280", background: `${CATEGORY_COLORS[range.category] ?? "#e5e7eb"}18`, borderRadius: 4, padding: "2px 7px" }}>
+          {range.category}
+        </span>
+        <span style={{ fontSize: 10, fontWeight: 700, color: CONF_COLOR[range.confidence], background: `${CONF_COLOR[range.confidence]}15`, borderRadius: 4, padding: "2px 7px" }}>
+          {CONF_ICON[range.confidence]} {range.confidence}
+        </span>
       </div>
 
+      {/* Metadata rows */}
       {[
-        { label: "Category", value: <span style={{ color: CATEGORY_COLORS[entry.category] ?? "#374151" }}>{entry.category}</span> },
-        { label: "Change",   value: entry.changeType },
-        { label: "Delta",    value: <span style={{ color: entry.delta >= 0 ? "#16a34a" : "#dc2626", fontWeight: 700 }}>{entry.delta >= 0 ? "+" : ""}{fmtK(entry.delta)}</span> },
-        { label: "Cause",    value: entry.cause },
-        { label: "Confidence", value: <span style={{ color: confidenceColors[entry.confidence], fontWeight: 700 }}>{entry.confidence}</span> },
+        { label: "Tokens",  value: `${range.changeType === "added" ? "+" : range.changeType === "removed" ? "−" : ""}${fmtK(Math.abs(range.tokens))}` },
+        range.cause ? { label: "Cause",   value: range.cause } : null,
+        range.sourceEvent ? { label: "Source",  value: range.sourceEvent.label } : null,
+        range.currentRange ? { label: "Chars",   value: `${range.currentRange.startChar.toLocaleString()}–${range.currentRange.endChar.toLocaleString()}` } : null,
+        range.currentRange?.startByte != null ? { label: "Bytes",   value: `${range.currentRange.startByte.toLocaleString()}–${range.currentRange.endByte?.toLocaleString()}` } : null,
+      ].filter(Boolean).map(item => (
+        <div key={item!.label} style={{ display: "flex", gap: 8, padding: "4px 0", borderBottom: "1px solid #f3f4f6" }}>
+          <span style={{ width: 56, flexShrink: 0, fontSize: 10, color: "#9ca3af" }}>{item!.label}</span>
+          <span style={{ fontSize: 10, color: "#374151", wordBreak: "break-word" }}>{item!.value}</span>
+        </div>
+      ))}
+
+      {/* Text preview */}
+      <div style={{ marginTop: 10, padding: "8px 10px", background: "#f9fafb", borderRadius: 6, fontSize: 10, fontFamily: "monospace", color: "#374151", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 120, overflowY: "auto" }}>
+        {range.textPreview}
+      </div>
+
+      {/* Evidence refs */}
+      {range.evidenceRefs.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 6 }}>Evidence references</div>
+          {range.evidenceRefs.map((ref, i) => (
+            <div key={i} style={{ padding: "5px 8px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 5, marginBottom: 4 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#16a34a" }}>{ref.label}</div>
+              <div style={{ fontSize: 9, color: "#4b5563", marginTop: 2 }}>{ref.detail}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {range.evidenceRefs.length === 0 && (
+        <div style={{ marginTop: 8, fontSize: 10, color: "#9ca3af", fontStyle: "italic" }}>
+          No direct evidence reference. Attribution is inferred.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Payload Map (segment minimap) ────────────────────────────────────────────
+
+function PayloadMapTab({ segments, selectedSegId, onSelect }: {
+  segments: PayloadSegment[];
+  selectedSegId: string | null;
+  onSelect: (s: PayloadSegment) => void;
+}) {
+  const total = segments.reduce((s, g) => s + g.tokens, 0) || 1;
+
+  return (
+    <div>
+      {/* Payload minimap — horizontal stacked bar sorted by payload order */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 6 }}>Payload order (char 0 → {fmtK(total * 4)} chars)</div>
+        <div style={{ height: 20, display: "flex", borderRadius: 6, overflow: "hidden", gap: 0.5 }}>
+          {segments.map(seg => (
+            <div key={seg.id}
+              onClick={() => onSelect(seg)}
+              title={`${seg.category}: ${seg.label} · ${fmtK(seg.tokens)}`}
+              style={{
+                width: `${seg.tokens / total * 100}%`,
+                background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb",
+                cursor: "pointer", opacity: selectedSegId === seg.id ? 1 : 0.75,
+                outline: selectedSegId === seg.id ? "2px solid #6366f1" : "none",
+                transition: "opacity 0.1s",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.opacity = "1"; }}
+              onMouseLeave={e => { e.currentTarget.style.opacity = selectedSegId === seg.id ? "1" : "0.75"; }}
+            />
+          ))}
+        </div>
+        {/* Ruler */}
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
+          <span style={{ fontSize: 8, color: "#d1d5db" }}>0</span>
+          <span style={{ fontSize: 8, color: "#d1d5db" }}>{fmtK(total * 4)} chars</span>
+        </div>
+      </div>
+
+      {/* Segment table */}
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 58px 44px 56px", padding: "5px 12px", background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+          {["Segment", "Tokens", "%", "Conf"].map(h => (
+            <span key={h} style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600 }}>{h}</span>
+          ))}
+        </div>
+        {segments.map((seg, i) => {
+          const pct = Math.round(seg.tokens / total * 100);
+          const isSelected = seg.id === selectedSegId;
+          return (
+            <div key={seg.id} onClick={() => onSelect(seg)} style={{
+              display: "grid", gridTemplateColumns: "1fr 58px 44px 56px",
+              padding: "8px 12px", alignItems: "center", cursor: "pointer",
+              borderBottom: i < segments.length - 1 ? "1px solid #f3f4f6" : "none",
+              background: isSelected ? "#eff6ff" : "transparent",
+              borderLeft: isSelected ? "3px solid #6366f1" : "3px solid transparent",
+            }}
+            onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#f9fafb"; }}
+            onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}>
+              <div style={{ overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ width: 7, height: 7, borderRadius: 1, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb", flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seg.label}</span>
+                </div>
+                {seg.sourceEvent && (
+                  <div style={{ fontSize: 9, color: "#9ca3af", marginLeft: 13, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {seg.sourceEvent.label}
+                  </div>
+                )}
+                {seg.currentRange && (
+                  <div style={{ fontSize: 8, color: "#d1d5db", marginLeft: 13, marginTop: 1, fontFamily: "monospace" }}>
+                    chars {seg.currentRange.startChar.toLocaleString()}–{seg.currentRange.endChar.toLocaleString()}
+                  </div>
+                )}
+              </div>
+              <span style={{ fontSize: 11, color: "#374151" }}>{fmtK(seg.tokens)}</span>
+              <span style={{ fontSize: 11, color: "#9ca3af" }}>{pct}%</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: CONF_COLOR[seg.confidence] }}>{CONF_ICON[seg.confidence]} {seg.confidence}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Segment Evidence Drawer (Payload Map) ────────────────────────────────────
+
+function PayloadSegmentEvidenceDrawer({ seg, onClear }: { seg: PayloadSegment; onClear: () => void }) {
+  return (
+    <div style={{ padding: "14px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#374151" }}>Segment</span>
+        <button onClick={onClear} style={{ border: "none", background: "none", cursor: "pointer", color: "#9ca3af", fontSize: 16, padding: 0 }}>×</button>
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#111827", marginBottom: 10 }}>{seg.label}</div>
+      {[
+        { label: "Category",   value: <span style={{ color: CATEGORY_COLORS[seg.category] ?? "#374151", fontWeight: 600 }}>{seg.category}</span> },
+        { label: "Tokens",     value: fmtK(seg.tokens) },
+        { label: "First seen", value: seg.firstSeenCallId != null ? `Call #${seg.firstSeenCallId}` : "—" },
+        { label: "Source",     value: seg.sourceEvent?.label ?? "—" },
+        { label: "Chars",      value: seg.currentRange ? `${seg.currentRange.startChar.toLocaleString()}–${seg.currentRange.endChar.toLocaleString()}` : "—" },
+        { label: "Confidence", value: <span style={{ color: CONF_COLOR[seg.confidence], fontWeight: 700 }}>{CONF_ICON[seg.confidence]} {seg.confidence}</span> },
       ].map(({ label, value }) => (
         <div key={label} style={{ display: "flex", gap: 8, padding: "5px 0", borderBottom: "1px solid #f3f4f6" }}>
           <span style={{ width: 72, flexShrink: 0, fontSize: 10, color: "#9ca3af" }}>{label}</span>
           <span style={{ fontSize: 11, color: "#374151" }}>{value}</span>
         </div>
       ))}
-
-      {entry.evidence && (
-        <div style={{ marginTop: 10, padding: "8px 10px", background: "#f9fafb", borderRadius: 6, fontSize: 10, fontFamily: "monospace", color: "#374151", lineHeight: 1.6, wordBreak: "break-all" }}>
-          {entry.evidence}
+      {seg.content && (
+        <div style={{ marginTop: 10, padding: "8px 10px", background: "#f9fafb", borderRadius: 6, fontSize: 10, fontFamily: "monospace", color: "#374151", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 120, overflowY: "auto" }}>
+          {seg.content}
         </div>
       )}
-      {!entry.evidence && (
-        <div style={{ marginTop: 10, padding: "8px 10px", background: "#f9fafb", borderRadius: 6, fontSize: 11, color: "#9ca3af", fontStyle: "italic" }}>
-          No source reference. <MockBadge />
-        </div>
-      )}
-
-      <div style={{ marginTop: 10, fontSize: 10, color: "#9ca3af", fontStyle: "italic", lineHeight: 1.5 }}>
-        {confidenceNotes[entry.confidence]}
-      </div>
     </div>
   );
 }
 
-// ─── Call Context Summary (right panel default) ───────────────────────────────
+// ─── LLM Call Detail Panel ────────────────────────────────────────────────────
 
-function CallContextSummaryPanel({ call, segments }: { call: MockLlmCall; segments: MockPayloadSegment[] }) {
-  const total = segments.reduce((s, seg) => s + seg.tokens, 0) || 1;
+type CallTab = "incoming" | "response-tools" | "payload" | "next-impact" | "raw";
+
+function LlmCallDetailPanel({
+  call, onSelectEntry,
+}: { call: MockLlmCall; onSelectEntry: (e: MockDiffEntry) => void }) {
+  const [tab, setTab] = useState<CallTab>("incoming");
+
+  // Attributed diff ranges (new model)
+  const attrRanges = buildMockAttributedDiff(call);
+  const payloadSegs = buildMockPayloadSegments(call);
+  const response = buildMockCallResponse(call);
+  const bridges = buildMockBridgeEvents(call);
+  const trustMode = buildTrustMode(call);
+
+  type Selection =
+    | { kind: "range"; range: AttributedDiffRange }
+    | { kind: "segment"; seg: PayloadSegment }
+    | null;
+  const [selection, setSelection] = useState<Selection>(null);
+
+  function selectRange(r: AttributedDiffRange) {
+    setSelection({ kind: "range", range: r });
+    // legacy callback with a compatible shape
+    if (r.changeType !== "retained") {
+      onSelectEntry({
+        id: r.id, category: r.category, label: r.sourceEvent?.label ?? r.textPreview.slice(0, 40),
+        delta: r.tokens, changeType: r.changeType as MockDiffEntry["changeType"],
+        cause: r.cause ?? "", confidence: (r.confidence === "exact" || r.confidence === "high" ? "High" : r.confidence === "medium" ? "Medium" : r.confidence === "low" ? "Low" : "Unknown"),
+        evidence: r.evidenceRefs.map(e => e.label).join(" · "),
+      });
+    }
+  }
+
+  const freshIn  = call.contextSize - call.cacheRead - call.cacheWrite;
+  const cacheRatio = call.contextSize > 0 ? Math.round(call.cacheRead / call.contextSize * 100) : 0;
+  const nearLimit  = call.contextSize > call.contextWindowSize * 0.85;
+
+  // Diff summary numbers from attributed ranges
+  const addedTokens    = attrRanges.filter(r => r.changeType === "added").reduce((s, r) => s + r.tokens, 0);
+  const removedTokens  = Math.abs(attrRanges.filter(r => r.changeType === "removed").reduce((s, r) => s + r.tokens, 0));
+  const retainedTokens = attrRanges.filter(r => r.changeType === "retained").reduce((s, r) => s + r.tokens, 0);
+  const netDelta = addedTokens - removedTokens;
+  const confHigh = attrRanges.filter(r => r.confidence === "exact" || r.confidence === "high").length;
+  const confPct  = attrRanges.length > 0 ? Math.round(confHigh / attrRanges.length * 100) : 0;
+
+  const TAB_DEFS: Array<{ id: CallTab; label: string }> = [
+    { id: "incoming",       label: "Incoming Diff" },
+    { id: "response-tools", label: "Response & Tools" },
+    { id: "payload",        label: "Payload Map" },
+    { id: "next-impact",    label: "Next Impact" },
+    { id: "raw",            label: "Raw" },
+  ];
+
   return (
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>
-        Context Composition <MockBadge />
-      </div>
-      {/* Mini stacked bar */}
-      <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", gap: 0.5, marginBottom: 10 }}>
-        {segments.map(seg => (
-          <div key={seg.id} title={seg.category}
-            style={{ width: `${seg.tokens / total * 100}%`, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb" }} />
-        ))}
-      </div>
-      {segments.map(seg => {
-        const pct = Math.round(seg.tokens / total * 100);
-        return (
-          <div key={seg.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-            <div style={{ width: 7, height: 7, borderRadius: 1, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb", flexShrink: 0 }} />
-            <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seg.category}</span>
-            <div style={{ width: 36, height: 3, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
-              <div style={{ width: `${pct}%`, height: "100%", background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb" }} />
-            </div>
-            <span style={{ fontSize: 10, color: "#9ca3af", width: 24, textAlign: "right" }}>{pct}%</span>
+    <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      {/* ── Main column ─────────────────────────────── */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px 16px 22px", minWidth: 0 }}>
+
+        {/* ── Call Header ────────────────────────── */}
+        <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: "#111827" }}>Call #{call.id}</span>
+            <span style={{ fontSize: 10, color: "#9ca3af" }}>#{call.indexInTurn} in turn</span>
+            {call.isCompaction && <RiskBadge type="compaction" />}
+            {nearLimit && <RiskBadge type="near-limit" />}
+            {call.isSignificant && !nearLimit && <RiskBadge type="large-growth" />}
+            <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 600, color: "#374151" }}>
+              {call.model ? shortModelName(call.model) : "unknown"}
+            </span>
+            <span style={{ fontSize: 10, color: "#9ca3af" }}>
+              {call.timestamp ? new Date(call.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
+            </span>
           </div>
-        );
-      })}
-      <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #f3f4f6", fontSize: 10, color: "#9ca3af", lineHeight: 1.5 }}>
-        Click a diff row to see its evidence and source reference.
+
+          {/* Single trust badge */}
+          <TrustBadge mode={trustMode} proxy={call.proxy ?? undefined} />
+
+          {/* Metrics */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <SummaryMetricStrip columns={5} cards={[
+              { label: "Context",     value: fmtK(call.contextSize), color: nearLimit ? "#ea580c" : undefined },
+              { label: "Context Δ",  value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`, color: call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : undefined },
+              { label: "Cache Read",  value: fmtK(call.cacheRead) },
+              { label: "Cache Write", value: fmtK(call.cacheWrite) },
+              { label: "Cache %",     value: `${cacheRatio}%`, tooltip: "cache_read / context_size" },
+            ]} />
+            <SummaryMetricStrip columns={5} cards={[
+              { label: "Fresh In",    value: fmtK(freshIn) },
+              { label: "Fresh Out",   value: fmtK(call.outputTokens) },
+              { label: "Stop",        value: call.stopReason ?? "—" },
+              { label: "Window",      value: `${Math.round(call.contextSize / call.contextWindowSize * 100)}%`, color: nearLimit ? "#ea580c" : undefined },
+              { label: "Thinking",    value: response.hasThinking ? "yes" : "no", mock: true },
+            ]} />
+          </div>
+        </div>
+
+        {/* ── Tabs ─────────────────────────────────── */}
+        <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", marginBottom: 14, gap: 0 }}>
+          {TAB_DEFS.map(({ id, label }) => (
+            <button key={id} onClick={() => setTab(id)} style={{
+              padding: "6px 11px", fontSize: 11, fontWeight: tab === id ? 700 : 400,
+              color: tab === id ? "#6366f1" : "#6b7280",
+              background: "none", border: "none",
+              borderBottom: tab === id ? "2px solid #6366f1" : "2px solid transparent",
+              cursor: "pointer", marginBottom: -1,
+            }}>{label}</button>
+          ))}
+        </div>
+
+        {/* ══ Incoming Diff ════════════════════════ */}
+        {tab === "incoming" && (
+          <div>
+            {/* Diff summary strip */}
+            <SummaryMetricStrip columns={5} cards={[
+              { label: "Net Δ",      value: `${netDelta >= 0 ? "+" : ""}${fmtK(netDelta)}`, color: netDelta > 0 ? "#d97706" : "#16a34a" },
+              { label: "Added",      value: `+${fmtK(addedTokens)}`,   color: "#16a34a" },
+              { label: "Removed",    value: removedTokens > 0 ? `−${fmtK(removedTokens)}` : "—", color: "#dc2626" },
+              { label: "Retained",   value: fmtK(retainedTokens),       color: "#9ca3af" },
+              { label: "Conf %",     value: `${confPct}%`,              color: confPct >= 80 ? "#16a34a" : "#d97706", tooltip: "% of ranges with high/exact confidence", mock: true },
+            ]} />
+
+            <div style={{ marginTop: 14 }}>
+              {/* Attribution Flow Overview */}
+              <AttributionFlowOverview ranges={attrRanges} bridges={bridges} onSelectRange={selectRange} />
+
+              {/* Attributed Diff Entries */}
+              <SectionLabel mock>Attributed Payload Diff</SectionLabel>
+              <AttributedDiffTable
+                ranges={attrRanges}
+                selectedId={selection?.kind === "range" ? selection.range.id : null}
+                onSelect={selectRange}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ══ Response & Tools ═════════════════════ */}
+        {tab === "response-tools" && (
+          <div>
+            <SectionLabel>This call produced</SectionLabel>
+            <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
+              {response.hasThinking && (
+                <div style={{ padding: "10px 14px", borderBottom: "1px solid #f3f4f6", background: "#faf5ff" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", background: "#f3e8ff", borderRadius: 3, padding: "1px 5px" }}>thinking</span>
+                    <span style={{ fontSize: 10, color: "#9ca3af" }}>Extended Thinking · content redacted by redact-thinking beta</span>
+                    <MockBadge />
+                  </div>
+                  <div style={{ fontSize: 11, color: "#7c3aed", fontStyle: "italic", lineHeight: 1.5 }}>
+                    {response.thinkingPreview}<span style={{ color: "#c4b5fd" }}> … [redacted]</span>
+                  </div>
+                </div>
+              )}
+              {response.toolUseBlocks.map(tu => (
+                <div key={tu.id} style={{ padding: "10px 14px", borderBottom: "1px solid #f3f4f6", background: "#fffbeb" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#d97706", background: "#fef3c7", borderRadius: 3, padding: "1px 5px" }}>tool_use</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>{tu.name}</span>
+                    <code style={{ fontSize: 10, color: "#9ca3af" }}>{tu.id}</code>
+                  </div>
+                  <pre style={{ fontSize: 11, color: "#374151", margin: 0, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{tu.input}</pre>
+                </div>
+              ))}
+              {response.textOutput && (
+                <div style={{ padding: "10px 14px", background: "#f0fdf4" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#16a34a", background: "#dcfce7", borderRadius: 3, padding: "1px 5px" }}>text</span>
+                    <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtK(response.outputTokens)} tokens · stop: {response.stopReason}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#14532d", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{response.textOutput}</div>
+                </div>
+              )}
+            </div>
+            <SectionLabel mock>This affects next call</SectionLabel>
+            <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+              {response.toolUseBlocks.map(tu => (
+                <div key={tu.id} style={{ padding: "9px 14px", borderBottom: "1px solid #f3f4f6", display: "flex", gap: 10 }}>
+                  <span style={{ fontSize: 10, color: "#d97706", fontWeight: 700, width: 72, flexShrink: 0, paddingTop: 1 }}>→ tool_result</span>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{tu.name} result will be injected</div>
+                    <div style={{ fontSize: 10, color: "#9ca3af" }}>tool_call_id: {tu.id} · awaiting execution</div>
+                  </div>
+                </div>
+              ))}
+              {response.textOutput && (
+                <div style={{ padding: "9px 14px", display: "flex", gap: 10 }}>
+                  <span style={{ fontSize: 10, color: "#16a34a", fontWeight: 700, width: 72, flexShrink: 0, paddingTop: 1 }}>→ history</span>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>Assistant response appended to history</div>
+                    <div style={{ fontSize: 10, color: "#9ca3af" }}>{fmtK(response.outputTokens)} tokens → Assistant History in next call</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ══ Payload Map ══════════════════════════ */}
+        {tab === "payload" && (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+              <SectionLabel mock>Payload Map (estimated attribution)</SectionLabel>
+              {trustMode === "jsonl-only" && (
+                <span style={{ fontSize: 9, color: "#d97706", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 3, padding: "2px 6px" }}>
+                  estimated · link proxy for exact offsets
+                </span>
+              )}
+            </div>
+            <PayloadMapTab
+              segments={payloadSegs}
+              selectedSegId={selection?.kind === "segment" ? selection.seg.id : null}
+              onSelect={seg => setSelection({ kind: "segment", seg })}
+            />
+          </div>
+        )}
+
+        {/* ══ Next Impact ══════════════════════════ */}
+        {tab === "next-impact" && (
+          <div>
+            <SectionLabel mock>Next Impact</SectionLabel>
+            <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, padding: "10px 14px", fontSize: 11, color: "#0c4a6e", marginBottom: 14 }}>
+              <strong>Next Impact</strong> = this call's response + tool_use + following tool_result(s) → changes in the next call's payload.
+            </div>
+            {[
+              { kind: "tool_result" as const, label: "tool_result injected",               detail: "Read(server/src/parser.ts) → ~12.8k tokens added to Tool Output",     impact: 12800, conf: "high" as ConfidenceLevel },
+              { kind: "assistant_response" as const, label: "assistant response → history", detail: `${fmtK(response.outputTokens)} tokens appended to Assistant History`, impact: response.outputTokens, conf: "high" as ConfidenceLevel },
+              { kind: "system_injection" as const, label: "cache write → cache read",       detail: `${fmtK(call.cacheWrite)} tokens promoted to cache read in next call`,   impact: 0, conf: "medium" as ConfidenceLevel },
+            ].map((item, i) => {
+              const BRIDGE_CFG_COLORS: Record<BridgeEventKind, string> = { user_input: "#6366f1", tool_use: "#d97706", tool_result: "#d97706", system_injection: "#6b7280", compaction: "#ef4444", assistant_response: "#16a34a" };
+              const color = BRIDGE_CFG_COLORS[item.kind];
+              return (
+                <div key={i} style={{ border: `1px solid ${color}30`, borderLeft: `3px solid ${color}`, borderRadius: 7, padding: "10px 14px", marginBottom: 8, background: "#fafafa" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color, background: `${color}15`, borderRadius: 3, padding: "1px 6px" }}>{item.kind}</span>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{item.label}</span>
+                    {item.impact > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: "#d97706", marginLeft: "auto" }}>+{fmtK(item.impact)}</span>}
+                    <span style={{ fontSize: 10, fontWeight: 700, color: CONF_COLOR[item.conf] }}>{CONF_ICON[item.conf]} {item.conf}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#6b7280" }}>{item.detail}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ══ Raw ══════════════════════════════════ */}
+        {tab === "raw" && (
+          <div>
+            <SectionLabel>JSONL Usage</SectionLabel>
+            <div style={{ fontSize: 10, background: trustMode === "proxy-exact" ? "#f0fdf4" : "#fffbeb", border: `1px solid ${trustMode === "proxy-exact" ? "#bbf7d0" : "#fde68a"}`, borderRadius: 5, padding: "6px 10px", marginBottom: 10, color: "#374151" }}>
+              {trustMode === "proxy-exact" ? "Proxy exact — full request/response body available at JSONL offset." : "JSONL observed only. No request payload."}
+            </div>
+            <pre style={{ fontSize: 11, fontFamily: "monospace", color: "#374151", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "12px 14px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5 }}>
+              {JSON.stringify({
+                _trust: trustMode,
+                call_id: call.id, index_in_turn: call.indexInTurn,
+                model: call.model, timestamp: call.timestamp,
+                usage: { input_tokens: freshIn, cache_read_input_tokens: call.cacheRead, cache_creation_input_tokens: call.cacheWrite, output_tokens: call.outputTokens },
+                context_size_estimated: call.contextSize, stop_reason: call.stopReason,
+                ...(call.proxy ? { proxy_request_id: call.proxy.requestId, proxy_duration_ms: call.proxy.durationMs } : {}),
+              }, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
+
+      {/* ── Evidence Drawer ──────────────────────── */}
+      <div style={{ width: 240, borderLeft: "1px solid #f3f4f6", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
+        {selection?.kind === "range" && (
+          <AttributedRangeEvidenceDrawer range={selection.range} onClear={() => setSelection(null)} />
+        )}
+        {selection?.kind === "segment" && (
+          <PayloadSegmentEvidenceDrawer seg={selection.seg} onClear={() => setSelection(null)} />
+        )}
+        {!selection && (
+          <div style={{ padding: "24px 14px", textAlign: "center" }}>
+            <div style={{ fontSize: 20, marginBottom: 10, color: "#e5e7eb" }}>◎</div>
+            <div style={{ fontSize: 10, color: "#9ca3af", lineHeight: 1.7 }}>
+              Select a <strong>diff range</strong> or <strong>payload segment</strong> to see:<br />
+              · source event<br />
+              · char/byte offsets<br />
+              · confidence level<br />
+              · evidence references
+            </div>
+            <div style={{ marginTop: 16, fontSize: 9, color: "#d1d5db" }}>← click any row</div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function DiffRow({ entry, onSelect }: { entry: MockDiffEntry; onSelect: (e: MockDiffEntry) => void }) {
-  const confidenceColors = { High: "#16a34a", Medium: "#d97706", Low: "#dc2626", Unknown: "#6b7280" };
-  return (
-    <div
-      onClick={() => onSelect(entry)}
-      style={{
-        display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
-        borderRadius: 6, cursor: "pointer", marginBottom: 2,
-      }}
-      onMouseEnter={e => (e.currentTarget.style.background = "#f3f4f6")}
-      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-    >
-      <ChangeTypeIcon type={entry.changeType} />
-      <div style={{ width: 6, height: 6, borderRadius: 1, background: CATEGORY_COLORS[entry.category] ?? "#e5e7eb", flexShrink: 0 }} />
-      <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.label}</span>
-      <span style={{ fontSize: 10, color: confidenceColors[entry.confidence], flexShrink: 0 }} title={`${entry.confidence} confidence`}>
-        {entry.confidence === "High" ? "✓" : entry.confidence === "Unknown" ? "?" : "~"}
-      </span>
-      <span style={{ fontSize: 11, fontWeight: 600, color: entry.delta >= 0 ? "#16a34a" : "#dc2626", flexShrink: 0, width: 48, textAlign: "right" }}>
-        {entry.delta >= 0 ? "+" : ""}{fmtK(entry.delta)}
-      </span>
-    </div>
-  );
-}
+
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 

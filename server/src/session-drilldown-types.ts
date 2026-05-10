@@ -26,6 +26,24 @@ export interface ProxyCallData {
   durationMs: number | null;
 }
 
+export interface SubAgentSummary {
+  agentFileId: string;
+  agentType: string;
+  description: string;
+  toolUseId: string;
+  toolUseName: string;
+  llmCallCount: number;
+  toolCallCount: number;
+  totalCacheRead: number;
+  totalCacheWrite: number;
+  totalFreshIn: number;
+  totalOutputTokens: number;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  resultPreview: string;
+}
+
 export interface LlmCall {
   id: number;
   indexInTurn: number;
@@ -42,6 +60,7 @@ export interface LlmCall {
   isSignificant: boolean;
   significantDelta: number;
   proxy: ProxyCallData | null;
+  subAgent: SubAgentSummary | null;
   incomingDiff: DiffEntry[];
 }
 
@@ -86,6 +105,8 @@ export interface SessionDrilldown {
   contextWindowSize: number;
   hasProxyData: boolean;
   hasJsonlSource: boolean;
+  subAgentCount: number;
+  subAgents: SubAgentSummary[];
   turns: UserTurn[];
 }
 

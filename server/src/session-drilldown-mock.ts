@@ -30,6 +30,8 @@ export function buildMockDrilldown(sessionId: string): SessionDrilldown {
     contextWindowSize: 200_000,
     hasProxyData: false,
     hasJsonlSource: false,
+    subAgentCount: 0,
+    subAgents: [],
     turns,
   };
 }
@@ -312,6 +314,7 @@ function call(id: number, indexInTurn: number, overrides: CallOverrides): LlmCal
     isUnknownHeavy: false,
     isSignificant: false,
     proxy: null,
+    subAgent: null,
     ...overrides,
   };
 }

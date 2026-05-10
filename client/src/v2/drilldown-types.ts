@@ -34,6 +34,32 @@ export interface ModelStats {
   freshIn: number;
 }
 
+// ─── Sub agent summary (attached to the LlmCall that triggered it) ──────────
+
+export interface SubAgentSummary {
+  // Derived from subagents/agent-{agentFileId}.jsonl + .meta.json
+  agentFileId: string;        // e.g. "a373036faaffe1b06"
+  agentType: string;          // "Explore" | "general-purpose" | custom name
+  description: string;        // from meta.json
+  toolUseId: string;          // matching tool_use.id in parent call content
+  toolUseName: string;        // usually "Agent"
+
+  // Token / call stats from sub agent JSONL
+  llmCallCount: number;
+  toolCallCount: number;
+  totalCacheRead: number;
+  totalCacheWrite: number;
+  totalFreshIn: number;
+  totalOutputTokens: number;
+
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+
+  // The text returned in the tool_result to the parent session
+  resultPreview: string;      // first 300 chars of tool_result content
+}
+
 export interface LlmCall {
   // Position within the session (1-based, globally across all turns)
   id: number;
@@ -57,6 +83,9 @@ export interface LlmCall {
 
   // null when no proxy record matches this call
   proxy: ProxyCallData | null;
+
+  // Non-null when this call triggered a sub agent via Agent tool_use
+  subAgent: SubAgentSummary | null;
 
   // Empty array in v1 backend — frontend fills with mock when empty
   incomingDiff: DiffEntry[];
@@ -114,6 +143,10 @@ export interface SessionDrilldown {
   hasProxyData: boolean;
   // true if source_file exists on disk at the time of the request
   hasJsonlSource: boolean;
+
+  // Sub agents spawned during this session (all turns combined)
+  subAgentCount: number;
+  subAgents: SubAgentSummary[];
 
   turns: UserTurn[];
 }
