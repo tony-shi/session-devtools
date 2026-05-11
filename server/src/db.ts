@@ -295,6 +295,13 @@ export function initV2Schema(): void {
     // Re-parse will overwrite with correct separation when files change (PARSER_VERSION bump).
     db.exec("UPDATE sessions_meta_v2 SET ai_title = title WHERE title IS NOT NULL AND ai_title IS NULL");
   }
+  // Migrate: add summary candidate columns (idempotent)
+  if (!v2colSet.has("away_summary")) {
+    db.exec("ALTER TABLE sessions_meta_v2 ADD COLUMN away_summary TEXT");
+  }
+  if (!v2colSet.has("last_assistant_text")) {
+    db.exec("ALTER TABLE sessions_meta_v2 ADD COLUMN last_assistant_text TEXT");
+  }
 }
 
 export function initDigestSchema(): void {

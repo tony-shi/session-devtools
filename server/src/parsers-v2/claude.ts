@@ -35,6 +35,8 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
   let aiTitle: string | null = null;
   let customTitle: string | null = null;
   let firstUserMessage = "";
+  let awaySummary: string | null = null;
+  let lastAssistantText: string | null = null;
   let eventCount = 0;
   let inputTokens = 0;
   let outputTokens = 0;
@@ -95,6 +97,8 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
       // TODO: replace with Anthropic API contract check (msg.id?.startsWith("msg_")) once validated.
       if (msg.model && msg.model !== "<synthetic>") {
         modelCounts.set(msg.model, (modelCounts.get(msg.model) ?? 0) + 1);
+        const text = extractText(msg.content);
+        if (text) lastAssistantText = text.slice(0, 300);
       }
       const usage = msg.usage ?? {};
       inputTokens += usage.input_tokens ?? 0;
@@ -108,8 +112,13 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
       }
     }
 
-    if (t === "system" && rec.subtype === "api_error") { // Claude Code wrapper event; NOT HTTP error
-      apiErrorCount++;
+    if (t === "system") {
+      if (rec.subtype === "api_error") { // Claude Code wrapper event; NOT HTTP error
+        apiErrorCount++;
+      }
+      if (rec.subtype === "away_summary" && typeof rec.content === "string" && rec.content.trim()) {
+        awaySummary = rec.content.trim();
+      }
     }
   }
 
@@ -135,6 +144,8 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
     claude_code_api_error_count: apiErrorCount,
     parser_warnings: Array.from(unknownTypes),
     schema_fingerprint: computeFingerprint(eventTypeSet),
+    away_summary: awaySummary,
+    last_assistant_text: lastAssistantText,
   };
 }
 

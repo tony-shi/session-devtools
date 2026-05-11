@@ -26,6 +26,9 @@ export interface SessionMetaV2 {
   claude_code_api_error_count: number;  // Claude Code "system/api_error" events; NOT HTTP errors
   parser_warnings: string[];
   schema_fingerprint: string;
+
+  away_summary: string | null;       // last system/away_summary content (Claude Code auto-recap on return)
+  last_assistant_text: string | null; // last non-synthetic assistant plain text, truncated to 300 chars
 }
 
 export type ParserV2 = (filePath: string) => Promise<SessionMetaV2>;
@@ -36,4 +39,4 @@ export const PARSERS_V2: Record<string, ParserV2> = {
   claude: parseClaudeSessionV2,
 };
 
-export const PARSER_VERSION = 3;
+export const PARSER_VERSION = 4;

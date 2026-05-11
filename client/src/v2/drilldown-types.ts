@@ -67,7 +67,6 @@ export interface LlmCall {
   indexInTurn: number;
 
   contextSize: number;
-  contextWindowSize: number;
   outputTokens: number;
   cacheRead: number;
   cacheWrite: number;
@@ -77,6 +76,7 @@ export interface LlmCall {
 
   isCompaction: boolean;
   isUnknownHeavy: boolean;
+  freshIn: number;
   isSignificant: boolean;
   // Net delta vs previous call in the session (positive = growth)
   significantDelta: number;
@@ -91,12 +91,21 @@ export interface LlmCall {
   incomingDiff: DiffEntry[];
 }
 
+export interface MidTurnInjection {
+  text: string;
+  timestamp: string;
+  // approximate position: after which LLM call index (0 = before any call)
+  afterCallIndex: number;
+}
+
 export interface UserTurn {
   // 1-based index within the session
   id: number;
   userInput: string;
   // Full text of the model's final end_turn response (null if not available)
   finalOutput: string | null;
+  // User messages injected while LLM was executing tool calls within this turn
+  midTurnInjections: MidTurnInjection[];
   startedAt: string;
   endedAt: string;
   // Wall-clock ms from first user event to last assistant end_turn
@@ -115,8 +124,14 @@ export interface UserTurn {
   hasCompaction: boolean;
   // v1 backend: always false
   hasUnknownSpike: boolean;
+  errorCount: number;
 
   calls: LlmCall[];
+}
+
+export interface ToolUsageEntry {
+  name: string;
+  count: number;
 }
 
 export interface SessionDrilldown {
@@ -133,11 +148,13 @@ export interface SessionDrilldown {
   peakContext: number;
   totalCacheRead: number;
   totalCacheWrite: number;
-  totalFreshIn: number;
+  totalFreshIn: number;   // sum of per-call context deltas — new content injected each call
   totalFreshOut: number;
+  lastContext: number;    // contextSize of the final LLM call — current window usage
   systemErrorCount: number;
+  compactionCount: number;
   modelBreakdown: Record<string, ModelStats>;
-  contextWindowSize: number;
+  toolDistribution: ToolUsageEntry[];
 
   // true if at least one proxy_requests row is linked to this session
   hasProxyData: boolean;

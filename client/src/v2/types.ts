@@ -25,6 +25,8 @@ export interface SessionV2 {
   claude_code_api_error_count: number;
   parser_warnings: string[];
   proxy_count: number;
+  away_summary: string | null;
+  last_assistant_text: string | null;
 }
 
 export interface SessionsV2Response {

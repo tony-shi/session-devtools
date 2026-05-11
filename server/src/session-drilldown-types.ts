@@ -48,7 +48,6 @@ export interface LlmCall {
   id: number;
   indexInTurn: number;
   contextSize: number;
-  contextWindowSize: number;   // model's max context window, for ceiling line
   outputTokens: number;
   cacheRead: number;
   cacheWrite: number;
@@ -57,6 +56,7 @@ export interface LlmCall {
   stopReason: string | null;
   isCompaction: boolean;
   isUnknownHeavy: boolean;
+  freshIn: number;
   isSignificant: boolean;
   significantDelta: number;
   proxy: ProxyCallData | null;
@@ -80,7 +80,13 @@ export interface UserTurn {
   unknownDelta: number;
   hasCompaction: boolean;
   hasUnknownSpike: boolean;
+  errorCount: number;
   calls: LlmCall[];
+}
+
+export interface ToolUsageEntry {
+  name: string;
+  count: number;
 }
 
 export interface SessionDrilldown {
@@ -96,13 +102,15 @@ export interface SessionDrilldown {
   peakContext: number;
   totalCacheRead: number;
   totalCacheWrite: number;
-  totalFreshIn: number;
+  totalFreshIn: number;   // sum of API input_tokens (non-cached) — billing unit
   totalFreshOut: number;
+  lastContext: number;    // contextSize of the final LLM call — current window usage
   systemErrorCount: number;
+  compactionCount: number;
   // Per-model breakdown: model name → { calls, outputTokens, cacheRead, cacheWrite }
   modelBreakdown: Record<string, ModelStats>;
-  // The dominant context window ceiling across all calls (for chart Y-axis)
-  contextWindowSize: number;
+  // Top tool names by usage count, descending
+  toolDistribution: ToolUsageEntry[];
   hasProxyData: boolean;
   hasJsonlSource: boolean;
   subAgentCount: number;

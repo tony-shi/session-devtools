@@ -24,13 +24,13 @@ type MockDiffEntry = DiffEntry;
 // LlmCall fields added in drilldown-types are optional in the raw fallback
 // data below; normalizeTurns() fills them in.
 type RawMockCall = Omit<LlmCall,
-  "indexInTurn" | "model" | "contextWindowSize" | "stopReason" | "proxy" | "subAgent" |
-  "isCompaction" | "isUnknownHeavy" | "isSignificant" | "significantDelta"
+  "indexInTurn" | "model" | "stopReason" | "proxy" | "subAgent" |
+  "isCompaction" | "isUnknownHeavy" | "isSignificant" | "significantDelta" | "freshIn"
 > & {
-  isCompaction?: boolean; isUnknownHeavy?: boolean; isSignificant?: boolean; significantDelta?: number;
+  isCompaction?: boolean; isUnknownHeavy?: boolean; isSignificant?: boolean; significantDelta?: number; freshIn?: number;
 };
-type RawMockTurn = Omit<UserTurn, "startedAt" | "endedAt" | "hasCompaction" | "hasUnknownSpike" | "finalOutput" | "durationMs" | "calls"> & {
-  hasCompaction?: boolean; hasUnknownSpike?: boolean; calls: RawMockCall[];
+type RawMockTurn = Omit<UserTurn, "startedAt" | "endedAt" | "hasCompaction" | "hasUnknownSpike" | "finalOutput" | "durationMs" | "midTurnInjections" | "errorCount" | "calls"> & {
+  hasCompaction?: boolean; hasUnknownSpike?: boolean; errorCount?: number; midTurnInjections?: UserTurn["midTurnInjections"]; calls: RawMockCall[];
 };
 type MockLlmCall = LlmCall;
 type MockUserTurn = UserTurn;
@@ -43,15 +43,17 @@ function normalizeTurns(raw: RawMockTurn[]): UserTurn[] {
     durationMs: 0,
     hasCompaction: t.hasCompaction ?? false,
     hasUnknownSpike: t.hasUnknownSpike ?? false,
+    errorCount: t.errorCount ?? 0,
     ...t,
+    midTurnInjections: t.midTurnInjections ?? [],
     calls: t.calls.map((c, ci) => ({
       ...c,
       indexInTurn: ci + 1,
       model: "claude-opus-4-7",
-      contextWindowSize: 200_000,
       stopReason: "end_turn" as const,
       proxy: null,
       subAgent: null,
+      freshIn: c.freshIn ?? 0,
       isCompaction: c.isCompaction ?? false,
       isUnknownHeavy: c.isUnknownHeavy ?? false,
       isSignificant: c.isSignificant ?? false,
@@ -269,6 +271,18 @@ function fmtPct(n: number | null): string {
   return n >= 10 ? `${n.toFixed(1)}%` : `${n.toFixed(2)}%`;
 }
 
+function fmtDateShort(iso: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  const now = new Date();
+  const sameYear = d.getFullYear() === now.getFullYear();
+  const month = d.toLocaleString("en", { month: "short" });
+  const day = d.getDate();
+  const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return sameYear ? `${month} ${day} ${hhmm}` : `${month} ${day}, ${d.getFullYear()}`;
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function MockBadge() {
@@ -373,7 +387,7 @@ function TurnRollupPanel({ turn }: { turn: MockUserTurn }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
         {[
-          { label: "Net Context", value: `${turn.netContextDelta > 0 ? "+" : ""}${fmtK(turn.netContextDelta)}` },
+          { label: "Context Δ", value: `${turn.netContextDelta > 0 ? "+" : ""}${fmtK(turn.netContextDelta)}` },
           { label: "Peak Context", value: fmtK(turn.peakContext) },
           { label: "Cache Read", value: fmtK(turn.cacheRead) },
           { label: "Unknown Δ", value: `+${fmtK(turn.unknownDelta)}` },
@@ -504,18 +518,10 @@ function SessionOverviewPanel({
   const systemErrors     = sm?.systemErrorCount ?? null;
   const durationStr      = sm?.durationStr      ?? "—";
   const cacheRatio       = sm?.cacheRatio       ?? null;
-  const contextWindowSize = sm?.contextWindowSize ?? 200_000;
   const modelBreakdown   = drilldown?.modelBreakdown ?? null;
 
   // Hotspots from real data
   const hotspots = drilldown ? deriveSessionHotspots(drilldown) : null;
-
-  // Net Context = last call's context size minus first call's context size across the whole session
-  // Net context from real fill (✓) or fallback from local turns
-  const netContext = sm?.netContext ?? (turns.flatMap(t => t.calls).length >= 2
-    ? (() => { const all = turns.flatMap(t => t.calls); return all[all.length - 1].contextSize - all[0].contextSize; })()
-    : null);
-  const netContextStr = netContext !== null ? `${netContext >= 0 ? "+" : ""}${fmtK(netContext)}` : "—";
 
   const compactionTurns = hotspots?.compactionTurns ?? turns.filter(t => t.hasCompaction || t.calls.some(c => c.isCompaction));
 
@@ -532,7 +538,7 @@ function SessionOverviewPanel({
               <div style={{ width: 8, height: 8, borderRadius: 2, background: color }} />
               <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{shortModelName(m)}</span>
               <span style={{ fontSize: 10, color: "#9ca3af" }}>·</span>
-              <span style={{ fontSize: 10, color: "#9ca3af" }}>{contextWindowSize.toLocaleString()} ctx window</span>
+              <span style={{ fontSize: 10, color: "#9ca3af" }}>{sm?.totalLlmCalls ?? "?"} calls</span>
             </div>
           );
         })()}
@@ -544,31 +550,40 @@ function SessionOverviewPanel({
           { label: "Sub Agents",  value: String(sm?.subAgentCount ?? 0),        mock: isMock,
             color: (sm?.subAgentCount ?? 0) > 0 ? "#6366f1" : undefined },
           { label: "Duration",    value: durationStr,                           mock: isMock },
-          { label: "Cache Read",  value: fmtK(totalCacheRead),  mock: isMock },
-          { label: "Cache Write", value: fmtK(totalCacheWrite), mock: isMock },
-          { label: "Fresh In",    value: totalFreshIn !== null ? fmtK(totalFreshIn) : "—", mock: isMock },
-          { label: "Fresh Out",   value: totalFreshOut !== null ? fmtK(totalFreshOut) : "—", mock: isMock },
+          { label: "Cache Read",  value: fmtK(totalCacheRead),  mock: isMock,
+            tooltip: "Σ cache_read_input_tokens across all calls — billing unit" },
+          { label: "Cache Write", value: fmtK(totalCacheWrite), mock: isMock,
+            tooltip: "Σ cache_creation_input_tokens across all calls — billing unit" },
+          { label: "Fresh In",    value: totalFreshIn !== null ? fmtK(totalFreshIn) : "—", mock: isMock,
+            tooltip: "每次 LLM call 相比上一次新增的 token 总量（context 增量累加）" },
+          { label: "Fresh Out",   value: totalFreshOut !== null ? fmtK(totalFreshOut) : "—", mock: isMock,
+            tooltip: "Σ output_tokens across all calls — billing unit" },
           { label: "Cache Ratio", value: fmtPct(cacheRatio),
-            tooltip: "cache_read / (cache_read + cache_write + fresh_in)", mock: isMock },
-          { label: "Peak Context", value: fmtK(peakContext), mock: isMock },
-          { label: "Net Context Δ",  value: netContextStr,
-            color: netContext !== null && netContext < 0 ? "#16a34a" : undefined,
-            mock: netContext === null,
-            tooltip: "从 session 第一个 LLM call 到最后一个 call，context size 的净变化。compaction 会压低这个数字。" },
+            tooltip: "Last call: cache_read / context_size", mock: isMock },
+          { label: "Context",
+            value: `${fmtK(peakContext)} / ${fmtK(sm?.lastContext ?? peakContext)}`,
+            mock: isMock,
+            tooltip: "peak context / final context (last LLM call)" },
+          { label: "Compactions", value: String(sm?.compactionCount ?? compactionTurns.length), mock: isMock,
+            color: (sm?.compactionCount ?? compactionTurns.length) > 0 ? "#ef4444" : undefined,
+            tooltip: "Number of turns where a context compaction occurred" },
           { label: "Errors",       value: String(systemErrors ?? 0),
             alert: systemErrors !== null && systemErrors > 0, mock: isMock },
+          { label: "Started",
+            value: sm ? fmtDateShort(sm.firstEventAt) : "—",
+            mock: isMock,
+            tooltip: sm?.firstEventAt ?? "" },
+          { label: "Last Active",
+            value: sm ? fmtDateShort(sm.lastEventAt) : "—",
+            mock: isMock,
+            tooltip: sm?.lastEventAt ?? "" },
         ]} />
       </div>
 
-      {/* Compaction / Near-limit hotspot chips — only meaningful info */}
-      {!isMock && (compactionTurns.length > 0 || peakContext > contextWindowSize * 0.85) && (
+      {/* Compaction hotspot chips */}
+      {!isMock && compactionTurns.length > 0 && (
         <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
-          {compactionTurns.length > 0 && (
-            <HotspotChip icon="◆" label="Compaction" value={compactionTurns.map(t => `Turn ${t.id}`).join(", ")} color="#ef4444" />
-          )}
-          {peakContext > contextWindowSize * 0.85 && (
-            <HotspotChip icon="⚠" label="Peak context" value={`${fmtK(peakContext)} (${Math.round(peakContext / contextWindowSize * 100)}%)`} color="#ea580c" />
-          )}
+          <HotspotChip icon="◆" label="Compaction" value={compactionTurns.map(t => `Turn ${t.id}`).join(", ")} color="#ef4444" />
         </div>
       )}
 
@@ -576,7 +591,7 @@ function SessionOverviewPanel({
       {modelBreakdown && Object.keys(modelBreakdown).length > 1 && (
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Models</div>
-          <ModelBreakdownBlock breakdown={modelBreakdown} contextWindowSize={contextWindowSize} />
+          <ModelBreakdownBlock breakdown={modelBreakdown} />
         </div>
       )}
 
@@ -584,13 +599,8 @@ function SessionOverviewPanel({
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
           Context Timeline {isMock && <MockBadge />}
-          {!isMock && (
-            <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 400, marginLeft: 6 }}>
-              model window = {fmtK(contextWindowSize)}
-            </span>
-          )}
         </div>
-        <ContextTimelineChart turns={turns} isMock={isMock} contextWindowSize={contextWindowSize} />
+        <ContextTimelineChart turns={turns} isMock={isMock} />
       </div>
 
       {/* Top context contributors */}
@@ -679,6 +689,29 @@ function SessionOverviewPanel({
         );
       })()}
 
+      {/* Tool Distribution */}
+      {(() => {
+        const dist = drilldown?.toolDistribution ?? [];
+        if (dist.length === 0) return null;
+        const maxCount = dist[0].count;
+        return (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Tool Usage</div>
+            <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 14px", background: "#fff" }}>
+              {dist.map(entry => (
+                <div key={entry.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                  <span style={{ fontSize: 11, color: "#374151", width: 120, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
+                  <div style={{ flex: 1, height: 5, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ width: `${(entry.count / maxCount) * 100}%`, height: "100%", background: "#6366f1", borderRadius: 2 }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: "#6b7280", width: 36, textAlign: "right", flexShrink: 0 }}>{entry.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* User Turn List */}
       <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 10 }}>User Turns</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -709,8 +742,8 @@ function modelColor(m: string): string {
 }
 
 function ModelBreakdownBlock({
-  breakdown, contextWindowSize,
-}: { breakdown: Record<string, ModelStats>; contextWindowSize: number }) {
+  breakdown,
+}: { breakdown: Record<string, ModelStats> }) {
   const entries = Object.entries(breakdown).sort((a, b) => b[1].calls - a[1].calls);
   const totalCalls = entries.reduce((s, [, v]) => s + v.calls, 0);
 
@@ -748,12 +781,6 @@ function ModelBreakdownBlock({
           </div>
         );
       })}
-      {/* Footer: context window */}
-      <div style={{ padding: "6px 12px", background: "#f9fafb", borderTop: "1px solid #e5e7eb" }}>
-        <span style={{ fontSize: 10, color: "#9ca3af" }}>
-          Context window ceiling: <strong style={{ color: "#374151" }}>{contextWindowSize.toLocaleString()} tokens</strong>
-        </span>
-      </div>
     </div>
   );
 }
@@ -847,46 +874,30 @@ function HotspotChip({ icon, label, value, color }: { icon: string; label: strin
 type TimelineXMode = "linear" | "time";
 
 function ContextTimelineChart({
-  turns, isMock, contextWindowSize = 200_000,
-}: { turns: MockUserTurn[]; isMock: boolean; contextWindowSize?: number }) {
+  turns, isMock,
+}: { turns: MockUserTurn[]; isMock: boolean }) {
   const [xMode, setXMode] = useState<TimelineXMode>("linear");
 
   if (!turns.length) return null;
 
-  // Collect all LLM calls with timestamps
-  const allPoints: Array<{
-    turnId: number; callId: number; contextSize: number;
-    isCompaction: boolean; timestamp: string;
-  }> = [];
-  for (const turn of turns) {
-    for (const call of turn.calls) {
-      allPoints.push({
-        turnId: turn.id, callId: call.id,
-        contextSize: call.contextSize, isCompaction: call.isCompaction,
-        timestamp: call.timestamp,
-      });
-    }
-  }
+  // ── One data point per Turn ─────────────────────────────────────
+  // peak context, compaction flag, first/last call timestamps for active duration
+  const turnPoints = turns.map(turn => {
+    const peak = Math.max(...turn.calls.map(c => c.contextSize), 0);
+    const hasCompaction = turn.calls.some(c => c.isCompaction);
+    const parseTs = (s: string) => {
+      if (!s) return NaN;
+      // Support both "HH:MM:SS" and full ISO strings
+      const t = s.length <= 8 ? new Date(`1970-01-01T${s}Z`).getTime() : new Date(s).getTime();
+      return isNaN(t) ? NaN : t;
+    };
+    const firstMs = parseTs(turn.calls[0]?.timestamp ?? "");
+    const lastMs  = parseTs(turn.calls[turn.calls.length - 1]?.timestamp ?? "");
+    const durationMs = (!isNaN(firstMs) && !isNaN(lastMs)) ? Math.max(lastMs - firstMs, 0) : 0;
+    return { turnId: turn.id, contextSize: peak, isCompaction: hasCompaction, firstMs, durationMs };
+  });
 
-  if (allPoints.length === 0) {
-    const maxCtx = Math.max(...turns.map(t => t.peakContext), 1);
-    const barColors = ["#6366f1", "#3b82f6", "#22c55e", "#f59e0b", "#a855f7"];
-    return (
-      <div style={{ border: isMock ? "1px dashed #d1d5db" : "1px solid #e5e7eb", borderRadius: 8, padding: "16px", background: "#fafafa", height: 120, overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: "80%", paddingBottom: 4 }}>
-          {turns.map((t, i) => {
-            const h = Math.round((t.peakContext / maxCtx) * 100);
-            return (
-              <div key={t.id} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
-                <div style={{ width: "100%", height: `${Math.max(h, 4)}%`, background: barColors[i % barColors.length], borderRadius: "3px 3px 0 0", opacity: 0.7 }} />
-                <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 2 }}>T{t.id}</div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
+  if (turnPoints.length === 0) return null;
 
   // ── SVG dimensions ──────────────────────────────────────────────
   const W = 600, H = 110, PAD = { t: 10, b: 22, l: 6, r: 36 };
@@ -894,63 +905,58 @@ function ContextTimelineChart({
   const chartH = H - PAD.t - PAD.b;
 
   // ── Y axis ──────────────────────────────────────────────────────
-  // If local model-window metadata is stale or the API reports a larger
-  // effective window, scale Y up to fit the actual peak and keep the configured
-  // ceiling as a reference line rather than the hard top of the chart.
-  const peakCtxRaw = Math.max(...allPoints.map(p => p.contextSize), contextWindowSize);
-  // Round up to next 50k for a clean axis
-  const yMax = Math.ceil(peakCtxRaw / 50_000) * 50_000;
-  const exceedsWindow = peakCtxRaw > contextWindowSize;
+  const peakCtxRaw = Math.max(...turnPoints.map(p => p.contextSize), 0);
+  const yMax = Math.max(Math.ceil(peakCtxRaw / 50_000) * 50_000, 50_000);
 
   const toY = (v: number) => PAD.t + chartH - (v / yMax) * chartH;
-  const ceilingY = toY(contextWindowSize);         // model limit line (may not be at top)
-  const warningY = toY(contextWindowSize * 0.9);   // 90% of model limit
 
   // ── X axis: two modes ───────────────────────────────────────────
-  // Mode A (linear): equal spacing per call index
-  // Mode B (time): spacing proportional to wall-clock time between calls
+  // Mode A (linear): equal spacing per turn index
+  // Mode B (time): x = cumulative active time (sum of turn durations); idle gaps
+  //   between turns are excluded from the axis but annotated as "+Xm" markers.
+  const nT = turnPoints.length;
   let xs: number[];
-  const n = allPoints.length;
+  // idleGaps[i] = idle ms between turn i-1 and turn i (for i >= 1), in time mode
+  let idleGaps: number[] = new Array(nT).fill(0);
 
-  if (xMode === "linear" || n <= 1) {
-    xs = allPoints.map((_, i) => PAD.l + (i / Math.max(n - 1, 1)) * chartW);
+  if (xMode === "linear" || nT <= 1) {
+    xs = turnPoints.map((_, i) => PAD.l + (i / Math.max(nT - 1, 1)) * chartW);
   } else {
-    // Parse timestamps to ms; fall back to linear if timestamps are missing/identical
-    const tms = allPoints.map(p => {
-      const t = p.timestamp ? new Date(p.timestamp).getTime() : NaN;
-      return isNaN(t) ? null : t;
-    });
-    const hasAllTimestamps = tms.every(t => t !== null);
-    if (!hasAllTimestamps) {
-      xs = allPoints.map((_, i) => PAD.l + (i / Math.max(n - 1, 1)) * chartW);
+    const hasTimestamps = turnPoints.every(p => !isNaN(p.firstMs) && p.durationMs >= 0);
+    if (!hasTimestamps) {
+      xs = turnPoints.map((_, i) => PAD.l + (i / Math.max(nT - 1, 1)) * chartW);
     } else {
-      const tFirst = tms[0]!;
-      const tLast = tms[n - 1]!;
-      const tRange = tLast - tFirst || 1;
-      xs = tms.map(t => PAD.l + ((t! - tFirst) / tRange) * chartW);
+      // Compute idle gaps and cumulative active durations
+      for (let i = 1; i < nT; i++) {
+        const prevEnd = turnPoints[i - 1].firstMs + turnPoints[i - 1].durationMs;
+        idleGaps[i] = Math.max(0, turnPoints[i].firstMs - prevEnd);
+      }
+      // Cumulative active time at the start of each turn
+      const cumActive: number[] = [0];
+      for (let i = 1; i < nT; i++) {
+        cumActive.push(cumActive[i - 1] + turnPoints[i - 1].durationMs);
+      }
+      const totalActive = cumActive[nT - 1] + turnPoints[nT - 1].durationMs || 1;
+      xs = cumActive.map(t => PAD.l + (t / totalActive) * chartW);
     }
   }
 
-  const ys = allPoints.map(p => toY(p.contextSize));
+  const ys = turnPoints.map(p => toY(p.contextSize));
   const pathD = xs.map((x, i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
 
-  // Turn boundary x positions (first call of each turn except T1)
-  const turnBoundaries: number[] = [];
-  let cumIdx = 0;
-  for (const turn of turns) {
-    if (cumIdx > 0) turnBoundaries.push(xs[cumIdx]);
-    cumIdx += turn.calls.length;
-  }
-
-  // Peak
   const peakCtx = peakCtxRaw;
-  const peakPct = peakCtx / contextWindowSize;
-  const lineColor = peakPct > 0.9 ? "#ea580c" : "#6366f1";
+  const lineColor = "#6366f1";
 
-  // Y-axis ticks: cover full yMax range at 50k steps
   const tickStep = 50_000;
   const yTicks = Array.from({ length: Math.floor(yMax / tickStep) + 1 }, (_, i) => i * tickStep)
     .filter(v => v <= yMax);
+
+  function fmtIdle(ms: number): string {
+    const s = Math.round(ms / 1000);
+    if (s < 60) return `+${s}s`;
+    const m = Math.round(s / 60);
+    return `+${m}m`;
+  }
 
   return (
     <div style={{ border: isMock ? "1px dashed #d1d5db" : "1px solid #e5e7eb", borderRadius: 8, background: "#fafafa", overflow: "hidden" }}>
@@ -988,85 +994,53 @@ function ContextTimelineChart({
           );
         })}
 
-        {/* Model context window ceiling line (always drawn, may be below chart top if exceeded) */}
-        <line x1={PAD.l} y1={ceilingY} x2={PAD.l + chartW} y2={ceilingY}
-          stroke="#ef4444" strokeWidth={1} strokeDasharray="4,3" opacity={0.7}
-        />
-        <text x={W - PAD.r + 2} y={ceilingY + 3} fontSize={8} fill="#ef4444" opacity={0.85}>
-          {fmtK(contextWindowSize)}
-        </text>
-
-        {/* Danger zone: 90-100% of the model context window */}
-        {warningY > ceilingY && (
-          <rect x={PAD.l} y={ceilingY} width={chartW} height={warningY - ceilingY}
-            fill="#fef3c7" opacity={0.6}
-          />
-        )}
-
-        {/* Turn boundary vertical lines */}
-        {turnBoundaries.map((x, i) => (
-          <line key={i} x1={x} y1={PAD.t} x2={x} y2={PAD.t + chartH}
-            stroke="#e5e7eb" strokeWidth={1} strokeDasharray="3,3" />
-        ))}
-
-        {/* Turn labels at bottom */}
-        {turns.map((turn, ti) => {
-          const startIdx = turns.slice(0, ti).reduce((s, t) => s + t.calls.length, 0);
-          const midIdx = startIdx + Math.floor(turn.calls.length / 2);
-          const x = xs[Math.min(midIdx, xs.length - 1)] ?? 0;
-          return (
-            <text key={turn.id} x={x} y={H - 4} textAnchor="middle" fontSize={9} fill="#9ca3af">T{turn.id}</text>
-          );
-        })}
-
-        {/* Time labels on X axis (Time mode only) */}
-        {xMode === "time" && allPoints.map((p, i) => {
-          if (!p.timestamp) return null;
-          // Only label first + last + turn starts
-          const isTurnStart = turnBoundaries.includes(xs[i]) || i === 0;
-          if (!isTurnStart && i !== n - 1) return null;
-          const label = p.timestamp.length >= 19
-            ? p.timestamp.slice(11, 16)
-            : p.timestamp.slice(0, 5);
-          return (
-            <text key={i} x={xs[i]} y={H - 4} textAnchor="middle" fontSize={8} fill="#c4b5d5">{label}</text>
-          );
-        })}
-
         {/* Area fill */}
         <path
-          d={`${pathD} L${xs[n - 1].toFixed(1)},${(PAD.t + chartH).toFixed(1)} L${PAD.l.toFixed(1)},${(PAD.t + chartH).toFixed(1)} Z`}
+          d={`${pathD} L${xs[nT - 1].toFixed(1)},${(PAD.t + chartH).toFixed(1)} L${PAD.l.toFixed(1)},${(PAD.t + chartH).toFixed(1)} Z`}
           fill={lineColor} opacity={0.06}
         />
 
         {/* Main line */}
         <path d={pathD} fill="none" stroke={lineColor} strokeWidth={1.5} />
 
-        {/* Compaction markers */}
-        {allPoints.map((p, i) => p.isCompaction ? (
+        {/* Time mode: idle gap markers between turns */}
+        {xMode === "time" && turnPoints.map((_, i) => {
+          if (i === 0 || idleGaps[i] < 30_000) return null; // skip tiny gaps < 30s
+          const x = xs[i];
+          const midY = PAD.t + chartH / 2;
+          return (
+            <g key={i}>
+              {/* vertical dashed separator */}
+              <line x1={x - 1} y1={PAD.t} x2={x - 1} y2={PAD.t + chartH}
+                stroke="#e5e7eb" strokeWidth={1} strokeDasharray="3,3" />
+              {/* idle label */}
+              <text x={x - 4} y={midY} textAnchor="end" fontSize={8} fill="#d1d5db">
+                {fmtIdle(idleGaps[i])}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Turn dots + compaction markers */}
+        {turnPoints.map((p, i) => (
+          <circle key={i} cx={xs[i]} cy={ys[i]} r={2.5}
+            fill={p.isCompaction ? "#ef4444" : lineColor} opacity={0.85} />
+        ))}
+        {turnPoints.map((p, i) => p.isCompaction ? (
           <text key={i} x={xs[i]} y={ys[i] - 5} textAnchor="middle" fontSize={9} fill="#ef4444">◆</text>
         ) : null)}
 
-        {/* Call dots */}
-        {n <= 40 && allPoints.map((p, i) => (
-          <circle key={i} cx={xs[i]} cy={ys[i]} r={2.5}
-            fill={p.isCompaction ? "#ef4444" : lineColor} opacity={0.85} />
+        {/* X axis labels */}
+        {turnPoints.map((p, i) => (
+          <text key={i} x={xs[i]} y={H - 4} textAnchor="middle" fontSize={9} fill="#9ca3af">T{p.turnId}</text>
         ))}
       </svg>
 
       {/* Footer annotation */}
       {!isMock && (
         <div style={{ padding: "2px 10px 6px", fontSize: 10, color: "#9ca3af", display: "flex", gap: 16, flexWrap: "wrap" }}>
-          <span>
-            Peak: <strong style={{ color: peakPct > 0.9 ? "#ea580c" : "#374151" }}>{fmtK(peakCtx)}</strong>
-            {" "}({Math.round(peakPct * 100)}% of {fmtK(contextWindowSize)} window)
-          </span>
-          {exceedsWindow && (
-            <span style={{ color: "#ea580c" }}>
-              ⚠ exceeds configured window — verify model window metadata
-            </span>
-          )}
-          {xMode === "time" && <span style={{ color: "#c4b5d5" }}>X axis = wall-clock time</span>}
+          <span>Peak: <strong style={{ color: "#374151" }}>{fmtK(peakCtx)}</strong></span>
+          {xMode === "time" && <span style={{ color: "#c4b5d5" }}>X axis = cumulative active time (user idle excluded)</span>}
         </div>
       )}
     </div>
@@ -1103,9 +1077,6 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
   const needsExpand = inputFull.length > INPUT_PREVIEW_CHARS
     || (outputFull !== null && outputFull.length > OUTPUT_PREVIEW_CHARS);
 
-  const dur = fmtDuration(turn.durationMs);
-  const contextWindowSize = turn.calls[0]?.contextWindowSize ?? 200_000;
-
   return (
     <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, background: "#fff", overflow: "hidden" }}>
       {/* Header row — always visible, click to drilldown */}
@@ -1116,14 +1087,18 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
         onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
       >
         <span style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", flexShrink: 0 }}>Turn {turn.id}</span>
-        {dur && <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>{dur}</span>}
-        <span style={{ fontSize: 11, color: "#9ca3af", flexShrink: 0 }}>
-          {turn.llmCallCount} calls · {turn.toolCallCount} tools
-        </span>
         <span style={{ flex: 1 }} />
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
           {turn.hasCompaction && <RiskBadge type="compaction" />}
-          {turn.peakContext > contextWindowSize * 0.85 && <RiskBadge type="near-limit" />}
+          {turn.errorCount > 0 && (
+            <span style={{
+              fontSize: 9, fontWeight: 700, color: "#fff",
+              background: "#dc2626", borderRadius: 3, padding: "1px 4px",
+              letterSpacing: "0.04em",
+            }}>
+              {turn.errorCount}E
+            </span>
+          )}
         </div>
         <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>›</span>
       </div>
@@ -1141,6 +1116,36 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
             {expanded ? inputFull : inputPreview}
           </div>
         </div>
+
+        {/* Mid-turn injections — user messages received while LLM was executing */}
+        {turn.midTurnInjections && turn.midTurnInjections.length > 0 && (
+          <div style={{ marginTop: 8, marginBottom: outputFull ? 10 : 0 }}>
+            {turn.midTurnInjections.map((inj, idx) => (
+              <div key={idx} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 6 }}>
+                <div style={{
+                  flexShrink: 0, fontSize: 9, fontWeight: 600, color: "#f59e0b",
+                  background: "#fffbeb", border: "1px solid #fde68a",
+                  borderRadius: 4, padding: "2px 5px", marginTop: 1, letterSpacing: "0.04em",
+                }}>
+                  INJECTED
+                </div>
+                <div style={{
+                  fontSize: 12, color: "#92400e", lineHeight: 1.5,
+                  background: "#fffbeb", borderRadius: 6, padding: "6px 10px",
+                  whiteSpace: "pre-wrap", wordBreak: "break-word", flex: 1,
+                  borderLeft: "2px solid #f59e0b",
+                }}>
+                  {inj.text}
+                  {inj.timestamp && (
+                    <span style={{ display: "block", fontSize: 10, color: "#d97706", marginTop: 3 }}>
+                      after call {inj.afterCallIndex} · {inj.timestamp.length >= 19 ? inj.timestamp.slice(11, 19) : inj.timestamp}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Model output */}
         {outputFull && (
@@ -1566,7 +1571,7 @@ function AgentLoopFlow({
       ctxDelta,
       callH: Math.round(callHeightScale(call.contextSize)),
       isSignificant: Math.abs(ctxDelta) > 2000,
-      nearLimit: call.contextSize > call.contextWindowSize * 0.85,
+      nearLimit: false,
       tg: agentLoop.toolGroups.find(g => g.afterCallId === call.id) ?? null,
     };
   });
@@ -2240,7 +2245,6 @@ function UserTurnDetailPanel({
   const risks: Array<{ type: "compaction" | "unknown-spike" | "large-growth" | "near-limit" | "tool-heavy" }> = [];
   if (turn.hasCompaction) risks.push({ type: "compaction" });
   if (turn.hasUnknownSpike) risks.push({ type: "unknown-spike" });
-  if (turn.peakContext > (turn.calls[0]?.contextWindowSize ?? 200_000) * 0.85) risks.push({ type: "near-limit" });
   const toolHeavy = agentLoop.toolSummary.reduce((s, t) => s + t.totalOutput, 0) > 20_000;
   if (toolHeavy) risks.push({ type: "tool-heavy" });
 
@@ -2299,7 +2303,7 @@ function UserTurnDetailPanel({
         <div style={{ marginBottom: 0 }}>
           <SummaryMetricStrip columns={3} cards={[
             { label: "Peak Context", value: fmtK(turn.peakContext) },
-            { label: "Net Context Δ",  value: netCtxStr,
+            { label: "Context Δ",  value: netCtxStr,
               color: netCtx < 0 ? "#16a34a" : undefined,
               tooltip: "Last call context minus first call context in this turn" },
             { label: "Unknown Δ",    value: turn.unknownDelta > 0 ? `+${fmtK(turn.unknownDelta)}` : "0",
@@ -2904,7 +2908,7 @@ function LlmCallDetailPanel({
 
   const freshIn  = call.contextSize - call.cacheRead - call.cacheWrite;
   const cacheRatio = call.contextSize > 0 ? Math.round(call.cacheRead / call.contextSize * 100) : 0;
-  const nearLimit  = call.contextSize > call.contextWindowSize * 0.85;
+  const nearLimit  = false;
 
   // Diff summary numbers from attributed ranges
   const addedTokens    = attrRanges.filter(r => r.changeType === "added").reduce((s, r) => s + r.tokens, 0);
@@ -2959,7 +2963,7 @@ function LlmCallDetailPanel({
               { label: "Fresh In",    value: fmtK(freshIn) },
               { label: "Fresh Out",   value: fmtK(call.outputTokens) },
               { label: "Stop",        value: call.stopReason ?? "—" },
-              { label: "Window",      value: `${Math.round(call.contextSize / call.contextWindowSize * 100)}%`, color: nearLimit ? "#ea580c" : undefined },
+              { label: "Context",     value: fmtK(call.contextSize) },
               { label: "Thinking",    value: response.hasThinking ? "yes" : "no", mock: true },
             ]} />
           </div>
@@ -3299,8 +3303,8 @@ export function SessionDetailV2({ session, onClose }: Props) {
                 label={`Turn ${turn.id}`}
                 sublabel={`${turn.netContextDelta > 0 ? "+" : ""}${fmtK(turn.netContextDelta)} · ${turn.llmCallCount} calls`}
                 active={navLevel === "turn" && selectedTurn?.id === turn.id && !selectedCall}
-                badge={turn.hasCompaction ? "C" : turn.hasUnknownSpike ? "!" : undefined}
-                badgeColor={turn.hasCompaction ? "#ef4444" : "#94a3b8"}
+                badge={turn.hasCompaction ? "C" : turn.errorCount > 0 ? "E" : turn.hasUnknownSpike ? "!" : undefined}
+                badgeColor={turn.hasCompaction ? "#ef4444" : turn.errorCount > 0 ? "#dc2626" : "#94a3b8"}
                 onClick={() => handleSelectTurn(turn)}
               />
             ))}

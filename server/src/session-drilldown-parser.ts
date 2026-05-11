@@ -2,7 +2,7 @@ import { readFileSync, existsSync, readdirSync } from "fs";
 import { join, dirname, basename } from "path";
 import type { Database } from "better-sqlite3";
 import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData, ModelStats, SubAgentSummary } from "./session-drilldown-types.ts";
-import { getContextWindowSize, normaliseModelName } from "./model-info.ts";
+import { normaliseModelName } from "./model-info.ts";
 
 // ─── JSONL record shapes (loose, best-effort) ────────────────────────────────
 
@@ -317,12 +317,24 @@ export function parseSessionDrilldown(
     const userText = extractUserText(userEv.message?.content);
     const turnStartTs = tsOf(ev);
 
-    // Collect deduplicated assistant events until end_turn
+    // Collect deduplicated assistant events until end_turn.
+    // Also capture any human-input user events that arrive mid-turn
+    // (user typed while LLM was executing tool calls).
     const rawCalls: Array<{ ev: JAssistantEvent; lineIdx: number }> = [];
+    const midTurnInjections: Array<{ text: string; timestamp: string; afterCallIndex: number }> = [];
+    let turnErrorCount = 0;
     let j = i + 1;
     while (j < events.length) {
       const jev = events[j];
-      if (jev.type === "assistant" && !(jev as JAssistantEvent).isSidechain) {
+      if (jev.type === "user" && isHumanInput(jev as JUserEvent)) {
+        midTurnInjections.push({
+          text: extractUserText((jev as JUserEvent).message?.content),
+          timestamp: tsOf(jev),
+          afterCallIndex: rawCalls.length,
+        });
+      } else if (jev.type === "system") {
+        if (((jev as JSystemEvent).subtype ?? "") === "api_error") turnErrorCount++;
+      } else if (jev.type === "assistant" && !(jev as JAssistantEvent).isSidechain) {
         const aev = jev as JAssistantEvent;
         const msgId = aev.message?.id;
         const isCanonical = msgId
@@ -371,20 +383,23 @@ export function parseSessionDrilldown(
 
       // Context size proxy: sum of all token sources at this call
       const contextSize = freshIn + cacheRead + cacheWrite;
-      const contextWindowSize = getContextWindowSize(model);
-      // Delta vs previous call in turn
+      // Delta vs previous call (across the whole session, not just within turn)
       const prevCall = callIdx > 0 ? rawCalls[callIdx - 1].ev : null;
       const prevUsage = prevCall?.message?.usage ?? {};
       const prevContext = (prevUsage.input_tokens ?? 0)
         + (prevUsage.cache_read_input_tokens ?? 0)
         + (prevUsage.cache_creation_input_tokens ?? 0);
       const significantDelta = contextSize - prevContext;
+      // freshIn per-call = context growth since previous call.
+      // API input_tokens only counts non-cached tokens; here we want the actual
+      // new content injected (user turn + prev assistant output), regardless of
+      // whether it was served from cache or written fresh.
+      const callFreshIn = callIdx === 0 ? contextSize : Math.max(0, contextSize - prevContext);
 
       return {
         id: globalCallIndex,
         indexInTurn: callIdx + 1,
         contextSize,
-        contextWindowSize,
         outputTokens: freshOut,
         cacheRead,
         cacheWrite,
@@ -392,6 +407,7 @@ export function parseSessionDrilldown(
         model,
         stopReason,
         isCompaction,
+        freshIn: callFreshIn,
         isUnknownHeavy: false,
         isSignificant: Math.abs(significantDelta) > 2000,
         significantDelta,
@@ -404,11 +420,16 @@ export function parseSessionDrilldown(
 
     // Turn-level aggregates
     const llmCallCount = calls.length;
-    // Tool calls = assistant events with tool_use content blocks
+    // Tool calls = assistant events with tool_use content blocks; collect names
     let toolCallCount = 0;
+    const turnToolNames: string[] = [];
     for (const { ev: aev } of rawCalls) {
       for (const b of aev.message?.content ?? []) {
-        if (b.type === "tool_use") toolCallCount++;
+        const bc = b as { type?: string; name?: string };
+        if (bc.type === "tool_use") {
+          toolCallCount++;
+          if (bc.name) turnToolNames.push(bc.name);
+        }
       }
     }
     const totalCacheRead = calls.reduce((s, c) => s + c.cacheRead, 0);
@@ -439,6 +460,7 @@ export function parseSessionDrilldown(
       id: turns.length + 1,
       userInput: userText,
       finalOutput,
+      midTurnInjections,
       startedAt: turnStartTs,
       endedAt: turnEndTs,
       durationMs,
@@ -451,8 +473,10 @@ export function parseSessionDrilldown(
       unknownDelta: 0,
       hasCompaction: calls.some(c => c.isCompaction),
       hasUnknownSpike: false,
+      errorCount: turnErrorCount,
       calls,
-    });
+      _toolNames: turnToolNames,
+    } as UserTurn & { _toolNames: string[] });
 
     i = j + 1;
   }
@@ -482,8 +506,11 @@ export function parseSessionDrilldown(
   const peakContext = allCalls.length ? Math.max(...allCalls.map(c => c.contextSize)) : 0;
   const totalCacheRead = allCalls.reduce((s, c) => s + c.cacheRead, 0);
   const totalCacheWrite = allCalls.reduce((s, c) => s + c.cacheWrite, 0);
-  const totalFreshIn = allCalls.reduce((s, c) => s + c.contextSize - c.cacheRead - c.cacheWrite, 0);
+  // totalFreshIn = sum of per-call context deltas (new content injected each call)
+  const totalFreshIn = allCalls.reduce((s, c) => s + c.freshIn, 0);
   const totalFreshOut = allCalls.reduce((s, c) => s + c.outputTokens, 0);
+  const lastContext = allCalls.length ? allCalls[allCalls.length - 1].contextSize : 0;
+  const compactionCount = turns.filter(t => t.hasCompaction).length;
 
   // Per-model breakdown
   const modelBreakdown: Record<string, ModelStats> = {};
@@ -497,16 +524,24 @@ export function parseSessionDrilldown(
     s.outputTokens += call.outputTokens;
     s.cacheRead += call.cacheRead;
     s.cacheWrite += call.cacheWrite;
-    s.freshIn += call.contextSize - call.cacheRead - call.cacheWrite;
+    s.freshIn += call.freshIn;
   }
 
-  // Session context window = the ceiling of the most-used model
-  // (if multiple models, pick the one with most calls)
-  const dominantModel = Object.entries(modelBreakdown)
-    .sort((a, b) => b[1].calls - a[1].calls)[0]?.[0] ?? "";
-  const contextWindowSize = getContextWindowSize(dominantModel);
+  // Tool distribution: count by name, sort descending, top 8
+  const toolNameCounts = new Map<string, number>();
+  for (const turn of turns) {
+    const t = turn as UserTurn & { _toolNames?: string[] };
+    for (const name of t._toolNames ?? []) {
+      toolNameCounts.set(name, (toolNameCounts.get(name) ?? 0) + 1);
+    }
+    delete t._toolNames;
+  }
+  const toolDistribution = [...toolNameCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([name, count]) => ({ name, count }));
 
-  // ── 7. Proxy data availability ───────────────────────────────────────────
+  // ── 8. Proxy data availability ───────────────────────────────────────────
   const proxyRow = db.prepare(
     "SELECT COUNT(*) as cnt FROM proxy_requests WHERE session_id = ?",
   ).get(sessionId) as { cnt: number };
@@ -528,9 +563,11 @@ export function parseSessionDrilldown(
     totalCacheWrite,
     totalFreshIn,
     totalFreshOut,
+    lastContext,
     systemErrorCount,
+    compactionCount,
     modelBreakdown,
-    contextWindowSize,
+    toolDistribution,
 
     hasProxyData,
     hasJsonlSource: true,

@@ -34,14 +34,17 @@ export interface SessionMetrics {
   totalCacheWrite: number;
   totalFreshIn: number;
   totalFreshOut: number;
+  lastContext: number;          // ✓ contextSize of the final LLM call
   systemErrorCount: number;
-  contextWindowSize: number;
+  compactionCount: number;
   hasProxyData: boolean;
   durationMs: number;           // ✓ last_event - first_event
   durationStr: string;
+  firstEventAt: string;
+  lastEventAt: string;
 
   // ~ estimated
-  cacheRatio: number | null;    // ~ cache_read / total input tokens
+  cacheRatio: number | null;    // last call: cache_read / context_size
   netContext: number | null;    // ✓ last call ctx - first call ctx
 
   // Model info
@@ -55,11 +58,14 @@ export function deriveSessionMetrics(d: SessionDrilldown): SessionMetrics {
     ? Math.max(0, new Date(d.lastEventAt).getTime() - new Date(d.firstEventAt).getTime())
     : 0;
 
-  const totalInput = d.totalFreshIn + d.totalCacheWrite + d.totalCacheRead;
-  const cacheRatio = totalInput > 0 ? d.totalCacheRead / totalInput * 100 : null;
-
-  // Net context: last call in last turn → first call in first turn
+  // cacheRatio: based on the last LLM call (single-call view, most accurate)
   const allCalls = d.turns.flatMap(t => t.calls);
+  const lastCall = allCalls.length > 0 ? allCalls[allCalls.length - 1] : null;
+  const cacheRatio = lastCall && lastCall.contextSize > 0
+    ? lastCall.cacheRead / lastCall.contextSize * 100
+    : null;
+
+  // Net context: last call ctx - first call ctx
   const netContext = allCalls.length >= 2
     ? allCalls[allCalls.length - 1].contextSize - allCalls[0].contextSize
     : null;
@@ -79,11 +85,14 @@ export function deriveSessionMetrics(d: SessionDrilldown): SessionMetrics {
     totalCacheWrite: d.totalCacheWrite,
     totalFreshIn: d.totalFreshIn,
     totalFreshOut: d.totalFreshOut,
+    lastContext: d.lastContext,
     systemErrorCount: d.systemErrorCount,
-    contextWindowSize: d.contextWindowSize,
+    compactionCount: d.compactionCount ?? 0,
     hasProxyData: d.hasProxyData,
     durationMs,
     durationStr: fmtMs(durationMs),
+    firstEventAt: d.firstEventAt,
+    lastEventAt: d.lastEventAt,
     cacheRatio,
     netContext,
     modelNames,
@@ -117,25 +126,22 @@ export interface TurnMetrics {
   unknownDelta: number;         // always 0 in v1 (not computed)
 
   // Risk flags
-  isNearLimit: boolean;         // peak > 85% of window
-  riskFlags: Array<"compaction" | "near-limit" | "large-growth" | "tool-heavy">;
+  riskFlags: Array<"compaction" | "large-growth" | "tool-heavy">;
 }
 
-export function deriveTurnMetrics(turn: UserTurn, contextWindowSize: number): TurnMetrics {
+export function deriveTurnMetrics(turn: UserTurn): TurnMetrics {
   const calls = turn.calls;
   const firstCtx = calls[0]?.contextSize ?? 0;
   const lastCtx  = calls[calls.length - 1]?.contextSize ?? 0;
   const netContextDelta = lastCtx - firstCtx;
 
-  const freshIn  = calls.reduce((s, c) => s + Math.max(c.contextSize - c.cacheRead - c.cacheWrite, 0), 0);
+  const freshIn  = calls.reduce((s, c) => s + c.freshIn, 0);
   const freshOut = calls.reduce((s, c) => s + c.outputTokens, 0);
   const totalInput = freshIn + turn.cacheWrite + turn.cacheRead;
   const cacheRatio = totalInput > 0 ? turn.cacheRead / totalInput * 100 : null;
 
-  const isNearLimit = turn.peakContext > contextWindowSize * 0.85;
   const riskFlags: TurnMetrics["riskFlags"] = [];
   if (turn.hasCompaction) riskFlags.push("compaction");
-  if (isNearLimit)        riskFlags.push("near-limit");
   if (Math.abs(netContextDelta) > 20_000) riskFlags.push("large-growth");
 
   return {
@@ -154,7 +160,6 @@ export function deriveTurnMetrics(turn: UserTurn, contextWindowSize: number): Tu
     freshOut,
     cacheRatio,
     unknownDelta: turn.unknownDelta,
-    isNearLimit,
     riskFlags,
   };
 }
@@ -166,7 +171,6 @@ export interface CallMetrics {
   id: number;
   indexInTurn: number;
   contextSize: number;
-  contextWindowSize: number;
   outputTokens: number;
   cacheRead: number;
   cacheWrite: number;
@@ -179,8 +183,6 @@ export interface CallMetrics {
   // ✓ computed
   freshIn: number;
   cacheRatio: number;           // cache_read / context_size
-  windowUsedPct: number;        // context_size / context_window_size %
-  isNearLimit: boolean;
 
   // Proxy-backed (null when no proxy)
   proxyDurationMs: number | null;
@@ -189,16 +191,12 @@ export interface CallMetrics {
 }
 
 export function deriveCallMetrics(call: LlmCall): CallMetrics {
-  const freshIn = Math.max(call.contextSize - call.cacheRead - call.cacheWrite, 0);
+  const freshIn = call.freshIn;
   const cacheRatio = call.contextSize > 0 ? Math.round(call.cacheRead / call.contextSize * 100) : 0;
-  const windowUsedPct = Math.round(call.contextSize / call.contextWindowSize * 100);
-  const isNearLimit = call.contextSize > call.contextWindowSize * 0.85;
-
   return {
     id: call.id,
     indexInTurn: call.indexInTurn,
     contextSize: call.contextSize,
-    contextWindowSize: call.contextWindowSize,
     outputTokens: call.outputTokens,
     cacheRead: call.cacheRead,
     cacheWrite: call.cacheWrite,
@@ -209,8 +207,6 @@ export function deriveCallMetrics(call: LlmCall): CallMetrics {
     significantDelta: call.significantDelta,
     freshIn,
     cacheRatio,
-    windowUsedPct,
-    isNearLimit,
     proxyDurationMs: call.proxy?.durationMs ?? null,
     proxyStopReason: call.proxy?.resStopReason ?? null,
     hasProxy: !!call.proxy,
@@ -222,7 +218,6 @@ export function deriveCallMetrics(call: LlmCall): CallMetrics {
 export interface SessionHotspots {
   largestGrowthTurn: UserTurn | null;    // ✓ turn with max netContextDelta
   compactionTurns: UserTurn[];           // ✓ turns with compaction calls
-  nearLimitCalls: LlmCall[];             // ✓ calls > 85% window
   peakCall: LlmCall | null;              // ✓ call with max contextSize
 }
 
@@ -237,13 +232,9 @@ export function deriveSessionHotspots(d: SessionDrilldown): SessionHotspots {
     t => t.hasCompaction || t.calls.some(c => c.isCompaction),
   );
 
-  const nearLimitCalls = allCalls.filter(
-    c => c.contextSize > d.contextWindowSize * 0.85,
-  );
-
   const peakCall = allCalls.length > 0
     ? allCalls.reduce((best, c) => c.contextSize > best.contextSize ? c : best)
     : null;
 
-  return { largestGrowthTurn, compactionTurns, nearLimitCalls, peakCall };
+  return { largestGrowthTurn, compactionTurns, peakCall };
 }
