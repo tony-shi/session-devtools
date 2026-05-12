@@ -3261,8 +3261,9 @@ function AttributedRangeEvidenceDrawer({ range, onClear }: { range: AttributedDi
 // ─── Real Segment Tree (proxy-backed, no mock) ────────────────────────────────
 // Layout:
 //   Level 0 — top bar: section blocks (System / Tools / Messages / …)
-//   Level 1 — clicking a section block → sub-bar of its segments appears below
-//   Level 2 — clicking a segment in the sub-bar → detail panel below
+//   Default — collapsed overview: all sections listed with their segments
+//   Level 1 — clicking a section → sub-bar + rich segment list
+//   Level 2 — clicking a segment → detail panel with rawText
 
 const SECTION_LABEL: Record<string, string> = {
   system: "System", tools: "Tools", messages: "Messages", metadata: "Metadata", unknown: "Unknown",
@@ -3280,6 +3281,165 @@ const CACHE_BADGE: Record<string, { label: string; color: string; bg: string; bo
 };
 
 function charsToTokens(chars: number): number { return Math.round(chars / 4); }
+
+// Infer segment meta from category/label for display enrichment
+function inferSegmentMeta(seg: import("./drilldown-types").CallSegment): {
+  nature: "static" | "dynamic" | "rule-injected" | "tool-result" | "assistant" | "user" | null;
+  sourceHint: string | null;
+  isMock: boolean;
+} {
+  const cat = seg.category?.toLowerCase() ?? "";
+  const label = seg.label?.toLowerCase() ?? "";
+
+  // System segments: categorize by known patterns
+  if (seg.section === "system") {
+    if (cat.includes("memory") || label.includes("memory")) return { nature: "dynamic", sourceHint: "auto-memory", isMock: false };
+    if (cat.includes("claude.md") || label.includes("claude.md")) return { nature: "static", sourceHint: "CLAUDE.md", isMock: false };
+    if (cat.includes("reminder") || label.includes("reminder") || label.includes("task")) return { nature: "dynamic", sourceHint: "injected", isMock: false };
+    if (cat.includes("rule") || label.includes("rule")) return { nature: "rule-injected", sourceHint: "rule-registry", isMock: false };
+    if (cat.includes("context") || cat.includes("system_prompt") || cat.includes("system-prompt")) return { nature: "static", sourceHint: "system-prompt", isMock: false };
+    return { nature: "static", sourceHint: null, isMock: true };
+  }
+
+  // Tools segments
+  if (seg.section === "tools") {
+    if (label.includes("mcp") || cat.includes("mcp")) return { nature: "dynamic", sourceHint: "MCP", isMock: false };
+    if (label.includes("bash") || label.includes("read") || label.includes("write") || label.includes("edit"))
+      return { nature: "static", sourceHint: "system-tools", isMock: false };
+    return { nature: "static", sourceHint: "tools", isMock: true };
+  }
+
+  // Messages segments
+  if (seg.section === "messages") {
+    if (seg.role === "user" && (cat.includes("tool_result") || label.includes("tool_result")))
+      return { nature: "tool-result", sourceHint: null, isMock: false };
+    if (seg.role === "assistant") return { nature: "assistant", sourceHint: null, isMock: false };
+    if (seg.role === "user") return { nature: "user", sourceHint: null, isMock: false };
+    return { nature: null, sourceHint: null, isMock: true };
+  }
+
+  return { nature: null, sourceHint: null, isMock: true };
+}
+
+const NATURE_BADGE: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  "static":        { label: "static",       color: "#374151", bg: "#f3f4f6", border: "#e5e7eb" },
+  "dynamic":       { label: "dynamic",      color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
+  "rule-injected": { label: "rule",         color: "#7c3aed", bg: "#f5f3ff", border: "#ddd6fe" },
+  "tool-result":   { label: "tool_result",  color: "#b45309", bg: "#fef3c7", border: "#fde68a" },
+  "assistant":     { label: "assistant",    color: "#1d4ed8", bg: "#eff6ff", border: "#bfdbfe" },
+  "user":          { label: "user",         color: "#047857", bg: "#f0fdf4", border: "#bbf7d0" },
+};
+
+// Infer turn position for message segments from call context
+function inferMessageTurnInfo(seg: import("./drilldown-types").CallSegment, call: MockLlmCall): {
+  turnDesc: string | null;
+  isMock: boolean;
+} {
+  if (seg.section !== "messages") return { turnDesc: null, isMock: false };
+
+  // From label: often contains "Turn N" or message index heuristics
+  const labelLower = seg.label.toLowerCase();
+  if (labelLower.includes("turn")) {
+    const m = seg.label.match(/turn\s*(\d+)/i);
+    if (m) return { turnDesc: `Turn ${m[1]}`, isMock: false };
+  }
+  // Heuristic: if role is assistant, this is likely from a prior turn response
+  if (seg.role === "assistant") return { turnDesc: `□ prior turn`, isMock: true };
+  if (seg.role === "user" && (seg.category?.includes("tool_result") || seg.label.toLowerCase().includes("tool_result"))) {
+    return { turnDesc: `□ turn #${call.indexInTurn} · tool_result`, isMock: true };
+  }
+  if (seg.role === "user") return { turnDesc: `□ turn #${call.indexInTurn}`, isMock: true };
+  return { turnDesc: null, isMock: true };
+}
+
+// Compact segment row used in default overview and section drill-down
+function SegmentRow({
+  seg, secColor, totalCharsInSection, diffByHash, call, onClick,
+}: {
+  seg: import("./drilldown-types").CallSegment;
+  secColor: string;
+  totalCharsInSection: number;
+  diffByHash: Map<string, { op: string; charDelta: number }>;
+  call: MockLlmCall;
+  onClick: () => void;
+}) {
+  const segPct    = Math.round(seg.charCount / totalCharsInSection * 100);
+  const segTokens = charsToTokens(seg.charCount);
+  const diffEntry = diffByHash.get(seg.rawHash);
+  const cacheBadge = CACHE_BADGE[seg.cacheHint];
+  const deltaStr = diffEntry && diffEntry.op !== "unchanged"
+    ? (diffEntry.op === "added" ? "+" : diffEntry.op === "removed" ? "−" : diffEntry.charDelta >= 0 ? "+" : "") + fmtK(charsToTokens(Math.abs(diffEntry.charDelta)))
+    : null;
+  const deltaColor = diffEntry?.op === "removed" ? "#dc2626" : "#d97706";
+
+  const meta = inferSegmentMeta(seg);
+  const natureBadge = meta.nature ? NATURE_BADGE[meta.nature] : null;
+  const turnInfo = inferMessageTurnInfo(seg, call);
+
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: 8, padding: "7px 12px",
+        cursor: "pointer", background: "#fff",
+      }}
+      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "#f9fafb"; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "#fff"; }}
+    >
+      {/* mini proportion bar */}
+      <div style={{ width: 36, height: 4, background: "#f3f4f6", borderRadius: 2, overflow: "hidden", flexShrink: 0 }}>
+        <div style={{ width: `${segPct}%`, height: "100%", background: secColor + "80" }} />
+      </div>
+
+      {/* label + sub-info */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, overflow: "hidden" }}>
+          <span style={{ fontSize: 11, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {seg.label}
+          </span>
+          {meta.isMock && (
+            <span title="Inferred / mock value" style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>□</span>
+          )}
+        </div>
+        {(meta.sourceHint || turnInfo.turnDesc || seg.role) && (
+          <div style={{ display: "flex", gap: 6, marginTop: 1, flexWrap: "wrap" }}>
+            {seg.role && (
+              <span style={{ fontSize: 9, color: "#9ca3af" }}>{seg.role}</span>
+            )}
+            {meta.sourceHint && (
+              <span style={{ fontSize: 9, color: "#9ca3af" }}>{meta.sourceHint}</span>
+            )}
+            {turnInfo.turnDesc && (
+              <span style={{ fontSize: 9, color: turnInfo.isMock ? "#d1d5db" : "#9ca3af" }}>{turnInfo.turnDesc}</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* nature badge */}
+      {natureBadge && (
+        <span style={{ fontSize: 9, color: natureBadge.color, background: natureBadge.bg, border: `1px solid ${natureBadge.border}`, borderRadius: 3, padding: "1px 4px", flexShrink: 0, whiteSpace: "nowrap" }}>
+          {natureBadge.label}
+        </span>
+      )}
+
+      {/* delta */}
+      {deltaStr && (
+        <span style={{ fontSize: 10, fontWeight: 600, color: deltaColor, flexShrink: 0, width: 44, textAlign: "right" }}>{deltaStr}</span>
+      )}
+
+      {/* tokens + pct */}
+      <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", width: 40, textAlign: "right", flexShrink: 0 }}>~{fmtK(segTokens)}</span>
+      <span style={{ fontSize: 10, color: "#9ca3af", width: 26, textAlign: "right", flexShrink: 0 }}>{segPct}%</span>
+
+      {/* cache badge */}
+      {cacheBadge
+        ? <span style={{ fontSize: 9, color: cacheBadge.color, background: cacheBadge.bg, border: `1px solid ${cacheBadge.border}`, borderRadius: 3, padding: "1px 5px", flexShrink: 0, whiteSpace: "nowrap" }}>{cacheBadge.label}</span>
+        : <span style={{ width: 54, flexShrink: 0 }} />
+      }
+    </div>
+  );
+}
 
 function RealSegmentTree({
   segments, diff, call,
@@ -3358,22 +3518,82 @@ function RealSegmentTree({
         })}
       </div>
 
-      {/* Summary legend below top bar (no section selected) */}
+      {/* ── Default overview: all sections listed when no section is selected ── */}
       {!activeSection && (
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+        <div>
           {SECTION_ORDER.filter(sec => bySection[sec]?.length).map(sec => {
-            const secChars = bySection[sec].reduce((s, g) => s + g.charCount, 0);
+            const secSegs  = bySection[sec];
+            const secChars = secSegs.reduce((s, g) => s + g.charCount, 0);
             const secPct   = Math.round(secChars / totalChars * 100);
+            const secColor = SECTION_COLOR[sec];
+            // Tools section: compute extra stats
+            const toolCount = sec === "tools" ? secSegs.length : null;
+            // Messages section: count by role
+            const msgByRole = sec === "messages"
+              ? secSegs.reduce<Record<string, number>>((acc, s) => {
+                  const r = s.role ?? "unknown";
+                  acc[r] = (acc[r] ?? 0) + 1;
+                  return acc;
+                }, {})
+              : null;
+
             return (
-              <button
-                key={sec}
-                onClick={() => handleSectionClick(sec)}
-                style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", padding: 0 }}
-              >
-                <div style={{ width: 9, height: 9, borderRadius: 2, background: SECTION_COLOR[sec] }} />
-                <span style={{ fontSize: 11, color: "#374151" }}>{SECTION_LABEL[sec]}</span>
-                <span style={{ fontSize: 10, color: "#9ca3af" }}>{secPct}%</span>
-              </button>
+              <div key={sec} style={{ marginBottom: 10 }}>
+                {/* Section header row */}
+                <button
+                  onClick={() => handleSectionClick(sec)}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "center", gap: 8,
+                    padding: "6px 10px", background: secColor + "10",
+                    border: `1px solid ${secColor}30`, borderRadius: 6,
+                    cursor: "pointer", marginBottom: 2,
+                  }}
+                >
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: secColor, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{SECTION_LABEL[sec]}</span>
+                  <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: 2 }}>~{fmtK(charsToTokens(secChars))}</span>
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>{secPct}%</span>
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>{secSegs.length} segment{secSegs.length !== 1 ? "s" : ""}</span>
+                  {toolCount != null && (
+                    <span style={{ fontSize: 9, color: "#6b7280", background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 3, padding: "1px 5px", marginLeft: 2 }}>
+                      {toolCount} tools
+                    </span>
+                  )}
+                  {msgByRole && Object.keys(msgByRole).length > 0 && (
+                    <span style={{ display: "flex", gap: 4, marginLeft: 2 }}>
+                      {Object.entries(msgByRole).map(([role, count]) => (
+                        <span key={role} style={{ fontSize: 9, color: "#6b7280", background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 3, padding: "1px 5px" }}>
+                          {count} {role}
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                  <span style={{ marginLeft: "auto", fontSize: 10, color: "#9ca3af" }}>▶ expand</span>
+                </button>
+
+                {/* Compact segment list (first 5 shown) */}
+                <div style={{ border: "1px solid #f3f4f6", borderRadius: 6, overflow: "hidden" }}>
+                  {secSegs.slice(0, 5).map((seg, i) => (
+                    <div key={seg.id} style={{ borderBottom: i < Math.min(secSegs.length, 5) - 1 ? "1px solid #f3f4f6" : "none" }}>
+                      <SegmentRow
+                        seg={seg} secColor={secColor}
+                        totalCharsInSection={secChars}
+                        diffByHash={diffByHash}
+                        call={call}
+                        onClick={() => { setActiveSection(sec); setActiveSegId(seg.id); }}
+                      />
+                    </div>
+                  ))}
+                  {secSegs.length > 5 && (
+                    <button
+                      onClick={() => handleSectionClick(sec)}
+                      style={{ width: "100%", padding: "5px 12px", fontSize: 10, color: "#6366f1", background: "#f9fafb", border: "none", borderTop: "1px solid #f3f4f6", cursor: "pointer", textAlign: "left" }}
+                    >
+                      + {secSegs.length - 5} more segments — click to expand
+                    </button>
+                  )}
+                </div>
+              </div>
             );
           })}
         </div>
@@ -3386,14 +3606,24 @@ function RealSegmentTree({
         const secPct   = Math.round(secChars / totalChars * 100);
         return (
           <div style={{ marginBottom: 12 }}>
-            {/* Section header — click to collapse */}
+            {/* Section header with prominent back button */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
               <button onClick={() => handleSectionClick(activeSection)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6 }}>
                 <div style={{ width: 10, height: 10, borderRadius: 2, background: secColor }} />
                 <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{SECTION_LABEL[activeSection]}</span>
                 <span style={{ fontSize: 10, color: "#9ca3af" }}>~{fmtK(charsToTokens(secChars))} · {secPct}% · {activeSectionSegs.length} segments</span>
               </button>
-              <button onClick={() => { setActiveSection(null); setActiveSegId(null); }} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: 14, color: "#9ca3af", lineHeight: 1, padding: "0 2px" }}>×</button>
+              <button
+                onClick={() => { setActiveSection(null); setActiveSegId(null); }}
+                title="返回总览"
+                style={{
+                  marginLeft: "auto", display: "flex", alignItems: "center", gap: 4,
+                  background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 5,
+                  cursor: "pointer", fontSize: 11, color: "#374151", padding: "3px 8px", lineHeight: 1,
+                }}
+              >
+                ← 返回
+              </button>
             </div>
 
             {/* Sub-bar: one block per segment */}
@@ -3429,49 +3659,23 @@ function RealSegmentTree({
               })}
             </div>
 
-            {/* Segment list — summary rows, no rawText yet */}
+            {/* Full segment list with enriched metadata */}
             {!activeSeg && (
               <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
-                {activeSectionSegs.map((seg, i) => {
-                  const segPct    = Math.round(seg.charCount / activeSegTotalChars * 100);
-                  const segTokens = charsToTokens(seg.charCount);
-                  const diffEntry = diffByHash.get(seg.rawHash);
-                  const cacheBadge = CACHE_BADGE[seg.cacheHint];
-                  const deltaStr = diffEntry && diffEntry.op !== "unchanged"
-                    ? (diffEntry.op === "added" ? "+" : diffEntry.op === "removed" ? "−" : diffEntry.charDelta >= 0 ? "+" : "") + fmtK(charsToTokens(Math.abs(diffEntry.charDelta)))
-                    : null;
-                  const deltaColor = diffEntry?.op === "removed" ? "#dc2626" : "#d97706";
-
-                  return (
-                    <div
-                      key={seg.id}
+                {activeSectionSegs.map((seg, i) => (
+                  <div
+                    key={seg.id}
+                    style={{ borderBottom: i < activeSectionSegs.length - 1 ? "1px solid #f3f4f6" : "none" }}
+                  >
+                    <SegmentRow
+                      seg={seg} secColor={secColor}
+                      totalCharsInSection={activeSegTotalChars}
+                      diffByHash={diffByHash}
+                      call={call}
                       onClick={() => handleSegClick(seg.id)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 10, padding: "7px 12px",
-                        borderBottom: i < activeSectionSegs.length - 1 ? "1px solid #f3f4f6" : "none",
-                        cursor: "pointer", background: "#fff",
-                      }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "#f9fafb"; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "#fff"; }}
-                    >
-                      {/* mini proportion bar */}
-                      <div style={{ width: 48, height: 4, background: "#f3f4f6", borderRadius: 2, overflow: "hidden", flexShrink: 0 }}>
-                        <div style={{ width: `${segPct}%`, height: "100%", background: secColor + "80" }} />
-                      </div>
-                      <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {seg.label}
-                      </span>
-                      {seg.role && <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>{seg.role}</span>}
-                      {deltaStr && <span style={{ fontSize: 10, fontWeight: 600, color: deltaColor, flexShrink: 0, width: 48, textAlign: "right" }}>{deltaStr}</span>}
-                      <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", width: 42, textAlign: "right", flexShrink: 0 }}>~{fmtK(segTokens)}</span>
-                      <span style={{ fontSize: 10, color: "#9ca3af", width: 28, textAlign: "right", flexShrink: 0 }}>{segPct}%</span>
-                      {cacheBadge
-                        ? <span style={{ fontSize: 9, color: cacheBadge.color, background: cacheBadge.bg, border: `1px solid ${cacheBadge.border}`, borderRadius: 3, padding: "1px 5px", flexShrink: 0 }}>{cacheBadge.label}</span>
-                        : <span style={{ width: 58 }} />
-                      }
-                    </div>
-                  );
-                })}
+                    />
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -3485,25 +3689,40 @@ function RealSegmentTree({
         const segTokens  = charsToTokens(activeSeg.charCount);
         const segPct     = Math.round(activeSeg.charCount / activeSegTotalChars * 100);
         const diffEntry  = diffByHash.get(activeSeg.rawHash);
+        const meta       = inferSegmentMeta(activeSeg);
+        const natureBadge = meta.nature ? NATURE_BADGE[meta.nature] : null;
+        const turnInfo   = inferMessageTurnInfo(activeSeg, call);
 
         return (
           <div style={{ border: `1px solid ${secColor}40`, borderLeft: `3px solid ${secColor}`, borderRadius: 8, overflow: "hidden", marginBottom: 8 }}>
             {/* Detail header */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", background: "#fafafa", borderBottom: "1px solid #f3f4f6" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#111827", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {activeSeg.label}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {activeSeg.label}
+                  </span>
+                  {meta.isMock && <span title="Inferred / mock value" style={{ fontSize: 9, color: "#9ca3af" }}>□</span>}
+                  {natureBadge && (
+                    <span style={{ fontSize: 9, fontWeight: 700, color: natureBadge.color, background: natureBadge.bg, border: `1px solid ${natureBadge.border}`, borderRadius: 3, padding: "1px 4px", flexShrink: 0 }}>
+                      {natureBadge.label}
+                    </span>
+                  )}
                 </div>
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  {[
-                    { label: "~" + fmtK(segTokens) + " tokens", color: "#374151" },
-                    { label: segPct + "% of section",            color: "#9ca3af" },
-                    { label: activeSeg.charCount.toLocaleString() + " chars", color: "#9ca3af" },
-                    activeSeg.category !== activeSeg.section ? { label: activeSeg.category, color: "#9ca3af" } : null,
-                    activeSeg.role ? { label: activeSeg.role, color: "#9ca3af" } : null,
-                  ].filter(Boolean).map(item => (
-                    <span key={item!.label} style={{ fontSize: 10, color: item!.color }}>{item!.label}</span>
-                  ))}
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 10, color: "#374151" }}>~{fmtK(segTokens)} tokens</span>
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>{segPct}% of section</span>
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>{activeSeg.charCount.toLocaleString()} chars</span>
+                  {activeSeg.category !== activeSeg.section && (
+                    <span style={{ fontSize: 10, color: "#9ca3af" }}>{activeSeg.category}</span>
+                  )}
+                  {activeSeg.role && <span style={{ fontSize: 10, color: "#9ca3af" }}>role: {activeSeg.role}</span>}
+                  {meta.sourceHint && (
+                    <span style={{ fontSize: 10, color: "#6b7280" }}>source: {meta.sourceHint}</span>
+                  )}
+                  {turnInfo.turnDesc && (
+                    <span style={{ fontSize: 10, color: turnInfo.isMock ? "#d1d5db" : "#9ca3af" }}>{turnInfo.turnDesc}</span>
+                  )}
                   {cacheBadge && (
                     <span style={{ fontSize: 9, fontWeight: 700, color: cacheBadge.color, background: cacheBadge.bg, border: `1px solid ${cacheBadge.border}`, borderRadius: 3, padding: "1px 5px" }}>
                       {cacheBadge.label}
@@ -3517,7 +3736,17 @@ function RealSegmentTree({
                   )}
                 </div>
               </div>
-              <button onClick={() => setActiveSegId(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "#9ca3af", lineHeight: 1, padding: "0 2px", flexShrink: 0 }}>×</button>
+              <button
+                onClick={() => setActiveSegId(null)}
+                title="返回 segment 列表"
+                style={{
+                  display: "flex", alignItems: "center", gap: 4,
+                  background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 5,
+                  cursor: "pointer", fontSize: 11, color: "#374151", padding: "3px 8px", lineHeight: 1, flexShrink: 0,
+                }}
+              >
+                ← 返回
+              </button>
             </div>
 
             {/* rawText */}
@@ -3790,64 +4019,604 @@ function AttributionTab({
   );
 }
 
+// ─── Diff op styling ─────────────────────────────────────────────────────────
+
+const DIFF_OP_STYLE: Record<string, { color: string; bg: string; border: string; icon: string; label: string }> = {
+  added:     { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0", icon: "+", label: "added" },
+  removed:   { color: "#dc2626", bg: "#fef2f2", border: "#fecaca", icon: "−", label: "removed" },
+  changed:   { color: "#d97706", bg: "#fffbeb", border: "#fde68a", icon: "~", label: "changed" },
+  unchanged: { color: "#d1d5db", bg: "#f9fafb", border: "#e5e7eb", icon: "·", label: "unchanged" },
+};
+
+// ─── Derive cause of a diff segment from interval events ─────────────────────
+
+interface SegmentCause {
+  cause: string;
+  detail: string | null;
+  confidence: "high" | "medium" | "low" | "unknown";
+  isMock: boolean;
+  eventKind?: string;
+}
+
+function deriveSegmentCause(
+  seg: import("./drilldown-types").SegmentDiff,
+  intervalEvents: import("./drilldown-types").IntervalEvent[],
+  call: MockLlmCall,
+): SegmentCause {
+  if (seg.op === "unchanged") {
+    return { cause: "No change", detail: null, confidence: "high", isMock: false };
+  }
+
+  const hasHumanInput  = intervalEvents.some(e => e.kind === "user:human");
+  const hasToolResult  = intervalEvents.some(e => e.kind === "user:tool_result");
+  const hasCommand     = intervalEvents.some(e => e.kind === "user:command");
+  const hasAttachment  = intervalEvents.some(e =>
+    e.kind === "attachment:skill_listing" || e.kind === "attachment:task_reminder" || e.kind === "attachment:file");
+  const hasSnapshot    = intervalEvents.some(e => e.kind === "file-history-snapshot" || e.kind === "last-prompt");
+  const hasAway        = intervalEvents.some(e => e.kind === "system:away_summary" || e.kind === "system:stop_hook_summary");
+
+  const firstHuman     = intervalEvents.find(e => e.kind === "user:human");
+  const firstTool      = intervalEvents.find(e => e.kind === "user:tool_result");
+  const firstAttach    = intervalEvents.find(e =>
+    e.kind === "attachment:skill_listing" || e.kind === "attachment:task_reminder" || e.kind === "attachment:file");
+
+  // messages section — added segments
+  if (seg.section === "messages" && seg.op === "added") {
+    const role = seg.role ?? "";
+    if (role === "user" && (seg.category?.includes("tool_result") || seg.label?.toLowerCase().includes("tool_result"))) {
+      if (hasToolResult) {
+        return {
+          cause: "Tool result injected",
+          detail: firstTool?.contentPreview?.slice(0, 120) ?? null,
+          confidence: "high", isMock: false, eventKind: "user:tool_result",
+        };
+      }
+      return { cause: "□ Tool result (unmatched event)", detail: null, confidence: "low", isMock: true };
+    }
+    if (role === "user" && hasHumanInput) {
+      return {
+        cause: "User input",
+        detail: firstHuman?.contentPreview?.slice(0, 120) ?? null,
+        confidence: "high", isMock: false, eventKind: "user:human",
+      };
+    }
+    if (role === "assistant") {
+      return { cause: "Assistant response carried forward", detail: null, confidence: "high", isMock: false };
+    }
+    if (hasCommand) {
+      return { cause: "Command injection", detail: null, confidence: "medium", isMock: false, eventKind: "user:command" };
+    }
+    return { cause: "□ New message (cause inferred)", detail: null, confidence: "low", isMock: true };
+  }
+
+  // messages section — removed segments (compaction or trimming)
+  if (seg.section === "messages" && seg.op === "removed") {
+    if (call.isCompaction) {
+      return { cause: "□ Compaction (context trimmed)", detail: null, confidence: "low", isMock: true };
+    }
+    return { cause: "□ Message removed (unknown cause)", detail: null, confidence: "unknown", isMock: true };
+  }
+
+  // messages section — changed segments
+  if (seg.section === "messages" && seg.op === "changed") {
+    if (call.isCompaction) {
+      return { cause: "□ Compaction (message modified)", detail: null, confidence: "low", isMock: true };
+    }
+    return { cause: "□ Message modified", detail: null, confidence: "unknown", isMock: true };
+  }
+
+  // system section
+  if (seg.section === "system") {
+    if (seg.op === "added" || seg.op === "changed") {
+      if (hasAttachment) {
+        return {
+          cause: "Attachment injected",
+          detail: firstAttach?.contentPreview?.slice(0, 120) ?? null,
+          confidence: "medium", isMock: false, eventKind: firstAttach?.kind,
+        };
+      }
+      if (hasSnapshot) {
+        return { cause: "Context snapshot injected", detail: null, confidence: "medium", isMock: false, eventKind: "file-history-snapshot" };
+      }
+      if (hasAway) {
+        return { cause: "□ Away/stop hook summary", detail: null, confidence: "low", isMock: true };
+      }
+      return { cause: "□ System prompt changed (cause inferred)", detail: null, confidence: "unknown", isMock: true };
+    }
+    if (seg.op === "removed") {
+      return { cause: "□ System block removed", detail: null, confidence: "unknown", isMock: true };
+    }
+  }
+
+  // tools section
+  if (seg.section === "tools") {
+    if (seg.op === "added")   return { cause: "□ New tool registered", detail: null, confidence: "unknown", isMock: true };
+    if (seg.op === "removed") return { cause: "□ Tool unregistered", detail: null, confidence: "unknown", isMock: true };
+    if (seg.op === "changed") return { cause: "□ Tool schema updated", detail: null, confidence: "unknown", isMock: true };
+  }
+
+  // fallback
+  return { cause: "□ Unknown", detail: null, confidence: "unknown", isMock: true };
+}
+
+// ─── SegmentDiffTree — mirrors RealSegmentTree hierarchy but for diffs ────────
+// Structure:
+//   Level 0 — top bar: section blocks with diff badge
+//   Default  — all sections listed, changed segments highlighted, unchanged grayed
+//   Level 1  — section expanded: sub-bar (op-colored) + segment list
+//   Level 2  — segment detail: meta diff + text diff + cause panel
+
+function SegmentDiffTree({
+  diff, call,
+}: {
+  diff: import("./drilldown-types").SegmentDiff[];
+  call: MockLlmCall;
+}) {
+  const SECTION_ORDER = ["system", "tools", "messages", "metadata", "unknown"] as const;
+
+  const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [activeSegIdx,  setActiveSegIdx]  = useState<number | null>(null);
+
+  // group by section, preserve order
+  const bySection: Record<string, import("./drilldown-types").SegmentDiff[]> = {};
+  for (const d of diff) {
+    if (!bySection[d.section]) bySection[d.section] = [];
+    bySection[d.section].push(d);
+  }
+
+  const totalChars = diff.reduce((s, d) => s + d.charCount, 0) || 1;
+  const activeSectionSegs = activeSection ? (bySection[activeSection] ?? []) : [];
+  const activeSeg = activeSegIdx != null ? activeSectionSegs[activeSegIdx] ?? null : null;
+
+  // compute section-level diff summary
+  function sectionNetDelta(sec: string): number {
+    return (bySection[sec] ?? []).reduce((s, d) => s + d.charDelta, 0);
+  }
+  function sectionHasChanges(sec: string): boolean {
+    return (bySection[sec] ?? []).some(d => d.op !== "unchanged");
+  }
+
+  function handleSectionClick(sec: string) {
+    if (activeSection === sec) { setActiveSection(null); setActiveSegIdx(null); }
+    else { setActiveSection(sec); setActiveSegIdx(null); }
+  }
+
+  return (
+    <div>
+      {/* ── Level 0: Top bar — one block per section with diff badge ── */}
+      <div style={{ height: 40, display: "flex", borderRadius: 10, overflow: "hidden", gap: 3, marginBottom: 10 }}>
+        {SECTION_ORDER.filter(sec => bySection[sec]?.length).map(sec => {
+          const secSegs  = bySection[sec];
+          const secChars = secSegs.reduce((s, d) => s + d.charCount, 0);
+          const secPct   = Math.round(secChars / totalChars * 100);
+          const color    = SECTION_COLOR[sec];
+          const isActive = activeSection === sec;
+          const netDelta = sectionNetDelta(sec);
+          const hasChg   = sectionHasChanges(sec);
+          return (
+            <div
+              key={sec}
+              onClick={() => handleSectionClick(sec)}
+              title={`${SECTION_LABEL[sec]}: ~${fmtK(charsToTokens(secChars))} (${secPct}%)${hasChg ? ` · Δ${netDelta > 0 ? "+" : ""}${fmtK(charsToTokens(Math.abs(netDelta)))}` : " · unchanged"}`}
+              style={{
+                flex: secChars, minWidth: 32, cursor: "pointer",
+                background: isActive ? color : hasChg ? color + "90" : color + "40",
+                display: "flex", flexDirection: "column", justifyContent: "center",
+                padding: "0 8px", overflow: "hidden", position: "relative",
+                outline: isActive ? `2px solid ${color}` : "none",
+                outlineOffset: -2, transition: "background 0.12s",
+              }}
+              onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = color + "c0"; }}
+              onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = hasChg ? color + "90" : color + "40"; }}
+            >
+              {secPct >= 8 && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {SECTION_LABEL[sec]}
+                </span>
+              )}
+              {secPct >= 5 && hasChg && (
+                <span style={{ fontSize: 9, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", fontWeight: 600 }}>
+                  {netDelta >= 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(netDelta)))}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Default overview (no section selected) ─────────────────── */}
+      {!activeSection && (
+        <div>
+          {SECTION_ORDER.filter(sec => bySection[sec]?.length).map(sec => {
+            const secSegs   = bySection[sec];
+            const secChars  = secSegs.reduce((s, d) => s + d.charCount, 0);
+            const secColor  = SECTION_COLOR[sec];
+            const netDelta  = sectionNetDelta(sec);
+            const hasChg    = sectionHasChanges(sec);
+            const changedN  = secSegs.filter(d => d.op !== "unchanged").length;
+
+            return (
+              <div key={sec} style={{ marginBottom: 10 }}>
+                {/* Section header */}
+                <button
+                  onClick={() => handleSectionClick(sec)}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "center", gap: 8,
+                    padding: "6px 10px",
+                    background: hasChg ? SECTION_COLOR[sec] + "12" : "#f9fafb",
+                    border: `1px solid ${hasChg ? SECTION_COLOR[sec] + "40" : "#e5e7eb"}`,
+                    borderRadius: 6, cursor: "pointer", marginBottom: 2,
+                  }}
+                >
+                  <div style={{ width: 10, height: 10, borderRadius: 2, background: secColor, opacity: hasChg ? 1 : 0.4, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: hasChg ? "#111827" : "#9ca3af" }}>{SECTION_LABEL[sec]}</span>
+                  <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: 2 }}>~{fmtK(charsToTokens(secChars))}</span>
+                  {hasChg ? (
+                    <>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: netDelta >= 0 ? "#d97706" : "#16a34a" }}>
+                        {netDelta >= 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(netDelta)))}
+                      </span>
+                      <span style={{ fontSize: 9, color: "#6b7280", background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 3, padding: "1px 5px" }}>
+                        {changedN} changed
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 10, color: "#d1d5db" }}>unchanged</span>
+                  )}
+                  <span style={{ marginLeft: "auto", fontSize: 10, color: "#9ca3af" }}>{hasChg ? "▶ expand" : "—"}</span>
+                </button>
+
+                {/* Segment list (first 5) */}
+                {hasChg && (
+                  <div style={{ border: "1px solid #f3f4f6", borderRadius: 6, overflow: "hidden" }}>
+                    {secSegs.slice(0, 5).map((seg, i) => {
+                      const opStyle = DIFF_OP_STYLE[seg.op] ?? DIFF_OP_STYLE.unchanged;
+                      const tokens  = charsToTokens(seg.charCount);
+                      const isUnchan = seg.op === "unchanged";
+                      return (
+                        <div
+                          key={i}
+                          onClick={() => isUnchan ? undefined : (setActiveSection(sec), setActiveSegIdx(i))}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 8, padding: "6px 12px",
+                            borderBottom: i < Math.min(secSegs.length, 5) - 1 ? "1px solid #f3f4f6" : "none",
+                            cursor: isUnchan ? "default" : "pointer",
+                            opacity: isUnchan ? 0.45 : 1,
+                            background: "#fff",
+                          }}
+                          onMouseEnter={e => { if (!isUnchan) (e.currentTarget as HTMLDivElement).style.background = "#f9fafb"; }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "#fff"; }}
+                        >
+                          <span style={{ fontSize: 11, fontWeight: 700, color: opStyle.color, width: 12, flexShrink: 0 }}>{opStyle.icon}</span>
+                          <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {seg.label}{seg.role ? <span style={{ color: "#9ca3af", fontWeight: 400 }}> · {seg.role}</span> : null}
+                          </span>
+                          {seg.charDelta !== 0 && (
+                            <span style={{ fontSize: 10, fontWeight: 600, color: seg.charDelta > 0 ? "#d97706" : "#16a34a", flexShrink: 0 }}>
+                              {seg.charDelta > 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(seg.charDelta)))}
+                            </span>
+                          )}
+                          <span style={{ fontSize: 10, color: "#9ca3af", width: 36, textAlign: "right", flexShrink: 0 }}>~{fmtK(tokens)}</span>
+                          {!isUnchan && (
+                            <span style={{ fontSize: 9, color: opStyle.color, background: opStyle.bg, border: `1px solid ${opStyle.border}`, borderRadius: 3, padding: "1px 4px", flexShrink: 0 }}>
+                              {opStyle.label}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {secSegs.length > 5 && (
+                      <button
+                        onClick={() => handleSectionClick(sec)}
+                        style={{ width: "100%", padding: "5px 12px", fontSize: 10, color: "#6366f1", background: "#f9fafb", border: "none", borderTop: "1px solid #f3f4f6", cursor: "pointer", textAlign: "left" }}
+                      >
+                        + {secSegs.length - 5} more — expand section
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Level 1: Section expanded ───────────────────────────────── */}
+      {activeSection && activeSectionSegs.length > 0 && (() => {
+        const secColor = SECTION_COLOR[activeSection];
+        const secChars = activeSectionSegs.reduce((s, d) => s + d.charCount, 0);
+        const netDelta = sectionNetDelta(activeSection);
+
+        return (
+          <div style={{ marginBottom: 12 }}>
+            {/* Section header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <button onClick={() => handleSectionClick(activeSection)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ width: 10, height: 10, borderRadius: 2, background: secColor }} />
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{SECTION_LABEL[activeSection]}</span>
+                <span style={{ fontSize: 10, color: "#9ca3af" }}>~{fmtK(charsToTokens(secChars))} · {activeSectionSegs.length} segments</span>
+                {netDelta !== 0 && (
+                  <span style={{ fontSize: 10, fontWeight: 700, color: netDelta >= 0 ? "#d97706" : "#16a34a" }}>
+                    {netDelta >= 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(netDelta)))}
+                  </span>
+                )}
+              </button>
+              <button
+                onClick={() => { setActiveSection(null); setActiveSegIdx(null); }}
+                title="返回总览"
+                style={{
+                  marginLeft: "auto", display: "flex", alignItems: "center", gap: 4,
+                  background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 5,
+                  cursor: "pointer", fontSize: 11, color: "#374151", padding: "3px 8px", lineHeight: 1,
+                }}
+              >
+                ← 返回
+              </button>
+            </div>
+
+            {/* Sub-bar: segments colored by op */}
+            <div style={{ height: 32, display: "flex", borderRadius: 8, overflow: "hidden", gap: 2, marginBottom: 8 }}>
+              {activeSectionSegs.map((seg, i) => {
+                const opStyle  = DIFF_OP_STYLE[seg.op] ?? DIFF_OP_STYLE.unchanged;
+                const isActive = activeSegIdx === i;
+                const pct      = Math.round(seg.charCount / secChars * 100);
+                const bg       = isActive ? opStyle.color : seg.op !== "unchanged" ? opStyle.bg : "#f3f4f6";
+                return (
+                  <div
+                    key={i}
+                    onClick={() => seg.op !== "unchanged" ? setActiveSegIdx(prev => prev === i ? null : i) : undefined}
+                    title={`${seg.label} [${seg.op}] ${seg.charDelta !== 0 ? (seg.charDelta > 0 ? "+" : "−") + fmtK(charsToTokens(Math.abs(seg.charDelta))) : ""}`}
+                    style={{
+                      flex: seg.charCount, minWidth: 4,
+                      cursor: seg.op !== "unchanged" ? "pointer" : "default",
+                      background: bg,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      overflow: "hidden", padding: "0 4px",
+                      outline: isActive ? `2px solid ${opStyle.color}` : "none",
+                      outlineOffset: -2, transition: "background 0.1s",
+                      opacity: seg.op === "unchanged" ? 0.3 : 1,
+                    }}
+                    onMouseEnter={e => { if (seg.op !== "unchanged" && !isActive) (e.currentTarget as HTMLDivElement).style.background = opStyle.color + "60"; }}
+                    onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = bg; }}
+                  >
+                    {pct >= 6 && (
+                      <span style={{ fontSize: 9, color: isActive ? "#fff" : "#374151", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", fontWeight: isActive ? 700 : 400 }}>
+                        {seg.label.length > 20 ? seg.label.slice(0, 18) + "…" : seg.label}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Segment list */}
+            {activeSeg == null && (
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+                {activeSectionSegs.map((seg, i) => {
+                  const opStyle  = DIFF_OP_STYLE[seg.op] ?? DIFF_OP_STYLE.unchanged;
+                  const tokens   = charsToTokens(seg.charCount);
+                  const secPct   = Math.round(seg.charCount / secChars * 100);
+                  const isUnchan = seg.op === "unchanged";
+                  const cause    = isUnchan ? null : deriveSegmentCause(seg, call.intervalEvents, call);
+
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => isUnchan ? undefined : setActiveSegIdx(prev => prev === i ? null : i)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 8, padding: "7px 12px",
+                        borderBottom: i < activeSectionSegs.length - 1 ? "1px solid #f3f4f6" : "none",
+                        cursor: isUnchan ? "default" : "pointer",
+                        opacity: isUnchan ? 0.45 : 1, background: "#fff",
+                        borderLeft: `3px solid ${isUnchan ? "transparent" : opStyle.color}`,
+                      }}
+                      onMouseEnter={e => { if (!isUnchan) (e.currentTarget as HTMLDivElement).style.background = "#f9fafb"; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "#fff"; }}
+                    >
+                      <span style={{ fontSize: 11, fontWeight: 700, color: opStyle.color, width: 12, flexShrink: 0 }}>{opStyle.icon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5, overflow: "hidden" }}>
+                          <span style={{ fontSize: 11, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seg.label}</span>
+                          {seg.role && <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>{seg.role}</span>}
+                        </div>
+                        {cause && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 1 }}>
+                            {cause.isMock && <span style={{ fontSize: 9, color: "#d1d5db" }}>□</span>}
+                            <span style={{ fontSize: 9, color: cause.isMock ? "#9ca3af" : "#374151" }}>{cause.cause}</span>
+                            {cause.eventKind && <span style={{ fontSize: 8, color: "#9ca3af", background: "#f3f4f6", borderRadius: 2, padding: "0 3px" }}>{cause.eventKind}</span>}
+                          </div>
+                        )}
+                      </div>
+                      {seg.charDelta !== 0 && (
+                        <span style={{ fontSize: 10, fontWeight: 600, color: seg.charDelta > 0 ? "#d97706" : "#16a34a", flexShrink: 0, width: 44, textAlign: "right" }}>
+                          {seg.charDelta > 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(seg.charDelta)))}
+                        </span>
+                      )}
+                      <span style={{ fontSize: 10, color: "#9ca3af", width: 36, textAlign: "right", flexShrink: 0 }}>~{fmtK(tokens)}</span>
+                      <span style={{ fontSize: 10, color: "#9ca3af", width: 26, textAlign: "right", flexShrink: 0 }}>{secPct}%</span>
+                      {!isUnchan && (
+                        <span style={{ fontSize: 9, color: opStyle.color, background: opStyle.bg, border: `1px solid ${opStyle.border}`, borderRadius: 3, padding: "1px 4px", flexShrink: 0 }}>
+                          {opStyle.label}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ── Level 2: Segment detail ──────────────────────────────────── */}
+      {activeSeg != null && activeSection != null && (() => {
+        const seg      = activeSeg;
+        const opStyle  = DIFF_OP_STYLE[seg.op] ?? DIFF_OP_STYLE.unchanged;
+        const tokens   = charsToTokens(seg.charCount);
+        const cause    = deriveSegmentCause(seg, call.intervalEvents, call);
+        const lineDiff = seg.op === "changed" && seg.prevRawText != null
+          ? computeLineDiff(seg.prevRawText, seg.rawText)
+          : null;
+
+        return (
+          <div style={{ border: `1px solid ${opStyle.color}40`, borderLeft: `3px solid ${opStyle.color}`, borderRadius: 8, overflow: "hidden", marginBottom: 8 }}>
+            {/* Detail header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", background: opStyle.bg, borderBottom: "1px solid #f3f4f6" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: opStyle.color }}>{opStyle.icon}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seg.label}</span>
+                  <span style={{ fontSize: 9, color: opStyle.color, background: "#fff", border: `1px solid ${opStyle.border}`, borderRadius: 3, padding: "1px 4px", flexShrink: 0 }}>{opStyle.label}</span>
+                </div>
+                {/* Meta diff: prev vs curr */}
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 10, color: "#374151" }}>~{fmtK(tokens)} tokens</span>
+                  {seg.charDelta !== 0 && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: seg.charDelta > 0 ? "#d97706" : "#16a34a" }}>
+                      {seg.charDelta > 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(seg.charDelta)))} chars
+                    </span>
+                  )}
+                  {seg.role && <span style={{ fontSize: 10, color: "#9ca3af" }}>role: {seg.role}</span>}
+                  {seg.category && <span style={{ fontSize: 10, color: "#9ca3af" }}>{seg.category}</span>}
+                </div>
+              </div>
+              <button
+                onClick={() => setActiveSegIdx(null)}
+                title="返回 segment 列表"
+                style={{
+                  display: "flex", alignItems: "center", gap: 4,
+                  background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 5,
+                  cursor: "pointer", fontSize: 11, color: "#374151", padding: "3px 8px", lineHeight: 1, flexShrink: 0,
+                }}
+              >
+                ← 返回
+              </button>
+            </div>
+
+            {/* Cause / attribution panel */}
+            <div style={{ padding: "10px 14px", borderBottom: "1px solid #f3f4f6", background: "#fafafa" }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 6, letterSpacing: "0.06em" }}>CAUSE</div>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    {cause.isMock && <span title="Inferred / mock" style={{ fontSize: 9, color: "#d1d5db" }}>□</span>}
+                    <span style={{ fontSize: 11, fontWeight: 600, color: cause.isMock ? "#9ca3af" : "#374151" }}>{cause.cause}</span>
+                    {cause.eventKind && (
+                      <span style={{ fontSize: 9, color: "#6b7280", background: "#e5e7eb", borderRadius: 3, padding: "1px 5px", fontFamily: "monospace" }}>{cause.eventKind}</span>
+                    )}
+                  </div>
+                  {cause.detail && (
+                    <div style={{ marginTop: 4, fontSize: 10, color: "#6b7280", fontFamily: "monospace", background: "#f3f4f6", borderRadius: 4, padding: "4px 8px", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 60, overflowY: "auto" }}>
+                      {cause.detail}
+                    </div>
+                  )}
+                </div>
+                <span style={{ fontSize: 9, fontWeight: 700, color: cause.confidence === "high" ? "#16a34a" : cause.confidence === "medium" ? "#d97706" : cause.confidence === "low" ? "#9ca3af" : "#d1d5db", flexShrink: 0, paddingTop: 2 }}>
+                  {cause.confidence}
+                </span>
+              </div>
+              {/* Relevant interval events */}
+              {call.intervalEvents.length > 0 && (
+                <div style={{ marginTop: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 9, color: "#9ca3af" }}>interval events:</span>
+                  {call.intervalEvents.slice(0, 6).map((ev, i) => (
+                    <span key={i} style={{ fontSize: 9, color: "#374151", background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 3, padding: "1px 4px", fontFamily: "monospace" }}>
+                      {ev.kind}
+                    </span>
+                  ))}
+                  {call.intervalEvents.length > 6 && (
+                    <span style={{ fontSize: 9, color: "#9ca3af" }}>+{call.intervalEvents.length - 6} more</span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Text diff */}
+            {seg.op !== "unchanged" && (
+              <div style={{ padding: "10px 14px" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 6, letterSpacing: "0.06em" }}>
+                  {seg.op === "changed" ? "TEXT DIFF" : seg.op === "added" ? "ADDED TEXT" : "REMOVED TEXT"}
+                </div>
+                {lineDiff ? (
+                  <div style={{ fontFamily: "monospace", fontSize: 10, lineHeight: 1.55, border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden", maxHeight: 400, overflowY: "auto" }}>
+                    {lineDiff.map((line, i) => {
+                      const bg     = line.kind === "added" ? "#dcfce7" : line.kind === "removed" ? "#fee2e2" : "transparent";
+                      const color  = line.kind === "added" ? "#15803d" : line.kind === "removed" ? "#b91c1c" : "#6b7280";
+                      const prefix = line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " ";
+                      if (line.text === "⋯") {
+                        return <div key={i} style={{ padding: "1px 8px", color: "#9ca3af", fontSize: 9, background: "#f9fafb" }}>⋯</div>;
+                      }
+                      return (
+                        <div key={i} style={{ display: "flex", background: bg, padding: "0 8px" }}>
+                          <span style={{ color, fontWeight: 700, width: 12, flexShrink: 0, userSelect: "none" }}>{prefix}</span>
+                          <span style={{ color, whiteSpace: "pre-wrap", wordBreak: "break-all", flex: 1 }}>{line.text}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <pre style={{
+                    fontSize: 10, fontFamily: "monospace",
+                    color: seg.op === "added" ? "#15803d" : "#b91c1c",
+                    background: seg.op === "added" ? "#f0fdf4" : "#fef2f2",
+                    border: `1px solid ${seg.op === "added" ? "#bbf7d0" : "#fecaca"}`,
+                    borderRadius: 6, padding: "10px 12px", maxHeight: 280, overflowY: "auto",
+                    whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.65, margin: 0,
+                  }}>
+                    {seg.rawText.slice(0, 3000)}{seg.rawText.length > 3000 ? "\n… (truncated)" : ""}
+                  </pre>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
 // ─── Diff vs Previous Tab ────────────────────────────────────────────────────
 
 function DiffVsPreviousTab({
-  ranges, diff, callDetailLoading, prevCallId,
-  selectedRangeId, onSelectRange,
+  diff, call, callDetailLoading, prevCallId,
 }: {
-  ranges: AttributedDiffRange[];
   diff: import("./drilldown-types").SegmentDiff[] | null;
+  call: MockLlmCall;
   callDetailLoading: boolean;
   prevCallId: number | null;
-  selectedRangeId: string | null;
-  onSelectRange: (r: AttributedDiffRange) => void;
 }) {
   const [mode, setMode] = useState<DiffMode>("segment");
 
-  const addedTokens    = ranges.filter(r => r.changeType === "added").reduce((s, r) => s + r.tokens, 0);
-  const removedTokens  = Math.abs(ranges.filter(r => r.changeType === "removed").reduce((s, r) => s + r.tokens, 0));
-  const retainedTokens = ranges.filter(r => r.changeType === "retained").reduce((s, r) => s + r.tokens, 0);
-  const netDelta = addedTokens - removedTokens;
-
-  // Sort added ranges by token count descending for "top contributors"
-  const topContributors = [...ranges]
-    .filter(r => r.changeType === "added" && r.tokens > 0)
-    .sort((a, b) => b.tokens - a.tokens)
-    .slice(0, 5);
+  // Summary stats from proxy diff
+  const addedChars   = (diff ?? []).filter(d => d.op === "added").reduce((s, d) => s + d.charCount, 0);
+  const removedChars = (diff ?? []).filter(d => d.op === "removed").reduce((s, d) => s + Math.abs(d.charDelta), 0);
+  const changedN     = (diff ?? []).filter(d => d.op === "changed").length;
+  const netDelta     = (diff ?? []).reduce((s, d) => s + d.charDelta, 0);
 
   return (
     <div>
       {/* Summary strip */}
-      <div style={{ background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
+      <div style={{ background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
         {prevCallId != null && (
-          <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 8 }}>Compared with Call #{prevCallId}</div>
+          <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 6 }}>Compared with Call #{prevCallId}</div>
         )}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 12 }}>
-          {[
-            { label: "Net Δ",    value: `${netDelta >= 0 ? "+" : ""}${fmtK(netDelta)}`,     color: netDelta > 0 ? "#d97706" : "#16a34a" },
-            { label: "Added",    value: `+${fmtK(addedTokens)}`,    color: "#16a34a" },
-            { label: "Removed",  value: removedTokens > 0 ? `−${fmtK(removedTokens)}` : "—", color: "#dc2626" },
-            { label: "Retained", value: fmtK(retainedTokens),        color: "#9ca3af" },
-          ].map(({ label, value, color }) => (
-            <div key={label} style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color }}>{value}</div>
-              <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 2 }}>{label}</div>
-            </div>
-          ))}
-        </div>
-        {topContributors.length > 0 && (
-          <div>
-            <div style={{ fontSize: 10, color: "#6b7280", fontWeight: 600, marginBottom: 6 }}>Top contributors</div>
-            {topContributors.map(r => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <div style={{ width: 7, height: 7, borderRadius: 1, background: CATEGORY_COLORS[r.category] ?? "#e5e7eb", flexShrink: 0 }} />
-                <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {r.sourceEvent?.label ?? r.category}
-                </span>
-                <span style={{ fontSize: 10, fontWeight: 600, color: "#d97706", flexShrink: 0 }}>+{fmtK(r.tokens)}</span>
+        {diff ? (
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {[
+              { label: "Net Δ",   value: `${netDelta >= 0 ? "+" : "−"}${fmtK(charsToTokens(Math.abs(netDelta)))}`, color: netDelta > 0 ? "#d97706" : "#16a34a" },
+              { label: "Added",   value: `+${fmtK(charsToTokens(addedChars))}`,   color: "#16a34a" },
+              { label: "Removed", value: removedChars > 0 ? `−${fmtK(charsToTokens(removedChars))}` : "—", color: "#dc2626" },
+              { label: "Changed", value: changedN > 0 ? String(changedN) + " segs" : "—", color: "#d97706" },
+            ].map(({ label, value, color }) => (
+              <div key={label}>
+                <div style={{ fontSize: 13, fontWeight: 700, color }}>{value}</div>
+                <div style={{ fontSize: 9, color: "#9ca3af" }}>{label}</div>
               </div>
             ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 10, color: "#9ca3af" }}>
+            {callDetailLoading ? "Computing diff…" : "No proxy data · diff not available"}
           </div>
         )}
       </div>
@@ -3867,59 +4636,59 @@ function DiffVsPreviousTab({
         ))}
       </div>
 
-      {/* Segment mode — reuse AttributedDiffTable */}
+      {/* Segment mode — new SegmentDiffTree */}
       {mode === "segment" && (
-        <AttributedDiffTable ranges={ranges} selectedId={selectedRangeId} onSelect={onSelectRange} />
+        diff
+          ? <SegmentDiffTree diff={diff} call={call} />
+          : <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0", textAlign: "center" }}>
+              {callDetailLoading ? "Loading…" : "No proxy data — enable proxy dump to see segment diff"}
+            </div>
       )}
 
-      {/* Range mode — show attributed ranges with char offsets */}
+      {/* Range mode — char-offset view (kept for reference) */}
       {mode === "range" && (
         <div>
-          {ranges.filter(r => r.changeType !== "retained").map((r, i) => {
-            const CHANGE_CFG: Record<string, { color: string; icon: string; bg: string }> = {
-              added: { color: "#16a34a", icon: "+", bg: "#f0fdf4" },
-              removed: { color: "#dc2626", icon: "−", bg: "#fef2f2" },
-              changed: { color: "#d97706", icon: "~", bg: "#fffbeb" },
-              reclassified: { color: "#7c3aed", icon: "⇄", bg: "#faf5ff" },
-              moved: { color: "#3b82f6", icon: "→", bg: "#eff6ff" },
-            };
-            const cfg = CHANGE_CFG[r.changeType] ?? { color: "#9ca3af", icon: "·", bg: "#f9fafb" };
-            const isSelected = r.id === selectedRangeId;
-            return (
-              <div key={r.id} onClick={() => onSelectRange(r)} style={{
-                padding: "8px 12px", borderRadius: 6, marginBottom: 6, cursor: "pointer",
-                background: isSelected ? "#eff6ff" : cfg.bg,
-                border: `1px solid ${isSelected ? "#6366f1" : cfg.color + "30"}`,
-                borderLeft: `3px solid ${isSelected ? "#6366f1" : cfg.color}`,
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 12, fontWeight: 800, color: cfg.color, width: 14 }}>{cfg.icon}</span>
-                  <span style={{ fontSize: 10, color: CATEGORY_COLORS[r.category] ?? "#6b7280", fontWeight: 600 }}>{r.category}</span>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.sourceEvent?.label ?? r.textPreview.slice(0, 40)}</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: cfg.color, flexShrink: 0 }}>
-                    {r.changeType === "added" ? "+" : r.changeType === "removed" ? "−" : ""}{fmtK(Math.abs(r.tokens))}
-                  </span>
-                </div>
-                {(r.currentRange || r.previousRange) && (
-                  <div style={{ fontSize: 9, color: "#9ca3af", fontFamily: "monospace", marginLeft: 22, marginTop: 2 }}>
-                    {r.currentRange && `chars ${r.currentRange.startChar.toLocaleString()}–${r.currentRange.endChar.toLocaleString()}`}
-                    {r.previousRange && r.currentRange && " (prev: "}
-                    {r.previousRange && !r.currentRange && "prev: "}
-                    {r.previousRange && `${r.previousRange.startChar.toLocaleString()}–${r.previousRange.endChar.toLocaleString()}`}
-                    {r.previousRange && r.currentRange && ")"}
-                    <span style={{ marginLeft: 8, color: CONF_COLOR[r.confidence], fontWeight: 700 }}>{CONF_ICON[r.confidence]} {r.confidence}</span>
+          {callDetailLoading && <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>}
+          {!callDetailLoading && !diff && (
+            <div style={{ fontSize: 11, color: "#9ca3af", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 5, padding: "8px 10px" }}>
+              No proxy data available.
+            </div>
+          )}
+          {!callDetailLoading && diff && (
+            <div>
+              {diff.filter(d => d.op !== "unchanged").map((d, i) => {
+                const opStyle = DIFF_OP_STYLE[d.op] ?? DIFF_OP_STYLE.unchanged;
+                return (
+                  <div key={i} style={{
+                    padding: "8px 12px", borderRadius: 6, marginBottom: 6,
+                    background: opStyle.bg, border: `1px solid ${opStyle.border}`,
+                    borderLeft: `3px solid ${opStyle.color}`,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: opStyle.color, width: 14 }}>{opStyle.icon}</span>
+                      <span style={{ fontSize: 10, color: "#6b7280", fontWeight: 600 }}>{d.section}</span>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {d.label}{d.role ? ` · ${d.role}` : ""}
+                      </span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: opStyle.color, flexShrink: 0 }}>
+                        {d.charDelta >= 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(d.charDelta)))}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 9, color: "#9ca3af", fontFamily: "monospace", marginLeft: 22, marginTop: 2 }}>
+                      {d.charCount.toLocaleString()} chars · hash: {d.rawHash.slice(0, 8)}
+                    </div>
                   </div>
-                )}
-              </div>
-            );
-          })}
-          {ranges.filter(r => r.changeType !== "retained").length === 0 && (
-            <div style={{ fontSize: 11, color: "#9ca3af", textAlign: "center", padding: "24px 0" }}>No changed ranges</div>
+                );
+              })}
+              {diff.every(d => d.op === "unchanged") && (
+                <div style={{ fontSize: 11, color: "#9ca3af", textAlign: "center", padding: "24px 0" }}>No changed segments</div>
+              )}
+            </div>
           )}
         </div>
       )}
 
-      {/* Raw mode — proxy diff */}
+      {/* Raw mode — proxy SegmentDiff verbatim */}
       {mode === "raw" && (
         <div>
           {callDetailLoading && <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading proxy diff…</div>}
@@ -4362,12 +5131,10 @@ function LlmCallDetailPanel({
       {/* ══ Diff vs Previous ══════════════════════════ */}
       {tab === "diff" && (
         <DiffVsPreviousTab
-          ranges={attrRanges}
           diff={callDetail?.diff ?? null}
+          call={call}
           callDetailLoading={callDetailLoading}
           prevCallId={prevCallId}
-          selectedRangeId={null}
-          onSelectRange={() => {}}
         />
       )}
 
