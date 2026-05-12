@@ -8,6 +8,7 @@ import { apiV2 } from "./api";
 import {
   buildMockAttributedDiff,
   buildMockPayloadSegments,
+  buildMockCallResponse,
   buildMockBridgeEvents, buildTrustMode,
   MOCK_SUB_AGENTS, attachMockSubAgents,
   type AttributedDiffRange, type PayloadSegment,
@@ -3025,6 +3026,123 @@ function AttributedDiffTable({ ranges, selectedId, onSelect }: {
 
 // ─── Attributed Diff Range Evidence Drawer ────────────────────────────────────
 
+// ─── Call Inspector Overview (right panel, no selection) ──────────────────────
+
+function CallInspectorOverview({
+  call, attrRanges, payloadSegs, confPct, trustMode,
+}: {
+  call: MockLlmCall;
+  attrRanges: AttributedDiffRange[];
+  payloadSegs: PayloadSegment[];
+  confPct: number;
+  trustMode: TrustMode;
+}) {
+  const total = payloadSegs.reduce((s, g) => s + g.tokens, 0) || 1;
+
+  const addedTokens    = attrRanges.filter(r => r.changeType === "added").reduce((s, r) => s + r.tokens, 0);
+  const removedTokens  = Math.abs(attrRanges.filter(r => r.changeType === "removed").reduce((s, r) => s + r.tokens, 0));
+  const retainedTokens = attrRanges.filter(r => r.changeType === "retained").reduce((s, r) => s + r.tokens, 0);
+  const netDelta = addedTokens - removedTokens;
+
+  const topContributors = [...attrRanges]
+    .filter(r => r.changeType === "added" && r.tokens > 0)
+    .sort((a, b) => b.tokens - a.tokens)
+    .slice(0, 4);
+
+  const confUnknown = attrRanges.filter(r => r.confidence === "unknown").length;
+  const confMedium  = attrRanges.filter(r => r.confidence === "medium").length;
+  const confHighN   = attrRanges.filter(r => r.confidence === "exact" || r.confidence === "high").length;
+
+  return (
+    <div style={{ padding: "14px 14px" }}>
+      {/* Summary header */}
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.05em", marginBottom: 12, textTransform: "uppercase", fontSize: 10 as unknown as number }}>
+        Call #{call.id} Summary
+      </div>
+
+      {/* Net delta block */}
+      <div style={{ background: "#fff", border: "1px solid #f3f4f6", borderRadius: 7, padding: "10px 12px", marginBottom: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {[
+            { label: "Net Δ",    value: `${netDelta >= 0 ? "+" : ""}${fmtK(netDelta)}`,    color: netDelta > 0 ? "#d97706" : "#16a34a" },
+            { label: "Added",    value: `+${fmtK(addedTokens)}`,    color: "#16a34a" },
+            { label: "Removed",  value: removedTokens > 0 ? `−${fmtK(removedTokens)}` : "—", color: "#dc2626" },
+            { label: "Retained", value: fmtK(retainedTokens),        color: "#9ca3af" },
+          ].map(({ label, value, color }) => (
+            <div key={label}>
+              <div style={{ fontSize: 12, fontWeight: 700, color }}>{value}</div>
+              <div style={{ fontSize: 9, color: "#9ca3af" }}>{label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Top contributors */}
+      {topContributors.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 6 }}>Top Contributors</div>
+          {topContributors.map(r => (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+              <div style={{ width: 7, height: 7, borderRadius: 1, background: CATEGORY_COLORS[r.category] ?? "#e5e7eb", flexShrink: 0 }} />
+              <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.sourceEvent?.label ?? r.category}
+              </span>
+              <span style={{ fontSize: 10, fontWeight: 600, color: "#d97706", flexShrink: 0 }}>+{fmtK(r.tokens)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Payload composition mini-bar */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 6 }}>Payload Composition</div>
+        <div style={{ height: 10, display: "flex", borderRadius: 4, overflow: "hidden", gap: 0.5, marginBottom: 6 }}>
+          {payloadSegs.map(seg => (
+            <div key={seg.id}
+              title={`${seg.category}: ${seg.label} · ${fmtK(seg.tokens)} (${Math.round(seg.tokens / total * 100)}%)`}
+              style={{ width: `${seg.tokens / total * 100}%`, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb", opacity: 0.85, minWidth: 1 }}
+            />
+          ))}
+        </div>
+        {payloadSegs.filter(s => s.tokens / total > 0.05).map(seg => (
+          <div key={seg.id} style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3 }}>
+            <div style={{ width: 7, height: 7, borderRadius: 1, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb", flexShrink: 0 }} />
+            <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seg.label}</span>
+            <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>{Math.round(seg.tokens / total * 100)}%</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Attribution quality */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 6 }}>Attribution Quality</div>
+        {[
+          { label: "high / exact", count: confHighN, color: "#16a34a", pct: attrRanges.length > 0 ? Math.round(confHighN / attrRanges.length * 100) : 0 },
+          { label: "medium",       count: confMedium, color: "#d97706", pct: attrRanges.length > 0 ? Math.round(confMedium / attrRanges.length * 100) : 0 },
+          { label: "unknown",      count: confUnknown, color: "#9ca3af", pct: attrRanges.length > 0 ? Math.round(confUnknown / attrRanges.length * 100) : 0 },
+        ].filter(g => g.count > 0).map(g => (
+          <div key={g.label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 10, color: g.color, fontWeight: 600, width: 72 }}>{g.label}</span>
+            <div style={{ flex: 1, height: 4, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: `${g.pct}%`, height: "100%", background: g.color, opacity: 0.7 }} />
+            </div>
+            <span style={{ fontSize: 9, color: "#9ca3af", width: 26, textAlign: "right" }}>{g.pct}%</span>
+          </div>
+        ))}
+        {trustMode === "jsonl-only" && (
+          <div style={{ fontSize: 9, color: "#d97706", marginTop: 6, fontStyle: "italic" }}>
+            Link proxy to improve attribution quality
+          </div>
+        )}
+      </div>
+
+      <div style={{ fontSize: 9, color: "#c4b5fd", textAlign: "center", borderTop: "1px solid #f3f4f6", paddingTop: 10 }}>
+        Select a segment to inspect source, offsets and evidence
+      </div>
+    </div>
+  );
+}
+
 function AttributedRangeEvidenceDrawer({ range, onClear }: { range: AttributedDiffRange; onClear: () => void }) {
   const CHANGE_CFG: Record<ChangeType, { color: string; icon: string }> = {
     added: { color: "#16a34a", icon: "+" }, removed: { color: "#dc2626", icon: "−" },
@@ -3090,6 +3208,286 @@ function AttributedRangeEvidenceDrawer({ range, onClear }: { range: AttributedDi
           No direct evidence reference. Attribution is inferred.
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Real Segment Tree (proxy-backed, no mock) ────────────────────────────────
+// Layout:
+//   Level 0 — top bar: section blocks (System / Tools / Messages / …)
+//   Level 1 — clicking a section block → sub-bar of its segments appears below
+//   Level 2 — clicking a segment in the sub-bar → detail panel below
+
+const SECTION_LABEL: Record<string, string> = {
+  system: "System", tools: "Tools", messages: "Messages", metadata: "Metadata", unknown: "Unknown",
+};
+const SECTION_COLOR: Record<string, string> = {
+  system: "#6366f1", tools: "#6b7280", messages: "#3b82f6", metadata: "#a855f7", unknown: "#94a3b8",
+};
+// Muted fill variants for sub-bar segments (same hue, lighter)
+const SECTION_FILL: Record<string, string> = {
+  system: "#c7d2fe", tools: "#d1d5db", messages: "#bfdbfe", metadata: "#e9d5ff", unknown: "#e2e8f0",
+};
+const CACHE_BADGE: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  read:  { label: "cached",       color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
+  write: { label: "cache write",  color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+};
+
+function charsToTokens(chars: number): number { return Math.round(chars / 4); }
+
+function RealSegmentTree({
+  segments, diff, call,
+}: {
+  segments: import("./drilldown-types").CallSegment[];
+  diff: import("./drilldown-types").SegmentDiff[] | null;
+  call: MockLlmCall;
+}) {
+  const SECTION_ORDER = ["system", "tools", "messages", "metadata", "unknown"] as const;
+
+  const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [activeSegId,   setActiveSegId]   = useState<string | null>(null);
+
+  // diff lookup by rawHash
+  const diffByHash = new Map<string, { op: string; charDelta: number }>();
+  if (diff) for (const d of diff) if (d.rawHash) diffByHash.set(d.rawHash, { op: d.op, charDelta: d.charDelta });
+
+  // group by section
+  const bySection: Record<string, typeof segments> = {};
+  for (const s of segments) {
+    if (!bySection[s.section]) bySection[s.section] = [];
+    bySection[s.section].push(s);
+  }
+
+  const totalChars = segments.reduce((s, g) => s + g.charCount, 0) || 1;
+  const activeSectionSegs = activeSection ? (bySection[activeSection] ?? []) : [];
+  const activeSegTotalChars = activeSectionSegs.reduce((s, g) => s + g.charCount, 0) || 1;
+  const activeSeg = activeSegId ? activeSectionSegs.find(s => s.id === activeSegId) ?? null : null;
+
+  function handleSectionClick(sec: string) {
+    if (activeSection === sec) { setActiveSection(null); setActiveSegId(null); }
+    else { setActiveSection(sec); setActiveSegId(null); }
+  }
+  function handleSegClick(segId: string) {
+    setActiveSegId(prev => prev === segId ? null : segId);
+  }
+
+  return (
+    <div>
+      {/* ── Level 0: Top bar — one block per section ─────────────── */}
+      <div style={{ height: 40, display: "flex", borderRadius: 10, overflow: "hidden", gap: 3, marginBottom: 10 }}>
+        {SECTION_ORDER.filter(sec => bySection[sec]?.length).map(sec => {
+          const secChars = bySection[sec].reduce((s, g) => s + g.charCount, 0);
+          const secPct   = Math.round(secChars / totalChars * 100);
+          const color    = SECTION_COLOR[sec];
+          const isActive = activeSection === sec;
+          return (
+            <div
+              key={sec}
+              onClick={() => handleSectionClick(sec)}
+              title={`${SECTION_LABEL[sec]}: ~${fmtK(charsToTokens(secChars))} (${secPct}%)`}
+              style={{
+                flex: secChars, minWidth: 32, cursor: "pointer",
+                background: isActive ? color : color + "90",
+                display: "flex", flexDirection: "column", justifyContent: "center",
+                padding: "0 8px", overflow: "hidden",
+                outline: isActive ? `2px solid ${color}` : "none",
+                outlineOffset: -2,
+                transition: "background 0.12s",
+              }}
+              onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = color + "c0"; }}
+              onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = color + "90"; }}
+            >
+              {secPct >= 8 && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {SECTION_LABEL[sec]}
+                </span>
+              )}
+              {secPct >= 5 && (
+                <span style={{ fontSize: 9, color: "rgba(255,255,255,0.8)", whiteSpace: "nowrap" }}>
+                  ~{fmtK(charsToTokens(secChars))}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Summary legend below top bar (no section selected) */}
+      {!activeSection && (
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+          {SECTION_ORDER.filter(sec => bySection[sec]?.length).map(sec => {
+            const secChars = bySection[sec].reduce((s, g) => s + g.charCount, 0);
+            const secPct   = Math.round(secChars / totalChars * 100);
+            return (
+              <button
+                key={sec}
+                onClick={() => handleSectionClick(sec)}
+                style={{ display: "flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              >
+                <div style={{ width: 9, height: 9, borderRadius: 2, background: SECTION_COLOR[sec] }} />
+                <span style={{ fontSize: 11, color: "#374151" }}>{SECTION_LABEL[sec]}</span>
+                <span style={{ fontSize: 10, color: "#9ca3af" }}>{secPct}%</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Level 1: Sub-bar for selected section ────────────────── */}
+      {activeSection && activeSectionSegs.length > 0 && (() => {
+        const secColor = SECTION_COLOR[activeSection];
+        const secChars = activeSectionSegs.reduce((s, g) => s + g.charCount, 0);
+        const secPct   = Math.round(secChars / totalChars * 100);
+        return (
+          <div style={{ marginBottom: 12 }}>
+            {/* Section header — click to collapse */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <button onClick={() => handleSectionClick(activeSection)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ width: 10, height: 10, borderRadius: 2, background: secColor }} />
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{SECTION_LABEL[activeSection]}</span>
+                <span style={{ fontSize: 10, color: "#9ca3af" }}>~{fmtK(charsToTokens(secChars))} · {secPct}% · {activeSectionSegs.length} segments</span>
+              </button>
+              <button onClick={() => { setActiveSection(null); setActiveSegId(null); }} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", fontSize: 14, color: "#9ca3af", lineHeight: 1, padding: "0 2px" }}>×</button>
+            </div>
+
+            {/* Sub-bar: one block per segment */}
+            <div style={{ height: 32, display: "flex", borderRadius: 8, overflow: "hidden", gap: 2, marginBottom: 8 }}>
+              {activeSectionSegs.map(seg => {
+                const pct      = Math.round(seg.charCount / secChars * 100);
+                const fillColor = SECTION_FILL[activeSection] ?? "#e5e7eb";
+                const isActive  = activeSegId === seg.id;
+                return (
+                  <div
+                    key={seg.id}
+                    onClick={() => handleSegClick(seg.id)}
+                    title={`${seg.label}: ~${fmtK(charsToTokens(seg.charCount))} (${pct}%)`}
+                    style={{
+                      flex: seg.charCount, minWidth: 4, cursor: "pointer",
+                      background: isActive ? secColor : fillColor,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      overflow: "hidden", padding: "0 4px",
+                      outline: isActive ? `2px solid ${secColor}` : "none",
+                      outlineOffset: -2,
+                      transition: "background 0.1s",
+                    }}
+                    onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = secColor + "60"; }}
+                    onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = fillColor; }}
+                  >
+                    {pct >= 6 && (
+                      <span style={{ fontSize: 9, color: isActive ? "#fff" : "#374151", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", fontWeight: isActive ? 700 : 400 }}>
+                        {seg.label.length > 20 ? seg.label.slice(0, 18) + "…" : seg.label}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Segment list — summary rows, no rawText yet */}
+            {!activeSeg && (
+              <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+                {activeSectionSegs.map((seg, i) => {
+                  const segPct    = Math.round(seg.charCount / activeSegTotalChars * 100);
+                  const segTokens = charsToTokens(seg.charCount);
+                  const diffEntry = diffByHash.get(seg.rawHash);
+                  const cacheBadge = CACHE_BADGE[seg.cacheHint];
+                  const deltaStr = diffEntry && diffEntry.op !== "unchanged"
+                    ? (diffEntry.op === "added" ? "+" : diffEntry.op === "removed" ? "−" : diffEntry.charDelta >= 0 ? "+" : "") + fmtK(charsToTokens(Math.abs(diffEntry.charDelta)))
+                    : null;
+                  const deltaColor = diffEntry?.op === "removed" ? "#dc2626" : "#d97706";
+
+                  return (
+                    <div
+                      key={seg.id}
+                      onClick={() => handleSegClick(seg.id)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 10, padding: "7px 12px",
+                        borderBottom: i < activeSectionSegs.length - 1 ? "1px solid #f3f4f6" : "none",
+                        cursor: "pointer", background: "#fff",
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "#f9fafb"; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "#fff"; }}
+                    >
+                      {/* mini proportion bar */}
+                      <div style={{ width: 48, height: 4, background: "#f3f4f6", borderRadius: 2, overflow: "hidden", flexShrink: 0 }}>
+                        <div style={{ width: `${segPct}%`, height: "100%", background: secColor + "80" }} />
+                      </div>
+                      <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {seg.label}
+                      </span>
+                      {seg.role && <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>{seg.role}</span>}
+                      {deltaStr && <span style={{ fontSize: 10, fontWeight: 600, color: deltaColor, flexShrink: 0, width: 48, textAlign: "right" }}>{deltaStr}</span>}
+                      <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", width: 42, textAlign: "right", flexShrink: 0 }}>~{fmtK(segTokens)}</span>
+                      <span style={{ fontSize: 10, color: "#9ca3af", width: 28, textAlign: "right", flexShrink: 0 }}>{segPct}%</span>
+                      {cacheBadge
+                        ? <span style={{ fontSize: 9, color: cacheBadge.color, background: cacheBadge.bg, border: `1px solid ${cacheBadge.border}`, borderRadius: 3, padding: "1px 5px", flexShrink: 0 }}>{cacheBadge.label}</span>
+                        : <span style={{ width: 58 }} />
+                      }
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ── Level 2: Segment detail panel ────────────────────────── */}
+      {activeSeg && (() => {
+        const secColor   = SECTION_COLOR[activeSection!];
+        const cacheBadge = CACHE_BADGE[activeSeg.cacheHint];
+        const segTokens  = charsToTokens(activeSeg.charCount);
+        const segPct     = Math.round(activeSeg.charCount / activeSegTotalChars * 100);
+        const diffEntry  = diffByHash.get(activeSeg.rawHash);
+
+        return (
+          <div style={{ border: `1px solid ${secColor}40`, borderLeft: `3px solid ${secColor}`, borderRadius: 8, overflow: "hidden", marginBottom: 8 }}>
+            {/* Detail header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", background: "#fafafa", borderBottom: "1px solid #f3f4f6" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#111827", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {activeSeg.label}
+                </div>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  {[
+                    { label: "~" + fmtK(segTokens) + " tokens", color: "#374151" },
+                    { label: segPct + "% of section",            color: "#9ca3af" },
+                    { label: activeSeg.charCount.toLocaleString() + " chars", color: "#9ca3af" },
+                    activeSeg.category !== activeSeg.section ? { label: activeSeg.category, color: "#9ca3af" } : null,
+                    activeSeg.role ? { label: activeSeg.role, color: "#9ca3af" } : null,
+                  ].filter(Boolean).map(item => (
+                    <span key={item!.label} style={{ fontSize: 10, color: item!.color }}>{item!.label}</span>
+                  ))}
+                  {cacheBadge && (
+                    <span style={{ fontSize: 9, fontWeight: 700, color: cacheBadge.color, background: cacheBadge.bg, border: `1px solid ${cacheBadge.border}`, borderRadius: 3, padding: "1px 5px" }}>
+                      {cacheBadge.label}
+                    </span>
+                  )}
+                  {diffEntry && diffEntry.op !== "unchanged" && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: diffEntry.op === "removed" ? "#dc2626" : "#d97706" }}>
+                      {diffEntry.op === "added" ? "+" : diffEntry.op === "removed" ? "−" : diffEntry.charDelta >= 0 ? "+" : ""}
+                      {fmtK(charsToTokens(Math.abs(diffEntry.charDelta)))} vs prev
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button onClick={() => setActiveSegId(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "#9ca3af", lineHeight: 1, padding: "0 2px", flexShrink: 0 }}>×</button>
+            </div>
+
+            {/* rawText */}
+            <div style={{ padding: "10px 14px" }}>
+              <pre style={{
+                fontSize: 10, fontFamily: "monospace", color: "#374151",
+                background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6,
+                padding: "10px 12px", maxHeight: 320, overflowY: "auto",
+                whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.65, margin: 0,
+              }}>
+                {activeSeg.rawText.slice(0, 4000)}{activeSeg.rawText.length > 4000 ? "\n\n… (truncated, showing first 4000 chars)" : ""}
+              </pre>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -3213,7 +3611,376 @@ function PayloadSegmentEvidenceDrawer({ seg, onClear }: { seg: PayloadSegment; o
 
 // ─── LLM Call Detail Panel ────────────────────────────────────────────────────
 
-type CallTab = "incoming" | "response-tools" | "payload" | "next-impact" | "proxy-diff" | "raw";
+type CallTab = "attribution" | "diff" | "request" | "response-tools" | "raw";
+type DiffMode = "segment" | "range" | "raw";
+
+// ─── Attribution Tab ──────────────────────────────────────────────────────────
+
+function PayloadCompositionBar({ segments, selectedId, onSelect }: {
+  segments: PayloadSegment[];
+  selectedId: string | null;
+  onSelect: (s: PayloadSegment) => void;
+}) {
+  const total = segments.reduce((s, g) => s + g.tokens, 0) || 1;
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ height: 22, display: "flex", borderRadius: 6, overflow: "hidden", gap: 1 }}>
+        {segments.map(seg => (
+          <div key={seg.id}
+            onClick={() => onSelect(seg)}
+            title={`${seg.category}: ${seg.label} · ${fmtK(seg.tokens)} (${Math.round(seg.tokens / total * 100)}%)`}
+            style={{
+              width: `${seg.tokens / total * 100}%`,
+              background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb",
+              cursor: "pointer",
+              opacity: selectedId ? (selectedId === seg.id ? 1 : 0.5) : 0.85,
+              outline: selectedId === seg.id ? "2px solid #6366f1" : "none",
+              outlineOffset: -1,
+              transition: "opacity 0.1s",
+              minWidth: seg.tokens / total > 0.01 ? undefined : 2,
+            }}
+            onMouseEnter={e => { e.currentTarget.style.opacity = "1"; }}
+            onMouseLeave={e => { e.currentTarget.style.opacity = selectedId === seg.id ? "1" : selectedId ? "0.5" : "0.85"; }}
+          />
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
+        {segments.filter(s => s.tokens / total > 0.03).map(seg => (
+          <div key={seg.id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <div style={{ width: 7, height: 7, borderRadius: 1, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb", flexShrink: 0 }} />
+            <span style={{ fontSize: 9, color: "#6b7280" }}>{seg.category}</span>
+            <span style={{ fontSize: 9, color: "#9ca3af" }}>{Math.round(seg.tokens / total * 100)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AttributionTab({
+  segments, ranges, selectedSegId, onSelectSeg,
+}: {
+  segments: PayloadSegment[];
+  ranges: AttributedDiffRange[];
+  selectedSegId: string | null;
+  onSelectSeg: (s: PayloadSegment) => void;
+}) {
+  const total = segments.reduce((s, g) => s + g.tokens, 0) || 1;
+
+  // Build delta map from diff ranges: category -> delta tokens
+  const deltaByCategory: Record<string, number> = {};
+  for (const r of ranges) {
+    if (r.changeType === "added" || r.changeType === "changed") {
+      deltaByCategory[r.category] = (deltaByCategory[r.category] ?? 0) + r.tokens;
+    } else if (r.changeType === "removed") {
+      deltaByCategory[r.category] = (deltaByCategory[r.category] ?? 0) + r.tokens; // negative
+    }
+  }
+
+  // Build per-segment delta (best-effort: match by category)
+  const segDeltaUsed: Record<string, number> = {};
+  function getSegDelta(seg: PayloadSegment): number | null {
+    const catTotal = deltaByCategory[seg.category];
+    if (catTotal == null) return null;
+    // Distribute delta proportionally among segments of same category
+    const catSegs = segments.filter(s => s.category === seg.category);
+    const catTokens = catSegs.reduce((s, g) => s + g.tokens, 0) || 1;
+    const proportional = Math.round(catTotal * seg.tokens / catTokens);
+    const alreadyUsed = segDeltaUsed[seg.category] ?? 0;
+    segDeltaUsed[seg.category] = alreadyUsed + proportional;
+    return proportional;
+  }
+
+  // Reset and compute all deltas in order
+  const segDeltas = segments.map(seg => getSegDelta(seg));
+
+  return (
+    <div>
+      <PayloadCompositionBar segments={segments} selectedId={selectedSegId} onSelect={onSelectSeg} />
+
+      {/* Segment table */}
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 60px 40px 70px 60px", padding: "5px 12px", background: "#f9fafb", borderBottom: "1px solid #e5e7eb" }}>
+          {["Segment", "Tokens", "%", "Δ vs prev", "Conf"].map(h => (
+            <span key={h} style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600 }}>{h}</span>
+          ))}
+        </div>
+        {segments.map((seg, i) => {
+          const pct = Math.round(seg.tokens / total * 100);
+          const delta = segDeltas[i];
+          const isSelected = seg.id === selectedSegId;
+          return (
+            <div key={seg.id} onClick={() => onSelectSeg(seg)} style={{
+              display: "grid", gridTemplateColumns: "1fr 60px 40px 70px 60px",
+              padding: "9px 12px", alignItems: "center", cursor: "pointer",
+              borderBottom: i < segments.length - 1 ? "1px solid #f3f4f6" : "none",
+              background: isSelected ? "#eff6ff" : "transparent",
+              borderLeft: isSelected ? "3px solid #6366f1" : "3px solid transparent",
+            }}
+            onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#f9fafb"; }}
+            onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}>
+              <div style={{ overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ width: 7, height: 7, borderRadius: 1, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb", flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seg.label}</span>
+                </div>
+                {seg.sourceEvent && (
+                  <div style={{ fontSize: 9, color: "#9ca3af", marginLeft: 13, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {seg.sourceEvent.label}
+                  </div>
+                )}
+              </div>
+              <span style={{ fontSize: 11, color: "#374151" }}>{fmtK(seg.tokens)}</span>
+              <span style={{ fontSize: 11, color: "#9ca3af" }}>{pct}%</span>
+              <span style={{ fontSize: 10, fontWeight: 600, color: delta == null ? "#d1d5db" : delta > 0 ? "#d97706" : delta < 0 ? "#16a34a" : "#9ca3af" }}>
+                {delta == null ? "—" : delta === 0 ? "·" : `${delta > 0 ? "+" : ""}${fmtK(delta)}`}
+              </span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: CONF_COLOR[seg.confidence] }}>{CONF_ICON[seg.confidence]} {seg.confidence}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Diff vs Previous Tab ────────────────────────────────────────────────────
+
+function DiffVsPreviousTab({
+  ranges, diff, callDetailLoading, prevCallId,
+  selectedRangeId, onSelectRange,
+}: {
+  ranges: AttributedDiffRange[];
+  diff: import("./drilldown-types").SegmentDiff[] | null;
+  callDetailLoading: boolean;
+  prevCallId: number | null;
+  selectedRangeId: string | null;
+  onSelectRange: (r: AttributedDiffRange) => void;
+}) {
+  const [mode, setMode] = useState<DiffMode>("segment");
+
+  const addedTokens    = ranges.filter(r => r.changeType === "added").reduce((s, r) => s + r.tokens, 0);
+  const removedTokens  = Math.abs(ranges.filter(r => r.changeType === "removed").reduce((s, r) => s + r.tokens, 0));
+  const retainedTokens = ranges.filter(r => r.changeType === "retained").reduce((s, r) => s + r.tokens, 0);
+  const netDelta = addedTokens - removedTokens;
+
+  // Sort added ranges by token count descending for "top contributors"
+  const topContributors = [...ranges]
+    .filter(r => r.changeType === "added" && r.tokens > 0)
+    .sort((a, b) => b.tokens - a.tokens)
+    .slice(0, 5);
+
+  return (
+    <div>
+      {/* Summary strip */}
+      <div style={{ background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
+        {prevCallId != null && (
+          <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 8 }}>Compared with Call #{prevCallId}</div>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 12 }}>
+          {[
+            { label: "Net Δ",    value: `${netDelta >= 0 ? "+" : ""}${fmtK(netDelta)}`,     color: netDelta > 0 ? "#d97706" : "#16a34a" },
+            { label: "Added",    value: `+${fmtK(addedTokens)}`,    color: "#16a34a" },
+            { label: "Removed",  value: removedTokens > 0 ? `−${fmtK(removedTokens)}` : "—", color: "#dc2626" },
+            { label: "Retained", value: fmtK(retainedTokens),        color: "#9ca3af" },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color }}>{value}</div>
+              <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 2 }}>{label}</div>
+            </div>
+          ))}
+        </div>
+        {topContributors.length > 0 && (
+          <div>
+            <div style={{ fontSize: 10, color: "#6b7280", fontWeight: 600, marginBottom: 6 }}>Top contributors</div>
+            {topContributors.map(r => (
+              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <div style={{ width: 7, height: 7, borderRadius: 1, background: CATEGORY_COLORS[r.category] ?? "#e5e7eb", flexShrink: 0 }} />
+                <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {r.sourceEvent?.label ?? r.category}
+                </span>
+                <span style={{ fontSize: 10, fontWeight: 600, color: "#d97706", flexShrink: 0 }}>+{fmtK(r.tokens)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Mode selector */}
+      <div style={{ display: "flex", gap: 2, marginBottom: 12, background: "#f3f4f6", borderRadius: 6, padding: 3, width: "fit-content" }}>
+        {(["segment", "range", "raw"] as DiffMode[]).map(m => (
+          <button key={m} onClick={() => setMode(m)} style={{
+            padding: "4px 10px", fontSize: 10, fontWeight: mode === m ? 700 : 400,
+            color: mode === m ? "#6366f1" : "#6b7280",
+            background: mode === m ? "#fff" : "transparent",
+            border: "none", borderRadius: 4, cursor: "pointer",
+            boxShadow: mode === m ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
+          }}>
+            {m === "segment" ? "Segment" : m === "range" ? "Range" : "Raw"}
+          </button>
+        ))}
+      </div>
+
+      {/* Segment mode — reuse AttributedDiffTable */}
+      {mode === "segment" && (
+        <AttributedDiffTable ranges={ranges} selectedId={selectedRangeId} onSelect={onSelectRange} />
+      )}
+
+      {/* Range mode — show attributed ranges with char offsets */}
+      {mode === "range" && (
+        <div>
+          {ranges.filter(r => r.changeType !== "retained").map((r, i) => {
+            const CHANGE_CFG: Record<string, { color: string; icon: string; bg: string }> = {
+              added: { color: "#16a34a", icon: "+", bg: "#f0fdf4" },
+              removed: { color: "#dc2626", icon: "−", bg: "#fef2f2" },
+              changed: { color: "#d97706", icon: "~", bg: "#fffbeb" },
+              reclassified: { color: "#7c3aed", icon: "⇄", bg: "#faf5ff" },
+              moved: { color: "#3b82f6", icon: "→", bg: "#eff6ff" },
+            };
+            const cfg = CHANGE_CFG[r.changeType] ?? { color: "#9ca3af", icon: "·", bg: "#f9fafb" };
+            const isSelected = r.id === selectedRangeId;
+            return (
+              <div key={r.id} onClick={() => onSelectRange(r)} style={{
+                padding: "8px 12px", borderRadius: 6, marginBottom: 6, cursor: "pointer",
+                background: isSelected ? "#eff6ff" : cfg.bg,
+                border: `1px solid ${isSelected ? "#6366f1" : cfg.color + "30"}`,
+                borderLeft: `3px solid ${isSelected ? "#6366f1" : cfg.color}`,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: cfg.color, width: 14 }}>{cfg.icon}</span>
+                  <span style={{ fontSize: 10, color: CATEGORY_COLORS[r.category] ?? "#6b7280", fontWeight: 600 }}>{r.category}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.sourceEvent?.label ?? r.textPreview.slice(0, 40)}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: cfg.color, flexShrink: 0 }}>
+                    {r.changeType === "added" ? "+" : r.changeType === "removed" ? "−" : ""}{fmtK(Math.abs(r.tokens))}
+                  </span>
+                </div>
+                {(r.currentRange || r.previousRange) && (
+                  <div style={{ fontSize: 9, color: "#9ca3af", fontFamily: "monospace", marginLeft: 22, marginTop: 2 }}>
+                    {r.currentRange && `chars ${r.currentRange.startChar.toLocaleString()}–${r.currentRange.endChar.toLocaleString()}`}
+                    {r.previousRange && r.currentRange && " (prev: "}
+                    {r.previousRange && !r.currentRange && "prev: "}
+                    {r.previousRange && `${r.previousRange.startChar.toLocaleString()}–${r.previousRange.endChar.toLocaleString()}`}
+                    {r.previousRange && r.currentRange && ")"}
+                    <span style={{ marginLeft: 8, color: CONF_COLOR[r.confidence], fontWeight: 700 }}>{CONF_ICON[r.confidence]} {r.confidence}</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {ranges.filter(r => r.changeType !== "retained").length === 0 && (
+            <div style={{ fontSize: 11, color: "#9ca3af", textAlign: "center", padding: "24px 0" }}>No changed ranges</div>
+          )}
+        </div>
+      )}
+
+      {/* Raw mode — proxy diff */}
+      {mode === "raw" && (
+        <div>
+          {callDetailLoading && <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading proxy diff…</div>}
+          {!callDetailLoading && !diff && (
+            <div style={{ fontSize: 11, color: "#9ca3af", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 5, padding: "8px 10px" }}>
+              No proxy data available. Run with proxy enabled to see raw segment diff.
+            </div>
+          )}
+          {!callDetailLoading && diff && <ProxyDiffView diff={diff} />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Request Tab ─────────────────────────────────────────────────────────────
+
+function RequestTab({
+  call, callDetail, callDetailLoading,
+}: {
+  call: MockLlmCall;
+  callDetail: CallDetail | null;
+  callDetailLoading: boolean;
+}) {
+  const hasProxy = !!callDetail?.proxyRequestId;
+  const observedSource = hasProxy ? "Proxy + JSONL" : "JSONL only";
+  const reconstruction = hasProxy ? "exact" : "estimated";
+
+  const messageCount = callDetail?.rawRequestJson
+    ? (callDetail.rawRequestJson.messages as unknown[] | undefined)?.length ?? null
+    : null;
+  const toolCount = callDetail?.rawRequestJson
+    ? (callDetail.rawRequestJson.tools as unknown[] | undefined)?.length ?? null
+    : null;
+  const systemBlocks = callDetail?.rawRequestJson
+    ? (Array.isArray(callDetail.rawRequestJson.system)
+        ? (callDetail.rawRequestJson.system as unknown[]).length
+        : callDetail.rawRequestJson.system != null ? 1 : null)
+    : null;
+
+  return (
+    <div>
+      {/* Reconstruction status */}
+      <div style={{
+        background: hasProxy ? "#f0fdf4" : "#fffbeb",
+        border: `1px solid ${hasProxy ? "#bbf7d0" : "#fde68a"}`,
+        borderRadius: 8, padding: "10px 14px", marginBottom: 14,
+      }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: hasProxy ? "#16a34a" : "#d97706" }}>
+            {hasProxy ? "✓" : "⚠"} {hasProxy ? "Proxy exact" : "JSONL observed · reconstruction estimated"}
+          </span>
+        </div>
+        <div style={{ fontSize: 10, color: "#6b7280" }}>
+          {!hasProxy && "Exact request payload unavailable. The view below is estimated from JSONL events. Link proxy to upgrade to exact reconstruction."}
+          {hasProxy && "Full request payload available from proxy."}
+        </div>
+      </div>
+
+      {/* Reconstructed summary */}
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden", marginBottom: 14 }}>
+        <div style={{ padding: "6px 12px", background: "#f9fafb", borderBottom: "1px solid #e5e7eb", fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.05em" }}>
+          RECONSTRUCTED REQUEST SUMMARY
+        </div>
+        {[
+          { label: "Observed source", value: observedSource },
+          { label: "Reconstruction", value: reconstruction },
+          { label: "Model", value: call.model || "—" },
+          { label: "System blocks", value: callDetailLoading ? "…" : systemBlocks != null ? String(systemBlocks) : "—" },
+          { label: "Messages", value: callDetailLoading ? "…" : messageCount != null ? String(messageCount) : "—" },
+          { label: "Tools", value: callDetailLoading ? "…" : toolCount != null ? String(toolCount) : (call.toolNames.length > 0 ? String(call.toolNames.length) : "—") },
+          { label: "Input context", value: fmtK(call.contextSize) },
+          { label: "Cache control", value: call.cacheWrite > 0 ? "observed" : "—" },
+        ].map(({ label, value }) => (
+          <div key={label} style={{ display: "flex", padding: "7px 12px", borderBottom: "1px solid #f3f4f6" }}>
+            <span style={{ width: 120, flexShrink: 0, fontSize: 11, color: "#9ca3af" }}>{label}</span>
+            <span style={{ fontSize: 11, color: "#374151" }}>{value}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Tool names if available */}
+      {call.toolNames.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 10, color: "#6b7280", fontWeight: 600, marginBottom: 6 }}>Tool names observed</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {call.toolNames.map(name => (
+              <span key={name} style={{ fontSize: 10, background: "#f3f4f6", color: "#374151", borderRadius: 4, padding: "2px 8px", fontFamily: "monospace" }}>{name}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Raw JSONL metadata as fallback */}
+      <div style={{ fontSize: 10, color: "#6b7280", fontWeight: 600, marginBottom: 6 }}>JSONL Metadata</div>
+      <pre style={{ fontSize: 10, fontFamily: "monospace", color: "#374151", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5, marginBottom: 14 }}>
+        {JSON.stringify({
+          call_id: call.id, index_in_turn: call.indexInTurn,
+          model: call.model, timestamp: call.timestamp,
+          usage: { context_size: call.contextSize, fresh_in: call.contextSize - call.cacheRead - call.cacheWrite, cache_read: call.cacheRead, cache_write: call.cacheWrite, output_tokens: call.outputTokens },
+          stop_reason: call.stopReason,
+          ...(call.proxy ? { proxy_request_id: call.proxy.requestId, duration_ms: call.proxy.durationMs } : {}),
+        }, null, 2)}
+      </pre>
+    </div>
+  );
+}
 
 // ─── Proxy Diff View ──────────────────────────────────────────────────────────
 
@@ -3402,24 +4169,32 @@ function DiffSegmentRow({ d, style }: { d: SegmentDiff; style: { bg: string; bor
 }
 
 function LlmCallDetailPanel({
-  call, onSelectEntry, sessionId,
+  call, sessionId,
 }: { call: MockLlmCall; onSelectEntry: (e: MockDiffEntry) => void; sessionId: string }) {
-  const [tab, setTab] = useState<CallTab>("incoming");
+  const [tab, setTab] = useState<CallTab>("attribution");
   const [callDetail, setCallDetail] = useState<CallDetail | null>(null);
-  const [callDetailLoading, setCallDetailLoading] = useState(false);
+  const [callDetailLoading, setCallDetailLoading] = useState(true);
 
+  // Load eagerly on mount — needed for Attribution (real segments) from first render
   useEffect(() => {
-    if (tab !== "raw" && tab !== "proxy-diff") return;
     if (callDetail?.callId === call.id) return;
     setCallDetailLoading(true);
     apiV2.callDetail(sessionId, call.id)
       .then(d => setCallDetail(d))
       .catch(() => setCallDetail(null))
       .finally(() => setCallDetailLoading(false));
-  }, [tab, call.id, sessionId, callDetail?.callId]);
+  }, [call.id, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Attributed diff ranges (new model)
-  const attrRanges = call.incomingDiff.length > 0 ? call.incomingDiff.map(d => ({
+  const hasProxy = !!callDetail?.proxyRequestId;
+  const freshIn  = call.contextSize - call.cacheRead - call.cacheWrite;
+  const nearLimit = false;
+  const prevCallId = call.id > 1 ? call.id - 1 : null;
+
+  // Real segments from proxy — used for Attribution tab
+  const realSegments = callDetail?.segments ?? null;
+
+  // incomingDiff → AttributedDiffRange (for Diff tab)
+  const attrRanges: AttributedDiffRange[] = call.incomingDiff.map(d => ({
     id: d.id,
     changeType: d.changeType as ChangeType,
     textPreview: d.label,
@@ -3428,330 +4203,236 @@ function LlmCallDetailPanel({
     cause: d.cause,
     confidence: (d.confidence === "High" ? "high" : d.confidence === "Medium" ? "medium" : d.confidence === "Low" ? "low" : "unknown") as ConfidenceLevel,
     evidenceRefs: d.evidence ? [{ kind: "jsonl" as const, label: d.evidence, detail: d.evidence }] : [],
-  })) : buildMockAttributedDiff(call);
-  const payloadSegs = buildMockPayloadSegments(call);
-  const response: import("./drilldown-mock-fill").CallResponse = {
-    textOutput: call.stopReason === "end_turn" || call.stopReason === "stop_sequence" ? "" : "",
-    toolUseBlocks: [],
-    stopReason: call.stopReason ?? "end_turn",
-    outputTokens: call.outputTokens,
-    hasThinking: false,
-  };
-  const bridges = buildMockBridgeEvents(call);
-  const trustMode = buildTrustMode(call);
+  }));
 
-  type Selection =
-    | { kind: "range"; range: AttributedDiffRange }
-    | { kind: "segment"; seg: PayloadSegment }
-    | null;
-  const [selection, setSelection] = useState<Selection>(null);
+  const response = buildMockCallResponse(call);
 
-  function selectRange(r: AttributedDiffRange) {
-    setSelection({ kind: "range", range: r });
-    // legacy callback with a compatible shape
-    if (r.changeType !== "retained") {
-      onSelectEntry({
-        id: r.id, category: r.category, label: r.sourceEvent?.label ?? r.textPreview.slice(0, 40),
-        delta: r.tokens, changeType: r.changeType as MockDiffEntry["changeType"],
-        cause: r.cause ?? "", confidence: (r.confidence === "exact" || r.confidence === "high" ? "High" : r.confidence === "medium" ? "Medium" : r.confidence === "low" ? "Low" : "Unknown"),
-        evidence: r.evidenceRefs.map(e => e.label).join(" · "),
-      });
-    }
-  }
-
-  const freshIn  = call.contextSize - call.cacheRead - call.cacheWrite;
-  const cacheRatio = call.contextSize > 0 ? Math.round(call.cacheRead / call.contextSize * 100) : 0;
-  const nearLimit  = false;
-
-  // Diff summary numbers from attributed ranges
-  const addedTokens    = attrRanges.filter(r => r.changeType === "added").reduce((s, r) => s + r.tokens, 0);
-  const removedTokens  = Math.abs(attrRanges.filter(r => r.changeType === "removed").reduce((s, r) => s + r.tokens, 0));
-  const retainedTokens = attrRanges.filter(r => r.changeType === "retained").reduce((s, r) => s + r.tokens, 0);
-  const netDelta = addedTokens - removedTokens;
-  const confHigh = attrRanges.filter(r => r.confidence === "exact" || r.confidence === "high").length;
-  const confPct  = attrRanges.length > 0 ? Math.round(confHigh / attrRanges.length * 100) : 0;
-
-  const TAB_DEFS: Array<{ id: CallTab; label: string; proxyRequired?: boolean }> = [
-    { id: "incoming",       label: "Incoming Diff" },
+  const TAB_DEFS: Array<{ id: CallTab; label: string }> = [
+    { id: "attribution",    label: "Attribution" },
+    { id: "diff",           label: "Diff vs Previous" },
+    { id: "request",        label: "Request" },
     { id: "response-tools", label: "Response & Tools" },
-    { id: "payload",        label: "Payload Map" },
-    { id: "next-impact",    label: "Next Impact" },
-    { id: "proxy-diff",     label: "Proxy Diff", proxyRequired: true },
-    { id: "raw",            label: "Raw" },
+    { id: "raw",            label: "Raw / Evidence" },
   ];
 
   return (
-    <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-      {/* ── Main column ─────────────────────────────── */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px 16px 22px", minWidth: 0 }}>
+    <div style={{ flex: 1, overflowY: "auto", padding: "16px 22px", minWidth: 0 }}>
 
-        {/* ── Call Header ────────────────────────── */}
-        <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <span style={{ fontSize: 15, fontWeight: 800, color: "#111827" }}>Call #{call.id}</span>
-            <span style={{ fontSize: 10, color: "#9ca3af" }}>#{call.indexInTurn} in turn</span>
-            {call.isCompaction && <RiskBadge type="compaction" />}
-            {nearLimit && <RiskBadge type="near-limit" />}
-            {call.isSignificant && !nearLimit && <RiskBadge type="large-growth" />}
-            <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 600, color: "#374151" }}>
-              {call.model ? shortModelName(call.model) : "unknown"}
-            </span>
+      {/* ── Compact Header ──────────────────────── */}
+      <div style={{ marginBottom: 14, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
+
+        {/* Title row */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 15, fontWeight: 800, color: "#111827" }}>Call #{call.id}</span>
+          <span style={{ fontSize: 10, color: "#9ca3af" }}>#{call.indexInTurn} in turn</span>
+          {call.isCompaction && <RiskBadge type="compaction" />}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{call.model ? shortModelName(call.model) : "—"}</span>
             <span style={{ fontSize: 10, color: "#9ca3af" }}>
-              {call.timestamp ? new Date(call.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
+              {call.timestamp ? fmtDateShort(call.timestamp) : "—"}
             </span>
-          </div>
-
-          {/* Single trust badge */}
-          <TrustBadge mode={trustMode} proxy={call.proxy ?? undefined} />
-
-          {/* Metrics */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            <SummaryMetricStrip columns={5} cards={[
-              { label: "Context",     value: fmtK(call.contextSize), color: nearLimit ? "#ea580c" : undefined },
-              { label: "Context Δ",  value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`, color: call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : undefined },
-              { label: "Cache Read",  value: fmtK(call.cacheRead) },
-              { label: "Cache Write", value: fmtK(call.cacheWrite) },
-              { label: "Cache %",     value: `${cacheRatio}%`, tooltip: "cache_read / context_size" },
-            ]} />
-            <SummaryMetricStrip columns={5} cards={[
-              { label: "Fresh In",    value: fmtK(freshIn) },
-              { label: "Fresh Out",   value: fmtK(call.outputTokens) },
-              { label: "Stop",        value: call.stopReason ?? "—" },
-              { label: "Context",     value: fmtK(call.contextSize) },
-              { label: "Thinking",    value: response.hasThinking ? "yes" : "no", mock: true },
-            ]} />
+            {call.stopReason && (
+              <span style={{ fontSize: 9, color: "#6b7280", background: "#f3f4f6", borderRadius: 3, padding: "1px 6px" }}>
+                stop: {call.stopReason}
+              </span>
+            )}
+            {call.proxy?.durationMs != null && (
+              <span style={{ fontSize: 9, color: "#6b7280" }}>{call.proxy.durationMs >= 1000 ? `${(call.proxy.durationMs / 1000).toFixed(1)}s` : `${call.proxy.durationMs}ms`}</span>
+            )}
+            {/* Proxy status — only show when loaded and no proxy */}
+            {!callDetailLoading && !hasProxy && (
+              <span style={{ fontSize: 9, color: "#d97706", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 3, padding: "1px 6px" }}>
+                no proxy · <a href="/settings" style={{ color: "#d97706", textDecoration: "underline" }}>enable dump</a>
+              </span>
+            )}
           </div>
         </div>
 
-        {/* ── Tabs ─────────────────────────────────── */}
-        <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", marginBottom: 14, gap: 0 }}>
-          {TAB_DEFS.map(({ id, label }) => (
-            <button key={id} onClick={() => setTab(id)} style={{
-              padding: "6px 11px", fontSize: 11, fontWeight: tab === id ? 700 : 400,
-              color: tab === id ? "#6366f1" : "#6b7280",
-              background: "none", border: "none",
-              borderBottom: tab === id ? "2px solid #6366f1" : "2px solid transparent",
-              cursor: "pointer", marginBottom: -1,
-            }}>{label}</button>
+        {/* Inline metric row — compact, single line */}
+        <div style={{ display: "flex", gap: 0, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+          {[
+            { label: "Context",     value: fmtK(call.contextSize),
+              color: nearLimit ? "#ea580c" : "#111827",
+              tooltip: "Total input context (fresh + cache_read + cache_write)" },
+            { label: "Δ vs prev",   value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`,
+              color: call.significantDelta > 10000 ? "#dc2626" : call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : "#111827",
+              tooltip: "Context size delta vs previous call" },
+            { label: "Cache Read",  value: fmtK(call.cacheRead),  color: "#111827", tooltip: "cache_read_input_tokens" },
+            { label: "Cache Write", value: fmtK(call.cacheWrite), color: "#111827", tooltip: "cache_creation_input_tokens" },
+            { label: "Fresh In",    value: fmtK(freshIn),         color: "#111827", tooltip: "Non-cached input (context − cache_read − cache_write)" },
+            { label: "Fresh Out",   value: fmtK(call.outputTokens), color: "#111827", tooltip: "output_tokens" },
+          ].map(({ label, value, color, tooltip }, i, arr) => (
+            <div key={label} title={tooltip} style={{
+              flex: 1, padding: "6px 10px", borderRight: i < arr.length - 1 ? "1px solid #e5e7eb" : "none",
+              minWidth: 0,
+            }}>
+              <div style={{ fontSize: 9, color: "#9ca3af", whiteSpace: "nowrap", marginBottom: 2 }}>{label}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
+            </div>
           ))}
         </div>
+      </div>
 
-        {/* ══ Incoming Diff ════════════════════════ */}
-        {tab === "incoming" && (
-          <div>
-            {/* Diff summary strip */}
-            <SummaryMetricStrip columns={5} cards={[
-              { label: "Net Δ",      value: `${netDelta >= 0 ? "+" : ""}${fmtK(netDelta)}`, color: netDelta > 0 ? "#d97706" : "#16a34a" },
-              { label: "Added",      value: `+${fmtK(addedTokens)}`,   color: "#16a34a" },
-              { label: "Removed",    value: removedTokens > 0 ? `−${fmtK(removedTokens)}` : "—", color: "#dc2626" },
-              { label: "Retained",   value: fmtK(retainedTokens),       color: "#9ca3af" },
-              { label: "Conf %",     value: `${confPct}%`,              color: confPct >= 80 ? "#16a34a" : "#d97706", tooltip: "% of ranges with high/exact confidence", mock: true },
-            ]} />
+      {/* ── Tabs ──────────────────────────────────── */}
+      <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", marginBottom: 14, gap: 0 }}>
+        {TAB_DEFS.map(({ id, label }) => (
+          <button key={id} onClick={() => setTab(id)} style={{
+            padding: "6px 12px", fontSize: 11, fontWeight: tab === id ? 700 : 400,
+            color: tab === id ? "#6366f1" : "#6b7280",
+            background: "none", border: "none",
+            borderBottom: tab === id ? "2px solid #6366f1" : "2px solid transparent",
+            cursor: "pointer", marginBottom: -1, whiteSpace: "nowrap",
+          }}>{label}</button>
+        ))}
+      </div>
 
-            <div style={{ marginTop: 14 }}>
-              {/* Attribution Flow Overview */}
-              <AttributionFlowOverview ranges={attrRanges} bridges={bridges} onSelectRange={selectRange} />
-
-              {/* Attributed Diff Entries */}
-              <SectionLabel mock>Attributed Payload Diff</SectionLabel>
-              <AttributedDiffTable
-                ranges={attrRanges}
-                selectedId={selection?.kind === "range" ? selection.range.id : null}
-                onSelect={selectRange}
-              />
+      {/* ══ Attribution ══════════════════════════════ */}
+      {tab === "attribution" && (
+        callDetailLoading ? (
+          <div style={{ fontSize: 11, color: "#9ca3af", padding: "32px 0", textAlign: "center" }}>Loading…</div>
+        ) : realSegments ? (
+          <RealSegmentTree
+            segments={realSegments}
+            diff={callDetail?.diff ?? null}
+            call={call}
+          />
+        ) : (
+          <div style={{ padding: "24px 0", textAlign: "center" }}>
+            <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>No proxy data — segment breakdown unavailable</div>
+            <div style={{ fontSize: 10, color: "#9ca3af" }}>
+              Token counts from JSONL:{" "}
+              <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.contextSize)}</span> context ·{" "}
+              <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheRead)}</span> cache read ·{" "}
+              <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheWrite)}</span> cache write ·{" "}
+              <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(freshIn)}</span> fresh in
+            </div>
+            <div style={{ marginTop: 14, fontSize: 10, color: "#d97706" }}>
+              <a href="/settings" style={{ color: "#d97706" }}>Enable proxy dump</a> to see per-segment breakdown
             </div>
           </div>
-        )}
+        )
+      )}
 
-        {/* ══ Response & Tools ═════════════════════ */}
-        {tab === "response-tools" && (
-          <div>
-            <SectionLabel>This call produced</SectionLabel>
-            <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
-              {response.hasThinking && (
-                <div style={{ padding: "10px 14px", borderBottom: "1px solid #f3f4f6", background: "#faf5ff" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", background: "#f3e8ff", borderRadius: 3, padding: "1px 5px" }}>thinking</span>
-                    <span style={{ fontSize: 10, color: "#9ca3af" }}>Extended Thinking · content redacted by redact-thinking beta</span>
-                    <MockBadge />
-                  </div>
-                  <div style={{ fontSize: 11, color: "#7c3aed", fontStyle: "italic", lineHeight: 1.5 }}>
-                    {response.thinkingPreview}<span style={{ color: "#c4b5fd" }}> … [redacted]</span>
-                  </div>
-                </div>
-              )}
-              {response.toolUseBlocks.map(tu => (
-                <div key={tu.id} style={{ padding: "10px 14px", borderBottom: "1px solid #f3f4f6", background: "#fffbeb" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#d97706", background: "#fef3c7", borderRadius: 3, padding: "1px 5px" }}>tool_use</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>{tu.name}</span>
-                    <code style={{ fontSize: 10, color: "#9ca3af" }}>{tu.id}</code>
-                  </div>
-                  <pre style={{ fontSize: 11, color: "#374151", margin: 0, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{tu.input}</pre>
-                </div>
-              ))}
-              {response.textOutput && (
-                <div style={{ padding: "10px 14px", background: "#f0fdf4" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color: "#16a34a", background: "#dcfce7", borderRadius: 3, padding: "1px 5px" }}>text</span>
-                    <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtK(response.outputTokens)} tokens · stop: {response.stopReason}</span>
-                  </div>
-                  <div style={{ fontSize: 12, color: "#14532d", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{response.textOutput}</div>
-                </div>
-              )}
-            </div>
-            <SectionLabel mock>This affects next call</SectionLabel>
-            <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
-              {response.toolUseBlocks.map(tu => (
-                <div key={tu.id} style={{ padding: "9px 14px", borderBottom: "1px solid #f3f4f6", display: "flex", gap: 10 }}>
-                  <span style={{ fontSize: 10, color: "#d97706", fontWeight: 700, width: 72, flexShrink: 0, paddingTop: 1 }}>→ tool_result</span>
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{tu.name} result will be injected</div>
-                    <div style={{ fontSize: 10, color: "#9ca3af" }}>tool_call_id: {tu.id} · awaiting execution</div>
-                  </div>
-                </div>
-              ))}
-              {response.textOutput && (
-                <div style={{ padding: "9px 14px", display: "flex", gap: 10 }}>
-                  <span style={{ fontSize: 10, color: "#16a34a", fontWeight: 700, width: 72, flexShrink: 0, paddingTop: 1 }}>→ history</span>
-                  <div>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>Assistant response appended to history</div>
-                    <div style={{ fontSize: 10, color: "#9ca3af" }}>{fmtK(response.outputTokens)} tokens → Assistant History in next call</div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+      {/* ══ Diff vs Previous ══════════════════════════ */}
+      {tab === "diff" && (
+        <DiffVsPreviousTab
+          ranges={attrRanges}
+          diff={callDetail?.diff ?? null}
+          callDetailLoading={callDetailLoading}
+          prevCallId={prevCallId}
+          selectedRangeId={null}
+          onSelectRange={() => {}}
+        />
+      )}
 
-        {/* ══ Payload Map ══════════════════════════ */}
-        {tab === "payload" && (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-              <SectionLabel mock>Payload Map (estimated attribution)</SectionLabel>
-              {trustMode === "jsonl-only" && (
-                <span style={{ fontSize: 9, color: "#d97706", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 3, padding: "2px 6px" }}>
-                  estimated · link proxy for exact offsets
-                </span>
-              )}
-            </div>
-            <PayloadMapTab
-              segments={payloadSegs}
-              selectedSegId={selection?.kind === "segment" ? selection.seg.id : null}
-              onSelect={seg => setSelection({ kind: "segment", seg })}
-            />
-          </div>
-        )}
+      {/* ══ Request ════════════════════════════════════ */}
+      {tab === "request" && (
+        <RequestTab call={call} callDetail={callDetail} callDetailLoading={callDetailLoading} />
+      )}
 
-        {/* ══ Next Impact ══════════════════════════ */}
-        {tab === "next-impact" && (
-          <div>
-            <SectionLabel mock>Next Impact</SectionLabel>
-            <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 8, padding: "10px 14px", fontSize: 11, color: "#0c4a6e", marginBottom: 14 }}>
-              <strong>Next Impact</strong> = this call's response + tool_use + following tool_result(s) → changes in the next call's payload.
-            </div>
-            {[
-              { kind: "tool_result" as const, label: "tool_result injected",               detail: "Read(server/src/parser.ts) → ~12.8k tokens added to Tool Output",     impact: 12800, conf: "high" as ConfidenceLevel },
-              { kind: "assistant_response" as const, label: "assistant response → history", detail: `${fmtK(response.outputTokens)} tokens appended to Assistant History`, impact: response.outputTokens, conf: "high" as ConfidenceLevel },
-              { kind: "system_injection" as const, label: "cache write → cache read",       detail: `${fmtK(call.cacheWrite)} tokens promoted to cache read in next call`,   impact: 0, conf: "medium" as ConfidenceLevel },
-            ].map((item, i) => {
-              const BRIDGE_CFG_COLORS: Record<BridgeEventKind, string> = { user_input: "#6366f1", tool_use: "#d97706", tool_result: "#d97706", system_injection: "#6b7280", compaction: "#ef4444", assistant_response: "#16a34a" };
-              const color = BRIDGE_CFG_COLORS[item.kind];
-              return (
-                <div key={i} style={{ border: `1px solid ${color}30`, borderLeft: `3px solid ${color}`, borderRadius: 7, padding: "10px 14px", marginBottom: 8, background: "#fafafa" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 10, fontWeight: 700, color, background: `${color}15`, borderRadius: 3, padding: "1px 6px" }}>{item.kind}</span>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{item.label}</span>
-                    {item.impact > 0 && <span style={{ fontSize: 11, fontWeight: 700, color: "#d97706", marginLeft: "auto" }}>+{fmtK(item.impact)}</span>}
-                    <span style={{ fontSize: 10, fontWeight: 700, color: CONF_COLOR[item.conf] }}>{CONF_ICON[item.conf]} {item.conf}</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: "#6b7280" }}>{item.detail}</div>
+      {/* ══ Response & Tools ═══════════════════════════ */}
+      {tab === "response-tools" && (
+        <div>
+          <SectionLabel>Produced</SectionLabel>
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
+            {response.hasThinking && (
+              <div style={{ padding: "10px 14px", borderBottom: "1px solid #f3f4f6", background: "#faf5ff" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", background: "#f3e8ff", borderRadius: 3, padding: "1px 5px" }}>thinking</span>
+                  <span style={{ fontSize: 10, color: "#9ca3af" }}>Extended Thinking</span>
                 </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* ══ Proxy Diff ═══════════════════════════ */}
-        {tab === "proxy-diff" && (
-          <div>
-            <SectionLabel>Proxy Diff vs Previous Call</SectionLabel>
-            {callDetailLoading && <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>}
-            {!callDetailLoading && !callDetail?.proxyRequestId && (
-              <div style={{ fontSize: 11, color: "#9ca3af", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 5, padding: "8px 10px" }}>
-                No proxy data — run with proxy enabled to see segment diff.
+                <div style={{ fontSize: 11, color: "#7c3aed", fontStyle: "italic", lineHeight: 1.5 }}>
+                  {response.thinkingPreview}<span style={{ color: "#c4b5fd" }}> … [redacted]</span>
+                </div>
               </div>
             )}
-            {!callDetailLoading && callDetail?.proxyRequestId && !callDetail.diff && (
-              <div style={{ fontSize: 11, color: "#9ca3af", padding: "8px 0" }}>First call — no previous call to diff against.</div>
-            )}
-            {!callDetailLoading && callDetail?.diff && (
-              <ProxyDiffView diff={callDetail.diff} />
-            )}
-          </div>
-        )}
-
-        {/* ══ Raw ══════════════════════════════════ */}
-        {tab === "raw" && (
-          <div>
-            <SectionLabel>Raw</SectionLabel>
-            {callDetailLoading && <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>}
-            {!callDetailLoading && (() => {
-              const hasProxy = !!callDetail?.proxyRequestId;
-              return (
-                <>
-                  <div style={{ fontSize: 10, background: hasProxy ? "#f0fdf4" : "#fffbeb", border: `1px solid ${hasProxy ? "#bbf7d0" : "#fde68a"}`, borderRadius: 5, padding: "6px 10px", marginBottom: 10, color: "#374151" }}>
-                    {hasProxy ? "Proxy — full request body available." : "JSONL only — no request payload."}
-                  </div>
-                  {/* Phase 1: always shown */}
-                  <SectionLabel>JSONL Metadata</SectionLabel>
-                  <pre style={{ fontSize: 11, fontFamily: "monospace", color: "#374151", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "12px 14px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5, marginBottom: 12 }}>
-                    {JSON.stringify({
-                      call_id: call.id, index_in_turn: call.indexInTurn,
-                      model: call.model, timestamp: call.timestamp,
-                      usage: { input_tokens: freshIn, cache_read_input_tokens: call.cacheRead, cache_creation_input_tokens: call.cacheWrite, output_tokens: call.outputTokens },
-                      context_size: call.contextSize, stop_reason: call.stopReason,
-                      ...(call.proxy ? { proxy_request_id: call.proxy.requestId, proxy_duration_ms: call.proxy.durationMs } : {}),
-                    }, null, 2)}
-                  </pre>
-                  {/* Phase 2: proxy request body */}
-                  {hasProxy && callDetail?.rawRequestJson && (
-                    <>
-                      <SectionLabel>Proxy Request Body</SectionLabel>
-                      <pre style={{ fontSize: 11, fontFamily: "monospace", color: "#374151", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "12px 14px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5 }}>
-                        {JSON.stringify(callDetail.rawRequestJson, null, 2)}
-                      </pre>
-                    </>
-                  )}
-                </>
-              );
-            })()}
-          </div>
-        )}
-      </div>
-
-      {/* ── Evidence Drawer ──────────────────────── */}
-      <div style={{ width: 240, borderLeft: "1px solid #f3f4f6", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
-        {selection?.kind === "range" && (
-          <AttributedRangeEvidenceDrawer range={selection.range} onClear={() => setSelection(null)} />
-        )}
-        {selection?.kind === "segment" && (
-          <PayloadSegmentEvidenceDrawer seg={selection.seg} onClear={() => setSelection(null)} />
-        )}
-        {!selection && (
-          <div style={{ padding: "24px 14px", textAlign: "center" }}>
-            <div style={{ fontSize: 20, marginBottom: 10, color: "#e5e7eb" }}>◎</div>
-            <div style={{ fontSize: 10, color: "#9ca3af", lineHeight: 1.7 }}>
-              Select a <strong>diff range</strong> or <strong>payload segment</strong> to see:<br />
-              · source event<br />
-              · char/byte offsets<br />
-              · confidence level<br />
-              · evidence references
+            {response.toolUseBlocks.map(tu => (
+              <div key={tu.id} style={{ padding: "10px 14px", borderBottom: "1px solid #f3f4f6", background: "#fffbeb" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#d97706", background: "#fef3c7", borderRadius: 3, padding: "1px 5px" }}>tool_use</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>{tu.name}</span>
+                  <code style={{ fontSize: 10, color: "#9ca3af" }}>{tu.id}</code>
+                </div>
+                <pre style={{ fontSize: 10, color: "#374151", margin: 0, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5 }}>{tu.input}</pre>
+              </div>
+            ))}
+            <div style={{ padding: "8px 14px", background: "#f9fafb", display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 9, color: "#6b7280", background: "#e5e7eb", borderRadius: 3, padding: "1px 5px" }}>stop: {response.stopReason}</span>
+              <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtK(response.outputTokens)} output tokens</span>
             </div>
-            <div style={{ marginTop: 16, fontSize: 9, color: "#d1d5db" }}>← click any row</div>
+            {response.textOutput && (
+              <div style={{ padding: "10px 14px", background: "#f0fdf4", borderTop: "1px solid #f3f4f6" }}>
+                <div style={{ fontSize: 12, color: "#14532d", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{response.textOutput}</div>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+          <SectionLabel>Feeds Next Call</SectionLabel>
+          <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+            {response.toolUseBlocks.map(tu => (
+              <div key={tu.id} style={{ padding: "8px 14px", borderBottom: "1px solid #f3f4f6", display: "flex", gap: 10 }}>
+                <span style={{ fontSize: 10, color: "#d97706", fontWeight: 700, width: 80, flexShrink: 0, paddingTop: 1 }}>tool_result</span>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{tu.name}() → Tool Output</div>
+                  <div style={{ fontSize: 10, color: "#9ca3af" }}>{tu.id}</div>
+                </div>
+              </div>
+            ))}
+            {response.textOutput && (
+              <div style={{ padding: "8px 14px", borderBottom: "1px solid #f3f4f6", display: "flex", gap: 10 }}>
+                <span style={{ fontSize: 10, color: "#16a34a", fontWeight: 700, width: 80, flexShrink: 0, paddingTop: 1 }}>→ history</span>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>Assistant response → history</div>
+                  <div style={{ fontSize: 10, color: "#9ca3af" }}>+{fmtK(response.outputTokens)} tokens</div>
+                </div>
+              </div>
+            )}
+            {call.cacheWrite > 0 && (
+              <div style={{ padding: "8px 14px", display: "flex", gap: 10 }}>
+                <span style={{ fontSize: 10, color: "#6366f1", fontWeight: 700, width: 80, flexShrink: 0, paddingTop: 1 }}>cache write</span>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>→ cache read next call</div>
+                  <div style={{ fontSize: 10, color: "#9ca3af" }}>{fmtK(call.cacheWrite)} tokens</div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ══ Raw / Evidence ═══════════════════════════ */}
+      {tab === "raw" && (
+        <div>
+          {callDetailLoading && <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>}
+          {!callDetailLoading && (() => {
+            const hp = !!callDetail?.proxyRequestId;
+            return (
+              <>
+                <div style={{ fontSize: 10, background: hp ? "#f0fdf4" : "#fffbeb", border: `1px solid ${hp ? "#bbf7d0" : "#fde68a"}`, borderRadius: 5, padding: "5px 10px", marginBottom: 12, color: "#374151" }}>
+                  {hp ? "Proxy — full request body available." : "JSONL only — no request payload."}
+                </div>
+                <SectionLabel>JSONL Metadata</SectionLabel>
+                <pre style={{ fontSize: 10, fontFamily: "monospace", color: "#374151", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5, marginBottom: 14 }}>
+                  {JSON.stringify({ call_id: call.id, index_in_turn: call.indexInTurn, model: call.model, timestamp: call.timestamp, usage: { context_size: call.contextSize, fresh_in: freshIn, cache_read: call.cacheRead, cache_write: call.cacheWrite, output_tokens: call.outputTokens }, stop_reason: call.stopReason, ...(call.proxy ? { proxy_request_id: call.proxy.requestId, duration_ms: call.proxy.durationMs } : {}) }, null, 2)}
+                </pre>
+                {hp && callDetail?.diff && (
+                  <>
+                    <SectionLabel>Proxy Segment Diff vs Previous</SectionLabel>
+                    <ProxyDiffView diff={callDetail.diff} />
+                  </>
+                )}
+                {hp && callDetail?.rawRequestJson && (
+                  <>
+                    <SectionLabel>Proxy Request Body</SectionLabel>
+                    <pre style={{ fontSize: 10, fontFamily: "monospace", color: "#374151", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5 }}>
+                      {JSON.stringify(callDetail.rawRequestJson, null, 2)}
+                    </pre>
+                  </>
+                )}
+              </>
+            );
+          })()}
+        </div>
+      )}
     </div>
   );
 }
@@ -4031,13 +4712,6 @@ export function SessionDetailV2({ session, onClose }: Props) {
             )}
           </div>
 
-          {/* Inspector — only shown for Call detail */}
-          {navLevel === "call" && (
-            <div style={{ width: 240, borderLeft: "1px solid #e5e7eb", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
-              {inspector.type === "call-diff" && <CallDiffSummaryPanel call={inspector.call} />}
-              {inspector.type === "evidence" && <DiffEvidencePanel entry={inspector.entry} />}
-            </div>
-          )}
         </div>
       </div>
     </div>
