@@ -5538,16 +5538,9 @@ export function SessionDetailV2({ session, onClose }: Props) {
                     </React.Fragment>
                   );
                 } else {
-                  const block = item.block;
-                  const isSelected = navLevel === "inter-turn" && selectedInterTurnBlock?.index === block.index;
-                  return (
-                    <InterTurnNavItem
-                      key={`itb-${block.index}`}
-                      block={block}
-                      active={isSelected}
-                      onClick={() => handleSelectInterTurnBlock(block)}
-                    />
-                  );
+                  // Inter-turn blocks are accessible via the Turn detail "After This Turn" section,
+                  // not shown as standalone nav items to keep the list focused on user turns.
+                  return null;
                 }
               });
             })()}
@@ -5706,8 +5699,10 @@ function InterTurnBlockPanel({ block }: { block: InterTurnBlock }) {
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {[
             { label: "Events", value: String(block.events.length) },
-            { label: "After Turn", value: block.prevTurnId !== null ? `T${block.prevTurnId}` : "—" },
-            { label: "Before Turn", value: block.nextTurnId !== null ? `T${block.nextTurnId}` : "none" },
+            { label: "After Turn", value: block.prevTurnId !== null ? `T${block.prevTurnId}` : "session start",
+              color: block.prevTurnId === null ? "#9ca3af" : undefined },
+            { label: "Before Turn", value: block.nextTurnId !== null ? `T${block.nextTurnId}` : "session end",
+              color: block.nextTurnId === null ? "#9ca3af" : undefined },
             { label: "Entered Context", value: block.enteredContext ? "yes" : "no",
               color: block.enteredContext ? "#16a34a" : "#94a3b8" },
           ].map(({ label, value, color }) => (
