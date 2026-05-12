@@ -276,15 +276,33 @@ export function parseSessionDrilldown(
   }
 
   // ── 3. Deduplicate assistant events (same msg.id → keep the LAST one) ───
-  // Claude Code writes two events per assistant message when extended thinking
-  // is enabled: one with content=['thinking'] and one with content=['tool_use'/'text'].
-  // Both share the same msg.id. We keep the last occurrence which has the
-  // actionable content (tool calls / text) and the definitive stop_reason.
+  // Claude Code streams responses by writing multiple events per message:
+  //   Frame 1 (phantom, usage=0): text block — the AI's spoken text
+  //   Frame 2 (phantom, usage=0): tool_use block — tool dispatch decision
+  //   Frame N (real, usage>0):    final tool_use + full usage — text block ABSENT
+  //
+  // We keep the LAST frame (canonical, has usage) but must also preserve the
+  // text from earlier frames since it disappears in the real frame.
   const lastAssistantByMsgId = new Map<string, number>();
+  // Collect the first non-empty text seen for each message.id across all frames.
+  const textByMsgId = new Map<string, string>();
   events.forEach((ev, idx) => {
     if (ev.type !== "assistant" || (ev as JAssistantEvent).isSidechain) return;
-    const msgId = (ev as JAssistantEvent).message?.id;
-    if (msgId) lastAssistantByMsgId.set(msgId, idx);
+    const aev = ev as JAssistantEvent;
+    const msgId = aev.message?.id;
+    if (msgId) {
+      lastAssistantByMsgId.set(msgId, idx);
+      // Collect text from any frame (phantoms carry the text that the real frame drops)
+      if (!textByMsgId.has(msgId)) {
+        for (const b of aev.message?.content ?? []) {
+          const bc = b as { type?: string; text?: string };
+          if (bc.type === "text" && bc.text && bc.text.trim()) {
+            textByMsgId.set(msgId, bc.text);
+            break;
+          }
+        }
+      }
+    }
   });
 
   // ── 4. Identify all system errors ────────────────────────────────────────
@@ -387,6 +405,221 @@ export function parseSessionDrilldown(
         if (bc.type === "tool_use" && bc.name) toolNames.push(bc.name);
       }
 
+      // Extract assistant text: prefer the cross-frame text collected from phantom
+      // streaming frames (where the AI's spoken text lives), since the real final
+      // frame drops the text block and only keeps tool_use + usage.
+      const msgId = aev.message?.id ?? "";
+      const assistantText = (() => {
+        // First try textByMsgId (from phantom frames — most reliable)
+        const fromPhantom = msgId ? (textByMsgId.get(msgId) ?? "") : "";
+        if (fromPhantom) return fromPhantom.slice(0, 500) + (fromPhantom.length > 500 ? "…" : "");
+        // Fallback: text in the real frame itself (end_turn calls often have text here)
+        const parts: string[] = [];
+        for (const b of content) {
+          const bc = b as { type?: string; text?: string };
+          if (bc.type === "text" && bc.text) parts.push(bc.text);
+        }
+        const joined = parts.join("\n").trim();
+        return joined.slice(0, 500) + (joined.length > 500 ? "…" : "");
+      })();
+
+      // Build ToolCallSlot list: pair tool_use blocks with tool_result from next user event
+      // Scan forward in events from lineIdx+1 to find the user event(s) with tool_results
+      const toolUseMap = new Map<string, {
+        name: string;
+        inputPreview: string;
+        inputSize: number;
+      }>();
+      for (const b of content) {
+        const bc = b as { type?: string; name?: string; id?: string; input?: unknown };
+        if (bc.type === "tool_use" && bc.id) {
+          const inputStr = bc.input != null ? JSON.stringify(bc.input) : "";
+          toolUseMap.set(bc.id, {
+            name: bc.name ?? "unknown",
+            inputPreview: inputStr.slice(0, 300),
+            inputSize: inputStr.length,
+          });
+        }
+      }
+
+      // Scan subsequent events (up to next assistant event) for tool_results
+      const toolCallSlots: import("./session-drilldown-types.ts").ToolCallSlot[] = [];
+      if (toolUseMap.size > 0) {
+        const startIdx = rawCalls[callIdx].lineIdx + 1;
+        const endIdx = callIdx + 1 < rawCalls.length ? rawCalls[callIdx + 1].lineIdx : events.length;
+        for (let ei = startIdx; ei < endIdx; ei++) {
+          const uev = events[ei];
+          if (uev.type !== "user") continue;
+          const ucontent = (uev as JUserEvent).message?.content;
+          if (!Array.isArray(ucontent)) continue;
+          for (const rb of ucontent) {
+            const rbc = rb as { type?: string; tool_use_id?: string; content?: unknown; is_error?: boolean };
+            if (rbc.type !== "tool_result" || !rbc.tool_use_id) continue;
+            const tu = toolUseMap.get(rbc.tool_use_id);
+            if (!tu) continue;
+            const rawOut = rbc.content;
+            let outStr = "";
+            if (typeof rawOut === "string") outStr = rawOut;
+            else if (Array.isArray(rawOut)) outStr = rawOut.map((c: { text?: string }) => c?.text ?? "").join("");
+            else if (rawOut != null) outStr = JSON.stringify(rawOut);
+            toolCallSlots.push({
+              toolUseId: rbc.tool_use_id,
+              name: tu.name,
+              inputPreview: tu.inputPreview,
+              inputSize: tu.inputSize,
+              outputPreview: outStr.slice(0, 300),
+              outputSize: outStr.length,
+              isError: rbc.is_error === true,
+            });
+            toolUseMap.delete(rbc.tool_use_id); // matched
+          }
+        }
+        // Any unmatched tool_use (no tool_result found yet — still pending)
+        for (const [id, tu] of toolUseMap) {
+          toolCallSlots.push({
+            toolUseId: id,
+            name: tu.name,
+            inputPreview: tu.inputPreview,
+            inputSize: tu.inputSize,
+            outputPreview: "",
+            outputSize: 0,
+            isError: false,
+          });
+        }
+      }
+
+      // ── Collect all interval events between this call and the next ───────────
+      // For non-final calls: scan up to (but not including) the next call's lineIdx.
+      // For the FINAL call in the turn: scan up to the turn boundary (j), NOT
+      // beyond — otherwise we'd leak events from the next turn.
+      // Also skip phantom assistant events (usage=0, same msg.id as a real event).
+      const intervalEvents: import("./session-drilldown-types.ts").IntervalEvent[] = [];
+      {
+        const isLastCall = callIdx === rawCalls.length - 1;
+        const startEi = rawCalls[callIdx].lineIdx + 1;
+        // For non-final calls: scan up to the next call's lineIdx.
+        // For the final call: scan forward but stop at the first human input
+        // event (start of next turn) or end of file.
+        let endEi: number;
+        if (!isLastCall) {
+          endEi = rawCalls[callIdx + 1].lineIdx;
+        } else {
+          endEi = events.length;
+          for (let ei2 = startEi; ei2 < events.length; ei2++) {
+            if (events[ei2].type === "user" && isHumanInput(events[ei2] as JUserEvent)) {
+              endEi = ei2; // stop before next turn's human input
+              break;
+            }
+          }
+        }
+        for (let ei = startEi; ei < endEi; ei++) {
+          const iev = events[ei];
+
+          // Skip phantom assistant events (streaming frames with usage=0).
+          // The real event has the same msg.id but non-zero usage and is the
+          // canonical call already captured in rawCalls.
+          if (iev.type === "assistant") {
+            const aev = iev as JAssistantEvent;
+            const msgId = aev.message?.id;
+            // If this is NOT the canonical (last-seen) event for this id, skip it.
+            if (msgId && lastAssistantByMsgId.get(msgId) !== ei) continue;
+            // If canonical but zero usage, it's a phantom streaming frame — skip.
+            const u = aev.message?.usage ?? {};
+            const total = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
+              + (u.cache_creation_input_tokens ?? 0) + (u.output_tokens ?? 0);
+            if (total === 0) continue;
+            // A real assistant event here means this is an end_turn for the same call —
+            // it's already represented as the call card itself, skip.
+            continue;
+          }
+
+          const ts  = tsOf(iev);
+          const raw = JSON.stringify(iev);
+
+          let kind: import("./session-drilldown-types.ts").IntervalEventKind = "unknown";
+          let preview = "";
+          let size = raw.length;
+
+          if (iev.type === "user") {
+            const uev = iev as JUserEvent;
+            const content = uev.message?.content;
+            if (isToolResultOnly(content)) {
+              kind = "user:tool_result";
+              // preview = first tool_result content
+              const blocks = content as Array<{ type?: string; content?: unknown; tool_use_id?: string; is_error?: boolean }>;
+              for (const b of blocks) {
+                if (b.type === "tool_result") {
+                  const rc = b.content;
+                  const text = typeof rc === "string" ? rc
+                    : Array.isArray(rc) ? rc.map((c: { text?: string }) => c?.text ?? "").join("") : "";
+                  preview = text.slice(0, 300);
+                  size = text.length;
+                  break;
+                }
+              }
+            } else if (isCommandContent(content)) {
+              kind = "user:command";
+              preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
+            } else {
+              kind = "user:human";
+              preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
+            }
+          } else if (iev.type === "system") {
+            const sub = (iev as JSystemEvent).subtype ?? "";
+            if (sub === "api_error") {
+              kind = "system:api_error";
+              const err = (iev as { error?: unknown }).error;
+              preview = JSON.stringify(err ?? {}).slice(0, 300);
+            } else if (sub === "local_command") {
+              kind = "system:local_command";
+              preview = ((iev as { content?: string }).content ?? "").slice(0, 300);
+            } else if (sub === "turn_duration") {
+              kind = "system:turn_duration";
+              const d = (iev as { durationMs?: number }).durationMs ?? 0;
+              preview = `durationMs: ${d}`;
+            } else if (sub === "stop_hook_summary") {
+              kind = "system:stop_hook_summary";
+              const hi = (iev as { hookInfos?: unknown }).hookInfos;
+              preview = JSON.stringify(hi ?? {}).slice(0, 300);
+            } else if (sub === "away_summary") {
+              kind = "system:away_summary";
+              preview = ((iev as { content?: string }).content ?? "").slice(0, 300);
+            } else {
+              kind = "unknown";
+              preview = raw.slice(0, 300);
+            }
+          } else if (iev.type === "attachment") {
+            const att = (iev as { attachment?: { type?: string; content?: unknown; itemCount?: number } }).attachment ?? {};
+            const attType = att.type ?? "";
+            if (attType === "skill_listing") {
+              kind = "attachment:skill_listing";
+              preview = String(att.content ?? "").slice(0, 300);
+            } else if (attType === "task_reminder") {
+              kind = "attachment:task_reminder";
+              preview = `itemCount: ${att.itemCount ?? 0}`;
+            } else if (attType === "file") {
+              kind = "attachment:file";
+              preview = String(att.content ?? "").slice(0, 300);
+            } else {
+              kind = "unknown";
+              preview = raw.slice(0, 300);
+            }
+          } else if (iev.type === "file-history-snapshot") {
+            kind = "file-history-snapshot";
+            const snap = (iev as { snapshot?: { timestamp?: string } }).snapshot ?? {};
+            preview = `snapshot timestamp: ${snap.timestamp ?? ""}`;
+          } else if (iev.type === "last-prompt") {
+            kind = "last-prompt";
+            preview = ((iev as { lastPrompt?: string }).lastPrompt ?? "").slice(0, 300);
+          } else {
+            kind = "unknown";
+            preview = raw.slice(0, 300);
+          }
+
+          intervalEvents.push({ kind, lineIdx: ei, timestamp: ts, contentPreview: preview, contentSize: size, rawJson: raw });
+        }
+      }
+
       // Context size proxy: sum of all token sources at this call
       const contextSize = freshIn + cacheRead + cacheWrite;
       // Delta vs previous call (across the whole session, not just within turn)
@@ -421,6 +654,9 @@ export function parseSessionDrilldown(
         subAgents: [], // filled below after parsing sub agents
         incomingDiff: [],
         toolNames,
+        toolCalls: toolCallSlots,
+        assistantText,
+        intervalEvents,
         _agentToolUseIds: agentToolUseIds, // temp field for join
       } as LlmCall & { _agentToolUseIds: string[] };
     });

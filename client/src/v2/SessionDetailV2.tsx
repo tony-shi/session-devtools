@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import { scaleLinear, scaleSqrt, scaleOrdinal, line as d3line, curveCatmullRom, schemeTableau10 } from "d3";
 import { TurnMinimap } from "./TurnMinimap";
 import type { SessionV2 } from "./types";
-import type { DiffEntry, LlmCall, ModelStats, SessionDrilldown, UserTurn, CallDetail, SegmentDiff } from "./drilldown-types";
+import type { DiffEntry, IntervalEvent, IntervalEventKind, LlmCall, ModelStats, SessionDrilldown, ToolCallSlot, UserTurn, CallDetail, SegmentDiff } from "./drilldown-types";
 import { apiV2 } from "./api";
 import {
   buildMockAttributedDiff,
@@ -27,9 +27,11 @@ type MockDiffEntry = DiffEntry;
 // data below; normalizeTurns() fills them in.
 type RawMockCall = Omit<LlmCall,
   "indexInTurn" | "model" | "stopReason" | "proxy" | "subAgents" |
-  "isCompaction" | "isUnknownHeavy" | "isSignificant" | "significantDelta" | "freshIn" | "toolNames"
+  "isCompaction" | "isUnknownHeavy" | "isSignificant" | "significantDelta" | "freshIn" |
+  "toolNames" | "toolCalls" | "assistantText" | "intervalEvents"
 > & {
-  isCompaction?: boolean; isUnknownHeavy?: boolean; isSignificant?: boolean; significantDelta?: number; freshIn?: number; toolNames?: string[];
+  isCompaction?: boolean; isUnknownHeavy?: boolean; isSignificant?: boolean;
+  significantDelta?: number; freshIn?: number; toolNames?: string[];
 };
 type RawMockTurn = Omit<UserTurn, "startedAt" | "endedAt" | "hasCompaction" | "hasUnknownSpike" | "finalOutput" | "durationMs" | "midTurnInjections" | "errorCount" | "calls"> & {
   hasCompaction?: boolean; hasUnknownSpike?: boolean; errorCount?: number; midTurnInjections?: UserTurn["midTurnInjections"]; calls: RawMockCall[];
@@ -61,6 +63,9 @@ function normalizeTurns(raw: RawMockTurn[]): UserTurn[] {
       isSignificant: c.isSignificant ?? false,
       significantDelta: c.significantDelta ?? 0,
       toolNames: c.toolNames ?? [],
+      toolCalls: [],
+      assistantText: "",
+      intervalEvents: [],
     })),
   }));
 }
@@ -1248,11 +1253,27 @@ function buildRealAgentLoop(turn: MockUserTurn): MockAgentLoopData {
 
 // ─── Agent Loop Timeline component ───────────────────────────────────────────
 
+const TIMELINE_INPUT_PREVIEW = 200;
+const TIMELINE_OUTPUT_PREVIEW = 200;
+
 function AgentLoopTimeline({
   turn, agentLoop, onSelectCall, onSubAgentClick,
 }: { turn: MockUserTurn; agentLoop: MockAgentLoopData; onSelectCall: (c: MockLlmCall) => void; onSubAgentClick?: (sa: SubAgentSummary) => void }) {
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const [inputExpanded, setInputExpanded] = useState(false);
+  const [outputExpanded, setOutputExpanded] = useState(false);
   const maxCtx = Math.max(...turn.calls.map(c => c.contextSize), 1);
+
+  const inputNeedsExpand = turn.userInput.length > TIMELINE_INPUT_PREVIEW;
+  const inputShown = inputNeedsExpand && !inputExpanded
+    ? turn.userInput.slice(0, TIMELINE_INPUT_PREVIEW) + "…"
+    : turn.userInput;
+
+  const outputFull = turn.finalOutput ?? null;
+  const outputNeedsExpand = outputFull !== null && outputFull.length > TIMELINE_OUTPUT_PREVIEW;
+  const outputShown = outputFull
+    ? (outputNeedsExpand && !outputExpanded ? outputFull.slice(0, TIMELINE_OUTPUT_PREVIEW) + "…" : outputFull)
+    : null;
 
   return (
     <div style={{ position: "relative" }}>
@@ -1264,9 +1285,15 @@ function AgentLoopTimeline({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
         {/* User Input node */}
-        <AgentLoopNode icon="👤" color="#6366f1" label="User Input" secondary={fmtDuration(turn.durationMs) || undefined}>
-          <div style={{ fontSize: 12, color: "#374151", lineHeight: 1.5, background: "#f5f3ff", borderRadius: 6, padding: "8px 10px" }}>
-            {turn.userInput.length > 150 ? turn.userInput.slice(0, 150) + "…" : turn.userInput}
+        <AgentLoopNode
+          icon="👤" color="#6366f1" label="User Input"
+          secondary={fmtDuration(turn.durationMs) || undefined}
+          expandable={inputNeedsExpand}
+          expanded={inputExpanded}
+          onToggle={inputNeedsExpand ? () => setInputExpanded(v => !v) : undefined}
+        >
+          <div style={{ fontSize: 12, color: "#374151", lineHeight: 1.5, background: "#f5f3ff", borderRadius: 6, padding: "8px 10px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {inputShown}
           </div>
         </AgentLoopNode>
 
@@ -1417,13 +1444,22 @@ function AgentLoopTimeline({
           );
         })}
 
-        {/* Terminal node */}
+        {/* Terminal node — shows final output inline */}
         <AgentLoopNode
           icon={agentLoop.status === "completed" ? "✓" : agentLoop.status === "interrupted" ? "⚠" : "→"}
           color={agentLoop.status === "completed" ? "#16a34a" : agentLoop.status === "interrupted" ? "#d97706" : "#6366f1"}
           label={agentLoop.status === "completed" ? "Completed" : agentLoop.status === "interrupted" ? "Interrupted" : "Continued"}
+          expandable={outputNeedsExpand}
+          expanded={outputExpanded}
+          onToggle={outputNeedsExpand ? () => setOutputExpanded(v => !v) : undefined}
           isTerminal
-        />
+        >
+          {outputShown && (
+            <div className="md-prose" style={{ fontSize: 12, color: "#374151", lineHeight: 1.6, background: "#f0fdf4", borderRadius: 6, padding: "8px 10px", marginTop: 2 }}>
+              <ReactMarkdown>{outputShown}</ReactMarkdown>
+            </div>
+          )}
+        </AgentLoopNode>
       </div>
     </div>
   );
@@ -2278,14 +2314,407 @@ function TurnViewToggle({ view, onChange }: { view: TurnView; onChange: (v: Turn
   );
 }
 
-const INPUT_COLLAPSE_CHARS  = 200;
-const OUTPUT_COLLAPSE_CHARS = 300;
+// ─── JSONL Call Chain ─────────────────────────────────────────────────────────
+
+const TOOL_CHIP: Record<string, { bg: string; border: string; fg: string }> = {
+  Read:     { bg: "#eff6ff", border: "#bfdbfe", fg: "#2563eb" },
+  Write:    { bg: "#f0fdf4", border: "#bbf7d0", fg: "#16a34a" },
+  Edit:     { bg: "#fff7ed", border: "#fed7aa", fg: "#ea580c" },
+  Bash:     { bg: "#fffbeb", border: "#fde68a", fg: "#d97706" },
+  Grep:     { bg: "#eff6ff", border: "#c7d2fe", fg: "#4f46e5" },
+  Glob:     { bg: "#eff6ff", border: "#c7d2fe", fg: "#4f46e5" },
+  Agent:    { bg: "#faf5ff", border: "#ddd6fe", fg: "#7c3aed" },
+  WebFetch: { bg: "#ecfeff", border: "#a5f3fc", fg: "#0891b2" },
+};
+function toolChip(name: string) {
+  return TOOL_CHIP[name] ?? { bg: "#f9fafb", border: "#e5e7eb", fg: "#6b7280" };
+}
+
+function fmtBytes(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000)     return (n / 1_000).toFixed(1) + "k";
+  return String(n);
+}
+
+// ── Filter list (all known kinds; user can toggle) ────────────────────────────
+const ALL_KINDS: IntervalEventKind[] = [
+  "user:human", "user:tool_result", "user:command",
+  "system:api_error", "system:local_command", "system:turn_duration",
+  "system:stop_hook_summary", "system:away_summary",
+  "attachment:skill_listing", "attachment:task_reminder", "attachment:file",
+  "file-history-snapshot", "last-prompt", "unknown",
+];
+
+const KIND_LABEL: Record<IntervalEventKind, string> = {
+  "user:human":               "User input",
+  "user:tool_result":         "Tool result",
+  "user:command":             "Command",
+  "system:api_error":         "API error",
+  "system:local_command":     "Local cmd",
+  "system:turn_duration":     "Turn duration",
+  "system:stop_hook_summary": "Stop hook",
+  "system:away_summary":      "Away summary",
+  "attachment:skill_listing": "Skills",
+  "attachment:task_reminder": "Task reminder",
+  "attachment:file":          "File attach",
+  "file-history-snapshot":    "File snapshot",
+  "last-prompt":              "Last prompt",
+  "unknown":                  "Unknown",
+};
+
+const KIND_COLOR: Record<IntervalEventKind, { bg: string; border: string; fg: string }> = {
+  "user:human":               { bg: "#f5f3ff", border: "#c4b5fd", fg: "#7c3aed" },
+  "user:tool_result":         { bg: "#f0fdf4", border: "#86efac", fg: "#16a34a" },
+  "user:command":             { bg: "#f8fafc", border: "#cbd5e1", fg: "#475569" },
+  "system:api_error":         { bg: "#fef2f2", border: "#fca5a5", fg: "#dc2626" },
+  "system:local_command":     { bg: "#f8fafc", border: "#e2e8f0", fg: "#64748b" },
+  "system:turn_duration":     { bg: "#f8fafc", border: "#e2e8f0", fg: "#64748b" },
+  "system:stop_hook_summary": { bg: "#f8fafc", border: "#e2e8f0", fg: "#64748b" },
+  "system:away_summary":      { bg: "#fefce8", border: "#fde68a", fg: "#92400e" },
+  "attachment:skill_listing": { bg: "#f8fafc", border: "#e2e8f0", fg: "#475569" },
+  "attachment:task_reminder": { bg: "#fffbeb", border: "#fde68a", fg: "#92400e" },
+  "attachment:file":          { bg: "#f0f9ff", border: "#bae6fd", fg: "#0369a1" },
+  "file-history-snapshot":    { bg: "#f8fafc", border: "#e2e8f0", fg: "#94a3b8" },
+  "last-prompt":              { bg: "#f8fafc", border: "#e2e8f0", fg: "#64748b" },
+  "unknown":                  { bg: "#f8fafc", border: "#e2e8f0", fg: "#94a3b8" },
+};
+
+// ── ToolCallRow: dispatched from call + result injected into next ─────────────
+function ToolCallRow({ tc }: { tc: ToolCallSlot }) {
+  const [expanded, setExpanded] = useState(false);
+  const chip = toolChip(tc.name);
+  const hasOutput = tc.outputSize > 0;
+
+  return (
+    <div style={{ marginBottom: 3 }}>
+      <div
+        onClick={() => setExpanded(v => !v)}
+        style={{
+          display: "flex", alignItems: "center", gap: 6, padding: "4px 8px",
+          borderRadius: 6, cursor: "pointer",
+          background: tc.isError ? "#fef2f2" : "#fafafa",
+          border: `1px solid ${tc.isError ? "#fecaca" : "#f0f0f0"}`,
+        }}
+        onMouseEnter={e => { e.currentTarget.style.background = tc.isError ? "#fee2e2" : "#f3f4f6"; }}
+        onMouseLeave={e => { e.currentTarget.style.background = tc.isError ? "#fef2f2" : "#fafafa"; }}
+      >
+        {/* Dispatch arrow */}
+        <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>↳</span>
+        {/* Tool chip */}
+        <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: chip.bg, border: `1px solid ${chip.border}`, color: chip.fg, flexShrink: 0 }}>
+          {tc.name}
+        </span>
+        {/* Input preview — most important identifier */}
+        <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+          {tc.inputPreview.replace(/^\{?\s*"(?:command|file_path|pattern|query|prompt|url|description)"\s*:\s*"/, "").replace(/",?\s*.*$/, "").slice(0, 100)}
+        </span>
+        {/* Size badges */}
+        <div style={{ display: "flex", gap: 5, flexShrink: 0, alignItems: "center" }}>
+          {tc.inputSize > 0 && <span style={{ fontSize: 9, color: "#9ca3af" }}>in {fmtBytes(tc.inputSize)}</span>}
+          {hasOutput && <span style={{ fontSize: 9, fontWeight: 600, color: tc.outputSize > 10_000 ? "#d97706" : "#059669" }}>out {fmtBytes(tc.outputSize)}</span>}
+          {tc.isError && <span style={{ fontSize: 9, fontWeight: 700, color: "#dc2626", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 3, padding: "1px 4px" }}>ERR</span>}
+          {!hasOutput && !tc.isError && <span style={{ fontSize: 9, color: "#d1d5db" }}>no result</span>}
+          <span style={{ fontSize: 9, color: "#d1d5db" }}>{expanded ? "▲" : "▼"}</span>
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{ marginLeft: 12, marginTop: 2, display: "flex", flexDirection: "column", gap: 3 }}>
+          {/* INPUT — what was dispatched */}
+          {tc.inputPreview && (
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderLeft: "3px solid #94a3b8", borderRadius: "0 5px 5px 0", padding: "5px 8px" }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "#64748b", letterSpacing: "0.05em" }}>INPUT &nbsp;</span>
+              <span style={{ fontSize: 9, color: "#94a3b8" }}>{fmtBytes(tc.inputSize)}</span>
+              <pre style={{ margin: "3px 0 0", fontSize: 11, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 100, overflow: "auto" }}>{tc.inputPreview}</pre>
+            </div>
+          )}
+          {/* OUTPUT — what was injected back */}
+          {hasOutput && (
+            <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderLeft: "3px solid #22c55e", borderRadius: "0 5px 5px 0", padding: "5px 8px" }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", letterSpacing: "0.05em" }}>RESULT &nbsp;</span>
+              <span style={{ fontSize: 9, color: "#86efac" }}>{fmtBytes(tc.outputSize)} injected → next call</span>
+              <pre style={{ margin: "3px 0 0", fontSize: 11, color: "#166534", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 140, overflow: "auto" }}>
+                {tc.outputPreview}{tc.outputSize > 300 ? "\n…" : ""}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── IntervalEventRow: non-tool JSONL events between calls ─────────────────────
+function IntervalEventRow({ ev }: { ev: IntervalEvent }) {
+  const [expanded, setExpanded] = useState(false);
+  const col = KIND_COLOR[ev.kind];
+
+  return (
+    <div style={{ marginBottom: 2 }}>
+      <div
+        onClick={() => setExpanded(v => !v)}
+        style={{
+          display: "flex", alignItems: "center", gap: 6, padding: "3px 8px",
+          borderRadius: 5, cursor: "pointer", opacity: 0.9,
+          background: col.bg, border: `1px solid ${col.border}`,
+        }}
+        onMouseEnter={e => { e.currentTarget.style.opacity = "1"; }}
+        onMouseLeave={e => { e.currentTarget.style.opacity = "0.9"; }}
+      >
+        <span style={{ fontSize: 9, fontWeight: 700, color: col.fg, flexShrink: 0, minWidth: 90 }}>
+          {KIND_LABEL[ev.kind]}
+        </span>
+        <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+          {ev.contentPreview.slice(0, 120)}
+        </span>
+        {ev.contentSize > 0 && <span style={{ fontSize: 9, color: "#94a3b8", flexShrink: 0 }}>{fmtBytes(ev.contentSize)}</span>}
+        <span style={{ fontSize: 9, color: "#d1d5db", flexShrink: 0 }}>{expanded ? "▲" : "▼"}</span>
+      </div>
+
+      {expanded && (
+        <div style={{ marginLeft: 10, marginTop: 2, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 5, padding: "6px 8px" }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 9, color: "#64748b" }}>kind: <b>{ev.kind}</b></span>
+            <span style={{ fontSize: 9, color: "#64748b" }}>line: {ev.lineIdx}</span>
+            {ev.timestamp && <span style={{ fontSize: 9, color: "#64748b" }}>{ev.timestamp.slice(11, 19)}</span>}
+          </div>
+          <pre style={{ margin: 0, fontSize: 10, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 160, overflow: "auto" }}>
+            {ev.rawJson.length > 1000 ? ev.rawJson.slice(0, 1000) + "\n…" : ev.rawJson}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── JsonlCallChain: main component ────────────────────────────────────────────
+function JsonlCallChain({
+  turn, onSelectCall, onSubAgentClick,
+}: {
+  turn: MockUserTurn;
+  onSelectCall: (c: MockLlmCall) => void;
+  onSubAgentClick?: (sa: import("./drilldown-types").SubAgentSummary) => void;
+}) {
+  // Filter state: null means "show all" (default); populated = active filter set
+  const [hiddenKinds, setHiddenKinds] = useState<Set<IntervalEventKind>>(new Set());
+  const [filterOpen, setFilterOpen] = useState(false);
+
+  if (!turn.calls.length) return null;
+
+  const maxCtx = Math.max(...turn.calls.map(c => c.contextSize), 1);
+
+  function toggleKind(k: IntervalEventKind) {
+    setHiddenKinds(prev => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  }
+
+  return (
+    <div>
+      {/* ── Filter bar ──────────────────────────────────────────── */}
+      <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+        <button
+          onClick={() => setFilterOpen(v => !v)}
+          style={{
+            fontSize: 10, padding: "3px 10px", borderRadius: 5, cursor: "pointer",
+            border: "1px solid #e5e7eb", background: filterOpen ? "#6366f1" : "#f9fafb",
+            color: filterOpen ? "#fff" : "#6b7280", fontWeight: 600,
+          }}
+        >
+          ⚙ Filter events {hiddenKinds.size > 0 && `(${hiddenKinds.size} hidden)`}
+        </button>
+        {hiddenKinds.size > 0 && (
+          <button onClick={() => setHiddenKinds(new Set())} style={{ fontSize: 10, color: "#6366f1", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+            show all
+          </button>
+        )}
+        <span style={{ fontSize: 9, color: "#d1d5db", marginLeft: "auto" }}>
+          {turn.calls.length} calls · {turn.calls.reduce((s, c) => s + c.intervalEvents.length, 0)} events
+        </span>
+      </div>
+
+      {/* Filter panel */}
+      {filterOpen && (
+        <div style={{ marginBottom: 10, padding: "8px 10px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, display: "flex", flexWrap: "wrap", gap: 5 }}>
+          {ALL_KINDS.map(k => {
+            const hidden = hiddenKinds.has(k);
+            const col = KIND_COLOR[k];
+            return (
+              <button
+                key={k}
+                onClick={() => toggleKind(k)}
+                style={{
+                  fontSize: 9, padding: "2px 7px", borderRadius: 4, cursor: "pointer",
+                  background: hidden ? "#f3f4f6" : col.bg,
+                  border: `1px solid ${hidden ? "#d1d5db" : col.border}`,
+                  color: hidden ? "#9ca3af" : col.fg,
+                  fontWeight: 600,
+                  textDecoration: hidden ? "line-through" : "none",
+                }}
+              >
+                {KIND_LABEL[k]}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── Call chain ──────────────────────────────────────────── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 0, position: "relative" }}>
+        {/* Vertical spine */}
+        <div style={{ position: "absolute", left: 11, top: 8, bottom: 8, width: 2, background: "#e5e7eb", zIndex: 0 }} />
+
+        {turn.calls.map((call, idx) => {
+          const delta    = call.significantDelta;
+          // Context bar: absolute width proportional to contextSize / maxCtx
+          const ctxWidthPct = Math.round(call.contextSize / maxCtx * 100);
+          // Segment percentages within the bar
+          const readFrac  = call.contextSize > 0 ? call.cacheRead  / call.contextSize : 0;
+          const writeFrac = call.contextSize > 0 ? call.cacheWrite / call.contextSize : 0;
+          const freshFrac = call.contextSize > 0 ? call.freshIn    / call.contextSize : 0;
+
+          const visibleIntervals = call.intervalEvents.filter(ev => !hiddenKinds.has(ev.kind));
+
+          return (
+            <div key={call.id} style={{ position: "relative", zIndex: 1, marginBottom: 8 }}>
+
+              {/* ── LLM Call card ───────────────────────────── */}
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                {/* Spine dot */}
+                <div style={{ flexShrink: 0, marginTop: 10, width: 24, display: "flex", justifyContent: "center" }}>
+                  <div style={{
+                    width: 14, height: 14, borderRadius: "50%", border: "2px solid #fff",
+                    background: call.isCompaction ? "#ef4444" : call.isSignificant ? "#3b82f6" : "#6366f1",
+                    boxShadow: "0 0 0 2px " + (call.isCompaction ? "#ef444440" : "#6366f140"),
+                  }} />
+                </div>
+
+                {/* Card */}
+                <div
+                  onClick={() => onSelectCall(call)}
+                  style={{ flex: 1, border: "1px solid #e5e7eb", borderRadius: 8, background: "#fff", cursor: "pointer", overflow: "hidden" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "#6366f1"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e7eb"; }}
+                >
+                  {/* Header */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderBottom: "1px solid #f3f4f6" }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>
+                      Call #{call.id}
+                      {call.isCompaction && <span style={{ marginLeft: 5, fontSize: 10, color: "#ef4444" }}>◆</span>}
+                    </span>
+                    <span style={{ fontSize: 11, color: "#9ca3af" }}>{fmtK(call.contextSize)}</span>
+                    {delta !== 0 && (
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, color: delta > 0 ? "#d97706" : "#16a34a", background: delta > 0 ? "#fffbeb" : "#f0fdf4" }}>
+                        {delta > 0 ? "+" : ""}{fmtK(delta)}
+                      </span>
+                    )}
+                    <span style={{ marginLeft: "auto", fontSize: 10, color: call.stopReason === "end_turn" ? "#16a34a" : "#9ca3af", fontWeight: 600 }}>
+                      {call.stopReason === "end_turn" ? "✓ end_turn" : call.stopReason === "tool_use" ? "⚙ tool_use" : (call.stopReason ?? "")}
+                    </span>
+                    <span style={{ fontSize: 10, color: "#d1d5db" }}>›</span>
+                  </div>
+
+                  {/* Context bar — ABSOLUTE width shows context size visually */}
+                  <div style={{ padding: "6px 12px 7px" }}>
+                    {/* Outer track = full Turn max context */}
+                    <div style={{ height: 8, background: "#f3f4f6", borderRadius: 4, overflow: "hidden" }}>
+                      {/* Inner fill = this call's contextSize / maxCtx */}
+                      <div style={{ width: `${ctxWidthPct}%`, height: "100%", display: "flex", borderRadius: 4, overflow: "hidden" }}>
+                        <div style={{ flex: readFrac,  background: "#a5b4fc" }} title={`cache_read ${fmtK(call.cacheRead)}`} />
+                        <div style={{ flex: writeFrac, background: "#6366f1" }} title={`cache_write ${fmtK(call.cacheWrite)}`} />
+                        <div style={{ flex: freshFrac, background: "#f97316" }} title={`fresh ${fmtK(call.freshIn)}`} />
+                      </div>
+                    </div>
+                    {/* Legend */}
+                    <div style={{ display: "flex", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+                      {[
+                        { color: "#a5b4fc", label: "read",  val: call.cacheRead,  pct: Math.round(readFrac * 100) },
+                        { color: "#6366f1", label: "write", val: call.cacheWrite, pct: Math.round(writeFrac * 100) },
+                        { color: "#f97316", label: "fresh", val: call.freshIn,    pct: Math.round(freshFrac * 100) },
+                      ].map(({ color, label, val, pct }) => val > 0 ? (
+                        <span key={label} style={{ fontSize: 9, color: "#6b7280", display: "flex", alignItems: "center", gap: 3 }}>
+                          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 1, background: color }} />
+                          {label} {fmtK(val)} ({pct}%)
+                        </span>
+                      ) : null)}
+                      <span style={{ fontSize: 9, color: "#9ca3af", marginLeft: "auto" }}>out {fmtK(call.outputTokens)}</span>
+                    </div>
+                  </div>
+
+                  {/* Assistant text */}
+                  {call.assistantText && (
+                    <div style={{ padding: "0 12px 7px" }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", marginBottom: 2, letterSpacing: "0.04em" }}>ASSISTANT TEXT</div>
+                      <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, background: "#f9fafb", borderRadius: 5, padding: "5px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
+                        {call.assistantText}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ── Dispatched tool calls ─────────────────────── */}
+              {call.toolCalls.length > 0 && (
+                <div style={{ marginLeft: 32, marginTop: 3 }}>
+                  <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, letterSpacing: "0.04em", fontWeight: 600 }}>
+                    DISPATCHED ({call.toolCalls.length})
+                  </div>
+                  {call.toolCalls.map((tc, ti) => (
+                    <ToolCallRow key={tc.toolUseId || ti} tc={tc} />
+                  ))}
+                </div>
+              )}
+
+              {/* ── Sub-agent branches ────────────────────────── */}
+              {call.subAgents.length > 0 && (
+                <div style={{ marginLeft: 32, marginTop: 3 }}>
+                  {call.subAgents.map(sa => (
+                    <div key={sa.agentFileId} style={{ display: "flex", alignItems: "flex-start", marginBottom: 4 }}>
+                      <div style={{ width: 16, flexShrink: 0 }}>
+                        <div style={{ width: 12, height: 10, borderLeft: "1.5px solid #6366f180", borderBottom: "1.5px solid #6366f180", borderBottomLeftRadius: 4, marginTop: 4 }} />
+                      </div>
+                      <button
+                        onClick={() => onSubAgentClick?.(sa)}
+                        style={{ flex: 1, border: "1.5px solid #6366f1", borderRadius: 7, background: "#fafafe", padding: "5px 9px", cursor: onSubAgentClick ? "pointer" : "default", textAlign: "left", display: "flex", flexDirection: "column", gap: 2 }}
+                        onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "#eff6ff"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "#fafafe"; }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "#4338ca" }}>{sa.agentType}</span>
+                          <span style={{ fontSize: 9, color: "#6366f1" }}>{sa.llmCallCount}c · {sa.toolCallCount}t · {fmtDuration(sa.durationMs)}</span>
+                          <span style={{ fontSize: 9, color: "#6366f1", background: "#eff6ff", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
+                          {onSubAgentClick && <span style={{ fontSize: 9, color: "#a5b4fc", marginLeft: "auto" }}>›</span>}
+                        </div>
+                        {sa.description && <div style={{ fontSize: 10, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.description}</div>}
+                        {sa.resultPreview && <div style={{ fontSize: 10, color: "#374151", background: "#f5f3ff", borderRadius: 4, padding: "1px 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.resultPreview.slice(0, 100)}{sa.resultPreview.length > 100 ? "…" : ""}</div>}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* ── Interval events (filtered) ────────────────── */}
+              {visibleIntervals.length > 0 && (
+                <div style={{ marginLeft: 32, marginTop: 3 }}>
+                  {visibleIntervals.map((ev, ei) => (
+                    <IntervalEventRow key={`${ev.lineIdx}-${ei}`} ev={ev} />
+                  ))}
+                </div>
+              )}
+
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function UserTurnDetailPanel({
   turn, onSelectCall, isMockSession = false, onSubAgentClick,
 }: { turn: MockUserTurn; onSelectCall: (c: MockLlmCall) => void; isMockSession?: boolean; onSubAgentClick?: (sa: SubAgentSummary) => void }) {
-  const [inputExpanded,  setInputExpanded]  = useState(false);
-  const [outputExpanded, setOutputExpanded] = useState(false);
 
   const callsWithSubAgents = turn.calls.map((c, ci) => {
     // For mock sessions, inject mock sub-agent if none present
@@ -2315,19 +2744,6 @@ function UserTurnDetailPanel({
   const risks: Array<{ type: "compaction" | "unknown-spike" | "large-growth" | "near-limit" | "tool-heavy" }> = [];
   if (turn.hasCompaction)   risks.push({ type: "compaction" });
   if (turn.hasUnknownSpike) risks.push({ type: "unknown-spike" });
-
-  // ── Collapsible input / output ───────────────────────────────────
-  const inputFull      = turn.userInput;
-  const inputCollapsed = inputFull.length > INPUT_COLLAPSE_CHARS;
-  const inputShown     = inputCollapsed && !inputExpanded
-    ? inputFull.slice(0, INPUT_COLLAPSE_CHARS) + "…"
-    : inputFull;
-
-  const outputFull     = turn.finalOutput ?? null;
-  const outputCollapsed = outputFull !== null && outputFull.length > OUTPUT_COLLAPSE_CHARS;
-  const outputShown    = outputFull
-    ? (outputCollapsed && !outputExpanded ? outputFull.slice(0, OUTPUT_COLLAPSE_CHARS) + "…" : outputFull)
-    : null;
 
   return (
     <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
@@ -2379,80 +2795,15 @@ function UserTurnDetailPanel({
         />
       </div>
 
-      {/* ── Agent Loop (classic timeline) ─────────────────────────── */}
-      {/* Shows each LLM call node; user input + final output are inline */}
+      {/* ── JSONL Event Chain ─────────────────────────────────────── */}
       <div style={{ marginBottom: 20 }}>
-        <SectionLabel>Agent Loop</SectionLabel>
-
-        {/* User input node */}
-        <div style={{ marginBottom: 8, border: "1px solid #ede9fe", borderRadius: 8, overflow: "hidden", background: "#faf5ff" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderBottom: inputCollapsed ? "1px solid #ede9fe" : "none" }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", letterSpacing: "0.05em" }}>USER INPUT</span>
-            {inputCollapsed && (
-              <button
-                onClick={() => setInputExpanded(v => !v)}
-                style={{ marginLeft: "auto", fontSize: 10, color: "#7c3aed", background: "none", border: "none", cursor: "pointer", padding: 0 }}
-              >
-                {inputExpanded ? "collapse ↑" : "expand ↓"}
-              </button>
-            )}
-          </div>
-          <div style={{ padding: "8px 12px", fontSize: 12, color: "#374151", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-            {inputShown}
-          </div>
-        </div>
-
-        {/* LLM call timeline */}
-        <AgentLoopTimeline turn={enrichedTurn} agentLoop={agentLoop} onSelectCall={onSelectCall} onSubAgentClick={onSubAgentClick} />
-
-        {/* Final output node */}
-        {outputShown && (
-          <div style={{ marginTop: 8, border: "1px solid #d1fae5", borderRadius: 8, overflow: "hidden", background: "#f0fdf4" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderBottom: outputCollapsed ? "1px solid #d1fae5" : "none" }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color: "#059669", letterSpacing: "0.05em" }}>ASSISTANT OUTPUT</span>
-              {outputCollapsed && (
-                <button
-                  onClick={() => setOutputExpanded(v => !v)}
-                  style={{ marginLeft: "auto", fontSize: 10, color: "#059669", background: "none", border: "none", cursor: "pointer", padding: 0 }}
-                >
-                  {outputExpanded ? "collapse ↑" : "expand ↓"}
-                </button>
-              )}
-            </div>
-            <div style={{ padding: "8px 12px", fontSize: 12, color: "#374151", lineHeight: 1.6 }}>
-              <div className="md-prose" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                <ReactMarkdown>{outputShown}</ReactMarkdown>
-              </div>
-            </div>
-          </div>
-        )}
+        <SectionLabel>Call Chain</SectionLabel>
+        <JsonlCallChain
+          turn={enrichedTurn}
+          onSelectCall={onSelectCall}
+          onSubAgentClick={onSubAgentClick}
+        />
       </div>
-
-      {/* ── Sub Agents ────────────────────────────────────────────── */}
-      {turnSubAgents.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-            <SectionLabel>Sub Agents</SectionLabel>
-            <span style={{ fontSize: 10, color: "#6366f1", background: "#eff6ff", borderRadius: 4, padding: "1px 6px", marginLeft: 4 }}>
-              {turnSubAgents.length} spawned
-            </span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {callsWithSubAgents.flatMap((c, ci) => {
-              const mergeCall = callsWithSubAgents[ci + 1] ?? null;
-              return c.subAgents.map(sa => (
-                <SubAgentCard
-                  key={sa.agentFileId}
-                  sa={sa}
-                  spawnedAt={{ turnId: turn.id, callId: c.id, callIndex: c.indexInTurn }}
-                  mergedBefore={mergeCall ? { callId: mergeCall.id, callIndex: mergeCall.indexInTurn } : undefined}
-                  mergeContextDelta={mergeCall ? mergeCall.significantDelta : undefined}
-                />
-              ));
-            })}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

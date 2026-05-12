@@ -31,6 +31,8 @@ export default function App() {
   const [summaryV2Loading, setSummaryV2Loading] = useState(true);
   const [sessionsV2, setSessionsV2] = useState<SessionsV2Response | null>(null);
   const [sessionsV2Loading, setSessionsV2Loading] = useState(true);
+  const [v2Page, setV2Page] = useState(0);
+  const V2_PAGE_SIZE = 10;
 
   function handleDateChange(newDate: string) {
     setDate(newDate);
@@ -55,26 +57,31 @@ export default function App() {
       .finally(() => setSessionsLoading(false));
   }, [date]);
 
-  function fetchV2() {
-    setSummaryV2Loading(true);
+  function fetchV2Sessions(page: number) {
     setSessionsV2Loading(true);
-
-    apiV2.summary()
-      .then(setSummaryV2)
-      .catch(console.error)
-      .finally(() => setSummaryV2Loading(false));
-
-    apiV2.sessions({ limit: 50 })
+    apiV2.sessions({ limit: V2_PAGE_SIZE, offset: page * V2_PAGE_SIZE })
       .then(setSessionsV2)
       .catch(console.error)
       .finally(() => setSessionsV2Loading(false));
   }
 
+  function fetchV2() {
+    setSummaryV2Loading(true);
+    apiV2.summary()
+      .then(setSummaryV2)
+      .catch(console.error)
+      .finally(() => setSummaryV2Loading(false));
+    fetchV2Sessions(v2Page);
+  }
+
   // V2: fetch once on mount (lifecycle view, not date-driven)
-  useEffect(() => { fetchV2(); }, []);
+  useEffect(() => { fetchV2(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { fetchV2Sessions(v2Page); }, [v2Page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSyncV2() {
     const result = await apiV2.sync();
+    setV2Page(0);
     fetchV2();
     return result;
   }
@@ -177,11 +184,18 @@ export default function App() {
           flexDirection: "column",
           gap: 16,
           minWidth: 0,
+          minHeight: 0,
         }}>
           {tab === "sessions-v2" && (
             <>
               <SummaryCardsV2 data={summaryV2} loading={summaryV2Loading} />
-              <SessionListV2 data={sessionsV2} loading={sessionsV2Loading} />
+              <SessionListV2
+                data={sessionsV2}
+                loading={sessionsV2Loading}
+                page={v2Page}
+                pageSize={V2_PAGE_SIZE}
+                onPageChange={setV2Page}
+              />
             </>
           )}
           {tab === "daily-analysis" && (

@@ -60,6 +60,32 @@ export interface SubAgentSummary {
   resultPreview: string;      // first 300 chars of tool_result content
 }
 
+export type IntervalEventKind =
+  | "user:human" | "user:tool_result" | "user:command"
+  | "system:api_error" | "system:local_command" | "system:turn_duration"
+  | "system:stop_hook_summary" | "system:away_summary"
+  | "attachment:skill_listing" | "attachment:task_reminder" | "attachment:file"
+  | "file-history-snapshot" | "last-prompt" | "unknown";
+
+export interface IntervalEvent {
+  kind: IntervalEventKind;
+  lineIdx: number;
+  timestamp: string;
+  contentPreview: string;
+  contentSize: number;
+  rawJson: string;
+}
+
+export interface ToolCallSlot {
+  toolUseId: string;
+  name: string;
+  inputPreview: string;
+  inputSize: number;
+  outputPreview: string;
+  outputSize: number;
+  isError: boolean;
+}
+
 export interface LlmCall {
   // Position within the session (1-based, globally across all turns)
   id: number;
@@ -92,6 +118,12 @@ export interface LlmCall {
 
   // Tool names dispatched in this call's content (tool_use blocks)
   toolNames: string[];
+  // Structured tool_use + tool_result pairs for this call
+  toolCalls: ToolCallSlot[];
+  // Text blocks from assistant message (first 500 chars)
+  assistantText: string;
+  // All JSONL events following this call up to the next assistant call
+  intervalEvents: IntervalEvent[];
 }
 
 export interface MidTurnInjection {

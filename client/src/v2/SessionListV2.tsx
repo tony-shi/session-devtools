@@ -36,17 +36,6 @@ const TH: React.CSSProperties = {
   borderBottom: "1px solid #f3f4f6", whiteSpace: "nowrap",
 };
 
-function StatusDot({ lastEventAt }: { lastEventAt: string }) {
-  const diff = Date.now() - new Date(lastEventAt).getTime();
-  const active = diff < 5 * 60 * 1000;
-  return (
-    <span style={{
-      display: "inline-block", width: 7, height: 7, borderRadius: "50%",
-      background: active ? "#22c55e" : "#d1d5db",
-      marginRight: 6, flexShrink: 0,
-    }} title={active ? "活跃" : "已结束"} />
-  );
-}
 
 function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () => void }) {
   const [hovered, setHovered] = useState(false);
@@ -80,7 +69,6 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
       {/* 状态点 + 会话名 + 首条消息预览 */}
       <td style={{ padding: "10px 12px", maxWidth: 300 }}>
         <div style={{ display: "flex", alignItems: "center" }}>
-          <StatusDot lastEventAt={session.last_event_at} />
           <p style={{ fontSize: 13, fontWeight: 500, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: preview ? 2 : 0 }}>
             {displayName}
             {crossDay && <span style={{ marginLeft: 5, fontSize: 10, color: "#9ca3af", fontWeight: 400 }}>跨天</span>}
@@ -173,22 +161,82 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
 interface Props {
   data: SessionsV2Response | null;
   loading: boolean;
+  page: number;
+  pageSize: number;
+  onPageChange: (page: number) => void;
 }
 
-export function SessionListV2({ data, loading }: Props) {
+function Pagination({ page, pageSize, total, loading, onChange }: {
+  page: number; pageSize: number; total: number; loading: boolean;
+  onChange: (p: number) => void;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const btnBase: React.CSSProperties = {
+    padding: "4px 10px", borderRadius: 6, border: "1px solid #e5e7eb",
+    background: "#fff", fontSize: 12, cursor: "pointer", color: "#374151",
+    fontWeight: 500, lineHeight: 1.5,
+  };
+  const disabledStyle: React.CSSProperties = { opacity: 0.4, cursor: "not-allowed" };
+
+  const pageNums: (number | "…")[] = [];
+  if (totalPages <= 7) {
+    for (let i = 0; i < totalPages; i++) pageNums.push(i);
+  } else {
+    pageNums.push(0);
+    if (page > 2) pageNums.push("…");
+    for (let i = Math.max(1, page - 1); i <= Math.min(totalPages - 2, page + 1); i++) pageNums.push(i);
+    if (page < totalPages - 3) pageNums.push("…");
+    pageNums.push(totalPages - 1);
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+      <button
+        style={{ ...btnBase, ...(page === 0 || loading ? disabledStyle : {}) }}
+        disabled={page === 0 || loading}
+        onClick={() => onChange(page - 1)}
+      >‹</button>
+      {pageNums.map((p, i) =>
+        p === "…" ? (
+          <span key={`ellipsis-${i}`} style={{ fontSize: 12, color: "#9ca3af", padding: "0 4px" }}>…</span>
+        ) : (
+          <button
+            key={p}
+            style={{
+              ...btnBase,
+              background: p === page ? "#7c3aed" : "#fff",
+              color: p === page ? "#fff" : "#374151",
+              borderColor: p === page ? "#7c3aed" : "#e5e7eb",
+            }}
+            onClick={() => p !== page && onChange(p)}
+          >{p + 1}</button>
+        )
+      )}
+      <button
+        style={{ ...btnBase, ...(page >= totalPages - 1 || loading ? disabledStyle : {}) }}
+        disabled={page >= totalPages - 1 || loading}
+        onClick={() => onChange(page + 1)}
+      >›</button>
+      <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 4 }}>
+        第 {page + 1} / {totalPages} 页，共 {total} 条
+      </span>
+    </div>
+  );
+}
+
+export function SessionListV2({ data, loading, page, pageSize, onPageChange }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedSession = selectedId ? (data?.sessions.find((s) => s.session_id === selectedId) ?? null) : null;
+  const total = data?.total ?? 0;
 
   return (
     <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb", overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid #f3f4f6" }}>
-        <h2 style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid #f3f4f6", flexWrap: "wrap", gap: 8 }}>
+        <h2 style={{ fontSize: 13, fontWeight: 600, color: "#111827", flexShrink: 0 }}>
           会话列表
           <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "#9ca3af", background: "#f3f4f6", padding: "2px 7px", borderRadius: 12 }}>v2</span>
         </h2>
-        {data && (
-          <span style={{ fontSize: 11, color: "#9ca3af" }}>{data.total} 条</span>
-        )}
+        <Pagination page={page} pageSize={pageSize} total={total} loading={loading} onChange={onPageChange} />
       </div>
 
       {loading ? (

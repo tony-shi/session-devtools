@@ -44,6 +44,49 @@ export interface SubAgentSummary {
   resultPreview: string;
 }
 
+// ─── Interval events: all raw JSONL events between two LLM calls ─────────────
+// eventType mirrors the JSONL "type" field; subtype/attachmentType provide detail.
+// contentPreview is a short human-readable summary (first 300 chars).
+// rawJson is the full stringified event for inspector / raw view.
+
+export type IntervalEventKind =
+  | "user:human"         // user turn start — human typed text
+  | "user:tool_result"   // tool_result block(s) in user event
+  | "user:command"       // <local-command-caveat> / <command-name> etc.
+  | "system:api_error"   // API error / retry
+  | "system:local_command"
+  | "system:turn_duration"
+  | "system:stop_hook_summary"
+  | "system:away_summary"
+  | "attachment:skill_listing"
+  | "attachment:task_reminder"
+  | "attachment:file"
+  | "file-history-snapshot"
+  | "last-prompt"
+  | "unknown";           // catch-all for future JSONL types
+
+export interface IntervalEvent {
+  kind: IntervalEventKind;
+  lineIdx: number;        // 0-based line index in the JSONL file
+  timestamp: string;
+  contentPreview: string; // first 300 chars of meaningful text
+  contentSize: number;    // byte length of full content
+  rawJson: string;        // full JSON string of the event
+}
+
+// One tool_use block paired with its tool_result (if found in the next user event)
+export interface ToolCallSlot {
+  toolUseId: string;
+  name: string;
+  // JSON.stringify(input) preview — first 300 chars
+  inputPreview: string;
+  inputSize: number;      // chars of JSON.stringify(input)
+  // tool_result.content preview — first 300 chars
+  outputPreview: string;
+  outputSize: number;     // chars of stringified content
+  isError: boolean;
+}
+
 export interface LlmCall {
   id: number;
   indexInTurn: number;
@@ -65,6 +108,13 @@ export interface LlmCall {
   incomingDiff: DiffEntry[];
   // Tool names dispatched in this call's content (tool_use blocks)
   toolNames: string[];
+  // Structured tool_use + tool_result pairs for this call
+  toolCalls: ToolCallSlot[];
+  // Text blocks from assistant message (preview, first 500 chars)
+  assistantText: string;
+  // All JSONL events that follow this call (up to but not including the next assistant call)
+  // Includes tool_results, system events, attachments, human injections, etc.
+  intervalEvents: IntervalEvent[];
 }
 
 export interface UserTurn {
