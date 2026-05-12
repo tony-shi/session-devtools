@@ -158,17 +158,21 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
   );
 }
 
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+
 interface Props {
   data: SessionsV2Response | null;
   loading: boolean;
   page: number;
   pageSize: number;
   onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
 }
 
-function Pagination({ page, pageSize, total, loading, onChange }: {
+function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange }: {
   page: number; pageSize: number; total: number; loading: boolean;
   onChange: (p: number) => void;
+  onPageSizeChange: (size: number) => void;
 }) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const btnBase: React.CSSProperties = {
@@ -190,12 +194,37 @@ function Pagination({ page, pageSize, total, loading, onChange }: {
   }
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+      {/* Page size selector */}
+      <div style={{ display: "flex", alignItems: "center", gap: 4, marginRight: 4 }}>
+        <span style={{ fontSize: 11, color: "#9ca3af" }}>每页</span>
+        <select
+          value={pageSize}
+          onChange={(e) => onPageSizeChange(Number(e.target.value))}
+          disabled={loading}
+          style={{
+            padding: "3px 6px", borderRadius: 6, border: "1px solid #e5e7eb",
+            background: "#fff", fontSize: 12, color: "#374151", cursor: "pointer",
+            outline: "none", appearance: "none", paddingRight: 20,
+            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
+            backgroundRepeat: "no-repeat", backgroundPosition: "right 4px center",
+          }}
+        >
+          {PAGE_SIZE_OPTIONS.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        <span style={{ fontSize: 11, color: "#9ca3af" }}>条</span>
+      </div>
+
+      {/* Prev button */}
       <button
         style={{ ...btnBase, ...(page === 0 || loading ? disabledStyle : {}) }}
         disabled={page === 0 || loading}
         onClick={() => onChange(page - 1)}
       >‹</button>
+
+      {/* Page number buttons */}
       {pageNums.map((p, i) =>
         p === "…" ? (
           <span key={`ellipsis-${i}`} style={{ fontSize: 12, color: "#9ca3af", padding: "0 4px" }}>…</span>
@@ -212,19 +241,22 @@ function Pagination({ page, pageSize, total, loading, onChange }: {
           >{p + 1}</button>
         )
       )}
+
+      {/* Next button */}
       <button
         style={{ ...btnBase, ...(page >= totalPages - 1 || loading ? disabledStyle : {}) }}
         disabled={page >= totalPages - 1 || loading}
         onClick={() => onChange(page + 1)}
       >›</button>
-      <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 4 }}>
+
+      <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 2 }}>
         第 {page + 1} / {totalPages} 页，共 {total} 条
       </span>
     </div>
   );
 }
 
-export function SessionListV2({ data, loading, page, pageSize, onPageChange }: Props) {
+export function SessionListV2({ data, loading, page, pageSize, onPageChange, onPageSizeChange }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedSession = selectedId ? (data?.sessions.find((s) => s.session_id === selectedId) ?? null) : null;
   const total = data?.total ?? 0;
@@ -236,7 +268,7 @@ export function SessionListV2({ data, loading, page, pageSize, onPageChange }: P
           会话列表
           <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "#9ca3af", background: "#f3f4f6", padding: "2px 7px", borderRadius: 12 }}>v2</span>
         </h2>
-        <Pagination page={page} pageSize={pageSize} total={total} loading={loading} onChange={onPageChange} />
+        <Pagination page={page} pageSize={pageSize} total={total} loading={loading} onChange={onPageChange} onPageSizeChange={onPageSizeChange} />
       </div>
 
       {loading ? (
