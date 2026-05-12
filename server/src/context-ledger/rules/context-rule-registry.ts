@@ -138,131 +138,13 @@ function slotIdsForLedgerRule(rule: ContextLedgerRule): string[] {
   return [];
 }
 
-function fallbackRule(params: {
-  ruleId: string;
-  slotId: string;
-  category: SegmentCategory;
-  mechanism?: string;
-}): ContextRule {
-  return {
-    ruleId: params.ruleId,
-    slotId: params.slotId,
-    verifiedFor: null,
-    // 结构兜底 rule 不声称可重建文本：只确认"slot 锚点存在"。
-    materialization: "presence",
-    attribution: {
-      // 空 prefix 是显式的"结构存在即命中"兜底规则；它必须排在 copy 规则之后。
-      pattern: "",
-      matchMode: "prefix",
-      mechanism: params.mechanism ?? "slot_anchor_pattern",
-      category: params.category,
-    },
-  };
-}
-
-// AST attribution 的结构兜底规则。
-// 这些 rule 不声称可重建文本，只把 known slot 从 rule_gap 降为 inferred 识别，
-// 让 audit 页面区分"结构已知但内容规则待补"和"完全未知结构"。
-const STRUCTURAL_FALLBACK_RULES: ContextRule[] = [
-  fallbackRule({
-    ruleId: "context.slot.system-main-prompt.container.v1",
-    slotId: "system.main-prompt-block",
-    category: "system_prompt",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-prelude.fallback.v1",
-    slotId: "system.main-prompt.section.prelude",
-    category: "system_prompt",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-system.fallback.v1",
-    slotId: "system.main-prompt.section.system",
-    category: "system_prompt",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-doing-tasks.fallback.v1",
-    slotId: "system.main-prompt.section.doing-tasks",
-    category: "system_prompt",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-actions.fallback.v1",
-    slotId: "system.main-prompt.section.actions",
-    category: "system_prompt",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-using-tools.fallback.v1",
-    slotId: "system.main-prompt.section.using-tools",
-    category: "system_prompt",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-tone-style.fallback.v1",
-    slotId: "system.main-prompt.section.tone-style",
-    category: "system_prompt",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-text-output.fallback.v1",
-    slotId: "system.main-prompt.section.text-output",
-    category: "system_prompt",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-output-efficiency.fallback.v1",
-    slotId: "system.main-prompt.section.output-efficiency",
-    category: "system_prompt",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-session-guidance.fallback.v1",
-    slotId: "system.main-prompt.section.session-guidance",
-    category: "harness_injection",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-environment.fallback.v1",
-    slotId: "system.main-prompt.section.environment",
-    category: "harness_injection",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-auto-memory.fallback.v1",
-    slotId: "system.main-prompt.section.auto-memory",
-    category: "memory_injection",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-context-management.fallback.v1",
-    slotId: "system.main-prompt.section.context-management",
-    category: "harness_injection",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-context-tail.fallback.v1",
-    slotId: "system.main-prompt.section.context",
-    category: "harness_injection",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.system-section-language.fallback.v1",
-    slotId: "system.main-prompt.section.language",
-    category: "harness_injection",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.messages-text.fallback.v1",
-    slotId: "messages.text",
-    category: "user_message",
-    mechanism: "wire_schema",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.messages-inline-free-text.fallback.v1",
-    slotId: "messages.inline.free-text",
-    category: "user_message",
-    mechanism: "wire_schema",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.side-query-system.fallback.v1",
-    slotId: "side-query.system",
-    category: "system_prompt",
-  }),
-  fallbackRule({
-    ruleId: "context.slot.side-query-user.fallback.v1",
-    slotId: "side-query.user",
-    category: "user_message",
-    mechanism: "wire_schema",
-  }),
-];
+// PR 2 删除：STRUCTURAL_FALLBACK_RULES（空 prefix 规则伪装"slot 已识别"）。
+// 新模型里 node.origin 在 ast-builder 出口就是 structural/no_rule_matched 默认值，
+// 不需要假装命中一条空规则来"降一档"。fallbackRule helper 也一并不再使用。
+//
+// 影响：原本走 fallback 规则的节点（known slot 但无内容规则）现在 SegmentAttribution
+// 投影会输出 mechanism="rule_gap" 而非 mechanism="slot_anchor_pattern"；audit 覆盖率
+// 统计中 ruleGap 桶会包含这些节点。这是诚实的表达 —— 之前的"假证据"被去掉了。
 
 const COPIED_CONTEXT_RULES: ContextRule[] = CONTEXT_LEDGER_RULES.flatMap((rule) =>
   slotIdsForLedgerRule(rule)
@@ -272,7 +154,6 @@ const COPIED_CONTEXT_RULES: ContextRule[] = CONTEXT_LEDGER_RULES.flatMap((rule) 
 
 export const CONTEXT_RULES: ContextRule[] = [
   ...COPIED_CONTEXT_RULES,
-  ...STRUCTURAL_FALLBACK_RULES,
 ];
 
 export const CONTEXT_RULE_BY_ID: ReadonlyMap<string, ContextRule> = new Map(

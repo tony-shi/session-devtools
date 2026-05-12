@@ -7,8 +7,9 @@
 
 import { createHash } from "crypto";
 import type { SlotMatch, SegmentNode, ParsedQuerySnapshot } from "./types";
-import { UNKNOWN_SLOT } from "./types";
+import { UNKNOWN_SLOT, isUnknownSlotId } from "./types";
 import type { RequestTemplate, TemplateSlot } from "../template/types";
+import { originContainer, originStructural, originUnknown } from "./attribution/origin";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // id 命名规则（与重构前 segments 数组严格一致，保证 index 里 id 不变）
@@ -46,10 +47,19 @@ export function buildParsedQuerySnapshot(params: {
     return `${parentId}-c${ci}`;
   }
 
-  function toNode(id: string, match: SlotMatch, parentId?: string, inheritedCachePolicy?: import("./types").CachePolicy): SegmentNode {
+  function toNode(
+    id: string,
+    match: SlotMatch,
+    parentId?: string,
+    inheritedCachePolicy?: import("./types").CachePolicy,
+    inheritedWireMeta?: import("./types").WireMeta,
+  ): SegmentNode {
     // cachePolicy 优先使用 match 自身携带的值（顶层 block 由 matcher 填入）；
     // 子节点（H1 section 等 wire 内部切分）自身无 cache_control，继承父节点的值。
     const cachePolicy = match.cachePolicy ?? inheritedCachePolicy;
+    // wireMeta 同理：message 顶层节点由 matcher 填入 (messageIdx/role/toolUseId)；
+    // inline 切分等子节点不丢失消息坐标，从父节点继承。
+    const wireMeta = match.wireMeta ?? inheritedWireMeta;
     const node: SegmentNode = {
       id,
       slotType: match.slotType,
@@ -62,6 +72,12 @@ export function buildParsedQuerySnapshot(params: {
       parentId,
       ...(cachePolicy && { cachePolicy }),
       ...(match.unknownMeta && { unknownMeta: match.unknownMeta }),
+      ...(wireMeta && { wireMeta }),
+      // origin 占位：先按"叶子且无 rule"填 structural，下面递归完 children 后若发现是
+      // container 再升级。最终 attributeSnapshot / jsonl-linker 可覆盖。
+      origin: isUnknownSlotId(match.slotType)
+        ? originUnknown(match.unknownMeta?.reason ?? "unknown slot")
+        : originStructural(match.slotType),
     };
     // matcher 只产出顶层大块；这里根据 template 展开 H1/inline 子节点。
     // 若调用方未来传入了已有 children，优先使用它们，保证旧中间结构仍能被消费。
@@ -70,8 +86,12 @@ export function buildParsedQuerySnapshot(params: {
       : expandChildren(match, template);
 
     node.children = childMatches.map((child, ci) =>
-      toNode(childIdOf(id, match.slotType, ci), child, id, cachePolicy),
+      toNode(childIdOf(id, match.slotType, ci), child, id, cachePolicy, wireMeta),
     );
+    // 有 children 的节点是 container — 其 origin 不解释内容，由叶子负责。
+    if (node.children.length > 0) {
+      node.origin = originContainer(match.slotType);
+    }
     index[node.id] = node;
     return node;
   }

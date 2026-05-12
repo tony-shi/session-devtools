@@ -6,11 +6,12 @@
 //   - 处理 verifiedFor 降级、wire_schema fallback、rule_gap。
 //   - 不渲染 notes；notesTemplate 留给 audit/view 层按 dynamicFields 派生展示。
 
-import type { Confidence } from "../../types";
+import type { Confidence, SegmentCategory } from "../../types";
 import { SUPPORTED_CLAUDE_CODE_VERSION } from "../../rules/context-rule-registry";
 import type { ContextRule } from "../../rules/context-rule-registry";
 import type { SegmentNode } from "../types";
 import type { RuleEvaluation } from "./rule-evaluator";
+import type { RuleOrigin, DynamicFieldWithEvidence } from "./origin";
 import type {
   AttributionMatchMode,
   CharCoverage,
@@ -73,12 +74,29 @@ function deriveConfidence(rule: ContextRule, evaluation: RuleEvaluation): Confid
 
 // ── rule 命中 ────────────────────────────────────────────────────────────────
 
+/**
+ * 把 rule evaluation 投射到节点上：写入 node.origin（RuleOrigin），并产出 backward-compatible
+ * 的 SegmentAttribution。两个返回路径表达同一个事实，新模型以 node.origin 为权威，
+ * SegmentAttribution[] 仅用于尚未迁移的 audit / parser-view 调用方。
+ */
 export function resolveFromEvaluation(
   node: SegmentNode,
   evaluation: RuleEvaluation,
 ): SegmentAttribution {
   const { rule } = evaluation;
+  const confidence = deriveConfidence(rule, evaluation);
 
+  // —— 新模型：写入 node.origin —— //
+  const origin: RuleOrigin = {
+    kind: "rule",
+    ruleId: rule.ruleId,
+    matchMode: evaluation.matchMode,
+    confidence,
+    ...(evaluation.dynamicFields ? { dynamicFields: evaluation.dynamicFields as DynamicFieldWithEvidence[] } : {}),
+  };
+  node.origin = origin;
+
+  // —— 旧模型投影：保持 audit/parser-view 等调用方可继续工作 —— //
   return {
     nodeId: node.id,
     slotId: node.slotType,
@@ -90,23 +108,35 @@ export function resolveFromEvaluation(
     charCoverage: evaluation.charCoverage,
     ...(evaluation.dynamicFields ? { dynamicFields: evaluation.dynamicFields } : {}),
     reconstructable: reconstructableFromRule(rule),
-    confidence: deriveConfidence(rule, evaluation),
+    confidence,
   };
 }
 
 // ── wire-schema fallback ─────────────────────────────────────────────────────
+// wire 协议本身就是一种"先验规则"：tool_use / tool_result / tools.builtin.* 的结构
+// 由 Anthropic 协议固定，因此在新模型里同样表达为 RuleOrigin（带合成 ruleId "wire.*"）。
+// PR 3 的 jsonl-linker 会用真实的 jsonl 事件把这些 origin 升级为 JsonlOrigin。
 
 function wireAttribution(
   node: SegmentNode,
-  category: SegmentAttribution["category"],
-  matchMode: Exclude<AttributionMatchMode, "regex" | "prefix" | "rule_gap"> = "exact",
+  category: SegmentCategory,
+  wireRuleId: string,
 ): SegmentAttribution {
+  // —— 新模型：写合成 wire rule origin —— //
+  node.origin = {
+    kind: "rule",
+    ruleId: wireRuleId,
+    matchMode: "exact",
+    confidence: "definitive",
+  };
+
+  // —— 旧模型投影 —— //
   return {
     nodeId: node.id,
     slotId: node.slotType,
     category,
     mechanism: "wire_schema",
-    matchMode,
+    matchMode: "exact",
     ...(fullRange(node) ? { matchedRange: fullRange(node) } : {}),
     charCoverage: fullLiteralCoverage(node),
     reconstructable: true,
@@ -116,23 +146,25 @@ function wireAttribution(
 
 export function wireFallback(node: SegmentNode): SegmentAttribution | null {
   if (node.slotType === "messages.tool_use") {
-    return wireAttribution(node, "tool_use");
+    return wireAttribution(node, "tool_use", "wire.messages.tool_use");
   }
 
   if (node.slotType === "messages.tool_result") {
-    return wireAttribution(node, "tool_result");
+    return wireAttribution(node, "tool_result", "wire.messages.tool_result");
   }
 
   if (node.slotType.startsWith("tools.builtin.")) {
-    return wireAttribution(node, "tools_schema");
+    return wireAttribution(node, "tools_schema", "wire.tools.builtin");
   }
 
   return null;
 }
 
-// ── rule_gap ────────────────────────────────────────────────────────────────
+// ── rule_gap projection ─────────────────────────────────────────────────────
+// 不再写 origin —— 节点保留 PR 1 默认值（structural/no_rule_matched 或 unknown）。
+// 这里只为 backward compat 输出一条 SegmentAttribution，供旧 audit/view 使用。
 
-export function ruleGap(node: SegmentNode): SegmentAttribution {
+export function projectStructuralOriginAsAttribution(node: SegmentNode): SegmentAttribution {
   return {
     nodeId: node.id,
     slotId: node.slotType,

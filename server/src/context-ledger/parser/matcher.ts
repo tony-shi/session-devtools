@@ -106,6 +106,9 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
   for (let mi = 0; mi < messages.length; mi++) {
     const msg = messages[mi]!;
     const content = msg.content;
+    const roleNorm = msg.role === "assistant" || msg.role === "user" || msg.role === "system"
+      ? msg.role
+      : undefined;
 
     // string content：整条作为 messages.text 段
     if (typeof content === "string") {
@@ -115,6 +118,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
         rawText: content,
         anchorEvidence: "",
         children: [],
+        wireMeta: { messageIdx: mi, ...(roleNorm && { messageRole: roleNorm }) },
       });
       continue;
     }
@@ -134,6 +138,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
           anchorEvidence: "",
           children: [],
           cachePolicy: parseCachePolicy(blk.cache_control as Record<string, unknown> | undefined),
+          wireMeta: { messageIdx: mi, ...(roleNorm && { messageRole: roleNorm }) },
         });
       } else if (blk.type === "tool_use") {
         const rawText = JSON.stringify({
@@ -148,6 +153,12 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
           anchorEvidence: blk.name ?? "",
           children: [],
           cachePolicy: parseCachePolicy(blk.cache_control as Record<string, unknown> | undefined),
+          wireMeta: {
+            messageIdx: mi,
+            ...(roleNorm && { messageRole: roleNorm }),
+            ...(blk.id && { toolUseId: blk.id }),
+            ...(blk.name && { toolName: blk.name }),
+          },
         });
       } else if (blk.type === "tool_result") {
         out.push({
@@ -157,6 +168,11 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
           anchorEvidence: blk.tool_use_id ?? "",
           children: [],
           cachePolicy: parseCachePolicy(blk.cache_control as Record<string, unknown> | undefined),
+          wireMeta: {
+            messageIdx: mi,
+            ...(roleNorm && { messageRole: roleNorm }),
+            ...(blk.tool_use_id && { toolUseId: blk.tool_use_id }),
+          },
         });
       } else {
         // 未知 block type（image、document 等）：保留原始内容，不丢字符。
@@ -171,6 +187,7 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
             originalType: blk.type ?? "unknown",
             reason: "unrecognized content block type",
           },
+          wireMeta: { messageIdx: mi, ...(roleNorm && { messageRole: roleNorm }) },
         });
       }
     }

@@ -8,9 +8,8 @@
 
 import { getContextRulesForSlotId } from "../../rules/context-rule-registry";
 import type { ParsedQuerySnapshot, SegmentNode } from "../types";
-import { isUnknownSlotId } from "../types";
 import { findFirstRuleEvaluation } from "./rule-evaluator";
-import { resolveFromEvaluation, ruleGap, wireFallback } from "./resolver";
+import { resolveFromEvaluation, wireFallback, projectStructuralOriginAsAttribution } from "./resolver";
 import type { SegmentAttribution } from "./types";
 
 export { computeCoverage } from "./coverage";
@@ -35,18 +34,28 @@ function flattenNodes(roots: SegmentNode[]): SegmentNode[] {
 }
 
 /**
- * attributeSnapshot：对 ParsedQuerySnapshot 的每个节点产生一条 SegmentAttribution。
+ * attributeSnapshot：对 ParsedQuerySnapshot 的每个叶子节点尝试归因。
  *
- * 流程：
+ * 双重输出：
+ *   - 权威：在 node.origin 上原地写入归因结果（RuleOrigin / 不写则保留 PR 1 默认）
+ *   - 兼容：返回 SegmentAttribution[]，供尚未迁移到 origin 的 audit / parser-view 使用
+ *
+ * Container 节点跳过（PR 1 已经填了 origin=structural/container_node）。
+ *
+ * 流程（仅作用于叶子）：
  *   1. 按 slotId 取候选 rules → findFirstRuleEvaluation
- *   2. 命中：resolveFromEvaluation
- *   3. 未命中：wireFallback（tool_use/tool_result/tools.builtin.*）
- *   4. 仍未命中：ruleGap（unknown slot 或显式无 rule）
+ *   2. 命中：resolveFromEvaluation（写 RuleOrigin + 投影 SegmentAttribution）
+ *   3. 未命中：wireFallback（tool_use/tool_result/tools.builtin.* → 合成 wire RuleOrigin）
+ *   4. 仍未命中：不动 origin（保留 PR 1 的 structural/unknown 默认），projection 输出 rule_gap
  */
 export function attributeSnapshot(snapshot: ParsedQuerySnapshot): SegmentAttribution[] {
   const out: SegmentAttribution[] = [];
 
   for (const node of flattenNodes(snapshot.roots)) {
+    // container 节点：origin 已经是 structural/container_node，不参与 rule 命中。
+    // projection 也跳过（旧 audit 也不会渲染 container 单独的 attribution 行）。
+    if (node.children.length > 0) continue;
+
     const rules = getContextRulesForSlotId(node.slotType);
     const evaluation = findFirstRuleEvaluation(node, rules, snapshot.queryKind);
 
@@ -61,12 +70,9 @@ export function attributeSnapshot(snapshot: ParsedQuerySnapshot): SegmentAttribu
       continue;
     }
 
-    if (isUnknownSlotId(node.slotType)) {
-      out.push(ruleGap(node));
-      continue;
-    }
-
-    out.push(ruleGap(node));
+    // 没有 rule 命中、也不是 wire fallback：节点 origin 保留 PR 1 默认值。
+    // 投影一条 rule_gap SegmentAttribution 让 audit/view 知道这里有缺口。
+    out.push(projectStructuralOriginAsAttribution(node));
   }
 
   return out;

@@ -44,6 +44,20 @@ export interface SlotMatch {
     /** 产出 unknown 节点的原因说明 */
     reason?: string;
   };
+  /** wire 层结构化字段：仅 tool_use / tool_result / messages.text 节点携带。
+   *  PR 3 (jsonl-linker) 用 toolUseId / messageRole / messageIdx 做 deterministic 匹配。 */
+  wireMeta?: WireMeta;
+}
+
+export interface WireMeta {
+  /** tool_use 节点的 tool_use.id；tool_result 节点的 tool_use_id（指向其配对 tool_use）。 */
+  toolUseId?: string;
+  /** tool_use 节点的 tool name；tool_result 节点为 undefined。 */
+  toolName?: string;
+  /** message 角色：user / assistant；tools / system block 为 undefined。 */
+  messageRole?: "user" | "assistant" | "system";
+  /** message 在 messages[] 数组中的索引（0-based）。 */
+  messageIdx?: number;
 }
 
 /** AST 节点：一个 segment 在树里的表示 */
@@ -70,6 +84,18 @@ export interface SegmentNode {
     sectionHeader?: string;
     reason?: string;
   };
+  /** wire 层结构化字段；与 SlotMatch.wireMeta 同义。 */
+  wireMeta?: WireMeta;
+  /**
+   * Origin：该节点的"形态 / 出处"。
+   *
+   * 由 ast-builder 出口处填入默认值（container/structural/unknown），
+   * 后续可由 attributeSnapshot 用 rule 命中覆盖为 RuleOrigin，
+   * 由 jsonl-linker 用 id / 内容匹配覆盖为 JsonlOrigin。
+   *
+   * 不变量：构造完毕的 ParsedQuerySnapshot 中每个节点 origin 必为非空。
+   */
+  origin: import("./attribution/origin").SegmentOrigin;
 }
 
 export interface ParsedQuerySnapshot {
