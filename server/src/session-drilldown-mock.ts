@@ -30,9 +30,12 @@ export function buildMockDrilldown(sessionId: string): SessionDrilldown {
     modelBreakdown: { "claude-opus-4-7": { calls: totalLlmCalls, outputTokens: 0, cacheRead: totalCacheRead, cacheWrite: totalCacheWrite, freshIn: 0 } },
     hasProxyData: false,
     hasJsonlSource: false,
+    compactionCount: 0,
+    toolDistribution: [],
     subAgentCount: 0,
     subAgents: [],
     turns,
+    interTurnBlocks: [],
   };
 }
 
@@ -54,6 +57,8 @@ function buildMockTurns(): UserTurn[] {
       unknownDelta: 0,
       hasCompaction: false,
       hasUnknownSpike: false,
+      errorCount: 0,
+      midTurnInjections: [] as import("./session-drilldown-types.ts").MidTurnInjection[],
       calls: [
         call(1, 1, { contextSize: 42000, outputTokens: 1200, cacheRead: 0, cacheWrite: 8100, timestamp: "2026-05-09T14:01:02.000Z", significantDelta: 42000, isSignificant: true,
           incomingDiff: [
@@ -99,6 +104,8 @@ function buildMockTurns(): UserTurn[] {
       unknownDelta: 0,
       hasCompaction: true,
       hasUnknownSpike: false,
+      errorCount: 0,
+      midTurnInjections: [] as import("./session-drilldown-types.ts").MidTurnInjection[],
       calls: [
         call(12, 1, { contextSize: 90000, outputTokens: 1100, cacheRead: 18000, cacheWrite: 0, timestamp: "2026-05-09T14:22:01.000Z", significantDelta: 28000,
           incomingDiff: [
@@ -172,6 +179,8 @@ function buildMockTurns(): UserTurn[] {
       unknownDelta: 0,
       hasCompaction: true,
       hasUnknownSpike: false,
+      errorCount: 0,
+      midTurnInjections: [] as import("./session-drilldown-types.ts").MidTurnInjection[],
       calls: [
         call(29, 1, { contextSize: 118000, outputTokens: 900, cacheRead: 19000, cacheWrite: 0, timestamp: "2026-05-09T15:10:01.000Z", significantDelta: 740,
           incomingDiff: [
@@ -226,6 +235,8 @@ function buildMockTurns(): UserTurn[] {
       unknownDelta: 0,
       hasCompaction: false,
       hasUnknownSpike: false,
+      errorCount: 0,
+      midTurnInjections: [] as import("./session-drilldown-types.ts").MidTurnInjection[],
       calls: [
         call(37, 1, { contextSize: 103000, outputTokens: 600, cacheRead: 18000, cacheWrite: 0, timestamp: "2026-05-09T15:32:01.000Z", significantDelta: 420,
           incomingDiff: [
@@ -260,6 +271,8 @@ function buildMockTurns(): UserTurn[] {
       unknownDelta: 0,
       hasCompaction: false,
       hasUnknownSpike: false,
+      errorCount: 0,
+      midTurnInjections: [] as import("./session-drilldown-types.ts").MidTurnInjection[],
       calls: [
         call(40, 1, { contextSize: 108000, outputTokens: 700, cacheRead: 20000, cacheWrite: 0, timestamp: "2026-05-09T16:05:01.000Z", significantDelta: 380,
           incomingDiff: [
@@ -314,9 +327,13 @@ function call(id: number, indexInTurn: number, overrides: CallOverrides): LlmCal
     freshIn: Math.max(0, overrides.contextSize - overrides.cacheRead - overrides.cacheWrite),
     isSignificant: false,
     proxy: null,
-    subAgent: null,
+    subAgents: [],
+    toolNames: [],
+    toolCalls: [],
+    assistantText: "",
+    intervalEvents: [],
     ...overrides,
-  };
+  } as LlmCall;
 }
 
 type DiffChangeType = "added" | "removed" | "changed" | "retained";

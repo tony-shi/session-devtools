@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join, dirname, basename } from "path";
 import type { Database } from "better-sqlite3";
-import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData, ModelStats, SubAgentSummary } from "./session-drilldown-types.ts";
+import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData, ModelStats, SubAgentSummary, InterTurnBlock, IntervalEvent } from "./session-drilldown-types.ts";
 import { normaliseModelName } from "./model-info.ts";
 
 // ─── JSONL record shapes (loose, best-effort) ────────────────────────────────
@@ -55,7 +55,13 @@ function isToolResultOnly(content: unknown): boolean {
 function isCommandContent(content: unknown): boolean {
   const text = typeof content === "string" ? content : extractUserText(content);
   const trimmed = text.trimStart();
-  return trimmed.startsWith("<command-name>") || trimmed.startsWith("<local-command-caveat>");
+  return trimmed.startsWith("<command-name>")
+    || trimmed.startsWith("<local-command-caveat>")
+    || trimmed.startsWith("<local-command-stdout>")
+    || trimmed.startsWith("<local-command-stderr>")
+    || trimmed.startsWith("<bash-input>")
+    || trimmed.startsWith("<bash-stdout>")
+    || trimmed.startsWith("<bash-stderr>");
 }
 
 function isHumanInput(ev: JUserEvent): boolean {
@@ -85,6 +91,79 @@ function tsOf(ev: JEvent): string {
   const ts = ("timestamp" in ev ? (ev as { timestamp?: string }).timestamp : undefined)
     ?? ("ts" in ev ? (ev as { ts?: string }).ts : undefined);
   return ts ?? "";
+}
+
+function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
+  const ts  = tsOf(iev);
+  const raw = JSON.stringify(iev);
+  let kind: IntervalEvent["kind"] = "unknown";
+  let preview = "";
+  let size = raw.length;
+
+  if (iev.type === "user") {
+    const uev = iev as JUserEvent;
+    const content = uev.message?.content;
+    if (isToolResultOnly(content)) {
+      kind = "user:tool_result";
+      const blocks = content as Array<{ type?: string; content?: unknown }>;
+      for (const b of blocks) {
+        if (b.type === "tool_result") {
+          const rc = b.content;
+          const text = typeof rc === "string" ? rc
+            : Array.isArray(rc) ? rc.map((c: { text?: string }) => c?.text ?? "").join("") : "";
+          preview = text.slice(0, 300);
+          size = text.length;
+          break;
+        }
+      }
+    } else if (isCommandContent(content)) {
+      kind = "user:command";
+      preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
+    } else {
+      kind = "user:human";
+      preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
+    }
+  } else if (iev.type === "system") {
+    const sub = (iev as JSystemEvent).subtype ?? "";
+    if (sub === "api_error") {
+      kind = "system:api_error";
+      preview = JSON.stringify((iev as { error?: unknown }).error ?? {}).slice(0, 300);
+    } else if (sub === "local_command") {
+      kind = "system:local_command";
+      preview = ((iev as { content?: string }).content ?? "").slice(0, 300);
+    } else if (sub === "turn_duration") {
+      kind = "system:turn_duration";
+      preview = `durationMs: ${(iev as { durationMs?: number }).durationMs ?? 0}`;
+    } else if (sub === "stop_hook_summary") {
+      kind = "system:stop_hook_summary";
+      preview = JSON.stringify((iev as { hookInfos?: unknown }).hookInfos ?? {}).slice(0, 300);
+    } else if (sub === "away_summary") {
+      kind = "system:away_summary";
+      preview = ((iev as { content?: string }).content ?? "").slice(0, 300);
+    } else {
+      kind = "unknown";
+      preview = raw.slice(0, 300);
+    }
+  } else if (iev.type === "attachment") {
+    const att = (iev as { attachment?: { type?: string; content?: unknown; itemCount?: number } }).attachment ?? {};
+    const attType = att.type ?? "";
+    if (attType === "skill_listing") { kind = "attachment:skill_listing"; preview = String(att.content ?? "").slice(0, 300); }
+    else if (attType === "task_reminder") { kind = "attachment:task_reminder"; preview = `itemCount: ${att.itemCount ?? 0}`; }
+    else if (attType === "file") { kind = "attachment:file"; preview = String(att.content ?? "").slice(0, 300); }
+    else { kind = "unknown"; preview = raw.slice(0, 300); }
+  } else if (iev.type === "file-history-snapshot") {
+    kind = "file-history-snapshot";
+    const snap = (iev as { snapshot?: { timestamp?: string } }).snapshot ?? {};
+    preview = `snapshot timestamp: ${snap.timestamp ?? ""}`;
+  } else if (iev.type === "last-prompt") {
+    kind = "last-prompt";
+    preview = ((iev as { lastPrompt?: string }).lastPrompt ?? "").slice(0, 300);
+  } else {
+    kind = "unknown";
+    preview = raw.slice(0, 300);
+  }
+
+  return { kind, lineIdx, timestamp: ts, contentPreview: preview, contentSize: size, rawJson: raw };
 }
 
 // ─── Sub agent parser ─────────────────────────────────────────────────────────
@@ -533,90 +612,7 @@ export function parseSessionDrilldown(
             continue;
           }
 
-          const ts  = tsOf(iev);
-          const raw = JSON.stringify(iev);
-
-          let kind: import("./session-drilldown-types.ts").IntervalEventKind = "unknown";
-          let preview = "";
-          let size = raw.length;
-
-          if (iev.type === "user") {
-            const uev = iev as JUserEvent;
-            const content = uev.message?.content;
-            if (isToolResultOnly(content)) {
-              kind = "user:tool_result";
-              // preview = first tool_result content
-              const blocks = content as Array<{ type?: string; content?: unknown; tool_use_id?: string; is_error?: boolean }>;
-              for (const b of blocks) {
-                if (b.type === "tool_result") {
-                  const rc = b.content;
-                  const text = typeof rc === "string" ? rc
-                    : Array.isArray(rc) ? rc.map((c: { text?: string }) => c?.text ?? "").join("") : "";
-                  preview = text.slice(0, 300);
-                  size = text.length;
-                  break;
-                }
-              }
-            } else if (isCommandContent(content)) {
-              kind = "user:command";
-              preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
-            } else {
-              kind = "user:human";
-              preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
-            }
-          } else if (iev.type === "system") {
-            const sub = (iev as JSystemEvent).subtype ?? "";
-            if (sub === "api_error") {
-              kind = "system:api_error";
-              const err = (iev as { error?: unknown }).error;
-              preview = JSON.stringify(err ?? {}).slice(0, 300);
-            } else if (sub === "local_command") {
-              kind = "system:local_command";
-              preview = ((iev as { content?: string }).content ?? "").slice(0, 300);
-            } else if (sub === "turn_duration") {
-              kind = "system:turn_duration";
-              const d = (iev as { durationMs?: number }).durationMs ?? 0;
-              preview = `durationMs: ${d}`;
-            } else if (sub === "stop_hook_summary") {
-              kind = "system:stop_hook_summary";
-              const hi = (iev as { hookInfos?: unknown }).hookInfos;
-              preview = JSON.stringify(hi ?? {}).slice(0, 300);
-            } else if (sub === "away_summary") {
-              kind = "system:away_summary";
-              preview = ((iev as { content?: string }).content ?? "").slice(0, 300);
-            } else {
-              kind = "unknown";
-              preview = raw.slice(0, 300);
-            }
-          } else if (iev.type === "attachment") {
-            const att = (iev as { attachment?: { type?: string; content?: unknown; itemCount?: number } }).attachment ?? {};
-            const attType = att.type ?? "";
-            if (attType === "skill_listing") {
-              kind = "attachment:skill_listing";
-              preview = String(att.content ?? "").slice(0, 300);
-            } else if (attType === "task_reminder") {
-              kind = "attachment:task_reminder";
-              preview = `itemCount: ${att.itemCount ?? 0}`;
-            } else if (attType === "file") {
-              kind = "attachment:file";
-              preview = String(att.content ?? "").slice(0, 300);
-            } else {
-              kind = "unknown";
-              preview = raw.slice(0, 300);
-            }
-          } else if (iev.type === "file-history-snapshot") {
-            kind = "file-history-snapshot";
-            const snap = (iev as { snapshot?: { timestamp?: string } }).snapshot ?? {};
-            preview = `snapshot timestamp: ${snap.timestamp ?? ""}`;
-          } else if (iev.type === "last-prompt") {
-            kind = "last-prompt";
-            preview = ((iev as { lastPrompt?: string }).lastPrompt ?? "").slice(0, 300);
-          } else {
-            kind = "unknown";
-            preview = raw.slice(0, 300);
-          }
-
-          intervalEvents.push({ kind, lineIdx: ei, timestamp: ts, contentPreview: preview, contentSize: size, rawJson: raw });
+          intervalEvents.push(makeIntervalEvent(iev, ei));
         }
       }
 
@@ -724,6 +720,127 @@ export function parseSessionDrilldown(
     i = j + 1;
   }
 
+  // ── 5b. Build inter-turn blocks ───────────────────────────────────────────
+  // Scan for runs of command-only user events (and related system events) that
+  // appear between two turns or after the last turn.
+  // Strategy: for each gap between turn[k].endLineIdx and turn[k+1].startLineIdx
+  // (and after the last turn), collect any events that are command content.
+  // We track the end-of-turn line as the `j` value from each turn's inner loop.
+  // Simpler: re-scan events, noting which line each turn started/ended at.
+
+  // Record the JSONL line index of each turn's first human user event and last assistant
+  // event, so we can find gaps between turns.
+  interface TurnBoundary { turnId: number; startLine: number; endLine: number }
+  const turnBoundaries: TurnBoundary[] = [];
+  {
+    let ti = 0;
+    let k = 0;
+    while (k < events.length) {
+      if (events[k].type !== "user" || !isHumanInput(events[k] as JUserEvent)) { k++; continue; }
+      const startLine = k;
+      // Find end: scan forward until end_turn assistant (same logic as above)
+      let endLine = k;
+      let m = k + 1;
+      while (m < events.length) {
+        const mev = events[m];
+        if (mev.type === "user" && isHumanInput(mev as JUserEvent)) {
+          // mid-turn injection — keep scanning
+        } else if (mev.type === "assistant" && !(mev as JAssistantEvent).isSidechain) {
+          const aev = mev as JAssistantEvent;
+          const msgId = aev.message?.id;
+          const isCanonical = msgId ? lastAssistantByMsgId.get(msgId) === m : true;
+          if (isCanonical) {
+            const sr = aev.message?.stop_reason ?? "";
+            if (sr && sr !== "tool_use") { endLine = m; break; }
+          }
+        }
+        m++;
+      }
+      if (ti < turns.length) {
+        turnBoundaries.push({ turnId: turns[ti].id, startLine, endLine });
+        ti++;
+      }
+      k = m + 1;
+    }
+  }
+
+  // Build inter-turn blocks: command events in gaps between turns (or after last turn)
+  const interTurnBlocks: InterTurnBlock[] = [];
+  {
+    // Gaps to scan: [afterLine, beforeLine, prevTurnId, nextTurnId]
+    type Gap = { afterLine: number; beforeLine: number; prevTurnId: number | null; nextTurnId: number | null };
+    const gaps: Gap[] = [];
+
+    if (turnBoundaries.length === 0) {
+      // No turns at all — whole file is one gap
+      gaps.push({ afterLine: -1, beforeLine: events.length, prevTurnId: null, nextTurnId: null });
+    } else {
+      // Before first turn
+      gaps.push({ afterLine: -1, beforeLine: turnBoundaries[0].startLine, prevTurnId: null, nextTurnId: turnBoundaries[0].turnId });
+      // Between turns
+      for (let gi = 0; gi < turnBoundaries.length - 1; gi++) {
+        gaps.push({
+          afterLine: turnBoundaries[gi].endLine,
+          beforeLine: turnBoundaries[gi + 1].startLine,
+          prevTurnId: turnBoundaries[gi].turnId,
+          nextTurnId: turnBoundaries[gi + 1].turnId,
+        });
+      }
+      // After last turn
+      gaps.push({
+        afterLine: turnBoundaries[turnBoundaries.length - 1].endLine,
+        beforeLine: events.length,
+        prevTurnId: turnBoundaries[turnBoundaries.length - 1].turnId,
+        nextTurnId: null,
+      });
+    }
+
+    for (const gap of gaps) {
+      const blockEvents: IntervalEvent[] = [];
+      for (let gi = gap.afterLine + 1; gi < gap.beforeLine; gi++) {
+        const gev = events[gi];
+        // Include command user events and system:local_command events; skip noise
+        const isCmd = gev.type === "user" && isCommandContent((gev as JUserEvent).message?.content);
+        const isSysCmd = gev.type === "system" && ((gev as JSystemEvent).subtype ?? "") === "local_command";
+        const isMeta = gev.type === "user" && (gev as JUserEvent).isMeta;
+        if (isCmd || isSysCmd || isMeta) {
+          blockEvents.push(makeIntervalEvent(gev, gi));
+        }
+      }
+      if (blockEvents.length === 0) continue;
+
+      // Build a label summarising what happened
+      const cmdNames: string[] = [];
+      for (const ev of blockEvents) {
+        if (ev.kind === "user:command" || ev.kind === "system:local_command") {
+          const raw = ev.contentPreview;
+          // Extract <command-name>/exit</command-name>
+          const cmdMatch = raw.match(/<command-name>([^<]+)<\/command-name>/);
+          if (cmdMatch) { cmdNames.push(cmdMatch[1].trim()); continue; }
+          // bash-input
+          const bashMatch = raw.match(/<bash-input>([^<\n]{0,40})/);
+          if (bashMatch) { cmdNames.push(`!${bashMatch[1].trim()}`); continue; }
+          // local-command-stdout (e.g. Bye!)
+          const stdoutMatch = raw.match(/<local-command-stdout>([^<\n]{0,40})/);
+          if (stdoutMatch) { cmdNames.push(stdoutMatch[1].trim()); }
+        }
+      }
+      const label = cmdNames.length > 0
+        ? [...new Set(cmdNames)].slice(0, 3).join(", ")
+        : `${blockEvents.length} event${blockEvents.length > 1 ? "s" : ""}`;
+
+      interTurnBlocks.push({
+        index: interTurnBlocks.length,
+        prevTurnId: gap.prevTurnId,
+        nextTurnId: gap.nextTurnId,
+        timestamp: blockEvents[0].timestamp,
+        label,
+        enteredContext: gap.nextTurnId !== null,
+        events: blockEvents,
+      });
+    }
+  }
+
   // ── 6. Parse sub agents and join to LlmCalls ─────────────────────────────
   const subAgents = parseSubAgents(sourceFile, events);
   // Build lookup: toolUseId → SubAgentSummary
@@ -820,6 +937,7 @@ export function parseSessionDrilldown(
     subAgents,
 
     turns,
+    interTurnBlocks,
   };
 }
 

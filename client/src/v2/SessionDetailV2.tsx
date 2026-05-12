@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import { scaleLinear, scaleSqrt, scaleOrdinal, line as d3line, curveCatmullRom, schemeTableau10 } from "d3";
 import { TurnMinimap } from "./TurnMinimap";
 import type { SessionV2 } from "./types";
-import type { DiffEntry, IntervalEvent, IntervalEventKind, LlmCall, ModelStats, SessionDrilldown, ToolCallSlot, UserTurn, CallDetail, SegmentDiff } from "./drilldown-types";
+import type { DiffEntry, IntervalEvent, IntervalEventKind, LlmCall, ModelStats, SessionDrilldown, ToolCallSlot, UserTurn, InterTurnBlock, CallDetail, SegmentDiff } from "./drilldown-types";
 import { apiV2 } from "./api";
 import {
   buildMockAttributedDiff,
@@ -553,7 +553,7 @@ function SessionOverviewPanel({
         })()}
 
         <SummaryMetricStrip columns={7} cards={[
-          { label: "User Turns",  value: String(turns.length),                  mock: isMock },
+          { label: "User Turns",  value: String(drilldown?.turns.length ?? turns.length), mock: isMock },
           { label: "LLM Calls",   value: String(totalCalls),                    mock: isMock },
           { label: "Tool Calls",  value: String(totalToolCalls),                mock: isMock },
           { label: "Sub Agents",  value: String(sm?.subAgentCount ?? 0),        mock: isMock,
@@ -2714,8 +2714,8 @@ function JsonlCallChain({
 }
 
 function UserTurnDetailPanel({
-  turn, onSelectCall, isMockSession = false, onSubAgentClick,
-}: { turn: MockUserTurn; onSelectCall: (c: MockLlmCall) => void; isMockSession?: boolean; onSubAgentClick?: (sa: SubAgentSummary) => void }) {
+  turn, onSelectCall, isMockSession = false, onSubAgentClick, trailingInterTurnBlock = null,
+}: { turn: MockUserTurn; onSelectCall: (c: MockLlmCall) => void; isMockSession?: boolean; onSubAgentClick?: (sa: SubAgentSummary) => void; trailingInterTurnBlock?: InterTurnBlock | null }) {
 
   const callsWithSubAgents = turn.calls.map((c, ci) => {
     // For mock sessions, inject mock sub-agent if none present
@@ -2805,6 +2805,14 @@ function UserTurnDetailPanel({
           onSubAgentClick={onSubAgentClick}
         />
       </div>
+
+      {/* ── Trailing inter-turn block (commands after this turn ended) ── */}
+      {trailingInterTurnBlock && (
+        <div style={{ marginBottom: 20 }}>
+          <SectionLabel>After This Turn</SectionLabel>
+          <InterTurnBlockDetail block={trailingInterTurnBlock} />
+        </div>
+      )}
     </div>
   );
 }
@@ -4517,7 +4525,7 @@ function SubAgentSessionPanel({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-type NavLevel = "session" | "turn" | "call" | "subagent";
+type NavLevel = "session" | "turn" | "inter-turn" | "call" | "subagent";
 
 type InspectorState =
   | { type: "hotspots" }
@@ -4542,10 +4550,12 @@ export function SessionDetailV2({ session, onClose }: Props) {
   }, [session.session_id]);
 
   const turns: UserTurn[] = drilldown?.turns ?? buildFallbackTurns();
+  const interTurnBlocks: InterTurnBlock[] = drilldown?.interTurnBlocks ?? [];
   const isMockData = drilldown === null;
 
   const [navLevel, setNavLevel] = useState<NavLevel>("session");
   const [selectedTurn, setSelectedTurn] = useState<MockUserTurn | null>(null);
+  const [selectedInterTurnBlock, setSelectedInterTurnBlock] = useState<InterTurnBlock | null>(null);
   const [selectedCall, setSelectedCall] = useState<MockLlmCall | null>(null);
   const [inspector, setInspector] = useState<InspectorState>({ type: "hotspots" });
   const [selectedSubAgent, setSelectedSubAgent] = useState<SubAgentSummary | null>(null);
@@ -4574,8 +4584,16 @@ export function SessionDetailV2({ session, onClose }: Props) {
   function handleNavSession() {
     setNavLevel("session");
     setSelectedTurn(null);
+    setSelectedInterTurnBlock(null);
     setSelectedCall(null);
     setInspector({ type: "hotspots" });
+  }
+
+  function handleSelectInterTurnBlock(block: InterTurnBlock) {
+    setSelectedInterTurnBlock(block);
+    setSelectedTurn(null);
+    setSelectedCall(null);
+    setNavLevel("inter-turn");
   }
 
   function handleNavTurn(turn: MockUserTurn) {
@@ -4664,36 +4682,70 @@ export function SessionDetailV2({ session, onClose }: Props) {
             />
 
             <div style={{ padding: "10px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>USER TURNS</div>
-            {turns.map(turn => {
-              const isThisTurnSelected = selectedTurn?.id === turn.id;
-              const turnInput = turn.userInput.trim();
-              const turnLabel = `T${turn.id} ${turnInput.slice(0, 14).trimEnd()}${turnInput.length > 14 ? "…" : ""}`;
-              return (
-                <React.Fragment key={turn.id}>
-                  <NavItem
-                    label={turnLabel}
-                    sublabel={`${turn.netContextDelta > 0 ? "+" : ""}${fmtK(turn.netContextDelta)} · ${turn.llmCallCount} calls`}
-                    active={navLevel === "turn" && isThisTurnSelected && !selectedCall}
-                    badge={turn.hasCompaction ? "C" : turn.errorCount > 0 ? "E" : turn.hasUnknownSpike ? "!" : undefined}
-                    badgeColor={turn.hasCompaction ? "#ef4444" : turn.errorCount > 0 ? "#dc2626" : "#94a3b8"}
-                    onClick={() => handleSelectTurn(turn)}
-                  />
-                  {/* LLM calls nested under their turn */}
-                  {isThisTurnSelected && allCallsForNav.length > 0 && allCallsForNav.map(call => (
-                    <NavItem
-                      key={call.id}
-                      indent
-                      label={call.isCompaction ? `#${call.id} compact` : `#${call.id}`}
-                      sublabel={call.isSignificant ? `+${fmtK(call.significantDelta ?? 0)}` : fmtK(call.contextSize)}
-                      active={selectedCall?.id === call.id}
-                      badge={call.isCompaction ? "◆" : call.isSignificant ? "●" : undefined}
-                      badgeColor={call.isCompaction ? "#ef4444" : "#3b82f6"}
-                      onClick={() => handleSelectCall(call)}
+            {(() => {
+              // Build an interleaved list: turns + interTurnBlocks sorted by position
+              // interTurnBlocks with nextTurnId go before that turn; prevTurnId-only go after last turn
+              const items: Array<{ type: "turn"; turn: MockUserTurn } | { type: "itb"; block: InterTurnBlock }> = [];
+              for (const turn of turns) {
+                // Insert any interTurnBlock that comes before this turn (nextTurnId === turn.id)
+                for (const block of interTurnBlocks) {
+                  if (block.nextTurnId === turn.id) {
+                    items.push({ type: "itb", block });
+                  }
+                }
+                items.push({ type: "turn", turn });
+              }
+              // Append trailing blocks (nextTurnId === null, after last turn)
+              for (const block of interTurnBlocks) {
+                if (block.nextTurnId === null && block.prevTurnId !== null) {
+                  items.push({ type: "itb", block });
+                }
+              }
+
+              return items.map(item => {
+                if (item.type === "turn") {
+                  const turn = item.turn;
+                  const isThisTurnSelected = selectedTurn?.id === turn.id;
+                  const turnInput = turn.userInput.trim();
+                  const turnLabel = `T${turn.id} ${turnInput.slice(0, 14).trimEnd()}${turnInput.length > 14 ? "…" : ""}`;
+                  return (
+                    <React.Fragment key={`turn-${turn.id}`}>
+                      <NavItem
+                        label={turnLabel}
+                        sublabel={`${turn.netContextDelta > 0 ? "+" : ""}${fmtK(turn.netContextDelta)} · ${turn.llmCallCount} calls`}
+                        active={navLevel === "turn" && isThisTurnSelected && !selectedCall}
+                        badge={turn.hasCompaction ? "C" : turn.errorCount > 0 ? "E" : turn.hasUnknownSpike ? "!" : undefined}
+                        badgeColor={turn.hasCompaction ? "#ef4444" : turn.errorCount > 0 ? "#dc2626" : "#94a3b8"}
+                        onClick={() => handleSelectTurn(turn)}
+                      />
+                      {isThisTurnSelected && allCallsForNav.length > 0 && allCallsForNav.map(call => (
+                        <NavItem
+                          key={call.id}
+                          indent
+                          label={call.isCompaction ? `#${call.id} compact` : `#${call.id}`}
+                          sublabel={call.isSignificant ? `+${fmtK(call.significantDelta ?? 0)}` : fmtK(call.contextSize)}
+                          active={selectedCall?.id === call.id}
+                          badge={call.isCompaction ? "◆" : call.isSignificant ? "●" : undefined}
+                          badgeColor={call.isCompaction ? "#ef4444" : "#3b82f6"}
+                          onClick={() => handleSelectCall(call)}
+                        />
+                      ))}
+                    </React.Fragment>
+                  );
+                } else {
+                  const block = item.block;
+                  const isSelected = navLevel === "inter-turn" && selectedInterTurnBlock?.index === block.index;
+                  return (
+                    <InterTurnNavItem
+                      key={`itb-${block.index}`}
+                      block={block}
+                      active={isSelected}
+                      onClick={() => handleSelectInterTurnBlock(block)}
                     />
-                  ))}
-                </React.Fragment>
-              );
-            })}
+                  );
+                }
+              });
+            })()}
           </div>
 
           {/* Main Canvas */}
@@ -4702,7 +4754,12 @@ export function SessionDetailV2({ session, onClose }: Props) {
               <SessionOverviewPanel turns={turns} drilldown={drilldown} onSelectTurn={handleSelectTurn} />
             )}
             {navLevel === "turn" && selectedTurn && !selectedCall && (
-              <UserTurnDetailPanel turn={selectedTurn} onSelectCall={handleSelectCall} isMockSession={isMockData} onSubAgentClick={handleSelectSubAgent} />
+              <UserTurnDetailPanel turn={selectedTurn} onSelectCall={handleSelectCall} isMockSession={isMockData} onSubAgentClick={handleSelectSubAgent}
+                trailingInterTurnBlock={interTurnBlocks.find(b => b.prevTurnId === selectedTurn.id && b.nextTurnId !== selectedTurn.id) ?? null}
+              />
+            )}
+            {navLevel === "inter-turn" && selectedInterTurnBlock && (
+              <InterTurnBlockPanel block={selectedInterTurnBlock} />
             )}
             {navLevel === "call" && selectedCall && (
               <LlmCallDetailPanel call={selectedCall} onSelectEntry={handleSelectEntry} sessionId={session.session_id} />
@@ -4749,6 +4806,118 @@ function NavItem({
         {sublabel && <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 1 }}>{sublabel}</div>}
       </div>
       {badge && <span style={{ fontSize: 10, color: badgeColor, fontWeight: 700, flexShrink: 0 }}>{badge}</span>}
+    </div>
+  );
+}
+
+function InterTurnNavItem({ block, active, onClick }: { block: InterTurnBlock; active: boolean; onClick: () => void }) {
+  const exitLabel = block.label.includes("/exit") || !block.enteredContext;
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: "3px 12px 3px 22px",
+        cursor: "pointer",
+        background: active ? "#faf5ff" : "transparent",
+        borderLeft: active ? "2px solid #a78bfa" : "2px solid transparent",
+        display: "flex", alignItems: "center", gap: 5,
+      }}
+      onMouseEnter={e => { if (!active) e.currentTarget.style.background = "#f9fafb"; }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+    >
+      <span style={{ fontSize: 9, color: exitLabel ? "#94a3b8" : "#a78bfa", flexShrink: 0 }}>
+        {exitLabel ? "⏎" : "⌘"}
+      </span>
+      <span style={{
+        fontSize: 10,
+        color: active ? "#7c3aed" : "#9ca3af",
+        fontStyle: "italic",
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        flex: 1,
+      }}>
+        {block.label}
+      </span>
+      {!block.enteredContext && (
+        <span style={{ fontSize: 9, color: "#cbd5e1", flexShrink: 0 }} title="Session ended before this entered context">∅</span>
+      )}
+    </div>
+  );
+}
+
+// ─── InterTurnBlock detail (shared between inline Turn view and full panel) ───
+
+function InterTurnBlockDetail({ block }: { block: InterTurnBlock }) {
+  const kindLabel: Record<string, string> = {
+    "user:command": "cmd",
+    "system:local_command": "sys",
+    "user:human": "inject",
+    "file-history-snapshot": "snapshot",
+  };
+  return (
+    <div style={{ border: "1px solid #e9d5ff", borderRadius: 8, background: "#faf5ff", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #e9d5ff", background: "#f3e8ff" }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#7c3aed" }}>{block.label}</span>
+        <span style={{ fontSize: 10, color: "#a78bfa" }}>·</span>
+        <span style={{ fontSize: 10, color: "#a78bfa" }}>{block.events.length} event{block.events.length > 1 ? "s" : ""}</span>
+        {!block.enteredContext && (
+          <span style={{ fontSize: 10, color: "#94a3b8", marginLeft: "auto", fontStyle: "italic" }}>did not enter context (session ended)</span>
+        )}
+        {block.enteredContext && (
+          <span style={{ fontSize: 10, color: "#a78bfa", marginLeft: "auto", fontStyle: "italic" }}>entered context in next turn</span>
+        )}
+      </div>
+      <div style={{ padding: "8px 12px" }}>
+        {block.events.map((ev, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "4px 0", borderBottom: i < block.events.length - 1 ? "1px solid #f3e8ff" : "none" }}>
+            <span style={{
+              fontSize: 9, fontWeight: 700, color: "#a78bfa",
+              background: "#ede9fe", borderRadius: 3, padding: "1px 4px",
+              flexShrink: 0, marginTop: 2,
+            }}>
+              {kindLabel[ev.kind] ?? ev.kind.split(":")[1] ?? ev.kind}
+            </span>
+            <span style={{ fontSize: 11, color: "#374151", wordBreak: "break-all", fontFamily: "monospace", lineHeight: 1.5 }}>
+              {ev.contentPreview || <span style={{ color: "#d1d5db" }}>—</span>}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Full-page inter-turn block panel (shown in main canvas) ─────────────────
+
+function InterTurnBlockPanel({ block }: { block: InterTurnBlock }) {
+  return (
+    <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
+      <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid #f3f4f6" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#7c3aed" }}>
+            {block.label}
+          </span>
+          <span style={{ fontSize: 11, color: "#9ca3af" }}>inter-turn commands</span>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {[
+            { label: "Events", value: String(block.events.length) },
+            { label: "After Turn", value: block.prevTurnId !== null ? `T${block.prevTurnId}` : "—" },
+            { label: "Before Turn", value: block.nextTurnId !== null ? `T${block.nextTurnId}` : "none" },
+            { label: "Entered Context", value: block.enteredContext ? "yes" : "no",
+              color: block.enteredContext ? "#16a34a" : "#94a3b8" },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{
+              display: "flex", flexDirection: "column", alignItems: "center",
+              padding: "5px 10px", background: "#faf5ff", borderRadius: 6,
+              border: "1px solid #e9d5ff", minWidth: 64,
+            }}>
+              <span style={{ fontSize: 9, color: "#9ca3af", marginBottom: 2 }}>{label}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: color ?? "#7c3aed" }}>{value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <InterTurnBlockDetail block={block} />
     </div>
   );
 }

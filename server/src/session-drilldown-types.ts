@@ -117,10 +117,17 @@ export interface LlmCall {
   intervalEvents: IntervalEvent[];
 }
 
+export interface MidTurnInjection {
+  text: string;
+  timestamp: string;
+  afterCallIndex: number;
+}
+
 export interface UserTurn {
   id: number;
   userInput: string;
   finalOutput: string | null;
+  midTurnInjections: MidTurnInjection[];
   startedAt: string;
   endedAt: string;
   durationMs: number;
@@ -135,6 +142,26 @@ export interface UserTurn {
   hasUnknownSpike: boolean;
   errorCount: number;
   calls: LlmCall[];
+}
+
+// ─── Inter-turn block ─────────────────────────────────────────────────────────
+// Events that occur between two turns (or after the last turn).
+// These are user-driven actions (bash commands, /exit, etc.) that get injected
+// into context but do NOT trigger an LLM call on their own.
+// prevTurnId: the turn that ended before this block (null = before first turn)
+// nextTurnId: the turn that starts after this block (null = session ended here)
+export interface InterTurnBlock {
+  // Sequential index (0-based) — for ordering alongside turns
+  index: number;
+  prevTurnId: number | null;
+  nextTurnId: number | null;
+  timestamp: string;
+  // Summary label: "/exit", "!bash ×3", etc.
+  label: string;
+  // Whether this block was ever consumed by an LLM call (false when session ended first)
+  enteredContext: boolean;
+  // Raw events in this block
+  events: IntervalEvent[];
 }
 
 export interface ToolUsageEntry {
@@ -169,6 +196,7 @@ export interface SessionDrilldown {
   subAgentCount: number;
   subAgents: SubAgentSummary[];
   turns: UserTurn[];
+  interTurnBlocks: InterTurnBlock[];
 }
 
 export interface ModelStats {

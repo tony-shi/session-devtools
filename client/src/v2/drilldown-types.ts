@@ -164,6 +164,19 @@ export interface UserTurn {
   calls: LlmCall[];
 }
 
+// ─── Inter-turn block ─────────────────────────────────────────────────────────
+// Events between two turns (bash commands, /exit, etc.) — they enter context
+// but do NOT trigger an LLM call on their own.
+export interface InterTurnBlock {
+  index: number;
+  prevTurnId: number | null;
+  nextTurnId: number | null;
+  timestamp: string;
+  label: string;
+  enteredContext: boolean;
+  events: IntervalEvent[];
+}
+
 export interface ToolUsageEntry {
   name: string;
   count: number;
@@ -201,6 +214,7 @@ export interface SessionDrilldown {
   subAgents: SubAgentSummary[];
 
   turns: UserTurn[];
+  interTurnBlocks: InterTurnBlock[];
 }
 
 // ─── Call detail (per-call drilldown) ────────────────────────────────────────
