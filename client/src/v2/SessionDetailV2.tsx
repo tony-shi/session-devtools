@@ -2567,6 +2567,25 @@ function JsonlCallChain({
         {/* Vertical spine */}
         <div style={{ position: "absolute", left: 11, top: 8, bottom: 8, width: 2, background: "#e5e7eb", zIndex: 0 }} />
 
+        {/* ── User input boundary node ─────────────────────────── */}
+        {turn.userInput && (
+          <div style={{ position: "relative", zIndex: 1, marginBottom: 8 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <div style={{ flexShrink: 0, marginTop: 10, width: 24, display: "flex", justifyContent: "center" }}>
+                <div style={{ width: 14, height: 14, borderRadius: 3, border: "2px solid #fff", background: "#10b981", boxShadow: "0 0 0 2px #10b98140" }} />
+              </div>
+              <div style={{ flex: 1, border: "1px solid #d1fae5", borderRadius: 8, background: "#f0fdf4", overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderBottom: "1px solid #d1fae5" }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#065f46", letterSpacing: "0.04em" }}>USER INPUT</span>
+                </div>
+                <div style={{ padding: "6px 12px 8px", fontSize: 11, color: "#065f46", lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 80, overflow: "hidden" }}>
+                  {turn.userInput}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {turn.calls.map((call, idx) => {
           const delta    = call.significantDelta;
           // Context bar: absolute width proportional to contextSize / maxCtx
@@ -2708,6 +2727,25 @@ function JsonlCallChain({
             </div>
           );
         })}
+
+        {/* ── Final output boundary node ───────────────────────── */}
+        {turn.finalOutput && (
+          <div style={{ position: "relative", zIndex: 1, marginTop: 4 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              <div style={{ flexShrink: 0, marginTop: 10, width: 24, display: "flex", justifyContent: "center" }}>
+                <div style={{ width: 14, height: 14, borderRadius: 3, border: "2px solid #fff", background: "#3b82f6", boxShadow: "0 0 0 2px #3b82f640" }} />
+              </div>
+              <div style={{ flex: 1, border: "1px solid #bfdbfe", borderRadius: 8, background: "#eff6ff", overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderBottom: "1px solid #bfdbfe" }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: "#1e40af", letterSpacing: "0.04em" }}>FINAL OUTPUT</span>
+                </div>
+                <div style={{ padding: "6px 12px 8px", fontSize: 11, color: "#1e40af", lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 80, overflow: "hidden" }}>
+                  {turn.finalOutput}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
