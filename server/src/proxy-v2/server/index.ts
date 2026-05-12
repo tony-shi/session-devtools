@@ -443,7 +443,8 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
     // B1.3: 限定上游用我们能解的压缩算法
     normalizeAcceptEncoding(forwardHeaders);
 
-    // 转发到目标（直连，不再走 egress 避免循环）
+    // 转发到目标。明文 HTTP 代理请求也必须走统一 egress，
+    // 否则 mcli-proxy.dev 这类依赖上游代理 DNS/规则的目标会在本机解析失败。
     const fwdReq = http.request(
       {
         hostname: host,
@@ -451,6 +452,12 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
         path: targetUrl.pathname + targetUrl.search,
         method: req.method,
         headers: forwardHeaders,
+        createConnection: (_opts, cb) => {
+          connectEgress({ host, port })
+            .then((rawSock) => cb!(null, rawSock as any))
+            .catch((err) => cb!(err, undefined as any));
+          return undefined as any;
+        },
       },
       (fwdRes) => {
         res.writeHead(fwdRes.statusCode ?? 502, fwdRes.headers as any);
@@ -523,6 +530,7 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
             meta: {
               durationMs: Date.now() - startedAt,
               httpForward: true,
+              upstream: !!process.env.API_DASHBOARD_PROXY_UPSTREAM,
               isStream,
               sseEventCount,
               rawBytes: resBytes,
@@ -534,7 +542,8 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
       },
     );
     fwdReq.on("error", (err) => {
-      try { res.writeHead(502); res.end(`forward error: ${err.message}`); } catch {}
+      const code = err instanceof UpstreamProxyError ? err.statusCode : 502;
+      try { res.writeHead(code); res.end(`forward error: ${err.message}`); } catch {}
       if (inWhitelist) {
         writeTraffic({
           ts: new Date(startedAt).toISOString(),
@@ -542,7 +551,7 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
           msg: "http_forward_error",
           sni: host,
           url: req.url ?? "",
-          meta: { error: err.message },
+          meta: { error: err.message, code, upstream: !!process.env.API_DASHBOARD_PROXY_UPSTREAM },
         });
       }
     });
