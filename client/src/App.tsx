@@ -130,7 +130,7 @@ export default function App() {
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "#f0f2f5" }}>
+    <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "#f0f2f5" }}>
       {/* Topbar */}
       <Header
         date={date}
@@ -140,7 +140,7 @@ export default function App() {
       />
 
       {/* Body: sidebar + content */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden", minHeight: 0 }}>
+      <div style={{ display: "flex", flex: 1 }}>
         {/* Sidebar */}
         <nav style={{
           width: 200,
@@ -178,7 +178,6 @@ export default function App() {
         {/* Main content */}
         <main style={{
           flex: 1,
-          overflow: "auto",
           padding: "20px 24px",
           display: "flex",
           flexDirection: "column",
