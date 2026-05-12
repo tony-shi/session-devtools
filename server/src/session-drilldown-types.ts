@@ -38,6 +38,12 @@ export interface SubAgentSummary {
   totalCacheWrite: number;
   totalFreshIn: number;
   totalOutputTokens: number;
+  // Peak context size (input + cacheRead + cacheWrite) across the sub-agent's own LLM calls.
+  // Represents how big the foreign context grew at its tallest point — the counterfactual
+  // "main context would have peaked here had this exploration happened inline".
+  peakContext: number;
+  // Context size on the sub-agent's last LLM call (useful for tooltips / debugging).
+  lastContext: number;
   startedAt: string;
   endedAt: string;
   durationMs: number;

@@ -112,6 +112,34 @@ interface ToolCell {
   events: ToolEvent[];
 }
 
+// One sub-agent invocation absorbed into a parent call.
+// `peakContext` is the sub-agent's own peak context — what main context would
+// have peaked at had this exploration happened inline.
+// `returnedSize` is the size of the tool_result actually folded back into main.
+// `savings = max(0, peakContext - returnedSize)` is the compressed-away amount.
+interface SubAgentAgent {
+  agentType: string;
+  description: string;
+  toolUseId: string;
+  llmCallCount: number;
+  durationMs: number;
+  peakContext: number;
+  lastContext: number;
+  returnedSize: number;
+  savings: number;
+}
+
+// A sub-agent "compression event" anchored at a single parent call.
+// `terminateIdx` is the call index (inclusive) where the savings stop being
+// visualized — either the call just before the next compaction, or the last
+// call of the turn.
+interface SubAgentEvent {
+  triggerIdx: number;
+  terminateIdx: number;
+  totalSavings: number;
+  agents: SubAgentAgent[];
+}
+
 interface MinimapData {
   calls: CallPoint[];
   cells: ToolCell[];
@@ -120,7 +148,16 @@ interface MinimapData {
   maxOutput: number;
   totalToolEvents: number;
   totalOutputSize: number;
+  subAgentEvents: SubAgentEvent[];
+  // Per-call counterfactual context. Same length as calls. null where no
+  // active sub-agent savings are in effect (or value equals actual).
+  counterfactual: Array<number | null>;
+  totalSubAgentSavings: number;
 }
+
+// Compression below this threshold is hidden to reduce visual noise on
+// trivial Agent calls (e.g. a 200-char status-check sub-agent).
+const SUB_AGENT_MIN_SAVINGS = 2_000;
 
 function buildData(turn: UserTurn): MinimapData {
   const calls = turn.calls.map((c, i) => ({
@@ -179,12 +216,90 @@ function buildData(turn: UserTurn): MinimapData {
   const usedRows = new Set(cells.map(c => c.toolRow));
   const activeRows = TOOL_ROWS.filter(r => usedRows.has(r));
 
-  const maxCtx = Math.max(...calls.map(c => c.contextSize), 50_000);
+  // Sub-agent compression events: identify trigger calls, compute per-agent
+  // returnedSize via toolUseId lookup, and pick a terminateIdx at the next
+  // compaction (or end of turn) — savings are persistent until reset.
+  const subAgentEvents: SubAgentEvent[] = [];
+  for (let i = 0; i < turn.calls.length; i++) {
+    const call = turn.calls[i];
+    const subAgents = call.subAgents ?? [];
+    if (!subAgents.length) continue;
+
+    const agents: SubAgentAgent[] = [];
+    let totalSavings = 0;
+    for (const sa of subAgents) {
+      const slot = call.toolCalls.find(tc => tc.toolUseId === sa.toolUseId);
+      const returnedSize = slot?.outputSize ?? 0;
+      const savings = Math.max(0, sa.peakContext - returnedSize);
+      if (savings < SUB_AGENT_MIN_SAVINGS) continue;
+      agents.push({
+        agentType: sa.agentType,
+        description: sa.description,
+        toolUseId: sa.toolUseId,
+        llmCallCount: sa.llmCallCount,
+        durationMs: sa.durationMs,
+        peakContext: sa.peakContext,
+        lastContext: sa.lastContext,
+        returnedSize,
+        savings,
+      });
+      totalSavings += savings;
+    }
+    if (!agents.length) continue;
+
+    // Terminate at the call BEFORE the next compaction (compaction itself
+    // resets both lines to a much lower value, so the gap is meaningless
+    // afterwards). If no compaction follows, run to end of turn.
+    let terminateIdx = turn.calls.length - 1;
+    for (let j = i + 1; j < turn.calls.length; j++) {
+      if (turn.calls[j].isCompaction) { terminateIdx = j - 1; break; }
+    }
+    if (terminateIdx < i) terminateIdx = i;
+
+    subAgentEvents.push({ triggerIdx: i, terminateIdx, totalSavings, agents });
+  }
+
+  // Per-call cumulative active savings: at any call k, sum savings of all
+  // sub-agent events whose [triggerIdx, terminateIdx] window contains k.
+  // The counterfactual line equals actual + active savings (or null when 0).
+  const counterfactual: Array<number | null> = calls.map((c, k) => {
+    let active = 0;
+    let anyTouches = false;
+    for (const ev of subAgentEvents) {
+      // The trigger call C_t itself is anchored to the actual line (the agent
+      // hasn't run yet at C_t) — savings start showing at C_(t+1).
+      if (k > ev.triggerIdx && k <= ev.terminateIdx) {
+        active += ev.totalSavings;
+        anyTouches = true;
+      } else if (k === ev.triggerIdx) {
+        anyTouches = true; // anchor point — counterfactual touches actual here
+      }
+    }
+    if (!anyTouches) return null;
+    return c.contextSize + active;
+  });
+
+  const maxCounterfactual = counterfactual.reduce<number>(
+    (m, v) => (v != null && v > m ? v : m), 0,
+  );
+  const maxCtx = Math.max(...calls.map(c => c.contextSize), maxCounterfactual, 50_000);
   const maxOutput = Math.max(...cells.map(c => c.outputSize), 1);
   const totalToolEvents = cells.reduce((sum, c) => sum + c.count, 0);
   const totalOutputSize = cells.reduce((sum, c) => sum + c.outputSize, 0);
+  const totalSubAgentSavings = subAgentEvents.reduce((s, e) => s + e.totalSavings, 0);
 
-  return { calls, cells, activeRows, maxCtx, maxOutput, totalToolEvents, totalOutputSize };
+  return {
+    calls,
+    cells,
+    activeRows,
+    maxCtx,
+    maxOutput,
+    totalToolEvents,
+    totalOutputSize,
+    subAgentEvents,
+    counterfactual,
+    totalSubAgentSavings,
+  };
 }
 
 // ECharts option
@@ -203,8 +318,23 @@ type HeatmapValue = [number, number, number, number, number, number, number];
 type TooltipParam = { seriesName?: string; dataIndex?: number; value?: unknown; axisValue?: string | number };
 
 function buildOption(data: MinimapData): echarts.EChartsCoreOption {
-  const { calls, cells, activeRows, maxCtx, maxOutput } = data;
+  const { calls, cells, activeRows, maxCtx, maxOutput, subAgentEvents, counterfactual } = data;
   if (!calls.length) return {};
+
+  // Lookup: trigger index → SubAgentEvent (for tooltip / markPoint annotation).
+  const subAgentByTrigger = new Map<number, SubAgentEvent>();
+  for (const ev of subAgentEvents) subAgentByTrigger.set(ev.triggerIdx, ev);
+
+  // Lookup: any call → list of sub-agent events whose window covers it
+  // (used to expose "active savings" in the tooltip on downstream calls).
+  const activeSubAgentByCall = new Map<number, SubAgentEvent[]>();
+  for (const ev of subAgentEvents) {
+    for (let k = ev.triggerIdx; k <= ev.terminateIdx; k++) {
+      const list = activeSubAgentByCall.get(k) ?? [];
+      list.push(ev);
+      activeSubAgentByCall.set(k, list);
+    }
+  }
 
   const visibleRows: string[] = activeRows.length ? [...activeRows] : ["No tools"];
   const callCats = calls.map(c => c.label);
@@ -280,6 +410,34 @@ function buildOption(data: MinimapData): echarts.EChartsCoreOption {
     )).join("");
     const more = toolCells.length > 5 ? `<br/><span style="color:#9ca3af">+${toolCells.length - 5} tool rows</span>` : "";
 
+    // Sub-agent compression block. Two states:
+    //   1. callIdx is a trigger — show each agent's peak/returned/saved breakdown.
+    //   2. callIdx is downstream of a still-active trigger — show "carried savings".
+    let subAgentBlock = "";
+    const triggerEvent = subAgentByTrigger.get(callIdx);
+    const activeEvents = activeSubAgentByCall.get(callIdx) ?? [];
+    if (triggerEvent) {
+      const lines = triggerEvent.agents.map(a => (
+        `<br/><span style="color:#a855f7;font-weight:700">${a.agentType}</span> ` +
+        `· ${a.llmCallCount} calls · peak <strong>${fmtK(a.peakContext)}</strong> ` +
+        `→ returned <strong>${fmtK(a.returnedSize)}</strong> ` +
+        `<span style="color:#a855f7">(saved ${fmtK(a.savings)})</span>`
+      )).join("");
+      subAgentBlock = (
+        `<br/><span style="color:#a855f7;font-weight:700">Sub-agent compression</span> ` +
+        `<span style="color:#d8b4fe">total saved ${fmtK(triggerEvent.totalSavings)}</span>` +
+        lines
+      );
+    } else if (activeEvents.length) {
+      const total = activeEvents.reduce((s, e) => s + e.totalSavings, 0);
+      const triggers = activeEvents.map(e => calls[e.triggerIdx]?.label ?? "?").join(", ");
+      subAgentBlock = (
+        `<br/><span style="color:#a855f7;font-weight:700">Carrying sub-agent savings</span> ` +
+        `<span style="color:#d8b4fe">${fmtK(total)} ` +
+        `(from ${triggers})</span>`
+      );
+    }
+
     return [
       `<strong>${call.label}</strong>`,
       `<br/>Context: <strong>${fmtK(call.contextSize)}</strong>`,
@@ -287,6 +445,7 @@ function buildOption(data: MinimapData): echarts.EChartsCoreOption {
       `<br/>Tool responses before call: <strong>${toolCount}x</strong> · <strong>${fmtK(toolOutput)}</strong>`,
       toolLines || `<br/><span style="color:#9ca3af">No tool response observed</span>`,
       more,
+      subAgentBlock,
       `<br/><span style="color:#9ca3af">Click to open call detail</span>`,
     ].join("");
   }
@@ -315,7 +474,9 @@ function buildOption(data: MinimapData): echarts.EChartsCoreOption {
       min: 0,
       max: maxOutput,
       dimension: 2,
-      seriesIndex: 1,
+      // series order: 0=ctx-line, 1=ctx-counterfactual, 2=tool-heatmap.
+      // visualMap targets ONLY the heatmap.
+      seriesIndex: 2,
       inRange: {
         color: ["#fff1f2", "#fecdd3", "#fb7185", "#e11d48", "#7f1d1d"],
       },
@@ -460,15 +621,67 @@ function buildOption(data: MinimapData): echarts.EChartsCoreOption {
         markPoint: {
           symbol: "diamond",
           symbolSize: 11,
-          data: calls
-            .filter(c => c.isCompaction)
-            .map(c => ({
-              coord: [c.idx, c.contextSize],
-              itemStyle: { color: "#dc2626" },
-              label: { show: false },
-            })),
+          data: [
+            // Compaction markers (red diamonds) — context-resetting events.
+            ...calls
+              .filter(c => c.isCompaction)
+              .map(c => ({
+                coord: [c.idx, c.contextSize],
+                itemStyle: { color: "#dc2626" },
+                label: { show: false },
+              })),
+            // Sub-agent trigger markers (purple triangles). Annotated with
+            // total savings so the compression value is visible at a glance.
+            ...subAgentEvents.map(ev => {
+              const call = calls[ev.triggerIdx];
+              return {
+                coord: [ev.triggerIdx, call?.contextSize ?? 0],
+                symbol: "triangle",
+                symbolSize: 12,
+                itemStyle: { color: "#a855f7", borderColor: "#ffffff", borderWidth: 1 },
+                label: {
+                  show: true,
+                  position: "top" as const,
+                  formatter: `-${fmtK(ev.totalSavings)}`,
+                  color: "#7e22ce",
+                  fontSize: 9,
+                  fontWeight: 700,
+                  backgroundColor: "#faf5ff",
+                  borderColor: "#d8b4fe",
+                  borderWidth: 1,
+                  borderRadius: 3,
+                  padding: [1, 4],
+                },
+              };
+            }),
+          ],
         },
         z: 3,
+      },
+      // Counterfactual line: where main context WOULD have peaked had each
+      // sub-agent exploration happened inline. Drawn dashed in purple, with a
+      // translucent purple area down to 0 — the actual line's own (more
+      // opaque) area fill covers everything below it, so the purple shows
+      // visually only in the strip BETWEEN the two lines = the "saved" band.
+      {
+        id: "ctx-counterfactual",
+        name: "If inline (no sub-agent)",
+        type: "line",
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: counterfactual,
+        connectNulls: false,
+        showSymbol: false,
+        symbol: "none",
+        lineStyle: { color: "#a855f7", width: 1.5, type: "dashed" },
+        itemStyle: { color: "#a855f7" },
+        areaStyle: {
+          color: "#a855f714",
+          origin: "start",
+        },
+        emphasis: { focus: "none" },
+        z: 2,
+        silent: false,
       },
       {
         id: "tool-heatmap",
@@ -580,6 +793,18 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
           <div style={{ width: 16, height: 0, borderTop: "2px solid #6366f1" }} />
           <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>context</span>
         </div>
+        {data.subAgentEvents.length > 0 && (
+          <>
+            <div style={{ width: 1, height: 14, background: "#e5e7eb" }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <div style={{ width: 16, height: 0, borderTop: "1.5px dashed #a855f7" }} />
+              <span style={{ fontSize: 10, color: "#7e22ce", fontWeight: 600 }}>if inline</span>
+              <span style={{ fontSize: 10, color: "#a855f7" }}>
+                saved {fmtK(data.totalSubAgentSavings)} via {data.subAgentEvents.length} sub-agent{data.subAgentEvents.length > 1 ? "s" : ""}
+              </span>
+            </div>
+          </>
+        )}
         <div style={{ width: 1, height: 14, background: "#e5e7eb" }} />
         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
           <div style={{

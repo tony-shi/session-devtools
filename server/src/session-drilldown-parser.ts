@@ -253,6 +253,8 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
     let totalCacheWrite = 0;
     let totalFreshIn = 0;
     let totalOutputTokens = 0;
+    let peakContext = 0;
+    let lastContext = 0;
     let startedAt = "";
     let endedAt = "";
 
@@ -294,6 +296,9 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
         totalCacheWrite += cw;
         totalFreshIn    += fi;
         totalOutputTokens += out;
+        const ctx = fi + cr + cw;
+        if (ctx > peakContext) peakContext = ctx;
+        lastContext = ctx;
       }
       for (const b of aev.message?.content ?? []) {
         if (b.type === "tool_use") toolCallCount++;
@@ -320,6 +325,8 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
       totalCacheWrite,
       totalFreshIn,
       totalOutputTokens,
+      peakContext,
+      lastContext,
       startedAt,
       endedAt,
       durationMs,

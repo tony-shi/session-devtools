@@ -42,6 +42,17 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
   const badge = TOOL_BADGE[session.tool] ?? { bg: "#f3f4f6", color: "#374151" };
 
   const displayName = getSessionTitle(session);
+  const isIdFallback = !session.custom_title && !session.ai_title;
+  const [copied, setCopied] = useState(false);
+
+  function copySessionId(e: React.MouseEvent) {
+    e.stopPropagation();
+    navigator.clipboard.writeText(session.session_id).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
   const cwdLabel = session.cwd
     ? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd
     : session.project?.split("/").pop() ?? "—";
@@ -68,11 +79,20 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
 
       {/* 状态点 + 会话名 + 首条消息预览 */}
       <td style={{ padding: "10px 12px", maxWidth: 300 }}>
-        <div style={{ display: "flex", alignItems: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <p style={{ fontSize: 13, fontWeight: 500, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: preview ? 2 : 0 }}>
             {displayName}
             {crossDay && <span style={{ marginLeft: 5, fontSize: 10, color: "#9ca3af", fontWeight: 400 }}>跨天</span>}
           </p>
+          {isIdFallback && (
+            <button
+              onClick={copySessionId}
+              title={session.session_id}
+              style={{ flexShrink: 0, fontSize: 10, padding: "1px 5px", borderRadius: 4, border: "1px solid #d1d5db", background: copied ? "#d1fae5" : "#f9fafb", color: copied ? "#065f46" : "#6b7280", cursor: "pointer", whiteSpace: "nowrap" }}
+            >
+              {copied ? "copied" : "copy id"}
+            </button>
+          )}
         </div>
         {preview && (
           <p style={{ fontSize: 11, color: "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginLeft: 13 }}>

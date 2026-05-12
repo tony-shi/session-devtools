@@ -52,6 +52,12 @@ export interface SubAgentSummary {
   totalFreshIn: number;
   totalOutputTokens: number;
 
+  // Peak context size (input + cacheRead + cacheWrite) across the sub-agent's own LLM calls.
+  // Drives the counterfactual "what the main context would have peaked at had this run inline".
+  peakContext: number;
+  // Context size on the sub-agent's last LLM call.
+  lastContext: number;
+
   startedAt: string;
   endedAt: string;
   durationMs: number;
