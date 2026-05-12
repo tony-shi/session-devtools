@@ -22,6 +22,7 @@ export interface SessionV2 {
   models: string[];
   tool_call_count: number;
   human_input_count: number;
+  sub_agent_count: number;
   claude_code_api_error_count: number;
   parser_warnings: string[];
   proxy_count: number;

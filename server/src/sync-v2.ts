@@ -25,7 +25,7 @@ function stmtUpsert() {
       cwd, project, custom_title, ai_title, first_user_message,
       event_count,
       input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, models,
-      tool_call_count, human_input_count,
+      tool_call_count, human_input_count, sub_agent_count,
       claude_code_api_error_count, parser_warnings,
       away_summary, last_assistant_text
     ) VALUES (
@@ -35,7 +35,7 @@ function stmtUpsert() {
       ?, ?, ?, ?, ?,
       ?,
       ?, ?, ?, ?, ?,
-      ?, ?,
+      ?, ?, ?,
       ?, ?,
       ?, ?
     )
@@ -54,7 +54,7 @@ function upsertSessionMetaV2(meta: SessionMetaV2, fileMtime: number, fileSize: n
     meta.event_count,
     meta.input_tokens, meta.output_tokens, meta.cache_creation_tokens, meta.cache_read_tokens,
     JSON.stringify(meta.models),
-    meta.tool_call_count, meta.human_input_count,
+    meta.tool_call_count, meta.human_input_count, meta.sub_agent_count,
     meta.claude_code_api_error_count, JSON.stringify(meta.parser_warnings),
     meta.away_summary ?? null, meta.last_assistant_text ?? null,
   );

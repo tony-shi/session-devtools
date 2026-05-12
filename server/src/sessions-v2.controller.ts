@@ -33,7 +33,7 @@ export class SessionsV2Controller {
     const params: SqlParam[] = [];
 
     if (includeDeleted !== "1") conds.push("source_present = 1");
-    conds.push("(human_input_count > 0 OR tool_call_count > 0 OR input_tokens > 0)");
+    conds.push("(input_tokens > 0 OR output_tokens > 0)");
     if (tool) { conds.push("tool = ?"); params.push(tool); }
     if (project) { conds.push("project = ?"); params.push(project); }
 

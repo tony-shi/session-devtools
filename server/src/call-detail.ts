@@ -312,9 +312,10 @@ export async function loadCallDetail(
       FROM proxy_requests
       WHERE session_id = ?
         AND COALESCE(started_at, ts) <= ?
+        AND id != ?
       ORDER BY COALESCE(started_at, ts) DESC
       LIMIT 1
-    `).all(sessionId, prevCallTimestamp) as ProxyRow[];
+    `).all(sessionId, prevCallTimestamp, proxyRow.id) as ProxyRow[];
 
     const prevRow = prevRows[0] ?? null;
     if (prevRow) {

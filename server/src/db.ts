@@ -270,6 +270,7 @@ export function initV2Schema(): void {
 
       tool_call_count            INTEGER NOT NULL DEFAULT 0,
       human_input_count          INTEGER NOT NULL DEFAULT 0,
+      sub_agent_count            INTEGER NOT NULL DEFAULT 0,
 
       claude_code_api_error_count INTEGER NOT NULL DEFAULT 0,  -- Claude Code "system/api_error" events; NOT HTTP errors (those live in proxy_requests.error_class)
       parser_warnings            TEXT NOT NULL DEFAULT '[]'
@@ -301,6 +302,9 @@ export function initV2Schema(): void {
   }
   if (!v2colSet.has("last_assistant_text")) {
     db.exec("ALTER TABLE sessions_meta_v2 ADD COLUMN last_assistant_text TEXT");
+  }
+  if (!v2colSet.has("sub_agent_count")) {
+    db.exec("ALTER TABLE sessions_meta_v2 ADD COLUMN sub_agent_count INTEGER NOT NULL DEFAULT 0");
   }
 }
 

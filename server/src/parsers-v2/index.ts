@@ -22,6 +22,7 @@ export interface SessionMetaV2 {
 
   tool_call_count: number;
   human_input_count: number;
+  sub_agent_count: number;
 
   claude_code_api_error_count: number;  // Claude Code "system/api_error" events; NOT HTTP errors
   parser_warnings: string[];
@@ -39,4 +40,4 @@ export const PARSERS_V2: Record<string, ParserV2> = {
   claude: parseClaudeSessionV2,
 };
 
-export const PARSER_VERSION = 4;
+export const PARSER_VERSION = 5;

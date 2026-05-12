@@ -112,6 +112,20 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
         </span>
       </td>
 
+      {/* Sub agents */}
+      <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
+        {session.sub_agent_count > 0 ? (
+          <span style={{
+            fontSize: 11, padding: "1px 7px", borderRadius: 12,
+            background: "#faf5ff", color: "#7c3aed", fontWeight: 500,
+          }}>
+            {session.sub_agent_count}
+          </span>
+        ) : (
+          <span style={{ fontSize: 12, color: "#d1d5db" }}>—</span>
+        )}
+      </td>
+
       {/* Models */}
       <td style={{ padding: "8px 12px", maxWidth: 130 }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -267,6 +281,7 @@ export function SessionListV2({ data, loading, page, pageSize, onPageChange, onP
         <h2 style={{ fontSize: 13, fontWeight: 600, color: "#111827", flexShrink: 0 }}>
           会话列表
           <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "#9ca3af", background: "#f3f4f6", padding: "2px 7px", borderRadius: 12 }}>v2</span>
+          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "#6b7280" }}>· 仅展示有 LLM 交互的会话</span>
         </h2>
         <Pagination page={page} pageSize={pageSize} total={total} loading={loading} onChange={onPageChange} onPageSizeChange={onPageSizeChange} />
       </div>
@@ -295,6 +310,7 @@ export function SessionListV2({ data, loading, page, pageSize, onPageChange, onP
               <th style={{ ...TH, textAlign: "right" }}>交互</th>
               <th style={TH}>Tokens (lifetime)</th>
               <th style={{ ...TH, textAlign: "right" }}>工具调用</th>
+              <th style={{ ...TH, textAlign: "right" }}>子 Agent</th>
               <th style={TH}>模型</th>
               <th style={{ ...TH, textAlign: "right" }}>Proxy</th>
               <th style={{ ...TH, textAlign: "right" }}>最后活跃</th>

@@ -10,7 +10,7 @@ import {
   buildMockPayloadSegments,
   buildMockCallResponse,
   buildMockBridgeEvents, buildTrustMode,
-  MOCK_SUB_AGENTS, attachMockSubAgents,
+  attachMockSubAgents,
   type AttributedDiffRange, type PayloadSegment,
   type MockBridgeEvent, type BridgeEventKind, type ChangeType, type ConfidenceLevel,
   type TrustMode, type MockToolGroup, type MockAgentLoopData,
@@ -612,91 +612,40 @@ function SessionOverviewPanel({
         <ContextTimelineChart turns={turns} isMock={isMock} />
       </div>
 
-      {/* Top context contributors */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
-          Top Context Contributors {isMock && <MockBadge />}
-        </div>
-        {isMock ? (
-          <div style={{ border: "1px dashed #d1d5db", borderRadius: 8, padding: "10px 14px", background: "#fafafa" }}>
-            {[
-              { label: "Tool Output", pct: 42 },
-              { label: "Assistant History", pct: 28 },
-              { label: "System", pct: 18 },
-              { label: "Unknown", pct: 7 },
-              { label: "Other", pct: 5 },
-            ].map(item => (
-              <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <div style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: CATEGORY_COLORS[item.label] ?? "#e5e7eb" }} />
-                <span style={{ fontSize: 11, color: "#374151", flex: 1 }}>{item.label}</span>
-                <div style={{ width: 80, height: 5, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
-                  <div style={{ width: `${item.pct}%`, height: "100%", background: CATEGORY_COLORS[item.label] ?? "#e5e7eb" }} />
+      {/* Top context contributors — render for mock (illustrative) and for real
+          sessions that have proxy data (attribution will land here later).
+          Suppress entirely for real sessions without proxy: nothing to promise. */}
+      {(isMock || drilldown?.hasProxyData) && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
+            Top Context Contributors {isMock && <MockBadge />}
+          </div>
+          {isMock ? (
+            <div style={{ border: "1px dashed #d1d5db", borderRadius: 8, padding: "10px 14px", background: "#fafafa" }}>
+              {[
+                { label: "Tool Output", pct: 42 },
+                { label: "Assistant History", pct: 28 },
+                { label: "System", pct: 18 },
+                { label: "Unknown", pct: 7 },
+                { label: "Other", pct: 5 },
+              ].map(item => (
+                <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: CATEGORY_COLORS[item.label] ?? "#e5e7eb" }} />
+                  <span style={{ fontSize: 11, color: "#374151", flex: 1 }}>{item.label}</span>
+                  <div style={{ width: 80, height: 5, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ width: `${item.pct}%`, height: "100%", background: CATEGORY_COLORS[item.label] ?? "#e5e7eb" }} />
+                  </div>
+                  <span style={{ fontSize: 10, color: "#9ca3af", width: 28, textAlign: "right" }}>{item.pct}%</span>
                 </div>
-                <span style={{ fontSize: 10, color: "#9ca3af", width: 28, textAlign: "right" }}>{item.pct}%</span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{ border: "1px dashed #d1d5db", borderRadius: 8, padding: "10px 14px", background: "#fafafa", fontSize: 11, color: "#9ca3af" }}>
-            Attribution is not computed yet. {drilldown?.hasProxyData ? "Proxy data is available, but request-payload attribution still needs block matching." : "Enable proxy capture to compute this later."}
-          </div>
-        )}
-      </div>
-
-      {/* Sub Agents section */}
-      {(() => {
-        const sas = drilldown?.subAgents ?? (isMock ? MOCK_SUB_AGENTS : []);
-        if (sas.length === 0) return null;
-
-        // Derive spawn/merge context from turns for each sub agent
-        // spawnCall = the LlmCall that has call.subAgent.toolUseId === sa.toolUseId
-        // mergeCall = the call immediately after the spawn call in the same turn
-        interface SAContext {
-          spawnedAt?: { turnId: number; callId: number; callIndex: number };
-          mergedBefore?: { callId: number; callIndex: number };
-          mergeContextDelta?: number;
-        }
-        const saContextMap = new Map<string, SAContext>();
-        for (const turn of turns) {
-          for (let ci = 0; ci < turn.calls.length; ci++) {
-            const call = turn.calls[ci];
-            const mergeCall = turn.calls[ci + 1] ?? null;
-            for (const sa of call.subAgents) {
-              saContextMap.set(sa.toolUseId, {
-                spawnedAt: { turnId: turn.id, callId: call.id, callIndex: call.indexInTurn },
-                mergedBefore: mergeCall ? { callId: mergeCall.id, callIndex: mergeCall.indexInTurn } : undefined,
-                mergeContextDelta: mergeCall ? mergeCall.significantDelta : undefined,
-              });
-            }
-          }
-        }
-
-        return (
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-              Sub Agents
-              <span style={{ fontSize: 10, fontWeight: 400, color: "#6366f1", background: "#eff6ff", borderRadius: 4, padding: "1px 6px" }}>
-                {sas.length} spawned
-              </span>
-              {isMock && <MockBadge />}
+              ))}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {sas.map(sa => {
-                const ctx = saContextMap.get(sa.toolUseId);
-                return (
-                  <SubAgentCard
-                    key={sa.agentFileId}
-                    sa={sa}
-                    spawnedAt={ctx?.spawnedAt}
-                    mergedBefore={ctx?.mergedBefore}
-                    mergeContextDelta={ctx?.mergeContextDelta}
-                  />
-                );
-              })}
+          ) : (
+            <div style={{ border: "1px dashed #d1d5db", borderRadius: 8, padding: "10px 14px", background: "#fafafa", fontSize: 11, color: "#9ca3af" }}>
+              Attribution is not computed yet. Proxy data is available, but request-payload attribution still needs block matching.
             </div>
-          </div>
-        );
-      })()}
+          )}
+        </div>
+      )}
 
       {/* Tool Distribution */}
       {(() => {
@@ -794,79 +743,48 @@ function ModelBreakdownBlock({
   );
 }
 
-// ─── SubAgentCard ─────────────────────────────────────────────────────────────
+// ─── Sub-agent compression ratio helpers ──────────────────────────────────────
+// A sub agent reads/processes a lot of context internally and returns a small
+// summary to the parent. These helpers quantify that "compression" so a single
+// glance answers: "how much context did this branch save the main thread?"
 
-function SubAgentCard({ sa, spawnedAt, mergedBefore, mergeContextDelta }: {
-  sa: SubAgentSummary;
-  spawnedAt?: { turnId: number; callId: number; callIndex: number };
-  mergedBefore?: { callId: number; callIndex: number };
-  mergeContextDelta?: number;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const dur = fmtDuration(sa.durationMs);
+interface SubAgentCompression {
+  consumed: number;       // total tokens the sub agent dealt with internally (proxy)
+  returned: number;       // tokens written back into the parent context
+  savedRatio: number;     // 1 - returned/consumed, clamped 0..1
+}
+
+function deriveSubAgentCompression(sa: SubAgentSummary): SubAgentCompression | null {
+  // cacheRead is the dominant component of internal processing volume; it's the
+  // same number we surface as "Cache R" elsewhere, so the math stays explainable.
+  const consumed = sa.totalCacheRead;
+  const returned = sa.totalOutputTokens;
+  if (consumed <= 0 || returned <= 0 || returned >= consumed) return null;
+  const savedRatio = Math.max(0, Math.min(1, 1 - returned / consumed));
+  return { consumed, returned, savedRatio };
+}
+
+function CompressionCapsule({ sa, compact = false }: { sa: SubAgentSummary; compact?: boolean }) {
+  const comp = deriveSubAgentCompression(sa);
+  if (!comp) return null;
+  const pct = Math.round(comp.savedRatio * 100);
+  const barW = compact ? 36 : 56;
   return (
-    <div style={{ border: "1px solid #c7d2fe", borderRadius: 8, background: "#fafafa", overflow: "hidden" }}>
-      {/* Header */}
-      <div
-        onClick={() => setExpanded(v => !v)}
-        style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", cursor: "pointer", background: "#eff6ff" }}
-        onMouseEnter={e => (e.currentTarget.style.background = "#e0e7ff")}
-        onMouseLeave={e => (e.currentTarget.style.background = "#eff6ff")}
-      >
-        <span style={{ fontSize: 13 }}>🤖</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#4338ca" }}>Sub Agent</span>
-            <span style={{ fontSize: 10, color: "#6366f1", background: "#e0e7ff", borderRadius: 3, padding: "1px 5px" }}>{sa.agentType}</span>
-            {dur && <span style={{ fontSize: 10, color: "#9ca3af" }}>{dur}</span>}
-          </div>
-          <div style={{ fontSize: 11, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {sa.description}
-          </div>
-          {/* Spawn / merge context */}
-          {(spawnedAt || mergedBefore) && (
-            <div style={{ display: "flex", gap: 8, marginTop: 3, flexWrap: "wrap" }}>
-              {spawnedAt && (
-                <span style={{ fontSize: 9, color: "#6366f1", background: "#eff6ff", borderRadius: 3, padding: "1px 5px", border: "1px solid #c7d2fe" }}>
-                  spawned Turn {spawnedAt.turnId} / Call #{spawnedAt.callIndex}
-                </span>
-              )}
-              {mergedBefore && (
-                <span style={{ fontSize: 9, color: "#059669", background: "#f0fdf4", borderRadius: 3, padding: "1px 5px", border: "1px solid #a7f3d0" }}>
-                  merged before Call #{mergedBefore.callIndex}
-                  {mergeContextDelta !== undefined && mergeContextDelta !== 0 && (
-                    <> · {mergeContextDelta > 0 ? "+" : ""}{fmtK(mergeContextDelta)} ctx</>
-                  )}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: 12, flexShrink: 0 }}>
-          {[
-            { label: "LLM", value: String(sa.llmCallCount) },
-            { label: "Tools", value: String(sa.toolCallCount) },
-            { label: "Cache R", value: fmtK(sa.totalCacheRead) },
-            { label: "Out", value: fmtK(sa.totalOutputTokens) },
-          ].map(({ label, value }) => (
-            <div key={label} style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 9, color: "#9ca3af" }}>{label}</div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#4338ca" }}>{value}</div>
-            </div>
-          ))}
-        </div>
-        <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>{expanded ? "▲" : "▼"}</span>
-      </div>
-      {/* Expanded: result preview */}
-      {expanded && sa.resultPreview && (
-        <div style={{ padding: "10px 12px", borderTop: "1px solid #c7d2fe" }}>
-          <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", marginBottom: 4 }}>RESULT</div>
-          <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-            {sa.resultPreview}
-          </div>
-        </div>
-      )}
-    </div>
+    <span
+      title={`Sub agent processed ${fmtK(comp.consumed)} ctx internally and returned ${fmtK(comp.returned)} — main thread avoided ${fmtK(comp.consumed - comp.returned)} ctx.`}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        fontSize: 9, color: "#047857",
+        background: "#ecfdf5", border: "1px solid #a7f3d0",
+        borderRadius: 3, padding: "1px 5px", whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ width: barW, height: 4, background: "#d1fae5", borderRadius: 2, overflow: "hidden", position: "relative" }}>
+        <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct}%`, background: "#10b981" }} />
+      </span>
+      <span style={{ fontWeight: 700 }}>{pct}%</span>
+      {!compact && <span style={{ color: "#059669" }}>saved</span>}
+    </span>
   );
 }
 
@@ -1098,7 +1016,26 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
       >
         <span style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", flexShrink: 0 }}>Turn {turn.id}</span>
         <span style={{ flex: 1 }} />
-        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 4, flexShrink: 0, alignItems: "center" }}>
+          {(() => {
+            const saCount = turn.calls.reduce((s, c) => s + c.subAgents.length, 0);
+            if (saCount === 0) return null;
+            return (
+              <span
+                title={`${saCount} sub agent${saCount > 1 ? "s" : ""} spawned in this turn`}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 3,
+                  fontSize: 9, fontWeight: 700, color: "#4338ca",
+                  background: "#eef2ff", border: "1px dashed #a5b4fc",
+                  borderRadius: 4, padding: "1px 5px",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                <span style={{ fontSize: 10, lineHeight: 1 }}>⎇</span>
+                {saCount}
+              </span>
+            );
+          })()}
           {turn.hasCompaction && <RiskBadge type="compaction" />}
           {turn.errorCount > 0 && (
             <span style={{
@@ -1390,38 +1327,41 @@ function AgentLoopTimeline({
                 </div>
               )}
 
-              {/* ── Sub-agent branch nodes (git tree style) ── */}
+              {/* ── Sub-agent branch nodes (git tree style, distinct from tool calls) ── */}
               {call.subAgents.length > 0 && (
                 <div style={{ marginLeft: 32, marginBottom: 4, position: "relative" }}>
-                  {/* Vertical connector from spine */}
+                  {/* Vertical connector from spine — dashed to convey "side branch" */}
                   <div style={{
                     position: "absolute", left: -16, top: 0, bottom: 8,
-                    width: 1.5, background: "#6366f1", opacity: 0.35,
+                    width: 0, borderLeft: "1.5px dashed #818cf8", opacity: 0.7,
                   }} />
-                  {call.subAgents.map((sa, saIdx) => (
+                  {call.subAgents.map(sa => (
                     <div key={sa.agentFileId} style={{ display: "flex", alignItems: "flex-start", gap: 0, marginBottom: 6 }}>
-                      {/* Branch elbow */}
+                      {/* Branch elbow — dashed */}
                       <div style={{ width: 16, flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-                        <div style={{ width: 14, height: 12, borderLeft: "1.5px solid #6366f180", borderBottom: "1.5px solid #6366f180", borderBottomLeftRadius: 4, marginTop: 4 }} />
+                        <div style={{ width: 14, height: 12, borderLeft: "1.5px dashed #818cf8", borderBottom: "1.5px dashed #818cf8", borderBottomLeftRadius: 4, marginTop: 4 }} />
                       </div>
-                      {/* Agent node — clickable */}
+                      {/* Agent node — clickable, dashed-bordered to read as "branch" not "tool call" */}
                       <button
                         onClick={() => onSubAgentClick?.(sa)}
                         style={{
-                          flex: 1, border: "1.5px solid #6366f1", borderRadius: 8,
-                          background: "#fafafe", padding: "6px 10px",
+                          flex: 1, border: "1.5px dashed #818cf8", borderRadius: 8,
+                          background: "linear-gradient(135deg, #f5f3ff 0%, #faf5ff 100%)",
+                          padding: "6px 10px",
                           cursor: onSubAgentClick ? "pointer" : "default",
                           textAlign: "left", display: "flex", flexDirection: "column", gap: 3,
                         }}
-                        onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "#eff6ff"; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = "#fafafe"; }}
+                        onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "linear-gradient(135deg, #ede9fe 0%, #f3e8ff 100%)"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "linear-gradient(135deg, #f5f3ff 0%, #faf5ff 100%)"; }}
                       >
-                        {/* Row 1: type + stats + arrow */}
+                        {/* Row 1: branch icon + type + stats + arrow */}
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: "#4338ca" }}>{sa.agentType}</span>
-                          <span style={{ fontSize: 9, color: "#6366f1" }}>{sa.llmCallCount}c · {sa.toolCallCount}t</span>
+                          <span style={{ fontSize: 11, color: "#7c3aed", lineHeight: 1, fontWeight: 700 }}>⎇</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6" }}>{sa.agentType}</span>
+                          <span style={{ fontSize: 9, color: "#7c3aed" }}>{sa.llmCallCount}c · {sa.toolCallCount}t</span>
                           <span style={{ fontSize: 9, color: "#9ca3af" }}>{fmtDuration(sa.durationMs)}</span>
-                          <span style={{ fontSize: 9, color: "#6366f1", background: "#eff6ff", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
+                          <span style={{ fontSize: 9, color: "#5b21b6", background: "#ede9fe", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
+                          <CompressionCapsule sa={sa} />
                           {onSubAgentClick && <span style={{ fontSize: 10, color: "#a5b4fc", marginLeft: "auto" }}>›</span>}
                         </div>
                         {/* Row 2: description */}
@@ -1432,7 +1372,7 @@ function AgentLoopTimeline({
                         )}
                         {/* Row 3: result preview */}
                         {sa.resultPreview && (
-                          <div style={{ fontSize: 10, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "#f5f3ff", borderRadius: 4, padding: "2px 6px" }}>
+                          <div style={{ fontSize: 10, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "#fff", borderRadius: 4, padding: "2px 6px", border: "1px solid #e9d5ff" }}>
                             {sa.resultPreview.slice(0, 120)}{sa.resultPreview.length > 120 ? "…" : ""}
                           </div>
                         )}
@@ -1761,15 +1701,22 @@ function AgentLoopFlow({
                     ctxDelta={ctxDelta}
                     onClick={() => onSelectCall(call)}
                   />
-                  {/* Fork indicator: small badge on bottom-right of spawn call */}
+                  {/* Fork indicator: violet badge marks the spawn point of a sub-agent branch */}
                   {call.subAgents.length > 0 && (
-                    <div style={{
-                      position: "absolute", bottom: -2, right: -2,
-                      width: 14, height: 14, borderRadius: "50%",
-                      background: "#6366f1", border: "2px solid #fff",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      <span style={{ fontSize: 7, color: "#fff", lineHeight: 1 }}>↓</span>
+                    <div
+                      title={`${call.subAgents.length} sub-agent branch${call.subAgents.length > 1 ? "es" : ""} spawned here`}
+                      style={{
+                        position: "absolute", bottom: -2, right: -2,
+                        minWidth: 14, height: 14, padding: "0 3px", borderRadius: 7,
+                        background: "#7c3aed", border: "2px solid #fff",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        gap: 1,
+                      }}
+                    >
+                      <span style={{ fontSize: 8, color: "#fff", lineHeight: 1, fontWeight: 700 }}>⎇</span>
+                      {call.subAgents.length > 1 && (
+                        <span style={{ fontSize: 7, color: "#fff", lineHeight: 1, fontWeight: 700 }}>{call.subAgents.length}</span>
+                      )}
                     </div>
                   )}
                   {/* Merge indicator: small badge on bottom-left of merge-target call */}
@@ -1838,27 +1785,29 @@ function AgentLoopFlow({
 
           return cp.call.subAgents.map((sa, saIdx) => (
             <div key={`sa-branch-${cp.call.id}-${saIdx}`} style={{ display: "flex", alignItems: "center", paddingBottom: 6, marginLeft: xOffset }}>
-              {/* Fork line down from spawn call */}
+              {/* Fork line down from spawn call — dashed to read as side branch */}
               <div style={{ width: CALL_W / 2, display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
-                <div style={{ width: 1.5, height: saIdx === 0 ? 10 : 4, background: "#6366f1", opacity: 0.5 }} />
+                <div style={{ width: 0, height: saIdx === 0 ? 10 : 4, borderLeft: "1.5px dashed #818cf8", opacity: 0.85 }} />
               </div>
-              {/* Branch node — clickable */}
+              {/* Branch node — dashed border + violet wash to differentiate from tool calls */}
               <button
                 onClick={() => onSubAgentClick?.(sa)}
                 style={{
-                  border: "1.5px solid #6366f1", borderRadius: 8,
-                  background: "#fafafe", padding: "5px 10px",
+                  border: "1.5px dashed #818cf8", borderRadius: 8,
+                  background: "linear-gradient(135deg, #f5f3ff 0%, #faf5ff 100%)",
+                  padding: "5px 10px",
                   display: "flex", alignItems: "center", gap: 8,
                   minWidth: 0, cursor: onSubAgentClick ? "pointer" : "default",
                   textAlign: "left",
                 }}
-                onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "#eff6ff"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "#fafafe"; }}
+                onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "linear-gradient(135deg, #ede9fe 0%, #f3e8ff 100%)"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "linear-gradient(135deg, #f5f3ff 0%, #faf5ff 100%)"; }}
               >
-                <span style={{ fontSize: 9, fontWeight: 700, color: "#4338ca", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: 11, color: "#7c3aed", lineHeight: 1, fontWeight: 700 }}>⎇</span>
+                <span style={{ fontSize: 9, fontWeight: 700, color: "#5b21b6", whiteSpace: "nowrap" }}>
                   {sa.agentType}
                 </span>
-                <span style={{ fontSize: 9, color: "#6366f1", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: 9, color: "#7c3aed", whiteSpace: "nowrap" }}>
                   {sa.llmCallCount}c · {sa.toolCallCount}t
                 </span>
                 <span style={{ fontSize: 9, color: "#9ca3af", whiteSpace: "nowrap" }}>
@@ -1867,9 +1816,10 @@ function AgentLoopFlow({
                 <span style={{ fontSize: 9, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
                   {sa.description}
                 </span>
-                <span style={{ fontSize: 9, color: "#6366f1", background: "#eff6ff", borderRadius: 3, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
+                <span style={{ fontSize: 9, color: "#5b21b6", background: "#ede9fe", borderRadius: 3, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
                   +{fmtK(sa.totalOutputTokens)}
                 </span>
+                <CompressionCapsule sa={sa} compact />
                 {onSubAgentClick && <span style={{ fontSize: 9, color: "#a5b4fc" }}>›</span>}
               </button>
               {mergeCall && saIdx === cp.call.subAgents.length - 1 && (
@@ -2601,7 +2551,11 @@ function JsonlCallChain({
             <div key={call.id} style={{ position: "relative", zIndex: 1, marginBottom: 8 }}>
 
               {/* ── LLM Call card ───────────────────────────── */}
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+              {/* Regular call rows reserve a right gutter (marginRight) so the
+                  visual right-edge sits ~72px shy of the container; sub-agent
+                  branches below skip that gutter and extend to full width,
+                  producing a clear "side branch pops out to the right" effect. */}
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start", marginRight: 72 }}>
                 {/* Spine dot */}
                 <div style={{ flexShrink: 0, marginTop: 10, width: 24, display: "flex", justifyContent: "center" }}>
                   <div style={{
@@ -2677,7 +2631,7 @@ function JsonlCallChain({
 
               {/* ── Dispatched tool calls ─────────────────────── */}
               {call.toolCalls.length > 0 && (
-                <div style={{ marginLeft: 32, marginTop: 3 }}>
+                <div style={{ marginLeft: 32, marginRight: 72, marginTop: 3 }}>
                   <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, letterSpacing: "0.04em", fontWeight: 600 }}>
                     DISPATCHED ({call.toolCalls.length})
                   </div>
@@ -2687,28 +2641,31 @@ function JsonlCallChain({
                 </div>
               )}
 
-              {/* ── Sub-agent branches ────────────────────────── */}
+              {/* ── Sub-agent branches — extends past the right gutter to read
+                   as a side branch popping out of the main column ─────────── */}
               {call.subAgents.length > 0 && (
-                <div style={{ marginLeft: 32, marginTop: 3 }}>
+                <div style={{ marginLeft: 48, marginTop: 6 }}>
                   {call.subAgents.map(sa => (
                     <div key={sa.agentFileId} style={{ display: "flex", alignItems: "flex-start", marginBottom: 4 }}>
                       <div style={{ width: 16, flexShrink: 0 }}>
-                        <div style={{ width: 12, height: 10, borderLeft: "1.5px solid #6366f180", borderBottom: "1.5px solid #6366f180", borderBottomLeftRadius: 4, marginTop: 4 }} />
+                        <div style={{ width: 12, height: 10, borderLeft: "1.5px dashed #818cf8", borderBottom: "1.5px dashed #818cf8", borderBottomLeftRadius: 4, marginTop: 4 }} />
                       </div>
                       <button
                         onClick={() => onSubAgentClick?.(sa)}
-                        style={{ flex: 1, border: "1.5px solid #6366f1", borderRadius: 7, background: "#fafafe", padding: "5px 9px", cursor: onSubAgentClick ? "pointer" : "default", textAlign: "left", display: "flex", flexDirection: "column", gap: 2 }}
-                        onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "#eff6ff"; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = "#fafafe"; }}
+                        style={{ flex: 1, border: "1.5px dashed #818cf8", borderRadius: 7, background: "linear-gradient(135deg, #f5f3ff 0%, #faf5ff 100%)", padding: "5px 9px", cursor: onSubAgentClick ? "pointer" : "default", textAlign: "left", display: "flex", flexDirection: "column", gap: 2 }}
+                        onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "linear-gradient(135deg, #ede9fe 0%, #f3e8ff 100%)"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "linear-gradient(135deg, #f5f3ff 0%, #faf5ff 100%)"; }}
                       >
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: "#4338ca" }}>{sa.agentType}</span>
-                          <span style={{ fontSize: 9, color: "#6366f1" }}>{sa.llmCallCount}c · {sa.toolCallCount}t · {fmtDuration(sa.durationMs)}</span>
-                          <span style={{ fontSize: 9, color: "#6366f1", background: "#eff6ff", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
+                          <span style={{ fontSize: 11, color: "#7c3aed", lineHeight: 1, fontWeight: 700 }}>⎇</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6" }}>{sa.agentType}</span>
+                          <span style={{ fontSize: 9, color: "#7c3aed" }}>{sa.llmCallCount}c · {sa.toolCallCount}t · {fmtDuration(sa.durationMs)}</span>
+                          <span style={{ fontSize: 9, color: "#5b21b6", background: "#ede9fe", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
+                          <CompressionCapsule sa={sa} />
                           {onSubAgentClick && <span style={{ fontSize: 9, color: "#a5b4fc", marginLeft: "auto" }}>›</span>}
                         </div>
                         {sa.description && <div style={{ fontSize: 10, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.description}</div>}
-                        {sa.resultPreview && <div style={{ fontSize: 10, color: "#374151", background: "#f5f3ff", borderRadius: 4, padding: "1px 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.resultPreview.slice(0, 100)}{sa.resultPreview.length > 100 ? "…" : ""}</div>}
+                        {sa.resultPreview && <div style={{ fontSize: 10, color: "#374151", background: "#fff", border: "1px solid #e9d5ff", borderRadius: 4, padding: "1px 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.resultPreview.slice(0, 100)}{sa.resultPreview.length > 100 ? "…" : ""}</div>}
                       </button>
                     </div>
                   ))}
@@ -2717,7 +2674,7 @@ function JsonlCallChain({
 
               {/* ── Interval events (filtered) ────────────────── */}
               {visibleIntervals.length > 0 && (
-                <div style={{ marginLeft: 32, marginTop: 3 }}>
+                <div style={{ marginLeft: 32, marginRight: 72, marginTop: 3 }}>
                   {visibleIntervals.map((ev, ei) => (
                     <IntervalEventRow key={`${ev.lineIdx}-${ei}`} ev={ev} />
                   ))}
@@ -2783,6 +2740,7 @@ function UserTurnDetailPanel({
   const risks: Array<{ type: "compaction" | "unknown-spike" | "large-growth" | "near-limit" | "tool-heavy" }> = [];
   if (turn.hasCompaction)   risks.push({ type: "compaction" });
   if (turn.hasUnknownSpike) risks.push({ type: "unknown-spike" });
+  const minimapAnchorId = `turn-${turn.id}-call-minimap`;
 
   return (
     <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
@@ -2826,7 +2784,7 @@ function UserTurnDetailPanel({
       </div>
 
       {/* ── Call Minimap ──────────────────────────────────────────── */}
-      <div style={{ marginBottom: 20 }}>
+      <div id={minimapAnchorId} style={{ marginBottom: 20, scrollMarginTop: 16 }}>
         <SectionLabel>Call Minimap</SectionLabel>
         <TurnMinimap
           turn={enrichedTurn}
@@ -2836,7 +2794,35 @@ function UserTurnDetailPanel({
 
       {/* ── JSONL Event Chain ─────────────────────────────────────── */}
       <div style={{ marginBottom: 20 }}>
-        <SectionLabel>Call Chain</SectionLabel>
+        <div style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 5,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          padding: "2px 0 6px",
+          background: "#fff",
+        }}>
+          <SectionLabel>Call Chain</SectionLabel>
+          <button
+            type="button"
+            onClick={() => document.getElementById(minimapAnchorId)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+            style={{
+              border: "1px solid #e5e7eb",
+              background: "#fff",
+              color: "#4f46e5",
+              borderRadius: 6,
+              padding: "4px 8px",
+              fontSize: 11,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            ↑ Minimap
+          </button>
+        </div>
         <JsonlCallChain
           turn={enrichedTurn}
           onSelectCall={onSelectCall}
@@ -3571,28 +3557,6 @@ function RealSegmentTree({
                   <span style={{ marginLeft: "auto", fontSize: 10, color: "#9ca3af" }}>▶ expand</span>
                 </button>
 
-                {/* Compact segment list (first 5 shown) */}
-                <div style={{ border: "1px solid #f3f4f6", borderRadius: 6, overflow: "hidden" }}>
-                  {secSegs.slice(0, 5).map((seg, i) => (
-                    <div key={seg.id} style={{ borderBottom: i < Math.min(secSegs.length, 5) - 1 ? "1px solid #f3f4f6" : "none" }}>
-                      <SegmentRow
-                        seg={seg} secColor={secColor}
-                        totalCharsInSection={secChars}
-                        diffByHash={diffByHash}
-                        call={call}
-                        onClick={() => { setActiveSection(sec); setActiveSegId(seg.id); }}
-                      />
-                    </div>
-                  ))}
-                  {secSegs.length > 5 && (
-                    <button
-                      onClick={() => handleSectionClick(sec)}
-                      style={{ width: "100%", padding: "5px 12px", fontSize: 10, color: "#6366f1", background: "#f9fafb", border: "none", borderTop: "1px solid #f3f4f6", cursor: "pointer", textAlign: "left" }}
-                    >
-                      + {secSegs.length - 5} more segments — click to expand
-                    </button>
-                  )}
-                </div>
               </div>
             );
           })}
@@ -4139,12 +4103,10 @@ function deriveSegmentCause(
   return { cause: "□ Unknown", detail: null, confidence: "unknown", isMock: true };
 }
 
-// ─── SegmentDiffTree — mirrors RealSegmentTree hierarchy but for diffs ────────
-// Structure:
-//   Level 0 — top bar: section blocks with diff badge
-//   Default  — all sections listed, changed segments highlighted, unchanged grayed
-//   Level 1  — section expanded: sub-bar (op-colored) + segment list
-//   Level 2  — segment detail: meta diff + text diff + cause panel
+// ─── SegmentDiffTree ──────────────────────────────────────────────────────────
+// Two levels:
+//   Default  — 3 section rows (System / Tools / Messages) + diff summary badge
+//   Section  — all segments in that section via DiffSegmentRow (expandable text)
 
 function SegmentDiffTree({
   diff, call,
@@ -4153,11 +4115,8 @@ function SegmentDiffTree({
   call: MockLlmCall;
 }) {
   const SECTION_ORDER = ["system", "tools", "messages", "metadata", "unknown"] as const;
-
   const [activeSection, setActiveSection] = useState<string | null>(null);
-  const [activeSegIdx,  setActiveSegIdx]  = useState<number | null>(null);
 
-  // group by section, preserve order
   const bySection: Record<string, import("./drilldown-types").SegmentDiff[]> = {};
   for (const d of diff) {
     if (!bySection[d.section]) bySection[d.section] = [];
@@ -4165,46 +4124,48 @@ function SegmentDiffTree({
   }
 
   const totalChars = diff.reduce((s, d) => s + d.charCount, 0) || 1;
-  const activeSectionSegs = activeSection ? (bySection[activeSection] ?? []) : [];
-  const activeSeg = activeSegIdx != null ? activeSectionSegs[activeSegIdx] ?? null : null;
 
-  // compute section-level diff summary
   function sectionNetDelta(sec: string): number {
     return (bySection[sec] ?? []).reduce((s, d) => s + d.charDelta, 0);
   }
   function sectionHasChanges(sec: string): boolean {
     return (bySection[sec] ?? []).some(d => d.op !== "unchanged");
   }
-
-  function handleSectionClick(sec: string) {
-    if (activeSection === sec) { setActiveSection(null); setActiveSegIdx(null); }
-    else { setActiveSection(sec); setActiveSegIdx(null); }
+  function sectionAddedCount(sec: string): number {
+    return (bySection[sec] ?? []).filter(d => d.op === "added").length;
   }
+  function sectionRemovedCount(sec: string): number {
+    return (bySection[sec] ?? []).filter(d => d.op === "removed").length;
+  }
+  function sectionChangedCount(sec: string): number {
+    return (bySection[sec] ?? []).filter(d => d.op === "changed").length;
+  }
+
+  const sections = SECTION_ORDER.filter(sec => bySection[sec]?.length);
 
   return (
     <div>
-      {/* ── Level 0: Top bar — one block per section with diff badge ── */}
-      <div style={{ height: 40, display: "flex", borderRadius: 10, overflow: "hidden", gap: 3, marginBottom: 10 }}>
-        {SECTION_ORDER.filter(sec => bySection[sec]?.length).map(sec => {
-          const secSegs  = bySection[sec];
-          const secChars = secSegs.reduce((s, d) => s + d.charCount, 0);
+      {/* ── Top bar ─────────────────────────────────────────────────── */}
+      <div style={{ height: 36, display: "flex", borderRadius: 8, overflow: "hidden", gap: 2, marginBottom: 10 }}>
+        {sections.map(sec => {
+          const secChars = bySection[sec].reduce((s, d) => s + d.charCount, 0);
           const secPct   = Math.round(secChars / totalChars * 100);
           const color    = SECTION_COLOR[sec];
           const isActive = activeSection === sec;
-          const netDelta = sectionNetDelta(sec);
           const hasChg   = sectionHasChanges(sec);
+          const netDelta = sectionNetDelta(sec);
           return (
             <div
               key={sec}
-              onClick={() => handleSectionClick(sec)}
+              onClick={() => setActiveSection(isActive ? null : sec)}
               title={`${SECTION_LABEL[sec]}: ~${fmtK(charsToTokens(secChars))} (${secPct}%)${hasChg ? ` · Δ${netDelta > 0 ? "+" : ""}${fmtK(charsToTokens(Math.abs(netDelta)))}` : " · unchanged"}`}
               style={{
-                flex: secChars, minWidth: 32, cursor: "pointer",
+                flex: secChars, minWidth: 40, cursor: "pointer",
                 background: isActive ? color : hasChg ? color + "90" : color + "40",
                 display: "flex", flexDirection: "column", justifyContent: "center",
-                padding: "0 8px", overflow: "hidden", position: "relative",
+                padding: "0 10px", overflow: "hidden",
                 outline: isActive ? `2px solid ${color}` : "none",
-                outlineOffset: -2, transition: "background 0.12s",
+                outlineOffset: -2, transition: "background 0.12s", borderRadius: 0,
               }}
               onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = color + "c0"; }}
               onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = hasChg ? color + "90" : color + "40"; }}
@@ -4215,7 +4176,7 @@ function SegmentDiffTree({
                 </span>
               )}
               {secPct >= 5 && hasChg && (
-                <span style={{ fontSize: 9, color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", fontWeight: 600 }}>
+                <span style={{ fontSize: 9, color: "rgba(255,255,255,0.9)", fontWeight: 600 }}>
                   {netDelta >= 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(netDelta)))}
                 </span>
               )}
@@ -4224,350 +4185,129 @@ function SegmentDiffTree({
         })}
       </div>
 
-      {/* ── Default overview (no section selected) ─────────────────── */}
+      {/* ── Default view: section summary rows ─────────────────────── */}
       {!activeSection && (
-        <div>
-          {SECTION_ORDER.filter(sec => bySection[sec]?.length).map(sec => {
-            const secSegs   = bySection[sec];
-            const secChars  = secSegs.reduce((s, d) => s + d.charCount, 0);
-            const secColor  = SECTION_COLOR[sec];
-            const netDelta  = sectionNetDelta(sec);
-            const hasChg    = sectionHasChanges(sec);
-            const changedN  = secSegs.filter(d => d.op !== "unchanged").length;
+        <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+          {sections.map((sec, idx) => {
+            const secSegs  = bySection[sec];
+            const secChars = secSegs.reduce((s, d) => s + d.charCount, 0);
+            const secPct   = Math.round(secChars / totalChars * 100);
+            const secColor = SECTION_COLOR[sec];
+            const hasChg   = sectionHasChanges(sec);
+            const netDelta = sectionNetDelta(sec);
+            const addedN   = sectionAddedCount(sec);
+            const removedN = sectionRemovedCount(sec);
+            const changedN = sectionChangedCount(sec);
+            const isLast   = idx === sections.length - 1;
 
             return (
-              <div key={sec} style={{ marginBottom: 10 }}>
-                {/* Section header */}
-                <button
-                  onClick={() => handleSectionClick(sec)}
-                  style={{
-                    width: "100%", display: "flex", alignItems: "center", gap: 8,
-                    padding: "6px 10px",
-                    background: hasChg ? SECTION_COLOR[sec] + "12" : "#f9fafb",
-                    border: `1px solid ${hasChg ? SECTION_COLOR[sec] + "40" : "#e5e7eb"}`,
-                    borderRadius: 6, cursor: "pointer", marginBottom: 2,
-                  }}
-                >
-                  <div style={{ width: 10, height: 10, borderRadius: 2, background: secColor, opacity: hasChg ? 1 : 0.4, flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: hasChg ? "#111827" : "#9ca3af" }}>{SECTION_LABEL[sec]}</span>
-                  <span style={{ fontSize: 10, color: "#9ca3af", marginLeft: 2 }}>~{fmtK(charsToTokens(secChars))}</span>
-                  {hasChg ? (
-                    <>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: netDelta >= 0 ? "#d97706" : "#16a34a" }}>
-                        {netDelta >= 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(netDelta)))}
-                      </span>
-                      <span style={{ fontSize: 9, color: "#6b7280", background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 3, padding: "1px 5px" }}>
-                        {changedN} changed
-                      </span>
-                    </>
-                  ) : (
-                    <span style={{ fontSize: 10, color: "#d1d5db" }}>unchanged</span>
+              <button
+                key={sec}
+                onClick={() => setActiveSection(sec)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 10,
+                  padding: "9px 14px",
+                  background: hasChg ? secColor + "08" : "#fff",
+                  border: "none",
+                  borderBottom: isLast ? "none" : "1px solid #f3f4f6",
+                  cursor: "pointer", textAlign: "left",
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = hasChg ? secColor + "14" : "#f9fafb"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = hasChg ? secColor + "08" : "#fff"; }}
+              >
+                {/* Color dot */}
+                <div style={{ width: 10, height: 10, borderRadius: 2, background: secColor, opacity: hasChg ? 1 : 0.35, flexShrink: 0 }} />
+                {/* Section name */}
+                <span style={{ fontSize: 12, fontWeight: 700, color: hasChg ? "#111827" : "#9ca3af", minWidth: 72 }}>
+                  {SECTION_LABEL[sec]}
+                </span>
+                {/* Size */}
+                <span style={{ fontSize: 10, color: "#9ca3af" }}>~{fmtK(charsToTokens(secChars))}</span>
+                <span style={{ fontSize: 10, color: "#d1d5db" }}>{secPct}%</span>
+                {/* Diff badges */}
+                <span style={{ display: "flex", gap: 5, marginLeft: 4 }}>
+                  {!hasChg && <span style={{ fontSize: 10, color: "#d1d5db" }}>unchanged</span>}
+                  {addedN > 0 && (
+                    <span style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 3, padding: "1px 5px" }}>
+                      +{addedN} added
+                    </span>
                   )}
-                  <span style={{ marginLeft: "auto", fontSize: 10, color: "#9ca3af" }}>{hasChg ? "▶ expand" : "—"}</span>
-                </button>
-
-                {/* Segment list (first 5) */}
-                {hasChg && (
-                  <div style={{ border: "1px solid #f3f4f6", borderRadius: 6, overflow: "hidden" }}>
-                    {secSegs.slice(0, 5).map((seg, i) => {
-                      const opStyle = DIFF_OP_STYLE[seg.op] ?? DIFF_OP_STYLE.unchanged;
-                      const tokens  = charsToTokens(seg.charCount);
-                      const isUnchan = seg.op === "unchanged";
-                      return (
-                        <div
-                          key={i}
-                          onClick={() => isUnchan ? undefined : (setActiveSection(sec), setActiveSegIdx(i))}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 8, padding: "6px 12px",
-                            borderBottom: i < Math.min(secSegs.length, 5) - 1 ? "1px solid #f3f4f6" : "none",
-                            cursor: isUnchan ? "default" : "pointer",
-                            opacity: isUnchan ? 0.45 : 1,
-                            background: "#fff",
-                          }}
-                          onMouseEnter={e => { if (!isUnchan) (e.currentTarget as HTMLDivElement).style.background = "#f9fafb"; }}
-                          onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "#fff"; }}
-                        >
-                          <span style={{ fontSize: 11, fontWeight: 700, color: opStyle.color, width: 12, flexShrink: 0 }}>{opStyle.icon}</span>
-                          <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {seg.label}{seg.role ? <span style={{ color: "#9ca3af", fontWeight: 400 }}> · {seg.role}</span> : null}
-                          </span>
-                          {seg.charDelta !== 0 && (
-                            <span style={{ fontSize: 10, fontWeight: 600, color: seg.charDelta > 0 ? "#d97706" : "#16a34a", flexShrink: 0 }}>
-                              {seg.charDelta > 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(seg.charDelta)))}
-                            </span>
-                          )}
-                          <span style={{ fontSize: 10, color: "#9ca3af", width: 36, textAlign: "right", flexShrink: 0 }}>~{fmtK(tokens)}</span>
-                          {!isUnchan && (
-                            <span style={{ fontSize: 9, color: opStyle.color, background: opStyle.bg, border: `1px solid ${opStyle.border}`, borderRadius: 3, padding: "1px 4px", flexShrink: 0 }}>
-                              {opStyle.label}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                    {secSegs.length > 5 && (
-                      <button
-                        onClick={() => handleSectionClick(sec)}
-                        style={{ width: "100%", padding: "5px 12px", fontSize: 10, color: "#6366f1", background: "#f9fafb", border: "none", borderTop: "1px solid #f3f4f6", cursor: "pointer", textAlign: "left" }}
-                      >
-                        + {secSegs.length - 5} more — expand section
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+                  {removedN > 0 && (
+                    <span style={{ fontSize: 9, fontWeight: 700, color: "#dc2626", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 3, padding: "1px 5px" }}>
+                      −{removedN} removed
+                    </span>
+                  )}
+                  {changedN > 0 && (
+                    <span style={{ fontSize: 9, fontWeight: 700, color: "#d97706", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 3, padding: "1px 5px" }}>
+                      ~{changedN} changed
+                    </span>
+                  )}
+                  {hasChg && (
+                    <span style={{ fontSize: 10, fontWeight: 700, color: netDelta > 0 ? "#d97706" : "#16a34a", marginLeft: 2 }}>
+                      {netDelta > 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(netDelta)))}
+                    </span>
+                  )}
+                </span>
+                <span style={{ marginLeft: "auto", fontSize: 10, color: "#c4c9d4" }}>▶</span>
+              </button>
             );
           })}
         </div>
       )}
 
-      {/* ── Level 1: Section expanded ───────────────────────────────── */}
-      {activeSection && activeSectionSegs.length > 0 && (() => {
+      {/* ── Section detail view ─────────────────────────────────────── */}
+      {activeSection && (() => {
+        const secSegs  = bySection[activeSection] ?? [];
         const secColor = SECTION_COLOR[activeSection];
-        const secChars = activeSectionSegs.reduce((s, d) => s + d.charCount, 0);
+        const secChars = secSegs.reduce((s, d) => s + d.charCount, 0);
         const netDelta = sectionNetDelta(activeSection);
+        const hasChg   = sectionHasChanges(activeSection);
 
         return (
-          <div style={{ marginBottom: 12 }}>
-            {/* Section header */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-              <button onClick={() => handleSectionClick(activeSection)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 6 }}>
-                <div style={{ width: 10, height: 10, borderRadius: 2, background: secColor }} />
-                <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{SECTION_LABEL[activeSection]}</span>
-                <span style={{ fontSize: 10, color: "#9ca3af" }}>~{fmtK(charsToTokens(secChars))} · {activeSectionSegs.length} segments</span>
-                {netDelta !== 0 && (
-                  <span style={{ fontSize: 10, fontWeight: 700, color: netDelta >= 0 ? "#d97706" : "#16a34a" }}>
-                    {netDelta >= 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(netDelta)))}
-                  </span>
-                )}
-              </button>
+          <div>
+            {/* Section header / breadcrumb */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
               <button
-                onClick={() => { setActiveSection(null); setActiveSegIdx(null); }}
-                title="返回总览"
-                style={{
-                  marginLeft: "auto", display: "flex", alignItems: "center", gap: 4,
-                  background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 5,
-                  cursor: "pointer", fontSize: 11, color: "#374151", padding: "3px 8px", lineHeight: 1,
-                }}
+                onClick={() => setActiveSection(null)}
+                style={{ background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 5, cursor: "pointer", fontSize: 11, color: "#374151", padding: "3px 8px", lineHeight: 1, display: "flex", alignItems: "center", gap: 4 }}
               >
-                ← 返回
+                ← back
               </button>
-            </div>
-
-            {/* Sub-bar: segments colored by op */}
-            <div style={{ height: 32, display: "flex", borderRadius: 8, overflow: "hidden", gap: 2, marginBottom: 8 }}>
-              {activeSectionSegs.map((seg, i) => {
-                const opStyle  = DIFF_OP_STYLE[seg.op] ?? DIFF_OP_STYLE.unchanged;
-                const isActive = activeSegIdx === i;
-                const pct      = Math.round(seg.charCount / secChars * 100);
-                const bg       = isActive ? opStyle.color : seg.op !== "unchanged" ? opStyle.bg : "#f3f4f6";
-                return (
-                  <div
-                    key={i}
-                    onClick={() => seg.op !== "unchanged" ? setActiveSegIdx(prev => prev === i ? null : i) : undefined}
-                    title={`${seg.label} [${seg.op}] ${seg.charDelta !== 0 ? (seg.charDelta > 0 ? "+" : "−") + fmtK(charsToTokens(Math.abs(seg.charDelta))) : ""}`}
-                    style={{
-                      flex: seg.charCount, minWidth: 4,
-                      cursor: seg.op !== "unchanged" ? "pointer" : "default",
-                      background: bg,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      overflow: "hidden", padding: "0 4px",
-                      outline: isActive ? `2px solid ${opStyle.color}` : "none",
-                      outlineOffset: -2, transition: "background 0.1s",
-                      opacity: seg.op === "unchanged" ? 0.3 : 1,
-                    }}
-                    onMouseEnter={e => { if (seg.op !== "unchanged" && !isActive) (e.currentTarget as HTMLDivElement).style.background = opStyle.color + "60"; }}
-                    onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = bg; }}
-                  >
-                    {pct >= 6 && (
-                      <span style={{ fontSize: 9, color: isActive ? "#fff" : "#374151", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", fontWeight: isActive ? 700 : 400 }}>
-                        {seg.label.length > 20 ? seg.label.slice(0, 18) + "…" : seg.label}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Segment list */}
-            {activeSeg == null && (
-              <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
-                {activeSectionSegs.map((seg, i) => {
-                  const opStyle  = DIFF_OP_STYLE[seg.op] ?? DIFF_OP_STYLE.unchanged;
-                  const tokens   = charsToTokens(seg.charCount);
-                  const secPct   = Math.round(seg.charCount / secChars * 100);
-                  const isUnchan = seg.op === "unchanged";
-                  const cause    = isUnchan ? null : deriveSegmentCause(seg, call.intervalEvents, call);
-
-                  return (
-                    <div
-                      key={i}
-                      onClick={() => isUnchan ? undefined : setActiveSegIdx(prev => prev === i ? null : i)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 8, padding: "7px 12px",
-                        borderBottom: i < activeSectionSegs.length - 1 ? "1px solid #f3f4f6" : "none",
-                        cursor: isUnchan ? "default" : "pointer",
-                        opacity: isUnchan ? 0.45 : 1, background: "#fff",
-                        borderLeft: `3px solid ${isUnchan ? "transparent" : opStyle.color}`,
-                      }}
-                      onMouseEnter={e => { if (!isUnchan) (e.currentTarget as HTMLDivElement).style.background = "#f9fafb"; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = "#fff"; }}
-                    >
-                      <span style={{ fontSize: 11, fontWeight: 700, color: opStyle.color, width: 12, flexShrink: 0 }}>{opStyle.icon}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 5, overflow: "hidden" }}>
-                          <span style={{ fontSize: 11, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seg.label}</span>
-                          {seg.role && <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>{seg.role}</span>}
-                        </div>
-                        {cause && (
-                          <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 1 }}>
-                            {cause.isMock && <span style={{ fontSize: 9, color: "#d1d5db" }}>□</span>}
-                            <span style={{ fontSize: 9, color: cause.isMock ? "#9ca3af" : "#374151" }}>{cause.cause}</span>
-                            {cause.eventKind && <span style={{ fontSize: 8, color: "#9ca3af", background: "#f3f4f6", borderRadius: 2, padding: "0 3px" }}>{cause.eventKind}</span>}
-                          </div>
-                        )}
-                      </div>
-                      {seg.charDelta !== 0 && (
-                        <span style={{ fontSize: 10, fontWeight: 600, color: seg.charDelta > 0 ? "#d97706" : "#16a34a", flexShrink: 0, width: 44, textAlign: "right" }}>
-                          {seg.charDelta > 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(seg.charDelta)))}
-                        </span>
-                      )}
-                      <span style={{ fontSize: 10, color: "#9ca3af", width: 36, textAlign: "right", flexShrink: 0 }}>~{fmtK(tokens)}</span>
-                      <span style={{ fontSize: 10, color: "#9ca3af", width: 26, textAlign: "right", flexShrink: 0 }}>{secPct}%</span>
-                      {!isUnchan && (
-                        <span style={{ fontSize: 9, color: opStyle.color, background: opStyle.bg, border: `1px solid ${opStyle.border}`, borderRadius: 3, padding: "1px 4px", flexShrink: 0 }}>
-                          {opStyle.label}
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {/* ── Level 2: Segment detail ──────────────────────────────────── */}
-      {activeSeg != null && activeSection != null && (() => {
-        const seg      = activeSeg;
-        const opStyle  = DIFF_OP_STYLE[seg.op] ?? DIFF_OP_STYLE.unchanged;
-        const tokens   = charsToTokens(seg.charCount);
-        const cause    = deriveSegmentCause(seg, call.intervalEvents, call);
-        const lineDiff = seg.op === "changed" && seg.prevRawText != null
-          ? computeLineDiff(seg.prevRawText, seg.rawText)
-          : null;
-
-        return (
-          <div style={{ border: `1px solid ${opStyle.color}40`, borderLeft: `3px solid ${opStyle.color}`, borderRadius: 8, overflow: "hidden", marginBottom: 8 }}>
-            {/* Detail header */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", background: opStyle.bg, borderBottom: "1px solid #f3f4f6" }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: opStyle.color }}>{opStyle.icon}</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{seg.label}</span>
-                  <span style={{ fontSize: 9, color: opStyle.color, background: "#fff", border: `1px solid ${opStyle.border}`, borderRadius: 3, padding: "1px 4px", flexShrink: 0 }}>{opStyle.label}</span>
-                </div>
-                {/* Meta diff: prev vs curr */}
-                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 10, color: "#374151" }}>~{fmtK(tokens)} tokens</span>
-                  {seg.charDelta !== 0 && (
-                    <span style={{ fontSize: 10, fontWeight: 700, color: seg.charDelta > 0 ? "#d97706" : "#16a34a" }}>
-                      {seg.charDelta > 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(seg.charDelta)))} chars
-                    </span>
-                  )}
-                  {seg.role && <span style={{ fontSize: 10, color: "#9ca3af" }}>role: {seg.role}</span>}
-                  {seg.category && <span style={{ fontSize: 10, color: "#9ca3af" }}>{seg.category}</span>}
-                </div>
-              </div>
-              <button
-                onClick={() => setActiveSegIdx(null)}
-                title="返回 segment 列表"
-                style={{
-                  display: "flex", alignItems: "center", gap: 4,
-                  background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 5,
-                  cursor: "pointer", fontSize: 11, color: "#374151", padding: "3px 8px", lineHeight: 1, flexShrink: 0,
-                }}
-              >
-                ← 返回
-              </button>
-            </div>
-
-            {/* Cause / attribution panel */}
-            <div style={{ padding: "10px 14px", borderBottom: "1px solid #f3f4f6", background: "#fafafa" }}>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 6, letterSpacing: "0.06em" }}>CAUSE</div>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                    {cause.isMock && <span title="Inferred / mock" style={{ fontSize: 9, color: "#d1d5db" }}>□</span>}
-                    <span style={{ fontSize: 11, fontWeight: 600, color: cause.isMock ? "#9ca3af" : "#374151" }}>{cause.cause}</span>
-                    {cause.eventKind && (
-                      <span style={{ fontSize: 9, color: "#6b7280", background: "#e5e7eb", borderRadius: 3, padding: "1px 5px", fontFamily: "monospace" }}>{cause.eventKind}</span>
-                    )}
-                  </div>
-                  {cause.detail && (
-                    <div style={{ marginTop: 4, fontSize: 10, color: "#6b7280", fontFamily: "monospace", background: "#f3f4f6", borderRadius: 4, padding: "4px 8px", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 60, overflowY: "auto" }}>
-                      {cause.detail}
-                    </div>
-                  )}
-                </div>
-                <span style={{ fontSize: 9, fontWeight: 700, color: cause.confidence === "high" ? "#16a34a" : cause.confidence === "medium" ? "#d97706" : cause.confidence === "low" ? "#9ca3af" : "#d1d5db", flexShrink: 0, paddingTop: 2 }}>
-                  {cause.confidence}
+              <div style={{ width: 10, height: 10, borderRadius: 2, background: secColor, flexShrink: 0 }} />
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{SECTION_LABEL[activeSection]}</span>
+              <span style={{ fontSize: 10, color: "#9ca3af" }}>~{fmtK(charsToTokens(secChars))}</span>
+              {hasChg && netDelta !== 0 && (
+                <span style={{ fontSize: 10, fontWeight: 700, color: netDelta > 0 ? "#d97706" : "#16a34a" }}>
+                  {netDelta > 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(netDelta)))}
                 </span>
-              </div>
-              {/* Relevant interval events */}
-              {call.intervalEvents.length > 0 && (
-                <div style={{ marginTop: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 9, color: "#9ca3af" }}>interval events:</span>
-                  {call.intervalEvents.slice(0, 6).map((ev, i) => (
-                    <span key={i} style={{ fontSize: 9, color: "#374151", background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 3, padding: "1px 4px", fontFamily: "monospace" }}>
-                      {ev.kind}
-                    </span>
-                  ))}
-                  {call.intervalEvents.length > 6 && (
-                    <span style={{ fontSize: 9, color: "#9ca3af" }}>+{call.intervalEvents.length - 6} more</span>
-                  )}
-                </div>
               )}
             </div>
 
-            {/* Text diff */}
-            {seg.op !== "unchanged" && (
-              <div style={{ padding: "10px 14px" }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", marginBottom: 6, letterSpacing: "0.06em" }}>
-                  {seg.op === "changed" ? "TEXT DIFF" : seg.op === "added" ? "ADDED TEXT" : "REMOVED TEXT"}
-                </div>
-                {lineDiff ? (
-                  <div style={{ fontFamily: "monospace", fontSize: 10, lineHeight: 1.55, border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden", maxHeight: 400, overflowY: "auto" }}>
-                    {lineDiff.map((line, i) => {
-                      const bg     = line.kind === "added" ? "#dcfce7" : line.kind === "removed" ? "#fee2e2" : "transparent";
-                      const color  = line.kind === "added" ? "#15803d" : line.kind === "removed" ? "#b91c1c" : "#6b7280";
-                      const prefix = line.kind === "added" ? "+" : line.kind === "removed" ? "−" : " ";
-                      if (line.text === "⋯") {
-                        return <div key={i} style={{ padding: "1px 8px", color: "#9ca3af", fontSize: 9, background: "#f9fafb" }}>⋯</div>;
-                      }
-                      return (
-                        <div key={i} style={{ display: "flex", background: bg, padding: "0 8px" }}>
-                          <span style={{ color, fontWeight: 700, width: 12, flexShrink: 0, userSelect: "none" }}>{prefix}</span>
-                          <span style={{ color, whiteSpace: "pre-wrap", wordBreak: "break-all", flex: 1 }}>{line.text}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <pre style={{
-                    fontSize: 10, fontFamily: "monospace",
-                    color: seg.op === "added" ? "#15803d" : "#b91c1c",
-                    background: seg.op === "added" ? "#f0fdf4" : "#fef2f2",
-                    border: `1px solid ${seg.op === "added" ? "#bbf7d0" : "#fecaca"}`,
-                    borderRadius: 6, padding: "10px 12px", maxHeight: 280, overflowY: "auto",
-                    whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.65, margin: 0,
+            {/* All segments via DiffSegmentRow */}
+            {secSegs.map((seg, i) => {
+              if (seg.op === "unchanged") {
+                // Unchanged: compact single-line, no expand
+                return (
+                  <div key={i} style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "5px 10px",
+                    marginBottom: 2, borderRadius: 5, background: "#f9fafb",
+                    border: "1px solid #f3f4f6", opacity: 0.5,
                   }}>
-                    {seg.rawText.slice(0, 3000)}{seg.rawText.length > 3000 ? "\n… (truncated)" : ""}
-                  </pre>
-                )}
-              </div>
-            )}
+                    <span style={{ fontSize: 10, color: "#9ca3af", width: 12, textAlign: "center", flexShrink: 0 }}>—</span>
+                    <span style={{ fontSize: 11, color: "#6b7280", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {seg.label}{seg.role ? <span style={{ color: "#9ca3af" }}> · {seg.role}</span> : null}
+                    </span>
+                    <span style={{ fontSize: 10, color: "#9ca3af" }}>~{fmtK(charsToTokens(seg.charCount))}</span>
+                  </div>
+                );
+              }
+              const opColor = DIFF_OP_COLOR[seg.op];
+              return (
+                <div key={i} style={{ marginBottom: 4 }}>
+                  <DiffSegmentRow d={seg} style={opColor} />
+                </div>
+              );
+            })}
           </div>
         );
       })()}
@@ -4585,120 +4325,51 @@ function DiffVsPreviousTab({
   callDetailLoading: boolean;
   prevCallId: number | null;
 }) {
-  const [mode, setMode] = useState<DiffMode>("segment");
-
-  // Summary stats from proxy diff
-  const addedChars   = (diff ?? []).filter(d => d.op === "added").reduce((s, d) => s + d.charCount, 0);
-  const removedChars = (diff ?? []).filter(d => d.op === "removed").reduce((s, d) => s + Math.abs(d.charDelta), 0);
-  const changedN     = (diff ?? []).filter(d => d.op === "changed").length;
-  const netDelta     = (diff ?? []).reduce((s, d) => s + d.charDelta, 0);
+  const netDeltaTokens = call.significantDelta;
+  const addedChars     = (diff ?? []).filter(d => d.op === "added").reduce((s, d) => s + d.charCount, 0);
+  const removedChars   = (diff ?? []).filter(d => d.op === "removed").reduce((s, d) => s + Math.abs(d.charDelta), 0);
+  const changedN       = (diff ?? []).filter(d => d.op === "changed").length;
 
   return (
     <div>
       {/* Summary strip */}
-      <div style={{ background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 8, padding: "10px 14px", marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 20, marginBottom: 14, padding: "0 2px", flexWrap: "wrap" }}>
         {prevCallId != null && (
-          <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 6 }}>Compared with Call #{prevCallId}</div>
+          <span style={{ fontSize: 10, color: "#9ca3af" }}>vs Call #{prevCallId}</span>
         )}
         {diff ? (
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <>
             {[
-              { label: "Net Δ",   value: `${netDelta >= 0 ? "+" : "−"}${fmtK(charsToTokens(Math.abs(netDelta)))}`, color: netDelta > 0 ? "#d97706" : "#16a34a" },
-              { label: "Added",   value: `+${fmtK(charsToTokens(addedChars))}`,   color: "#16a34a" },
+              { label: "Net Δ",   value: `${netDeltaTokens >= 0 ? "+" : ""}${fmtK(netDeltaTokens)}`, color: netDeltaTokens > 0 ? "#d97706" : netDeltaTokens < 0 ? "#16a34a" : "#9ca3af" },
+              { label: "Added",   value: addedChars > 0 ? `+${fmtK(charsToTokens(addedChars))}` : "—", color: "#16a34a" },
               { label: "Removed", value: removedChars > 0 ? `−${fmtK(charsToTokens(removedChars))}` : "—", color: "#dc2626" },
-              { label: "Changed", value: changedN > 0 ? String(changedN) + " segs" : "—", color: "#d97706" },
+              { label: "Changed", value: changedN > 0 ? `${changedN} segs` : "—", color: "#d97706" },
             ].map(({ label, value, color }) => (
-              <div key={label}>
-                <div style={{ fontSize: 13, fontWeight: 700, color }}>{value}</div>
-                <div style={{ fontSize: 9, color: "#9ca3af" }}>{label}</div>
+              <div key={label} style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color, lineHeight: 1 }}>{value}</span>
+                <span style={{ fontSize: 9, color: "#9ca3af", marginTop: 2 }}>{label}</span>
               </div>
             ))}
-          </div>
+          </>
         ) : (
-          <div style={{ fontSize: 10, color: "#9ca3af" }}>
+          <span style={{ fontSize: 10, color: "#9ca3af" }}>
             {callDetailLoading ? "Computing diff…" : "No proxy data · diff not available"}
-          </div>
+          </span>
         )}
       </div>
 
-      {/* Mode selector */}
-      <div style={{ display: "flex", gap: 2, marginBottom: 12, background: "#f3f4f6", borderRadius: 6, padding: 3, width: "fit-content" }}>
-        {(["segment", "range", "raw"] as DiffMode[]).map(m => (
-          <button key={m} onClick={() => setMode(m)} style={{
-            padding: "4px 10px", fontSize: 10, fontWeight: mode === m ? 700 : 400,
-            color: mode === m ? "#6366f1" : "#6b7280",
-            background: mode === m ? "#fff" : "transparent",
-            border: "none", borderRadius: 4, cursor: "pointer",
-            boxShadow: mode === m ? "0 1px 3px rgba(0,0,0,0.08)" : "none",
-          }}>
-            {m === "segment" ? "Segment" : m === "range" ? "Range" : "Raw"}
-          </button>
-        ))}
-      </div>
-
-      {/* Segment mode — new SegmentDiffTree */}
-      {mode === "segment" && (
-        diff
-          ? <SegmentDiffTree diff={diff} call={call} />
-          : <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0", textAlign: "center" }}>
-              {callDetailLoading ? "Loading…" : "No proxy data — enable proxy dump to see segment diff"}
-            </div>
+      {/* Tree */}
+      {diff ? (
+        <SegmentDiffTree diff={diff} call={call} />
+      ) : (
+        !callDetailLoading && (
+          <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0", textAlign: "center" }}>
+            No proxy data — enable proxy dump to see segment diff
+          </div>
+        )
       )}
-
-      {/* Range mode — char-offset view (kept for reference) */}
-      {mode === "range" && (
-        <div>
-          {callDetailLoading && <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>}
-          {!callDetailLoading && !diff && (
-            <div style={{ fontSize: 11, color: "#9ca3af", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 5, padding: "8px 10px" }}>
-              No proxy data available.
-            </div>
-          )}
-          {!callDetailLoading && diff && (
-            <div>
-              {diff.filter(d => d.op !== "unchanged").map((d, i) => {
-                const opStyle = DIFF_OP_STYLE[d.op] ?? DIFF_OP_STYLE.unchanged;
-                return (
-                  <div key={i} style={{
-                    padding: "8px 12px", borderRadius: 6, marginBottom: 6,
-                    background: opStyle.bg, border: `1px solid ${opStyle.border}`,
-                    borderLeft: `3px solid ${opStyle.color}`,
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 12, fontWeight: 800, color: opStyle.color, width: 14 }}>{opStyle.icon}</span>
-                      <span style={{ fontSize: 10, color: "#6b7280", fontWeight: 600 }}>{d.section}</span>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {d.label}{d.role ? ` · ${d.role}` : ""}
-                      </span>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: opStyle.color, flexShrink: 0 }}>
-                        {d.charDelta >= 0 ? "+" : "−"}{fmtK(charsToTokens(Math.abs(d.charDelta)))}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 9, color: "#9ca3af", fontFamily: "monospace", marginLeft: 22, marginTop: 2 }}>
-                      {d.charCount.toLocaleString()} chars · hash: {d.rawHash.slice(0, 8)}
-                    </div>
-                  </div>
-                );
-              })}
-              {diff.every(d => d.op === "unchanged") && (
-                <div style={{ fontSize: 11, color: "#9ca3af", textAlign: "center", padding: "24px 0" }}>No changed segments</div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Raw mode — proxy SegmentDiff verbatim */}
-      {mode === "raw" && (
-        <div>
-          {callDetailLoading && <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading proxy diff…</div>}
-          {!callDetailLoading && !diff && (
-            <div style={{ fontSize: 11, color: "#9ca3af", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 5, padding: "8px 10px" }}>
-              No proxy data available. Run with proxy enabled to see raw segment diff.
-            </div>
-          )}
-          {!callDetailLoading && diff && <ProxyDiffView diff={diff} />}
-        </div>
+      {callDetailLoading && (
+        <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0", textAlign: "center" }}>Loading…</div>
       )}
     </div>
   );
@@ -5257,12 +4928,26 @@ function LlmCallDetailPanel({
 function SubAgentSessionPanel({
   drilldown,
   loadState,
+  parentLabel,
+  onReturnToParent,
 }: {
   drilldown: SessionDrilldown | null;
   loadState: "loading" | "ok" | "error";
+  parentLabel?: string;          // e.g. "Turn 3"
+  onReturnToParent?: () => void; // closes sub-turn, returns to parent turn detail
 }) {
-  const [innerTurn, setInnerTurn] = useState<UserTurn | null>(null);
+  // Default-select the sub agent's first turn — a sub agent is conceptually one
+  // turn of work, so the Turn detail view (not the Session overview) is the
+  // right landing surface. Multi-turn agents still get a mini nav to switch.
+  const firstTurn = drilldown?.turns[0] ?? null;
+  const [innerTurn, setInnerTurn] = useState<UserTurn | null>(firstTurn);
   const [innerCall, setInnerCall] = useState<LlmCall | null>(null);
+
+  // Re-default when the drilldown payload changes (clicking a different sub agent).
+  useEffect(() => {
+    setInnerTurn(drilldown?.turns[0] ?? null);
+    setInnerCall(null);
+  }, [drilldown?.sessionId]);
 
   if (loadState === "loading") {
     return (
@@ -5280,49 +4965,81 @@ function SubAgentSessionPanel({
   }
 
   const turns = drilldown.turns;
+  const multiTurn = turns.length > 1;
 
   return (
-    <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-      {/* Mini left nav for sub-session turns */}
-      <div style={{ width: 160, borderRight: "1px solid #f3f4f6", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
-        <div style={{ padding: "10px 10px 4px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>SUB-SESSION TURNS</div>
-        {turns.map(t => (
-          <div
-            key={t.id}
-            onClick={() => { setInnerTurn(t); setInnerCall(null); }}
+    <div style={{ display: "flex", flex: 1, overflow: "hidden", flexDirection: "column" }}>
+      {/* Back-to-parent bar — closes the loop so the user always knows the way home */}
+      {onReturnToParent && parentLabel && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "6px 16px", background: "#faf5ff",
+          borderBottom: "1px dashed #c4b5fd", flexShrink: 0,
+        }}>
+          <button
+            onClick={onReturnToParent}
             style={{
-              padding: "6px 10px", cursor: "pointer",
-              background: innerTurn?.id === t.id ? "#eff6ff" : "transparent",
-              borderLeft: innerTurn?.id === t.id ? "2px solid #6366f1" : "2px solid transparent",
+              display: "inline-flex", alignItems: "center", gap: 4,
+              fontSize: 11, fontWeight: 600, color: "#5b21b6",
+              background: "#ede9fe", border: "1px solid #c4b5fd",
+              borderRadius: 4, padding: "2px 8px", cursor: "pointer",
             }}
-            onMouseEnter={e => { if (innerTurn?.id !== t.id) e.currentTarget.style.background = "#f9fafb"; }}
-            onMouseLeave={e => { if (innerTurn?.id !== t.id) e.currentTarget.style.background = "transparent"; }}
           >
-            <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>Turn {t.id}</div>
-            <div style={{ fontSize: 10, color: "#9ca3af" }}>{t.llmCallCount} calls · {t.netContextDelta > 0 ? "+" : ""}{fmtK(t.netContextDelta)}</div>
-          </div>
-        ))}
-      </div>
+            <span style={{ fontSize: 12, lineHeight: 1 }}>↩</span>
+            Back to {parentLabel}
+          </button>
+          <span style={{ fontSize: 10, color: "#7c3aed", letterSpacing: "0.04em" }}>
+            ⎇ Side branch · {turns.length} turn{turns.length > 1 ? "s" : ""} · {drilldown.subAgents.length > 0 ? `${drilldown.subAgents.length} nested` : "leaf"}
+          </span>
+        </div>
+      )}
 
-      {/* Main content */}
-      <div style={{ flex: 1, overflowY: "auto" }}>
-        {!innerTurn && (
-          <SessionOverviewPanel turns={turns} drilldown={drilldown} onSelectTurn={t => { setInnerTurn(t); setInnerCall(null); }} />
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        {/* Mini left nav — only shown when the sub agent has multiple turns */}
+        {multiTurn && (
+          <div style={{ width: 160, borderRight: "1px solid #f3f4f6", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
+            <div style={{ padding: "10px 10px 4px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>SUB-AGENT TURNS</div>
+            {turns.map(t => (
+              <div
+                key={t.id}
+                onClick={() => { setInnerTurn(t); setInnerCall(null); }}
+                style={{
+                  padding: "6px 10px", cursor: "pointer",
+                  background: innerTurn?.id === t.id ? "#ede9fe" : "transparent",
+                  borderLeft: innerTurn?.id === t.id ? "2px solid #7c3aed" : "2px solid transparent",
+                }}
+                onMouseEnter={e => { if (innerTurn?.id !== t.id) e.currentTarget.style.background = "#f9fafb"; }}
+                onMouseLeave={e => { if (innerTurn?.id !== t.id) e.currentTarget.style.background = "transparent"; }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>Turn {t.id}</div>
+                <div style={{ fontSize: 10, color: "#9ca3af" }}>{t.llmCallCount} calls · {t.netContextDelta > 0 ? "+" : ""}{fmtK(t.netContextDelta)}</div>
+              </div>
+            ))}
+          </div>
         )}
-        {innerTurn && !innerCall && (
-          <UserTurnDetailPanel
-            turn={innerTurn}
-            onSelectCall={c => setInnerCall(c)}
-            isMockSession={false}
-          />
-        )}
-        {innerCall && (
-          <LlmCallDetailPanel
-            call={innerCall}
-            onSelectEntry={() => {}}
-            sessionId={drilldown.sessionId}
-          />
-        )}
+
+        {/* Main content — default lands on Turn detail (reuses Turn page) */}
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {innerTurn && !innerCall && (
+            <UserTurnDetailPanel
+              turn={innerTurn}
+              onSelectCall={c => setInnerCall(c)}
+              isMockSession={false}
+            />
+          )}
+          {innerCall && (
+            <LlmCallDetailPanel
+              call={innerCall}
+              onSelectEntry={() => {}}
+              sessionId={drilldown.sessionId}
+            />
+          )}
+          {!innerTurn && (
+            <div style={{ padding: 40, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
+              This sub agent recorded no turns.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -5418,6 +5135,19 @@ export function SessionDetailV2({ session, onClose }: Props) {
       .catch(() => setSubAgentLoadState("error"));
   }
 
+  // Return from a sub-agent side branch to its parent turn — closes the loop
+  // so the breadcrumb / "Back to T<n>" affordance always lands somewhere real.
+  function handleReturnFromSubAgent() {
+    setSelectedSubAgent(null);
+    if (selectedTurn) {
+      setNavLevel("turn");
+      setInspector({ type: "turn-rollup", turn: selectedTurn });
+    } else {
+      setNavLevel("session");
+      setInspector({ type: "hotspots" });
+    }
+  }
+
   const allCallsForNav = selectedTurn?.calls ?? [];
 
   return (
@@ -5438,7 +5168,10 @@ export function SessionDetailV2({ session, onClose }: Props) {
             {selectedTurn && (
               <>
                 <span style={{ color: "#d1d5db" }}>›</span>
-                <button onClick={() => handleNavTurn(selectedTurn)} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0 }}>
+                <button
+                  onClick={() => navLevel === "subagent" ? handleReturnFromSubAgent() : handleNavTurn(selectedTurn)}
+                  style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0 }}
+                >
                   <span style={{ fontSize: 13, fontWeight: 600, color: navLevel === "turn" && !selectedCall ? "#6366f1" : "#374151" }}>Turn {selectedTurn.id}</span>
                 </button>
               </>
@@ -5452,7 +5185,10 @@ export function SessionDetailV2({ session, onClose }: Props) {
             {selectedSubAgent && navLevel === "subagent" && (
               <>
                 <span style={{ color: "#d1d5db" }}>›</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#6366f1" }}>{selectedSubAgent.agentType}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 600, color: "#7c3aed" }}>
+                  <span style={{ fontSize: 12, lineHeight: 1 }}>⎇</span>
+                  {selectedSubAgent.agentType}
+                </span>
               </>
             )}
           </div>
@@ -5563,7 +5299,12 @@ export function SessionDetailV2({ session, onClose }: Props) {
               <LlmCallDetailPanel call={selectedCall} onSelectEntry={handleSelectEntry} sessionId={session.session_id} />
             )}
             {navLevel === "subagent" && (
-              <SubAgentSessionPanel drilldown={subAgentDrilldown} loadState={subAgentLoadState} />
+              <SubAgentSessionPanel
+                drilldown={subAgentDrilldown}
+                loadState={subAgentLoadState}
+                parentLabel={selectedTurn ? `Turn ${selectedTurn.id}` : undefined}
+                onReturnToParent={selectedTurn ? handleReturnFromSubAgent : undefined}
+              />
             )}
           </div>
 

@@ -1,94 +1,125 @@
-// Turn-level ECharts visualization — two stacked panels:
-//   Grid 0:  Context step line  (x = call index C1 … Cn)
-//   Grid 1:  Tool I/O Matrix    (x = transition C1→C2 …, y = tool type row)
+// Turn-level ECharts visualization.
 //
-// Data flows from UserTurn.calls[].incomingDiff:
-//   category "Tool Output", changeType "added"  → output delta per slot
-//   category "Tool Output", changeType "removed" → compaction-removed (skip)
+// Design intent:
+//   Grid 0: context step line, x = call index C1..Cn.
+//   Grid 1: observed tool response heatmap, x = "before call i", y = tool family.
 //
-// Input size is not available per-tool in the current data model; a thin fixed
-// placeholder is shown.  The left slim bar will be upgraded when proxy data
-// carries per-tool input tokens.
+// The heatmap is intentionally factual. It uses JSONL-derived toolCalls:
+//   call[i - 1].toolCalls -> tool responses observed before call[i].
+// It does not claim full context attribution or reuse.
 
-import React, { useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import * as echarts from "echarts/core";
-import { LineChart, CustomChart } from "echarts/charts";
-import { GridComponent, TooltipComponent, AxisPointerComponent } from "echarts/components";
+import { HeatmapChart, LineChart } from "echarts/charts";
+import {
+  AxisPointerComponent,
+  DataZoomComponent,
+  GridComponent,
+  MarkPointComponent,
+  TooltipComponent,
+  VisualMapComponent,
+} from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import type { UserTurn, LlmCall } from "./drilldown-types";
+import type { LlmCall, UserTurn } from "./drilldown-types";
 
-echarts.use([LineChart, CustomChart, GridComponent, TooltipComponent, AxisPointerComponent, CanvasRenderer]);
+echarts.use([
+  LineChart,
+  HeatmapChart,
+  GridComponent,
+  TooltipComponent,
+  AxisPointerComponent,
+  DataZoomComponent,
+  VisualMapComponent,
+  MarkPointComponent,
+  CanvasRenderer,
+]);
 
-// ─── Formatting ───────────────────────────────────────────────────────────────
+// Formatting
 
 function fmtK(n: number): string {
   const abs = Math.abs(n);
   if (abs >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (abs >= 1_000)     return (n / 1_000).toFixed(1)     + "k";
+  if (abs >= 1_000) return (n / 1_000).toFixed(1) + "k";
   return String(Math.round(n));
 }
 
-// ─── Tool taxonomy ────────────────────────────────────────────────────────────
-// Maps canonical tool names to display labels and colors.
+// Tool taxonomy
 
-const TOOL_ROWS = ["Read", "Write", "Edit", "Bash", "Grep", "Agent", "WebFetch", "Other"] as const;
+const TOOL_ROWS = [
+  "Read",
+  "Write",
+  "Edit",
+  "Bash",
+  "Grep",
+  "Agent",
+  "Web",
+  "Other",
+] as const;
 type ToolRow = typeof TOOL_ROWS[number];
 
-const TOOL_COLOR: Record<ToolRow, string> = {
-  Read:     "#6366f1",
-  Write:    "#f59e0b",
-  Edit:     "#f97316",
-  Bash:     "#22c55e",
-  Grep:     "#3b82f6",
-  Agent:    "#8b5cf6",
-  WebFetch: "#06b6d4",
-  Other:    "#94a3b8",
+const TOOL_ACCENT: Record<ToolRow, string> = {
+  Read: "#4f46e5",
+  Write: "#d97706",
+  Edit: "#ea580c",
+  Bash: "#16a34a",
+  Grep: "#2563eb",
+  Agent: "#7c3aed",
+  Web: "#0891b2",
+  Other: "#64748b",
 };
 
-function classifyTool(label: string): ToolRow {
-  const m = label.match(/^([A-Za-z_]+)\(/);
-  const name = m ? m[1] : label.split(" ")[0];
-  if (name === "Read")     return "Read";
-  if (name === "Write")    return "Write";
-  if (name === "Edit")     return "Edit";
-  if (name === "Bash")     return "Bash";
-  if (name === "Grep" || name === "grep") return "Grep";
-  if (name === "Agent")    return "Agent";
-  if (name === "WebFetch") return "WebFetch";
+function classifyTool(name: string): ToolRow {
+  const raw = name.trim();
+  const base = raw.match(/^([A-Za-z_]+)/)?.[1] ?? raw.split(/\s|\(/)[0] ?? raw;
+  if (base === "Read") return "Read";
+  if (base === "Write" || base === "NotebookWrite") return "Write";
+  if (base === "Edit" || base === "MultiEdit") return "Edit";
+  if (base === "Bash") return "Bash";
+  if (base === "Grep" || base === "Glob" || base === "grep") return "Grep";
+  if (base === "Agent" || base === "Task") return "Agent";
+  if (base === "WebFetch" || base === "WebSearch") return "Web";
   return "Other";
 }
 
-// ─── Data model ───────────────────────────────────────────────────────────────
+// Data model
 
-interface TransitionSlot {
-  slotIdx: number;           // 0-based
-  fromCall: LlmCall;
-  toCall: LlmCall;
-  label: string;             // e.g. "C2→C3"
-  contextDelta: number;
+interface CallPoint {
+  idx: number;
+  label: string;
+  contextSize: number;
   isCompaction: boolean;
 }
 
+interface ToolEvent {
+  toolUseId: string;
+  name: string;
+  inputPreview: string;
+  inputSize: number;
+  outputPreview: string;
+  outputSize: number;
+  isError: boolean;
+}
+
 interface ToolCell {
-  slotIdx: number;
+  callIdx: number; // Target call column: observed before this call.
+  sourceCall: LlmCall;
+  targetCall: LlmCall;
   toolRow: ToolRow;
-  outputDelta: number;       // tokens added (sum of matching incomingDiff)
-  callCount: number;         // number of distinct tool uses
-  hasError: boolean;
-  labels: string[];          // original labels e.g. ["Bash(npm test)"]
+  outputSize: number;
+  inputSize: number;
+  count: number;
+  errorCount: number;
+  events: ToolEvent[];
 }
 
 interface MinimapData {
-  // Context line: one point per call
-  calls: { idx: number; label: string; contextSize: number; isCompaction: boolean }[];
-  // Transition slots: between consecutive calls
-  slots: TransitionSlot[];
-  // Tool matrix: sparse — only cells with data
+  calls: CallPoint[];
   cells: ToolCell[];
-  // Which tool rows have any data (determines visible rows)
   activeRows: ToolRow[];
   maxCtx: number;
   maxOutput: number;
+  totalToolEvents: number;
+  totalOutputSize: number;
 }
 
 function buildData(turn: UserTurn): MinimapData {
@@ -99,405 +130,383 @@ function buildData(turn: UserTurn): MinimapData {
     isCompaction: c.isCompaction,
   }));
 
-  const slots: TransitionSlot[] = [];
-  for (let i = 0; i < turn.calls.length - 1; i++) {
-    const from = turn.calls[i];
-    const to   = turn.calls[i + 1];
-    slots.push({
-      slotIdx: i,
-      fromCall: from,
-      toCall: to,
-      label: `C${from.indexInTurn}→C${to.indexInTurn}`,
-      contextDelta: to.contextSize - from.contextSize,
-      isCompaction: to.isCompaction,
-    });
-  }
-
-  // Build cells from toolNames on the *source* call of each slot.
-  // call[i].toolNames = tools dispatched in call i → they produce results
-  // that appear in call[i+1]'s context (slot i).
-  // outputDelta for a cell = context delta of the slot divided equally among
-  // tool rows (best available approximation without per-tool attribution).
   const cellMap = new Map<string, ToolCell>();
 
-  for (const slot of slots) {
-    const names = slot.fromCall.toolNames ?? [];
-    if (!names.length) continue;
+  // Column C_i represents tool responses produced after C_(i-1) and observed
+  // before C_i. C1 is usually empty because no prior tool result exists in turn.
+  for (let targetIdx = 1; targetIdx < turn.calls.length; targetIdx++) {
+    const sourceCall = turn.calls[targetIdx - 1];
+    const targetCall = turn.calls[targetIdx];
+    const toolCalls = sourceCall.toolCalls ?? [];
 
-    // Count occurrences of each tool type in this slot
-    const rowCounts = new Map<ToolRow, number>();
-    for (const n of names) {
-      const row = classifyTool(n);
-      rowCounts.set(row, (rowCounts.get(row) ?? 0) + 1);
-    }
+    for (const tc of toolCalls) {
+      const row = classifyTool(tc.name);
+      const key = `${targetIdx}:${row}`;
+      const existing = cellMap.get(key);
+      const event: ToolEvent = {
+        toolUseId: tc.toolUseId,
+        name: tc.name,
+        inputPreview: tc.inputPreview,
+        inputSize: tc.inputSize,
+        outputPreview: tc.outputPreview,
+        outputSize: tc.outputSize,
+        isError: tc.isError,
+      };
 
-    // Context delta from this slot to distribute as output proxy
-    const totalDelta = Math.max(slot.contextDelta, 0);
-    const totalCount = names.length;
-
-    for (const [row, count] of rowCounts) {
-      const key = `${slot.slotIdx}:${row}`;
-      // Proportional share of the context delta
-      const outputDelta = totalCount > 0 ? Math.round(totalDelta * count / totalCount) : 0;
-      cellMap.set(key, {
-        slotIdx: slot.slotIdx,
-        toolRow: row,
-        outputDelta,
-        callCount: count,
-        hasError: false,
-        labels: names.filter(n => classifyTool(n) === row),
-      });
+      if (existing) {
+        existing.outputSize += tc.outputSize;
+        existing.inputSize += tc.inputSize;
+        existing.count += 1;
+        existing.errorCount += tc.isError ? 1 : 0;
+        existing.events.push(event);
+      } else {
+        cellMap.set(key, {
+          callIdx: targetIdx,
+          sourceCall,
+          targetCall,
+          toolRow: row,
+          outputSize: tc.outputSize,
+          inputSize: tc.inputSize,
+          count: 1,
+          errorCount: tc.isError ? 1 : 0,
+          events: [event],
+        });
+      }
     }
   }
 
   const cells = Array.from(cellMap.values());
-
-  // Determine active rows (preserve TOOL_ROWS order)
   const usedRows = new Set(cells.map(c => c.toolRow));
   const activeRows = TOOL_ROWS.filter(r => usedRows.has(r));
 
-  const maxCtx    = Math.max(...calls.map(c => c.contextSize), 50_000);
-  const maxOutput = Math.max(...cells.map(c => c.outputDelta), 1);
+  const maxCtx = Math.max(...calls.map(c => c.contextSize), 50_000);
+  const maxOutput = Math.max(...cells.map(c => c.outputSize), 1);
+  const totalToolEvents = cells.reduce((sum, c) => sum + c.count, 0);
+  const totalOutputSize = cells.reduce((sum, c) => sum + c.outputSize, 0);
 
-  return { calls, slots, cells, activeRows, maxCtx, maxOutput };
+  return { calls, cells, activeRows, maxCtx, maxOutput, totalToolEvents, totalOutputSize };
 }
 
-// ─── ECharts option builder ───────────────────────────────────────────────────
+// ECharts option
 
-const PAD_L = 60;  // space for y-axis labels
-const PAD_R = 16;
+const PAD_L = 64;
+const PAD_R = 18;
+const CTX_H = 104;
+const ROW_H = 34;
+const GAP = 18;
+const X_LABEL_H = 24;
+const ZOOM_THRESHOLD = 36;
+const ZOOM_WINDOW = 34;
+const ZOOM_H = 28;
 
-// Heights
-const CTX_H  = 80;  // context line grid height
-const ROW_H  = 28;  // each tool row height
+type HeatmapValue = [number, number, number, number, number, number, number];
+type TooltipParam = { seriesName?: string; dataIndex?: number; value?: unknown; axisValue?: string | number };
 
 function buildOption(data: MinimapData): echarts.EChartsCoreOption {
-  const { calls, slots, cells, activeRows, maxCtx, maxOutput } = data;
+  const { calls, cells, activeRows, maxCtx, maxOutput } = data;
   if (!calls.length) return {};
 
-  const nRows   = activeRows.length;
-  const matrixH = nRows * ROW_H;
+  const visibleRows: string[] = activeRows.length ? [...activeRows] : ["No tools"];
+  const callCats = calls.map(c => c.label);
+  const rowCats = visibleRows;
+  const matrixH = Math.max(visibleRows.length, 1) * ROW_H;
+  const labelMode = calls.length <= 20 ? "full" : calls.length <= 36 ? "compact" : "sparse";
+  const showZoom = calls.length > ZOOM_THRESHOLD;
+  const zoomEndValue = Math.min(calls.length - 1, ZOOM_WINDOW - 1);
+  const xLabelInterval = calls.length > 54 ? 2 : calls.length > 32 ? 1 : 0;
 
-  // Gap between the two grids
-  const GAP = 12;
+  const heatmapData = cells.map((cell): HeatmapValue => [
+    cell.callIdx,
+    visibleRows.indexOf(cell.toolRow),
+    cell.outputSize,
+    cell.count,
+    cell.inputSize,
+    cell.errorCount,
+    cell.sourceCall.indexInTurn,
+  ]);
 
-  // ── Grid 0: context line ──────────────────────────────────────────────────
-  // x = call index 0..n-1  (categories: C1, C2, …)
-  // y = context size
-
-  const ctxCats  = calls.map(c => c.label);
-  const ctxData  = calls.map(c => c.contextSize);
-
-  const yTickStep = maxCtx <= 100_000 ? 50_000 : maxCtx <= 200_000 ? 100_000 : 200_000;
-  const yTicks = Array.from(
-    { length: Math.floor(maxCtx / yTickStep) + 1 },
-    (_, i) => i * yTickStep,
-  ).filter(v => v <= maxCtx);
-
-  // ── Grid 1: tool I/O matrix ───────────────────────────────────────────────
-  // x = slot index 0..n-2  (categories: "C1→C2", …)
-  // y = tool row index     (categories: tool names)
-
-  const slotCats = slots.map(s => s.label);
-  const rowCats  = activeRows as string[];
-
-  // ── Custom renderItem for matrix cells ───────────────────────────────────
-  // Data point: [slotIdx, rowIdx]
-  // cellMap lookup by key to get actual values
-
-  const cellLookup = new Map(cells.map(c => [`${c.slotIdx}:${c.toolRow}`, c]));
-
-  function renderCell(
-    params: echarts.CustomSeriesRenderItemParams,
-    api: echarts.CustomSeriesRenderItemAPI,
-  ): echarts.CustomSeriesRenderItemReturn {
-    const si  = api.value(0) as number;   // slot index
-    const ri  = api.value(1) as number;   // row index
-    const row = activeRows[ri];
-    const cell = cellLookup.get(`${si}:${row}`);
-
-    // Cell bounding box from the coordinate system
-    const tl = api.coord([si - 0.5, ri - 0.5]);
-    const br = api.coord([si + 0.5, ri + 0.5]);
-    const cw = Math.max(br[0] - tl[0] - 2, 4);
-    const ch = Math.max(br[1] - tl[1] - 2, 4);  // note: y increases downward in pixel
-    const cx = (tl[0] + br[0]) / 2;
-    const cy = (tl[1] + br[1]) / 2;
-
-    if (!cell) {
-      // Empty cell — faint dot
-      return {
-        type: "circle",
-        shape: { cx, cy, r: 1 },
-        style: { fill: "#e5e7eb" },
-      } as echarts.CustomSeriesRenderItemReturn;
-    }
-
-    const color = TOOL_COLOR[row];
-    const children: echarts.CustomSeriesRenderItemReturn[] = [];
-
-    // Output bar: left-anchored after input stub, width ∝ output size
-    const outFrac = Math.min(cell.outputDelta / maxOutput, 1);
-    const available = cw - 10;   // space after stub (4px) + gap (2px) + right margin (4px)
-    const barW    = Math.max(Math.round(outFrac * available), 2);
-    const barH    = Math.max(ch - 6, 4);
-    const barX    = cx - cw / 2 + 8;   // stub (4) + gap (4)
-    const barY    = cy - barH / 2;
-
-    children.push({
-      type: "rect",
-      shape: { x: barX, y: barY, width: barW, height: barH },
-      style: { fill: color + "cc", stroke: color, lineWidth: 0.5 },
-    } as echarts.CustomSeriesRenderItemReturn);
-
-    // Input stub: thin left bar (placeholder — we don't have per-tool input size)
-    const stubW = 4;
-    const stubH = Math.max(barH - 4, 3);
-    children.push({
-      type: "rect",
-      shape: { x: cx - cw / 2 + 2, y: cy - stubH / 2, width: stubW, height: stubH },
-      style: { fill: color + "55", stroke: color + "88", lineWidth: 0.5 },
-    } as echarts.CustomSeriesRenderItemReturn);
-
-    // Count badge (only if > 1)
-    if (cell.callCount > 1) {
-      children.push({
-        type: "text",
-        style: {
-          text: String(cell.callCount),
-          x: cx + cw / 2 - 2,
-          y: cy - barH / 2,
-          textAlign: "right", textVerticalAlign: "top",
-          fontSize: 8, fill: color, fontWeight: "bold",
-        },
-      } as echarts.CustomSeriesRenderItemReturn);
-    }
-
-    // Error marker
-    if (cell.hasError) {
-      children.push({
-        type: "circle",
-        shape: { cx: cx + cw / 2 - 3, cy: cy - barH / 2 + 3, r: 3 },
-        style: { fill: "#dc2626" },
-      } as echarts.CustomSeriesRenderItemReturn);
-    }
-
-    return { type: "group", children } as echarts.CustomSeriesRenderItemReturn;
+  const cellsByCall = new Map<number, ToolCell[]>();
+  for (const cell of cells) {
+    const list = cellsByCall.get(cell.callIdx) ?? [];
+    list.push(cell);
+    cellsByCall.set(cell.callIdx, list);
   }
 
-  // All matrix data points (every combination of slot × row, sparse ok)
-  const matrixPoints: [number, number][] = [];
-  for (let si = 0; si < slots.length; si++) {
-    for (let ri = 0; ri < activeRows.length; ri++) {
-      matrixPoints.push([si, ri]);
-    }
+  function heatmapLabelFormatter(params: { value?: unknown }): string {
+    const value = params.value as HeatmapValue | undefined;
+    if (!value) return "";
+    const outputSize = value[2];
+    const count = value[3];
+    if (outputSize <= 0) return "";
+    if (labelMode === "full") return `${count}x\n${fmtK(outputSize)}`;
+    if (labelMode === "compact") return outputSize >= maxOutput * 0.16 ? `${count}x` : "";
+    return outputSize >= maxOutput * 0.32 ? fmtK(outputSize) : "";
   }
 
-  // ── Slot delta labels: embedded in matrix xAxis via rich text ───────────
-  // Two-line label: slot name + context delta in color.
-  // ECharts rich styles are static, so we pick "pos"/"neg"/"cmp" bucket.
-  function slotLabelFormatter(value: string): string {
-    const si = slotCats.indexOf(value);
-    if (si < 0) return value;
-    const slot  = slots[si];
-    const delta = slot.contextDelta;
-    const sign  = delta >= 0 ? "+" : "";
-    const style = slot.isCompaction ? "cmp"
-                : delta > 0         ? "pos"
-                :                     "neg";
-    return `{slot|${value}}\n{${style}|${sign}${fmtK(delta)}}`;
-  }
-
-  // ── Tooltip formatter ────────────────────────────────────────────────────
-  function tooltipFormatter(params: echarts.TooltipComponentFormatterCallbackParams): string {
-    const arr = Array.isArray(params) ? params : [params];
+  function tooltipFormatter(params: unknown): string {
+    const arr = (Array.isArray(params) ? params : [params]) as TooltipParam[];
     if (!arr.length) return "";
-    const p = arr[0];
-    const seriesName = p.seriesName as string;
+    let callIdx = -1;
 
-    if (seriesName === "Context") {
-      const i   = p.dataIndex as number;
-      const c   = calls[i];
-      const prev = calls[i - 1];
-      const delta = prev ? c.contextSize - prev.contextSize : 0;
-      return [
-        `<strong>${c.label}</strong>`,
-        `<br/>Context: <strong>${fmtK(c.contextSize)}</strong>`,
-        i > 0 ? `<br/>Δ vs prev: <span style="color:${delta >= 0 ? "#f59e0b" : "#22c55e"}">${delta >= 0 ? "+" : ""}${fmtK(delta)}</span>` : "",
-      ].join("");
+    for (const p of arr) {
+      const value = p.value as HeatmapValue | number | undefined;
+      if (Array.isArray(value) && typeof value[0] === "number") {
+        callIdx = value[0];
+        break;
+      }
+      if (p.seriesName === "Context" && typeof p.dataIndex === "number") {
+        callIdx = p.dataIndex;
+        break;
+      }
+      if (typeof p.axisValue === "string") {
+        const idx = callCats.indexOf(p.axisValue);
+        if (idx >= 0) callIdx = idx;
+      }
     }
 
-    if (seriesName === "Matrix") {
-      const si  = p.value as number[] | undefined;
-      if (!si) return "";
-      const slotIdx = si[0];
-      const rowIdx  = si[1];
-      const row     = activeRows[rowIdx];
-      const slot    = slots[slotIdx];
-      const cell    = cellLookup.get(`${slotIdx}:${row}`);
-      if (!slot) return "";
+    if (callIdx < 0) return "";
+    const call = calls[callIdx];
+    if (!call) return "";
 
-      const slotInfo = [
-        `<strong>${slot.label}</strong>`,
-        ` ctx Δ <span style="color:${slot.contextDelta >= 0 ? "#f59e0b" : "#22c55e"}">${slot.contextDelta >= 0 ? "+" : ""}${fmtK(slot.contextDelta)}</span>`,
-      ].join("");
+    const prev = calls[callIdx - 1];
+    const delta = prev ? call.contextSize - prev.contextSize : 0;
+    const deltaColor = delta >= 0 ? "#d97706" : "#16a34a";
+    const toolCells = [...(cellsByCall.get(callIdx) ?? [])].sort((a, b) => b.outputSize - a.outputSize);
+    const toolOutput = toolCells.reduce((sum, c) => sum + c.outputSize, 0);
+    const toolCount = toolCells.reduce((sum, c) => sum + c.count, 0);
+    const toolLines = toolCells.slice(0, 5).map(cell => (
+      `<br/><span style="color:${TOOL_ACCENT[cell.toolRow]};font-weight:700">${cell.toolRow}</span>` +
+      ` ${cell.count}x · <strong>${fmtK(cell.outputSize)}</strong>`
+    )).join("");
+    const more = toolCells.length > 5 ? `<br/><span style="color:#9ca3af">+${toolCells.length - 5} tool rows</span>` : "";
 
-      if (!cell) return slotInfo + `<br/><span style="color:#9ca3af">${row}: —</span>`;
-
-      const toolLines = cell.labels.map(l =>
-        `<br/>&nbsp;&nbsp;<span style="color:#9ca3af">${l}</span>`
-      ).join("");
-
-      return [
-        slotInfo,
-        `<br/><span style="color:${TOOL_COLOR[row]};font-weight:700">${row}</span>`,
-        ` ×${cell.callCount}`,
-        `<br/>Out: <strong>+${fmtK(cell.outputDelta)}</strong>`,
-        toolLines,
-        cell.hasError ? `<br/><span style="color:#dc2626">⚠ low-confidence attribution</span>` : "",
-      ].join("");
-    }
-
-    return "";
+    return [
+      `<strong>${call.label}</strong>`,
+      `<br/>Context: <strong>${fmtK(call.contextSize)}</strong>`,
+      callIdx > 0 ? `<br/>Delta: <span style="color:${deltaColor}">${delta >= 0 ? "+" : ""}${fmtK(delta)}</span>` : "",
+      `<br/>Tool responses before call: <strong>${toolCount}x</strong> · <strong>${fmtK(toolOutput)}</strong>`,
+      toolLines || `<br/><span style="color:#9ca3af">No tool response observed</span>`,
+      more,
+      `<br/><span style="color:#9ca3af">Click to open call detail</span>`,
+    ].join("");
   }
 
-  // ─── Full option ────────────────────────────────────────────────────────────
   return {
     animation: false,
     backgroundColor: "transparent",
-
-    // Two grids stacked vertically
+    axisPointer: {
+      type: "line",
+      snap: true,
+      link: [{ xAxisIndex: [0, 1] }],
+      label: { backgroundColor: "#111827" },
+    },
     grid: [
-      // Grid 0: context line
-      { id: "ctx",    left: PAD_L, right: PAD_R, top: 8,                          height: CTX_H },
-      // Grid 1: tool matrix — top accounts for 2-line xAxis labels (position: top)
-      { id: "matrix", left: PAD_L, right: PAD_R, top: 8 + CTX_H + GAP + 30,      height: matrixH },
-    ],
-
-    xAxis: [
-      // Context line x-axis (call labels)
+      { id: "ctx", left: PAD_L, right: PAD_R, top: 10, height: CTX_H },
       {
-        id: "xCtx", gridId: "ctx", gridIndex: 0,
-        type: "category", data: ctxCats,
-        boundaryGap: false,
-        axisLine: { lineStyle: { color: "#e5e7eb" } },
-        axisTick: { show: false },
-        axisLabel: { fontSize: 9, color: "#9ca3af" },
-        splitLine: { lineStyle: { color: "#f3f4f6" } },
+        id: "matrix",
+        left: PAD_L,
+        right: PAD_R,
+        top: 10 + CTX_H + GAP + X_LABEL_H,
+        height: matrixH,
       },
-      // Matrix x-axis (slot labels + delta, one slot = one column)
+    ],
+    visualMap: {
+      show: false,
+      min: 0,
+      max: maxOutput,
+      dimension: 2,
+      seriesIndex: 1,
+      inRange: {
+        color: ["#fff1f2", "#fecdd3", "#fb7185", "#e11d48", "#7f1d1d"],
+      },
+      outOfRange: {
+        color: ["#fff7f7"],
+      },
+    },
+    dataZoom: [
       {
-        id: "xMatrix", gridId: "matrix", gridIndex: 1,
-        type: "category", data: slotCats,
+        type: "inside",
+        xAxisIndex: [0, 1],
+        filterMode: "none",
+        startValue: 0,
+        endValue: showZoom ? zoomEndValue : calls.length - 1,
+        moveOnMouseWheel: true,
+        zoomOnMouseWheel: "ctrl",
+      },
+      ...(showZoom ? [{
+        type: "slider",
+        xAxisIndex: [0, 1],
+        filterMode: "none",
+        height: 18,
+        bottom: 4,
+        showDetail: false,
+        brushSelect: false,
+        borderColor: "#fecdd3",
+        fillerColor: "rgba(254, 202, 202, 0.45)",
+        handleSize: 12,
+        handleStyle: { color: "#e11d48" },
+        dataBackground: {
+          lineStyle: { color: "#fecdd3" },
+          areaStyle: { color: "#fff1f2" },
+        },
+      }] : []),
+    ],
+    xAxis: [
+      {
+        id: "xCtx",
+        gridId: "ctx",
+        gridIndex: 0,
+        type: "category",
+        data: callCats,
         boundaryGap: true,
         axisLine: { lineStyle: { color: "#e5e7eb" } },
         axisTick: { show: false },
+        axisLabel: { show: false },
+        splitLine: { show: true, lineStyle: { color: "#f3f4f6" } },
+      },
+      {
+        id: "xMatrix",
+        gridId: "matrix",
+        gridIndex: 1,
+        type: "category",
+        data: callCats,
+        boundaryGap: true,
         position: "top",
+        axisLine: { lineStyle: { color: "#e5e7eb" } },
+        axisTick: { show: false },
         axisLabel: {
+          interval: xLabelInterval,
+          hideOverlap: true,
           fontSize: 9,
-          formatter: slotLabelFormatter,
-          rich: {
-            slot: { fontSize: 9, color: "#9ca3af",  lineHeight: 14 },
-            pos:  { fontSize: 9, color: "#f59e0b",  fontWeight: "bold", lineHeight: 14 },
-            neg:  { fontSize: 9, color: "#22c55e",  fontWeight: "bold", lineHeight: 14 },
-            cmp:  { fontSize: 9, color: "#ef4444",  fontWeight: "bold", lineHeight: 14 },
-          },
+          color: "#94a3b8",
         },
-        splitLine: { lineStyle: { color: "#f3f4f6", type: "dashed" } },
+        splitLine: { show: true, lineStyle: { color: "#f1f5f9" } },
+        splitArea: { show: true, areaStyle: { color: ["#ffffff", "#fafafa"] } },
       },
     ],
-
     yAxis: [
-      // Context line y-axis
       {
-        id: "yCtx", gridId: "ctx", gridIndex: 0,
-        type: "value", min: 0, max: maxCtx,
+        id: "yCtx",
+        gridId: "ctx",
+        gridIndex: 0,
+        type: "value",
+        min: 0,
+        max: maxCtx,
         axisLabel: {
-          fontSize: 8, color: "#d1d5db",
+          fontSize: 8,
+          color: "#cbd5e1",
           formatter: (v: number) => fmtK(v),
-          width: 52, overflow: "truncate",
+          width: 54,
+          overflow: "truncate",
         },
         axisLine: { show: false },
         axisTick: { show: false },
-        splitLine: {
-          lineStyle: { color: "#f3f4f6" },
-          show: true,
-          interval: (_idx: number, value: number) => yTicks.includes(value),
-        },
+        splitLine: { show: true, lineStyle: { color: "#f1f5f9" } },
       },
-      // Matrix y-axis (tool row labels)
       {
-        id: "yMatrix", gridId: "matrix", gridIndex: 1,
+        id: "yMatrix",
+        gridId: "matrix",
+        gridIndex: 1,
         type: "category",
         data: rowCats,
-        // Extend one unit below to make room for header row
-        // We use min: -1 and a custom "header" row at y=-0.5
         inverse: false,
         axisLine: { show: false },
         axisTick: { show: false },
         axisLabel: {
-          fontSize: 10, color: "#374151", fontWeight: "bold",
-          formatter: (v: string) => v,
+          fontSize: 10,
+          color: "#374151",
+          fontWeight: 700,
         },
-        splitLine: { lineStyle: { color: "#f3f4f6" } },
+        splitLine: { show: true, lineStyle: { color: "#f1f5f9" } },
+        splitArea: { show: true, areaStyle: { color: ["#ffffff", "#fbfdff"] } },
       },
     ],
-
     tooltip: {
-      trigger: "item",
-      backgroundColor: "#1f2937",
+      trigger: "axis",
+      axisPointer: { type: "line" },
+      backgroundColor: "#111827",
       borderColor: "#374151",
       borderWidth: 1,
       textStyle: { color: "#f9fafb", fontSize: 11 },
+      extraCssText: "max-width: 520px; white-space: normal;",
       formatter: tooltipFormatter,
     },
-
     series: [
-      // ── Context step line (Grid 0) ────────────────────────────────
       {
         id: "ctx-line",
         name: "Context",
         type: "line",
-        xAxisIndex: 0, yAxisIndex: 0,
-        data: ctxData,
-        step: "end",
-        lineStyle: { color: "#6366f1", width: 2 },
-        symbol: "circle", symbolSize: 5,
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: calls.map(c => c.contextSize),
+        lineStyle: { color: "#6366f1", width: 2.5 },
+        symbol: "circle",
+        showSymbol: calls.length <= ZOOM_THRESHOLD,
+        symbolSize: 4,
         itemStyle: { color: "#6366f1" },
         areaStyle: {
           color: {
-            type: "linear", x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [{ offset: 0, color: "#6366f118" }, { offset: 1, color: "#6366f103" }],
+            type: "linear",
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              { offset: 0, color: "#6366f11f" },
+              { offset: 1, color: "#6366f103" },
+            ],
           },
         },
-        // Compaction dots rendered separately; mark compaction calls
         markPoint: {
           symbol: "diamond",
-          symbolSize: 10,
+          symbolSize: 11,
           data: calls
             .filter(c => c.isCompaction)
-            .map(c => ({ coord: [c.idx, c.contextSize], itemStyle: { color: "#ef4444" }, label: { show: false } })),
+            .map(c => ({
+              coord: [c.idx, c.contextSize],
+              itemStyle: { color: "#dc2626" },
+              label: { show: false },
+            })),
         },
         z: 3,
       },
-
-      // ── Tool matrix cells (Grid 1) ────────────────────────────────
       {
-        id: "matrix",
-        name: "Matrix",
-        type: "custom",
-        xAxisIndex: 1, yAxisIndex: 1,
-        renderItem: renderCell,
-        data: matrixPoints,
+        id: "tool-heatmap",
+        name: "Tool responses",
+        type: "heatmap",
+        xAxisIndex: 1,
+        yAxisIndex: 1,
+        data: heatmapData,
+        encode: { x: 0, y: 1, value: 2 },
+        label: {
+          show: true,
+          formatter: heatmapLabelFormatter,
+          color: "#111827",
+          fontSize: 9,
+          lineHeight: 11,
+          textBorderColor: "#ffffff",
+          textBorderWidth: 2,
+        },
+        itemStyle: {
+          borderColor: "#ffffff",
+          borderWidth: 2,
+          borderRadius: 3,
+        },
+        emphasis: {
+          itemStyle: {
+            borderColor: "#111827",
+            borderWidth: 1,
+            shadowBlur: 8,
+            shadowColor: "rgba(17, 24, 39, 0.18)",
+          },
+        },
         z: 2,
-        encode: { x: 0, y: 1 },
       },
-
     ],
   };
 }
 
-// ─── React component ──────────────────────────────────────────────────────────
+// React component
 
 export interface TurnMinimapProps {
   turn: UserTurn;
@@ -506,8 +515,7 @@ export interface TurnMinimapProps {
 
 export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef     = useRef<echarts.ECharts | null>(null);
-  const dataRef      = useRef<MinimapData | null>(null);
+  const chartRef = useRef<echarts.ECharts | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -515,11 +523,19 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
     const chart = echarts.init(el, undefined, { renderer: "canvas" });
     chartRef.current = chart;
 
-    chart.on("click", "series.line", (params) => {
+    chart.on("click", (params) => {
       if (!onSelectCall) return;
-      const i = params.dataIndex as number;
-      const call = turn.calls[i];
-      if (call) onSelectCall(call.id);
+      if (params.seriesName === "Context") {
+        const idx = params.dataIndex as number;
+        const call = turn.calls[idx];
+        if (call) onSelectCall(call.id);
+      }
+      if (params.seriesName === "Tool responses") {
+        const value = params.value as HeatmapValue | undefined;
+        const targetIdx = value?.[0];
+        const call = typeof targetIdx === "number" ? turn.calls[targetIdx] : undefined;
+        if (call) onSelectCall(call.id);
+      }
     });
 
     const ro = new ResizeObserver(() => chart.resize());
@@ -529,67 +545,80 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
       chart.dispose();
       chartRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [onSelectCall, turn.calls]);
 
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
     const data = buildData(turn);
-    dataRef.current = data;
 
-    const nRows  = data.activeRows.length;
-    // 8 top pad + ctx grid + 12 gap + xAxis labels (~30px for 2-line) + matrix rows + 8 bottom pad
-    const totalH = 8 + CTX_H + 12 + 30 + nRows * ROW_H + 8;
-    // Resize container to fit dynamic height
+    const rowCount = Math.max(data.activeRows.length, 1);
+    const showZoom = turn.calls.length > ZOOM_THRESHOLD;
+    const totalH = 10 + CTX_H + GAP + X_LABEL_H + rowCount * ROW_H + (showZoom ? ZOOM_H : 10);
     if (containerRef.current) {
       containerRef.current.style.height = `${totalH}px`;
     }
+
     chart.resize();
     chart.setOption(buildOption(data), true);
   }, [turn]);
 
   if (!turn.calls.length) return null;
 
+  const data = buildData(turn);
+
   return (
-    <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, background: "#fafafa", overflow: "hidden" }}>
-      {/* Header row */}
+    <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, background: "#ffffff", overflow: "hidden" }}>
       <div style={{
-        display: "flex", alignItems: "center", gap: 12,
-        padding: "5px 10px", borderBottom: "1px solid #f3f4f6",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "7px 10px",
+        borderBottom: "1px solid #f1f5f9",
       }}>
-        {/* Context legend */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <div style={{ width: 14, height: 0, borderTop: "2px solid #6366f1" }} />
-          <span style={{ fontSize: 9, color: "#9ca3af" }}>context</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <div style={{ width: 16, height: 0, borderTop: "2px solid #6366f1" }} />
+          <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>context</span>
         </div>
-        <div style={{ width: 1, height: 12, background: "#e5e7eb" }} />
-        {/* Tool legend chips */}
-        {(["Read","Bash","Edit","Write","Agent"] as ToolRow[]).map(r => (
-          <div key={r} style={{ display: "flex", alignItems: "center", gap: 3 }}>
-            <div style={{ width: 8, height: 8, borderRadius: 1, background: TOOL_COLOR[r] + "cc", border: `1px solid ${TOOL_COLOR[r]}` }} />
-            <span style={{ fontSize: 9, color: "#9ca3af" }}>{r}</span>
-          </div>
-        ))}
-        <span style={{ marginLeft: "auto", fontSize: 9, color: "#d1d5db" }}>
-          {turn.calls.length} calls · {Math.max(turn.calls.length - 1, 0)} slots
+        <div style={{ width: 1, height: 14, background: "#e5e7eb" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <div style={{
+            width: 44,
+            height: 9,
+            borderRadius: 2,
+            background: "linear-gradient(90deg, #fff1f2, #fb7185, #7f1d1d)",
+            border: "1px solid #fecdd3",
+          }} />
+          <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>response size</span>
+          <span style={{ fontSize: 10, color: "#94a3b8" }}>max {fmtK(data.maxOutput)}</span>
+        </div>
+        <span style={{ fontSize: 10, color: "#94a3b8" }}>label = count x size</span>
+        {turn.calls.length > ZOOM_THRESHOLD && (
+          <span style={{ fontSize: 10, color: "#be123c", background: "#fff1f2", border: "1px solid #fecdd3", borderRadius: 4, padding: "1px 6px" }}>
+            drag window
+          </span>
+        )}
+        <span style={{ marginLeft: "auto", fontSize: 10, color: "#cbd5e1" }}>
+          {turn.calls.length} calls / {data.totalToolEvents} tool responses / {fmtK(data.totalOutputSize)} chars
         </span>
       </div>
 
-      {/* Chart */}
-      <div ref={containerRef} style={{ width: "100%", height: 200 }} />
+      <div ref={containerRef} style={{ width: "100%", height: 220 }} />
 
-      {/* Footer: cell glyph legend */}
       <div style={{
-        display: "flex", alignItems: "center", gap: 8,
-        padding: "4px 10px", borderTop: "1px solid #f3f4f6",
-        fontSize: 9, color: "#9ca3af",
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "5px 10px",
+        borderTop: "1px solid #f1f5f9",
+        fontSize: 10,
+        color: "#94a3b8",
       }}>
-        <span style={{ fontWeight: 700, color: "#6b7280" }}>cell:</span>
-        <span>▏= input (placeholder)</span>
-        <span>█ = output size</span>
-        <span style={{ color: "#dc2626" }}>● = low-conf</span>
-        <span>N = call count</span>
+        <span style={{ fontWeight: 700, color: "#64748b" }}>cell:</span>
+        <span>color = total tool_result output size</span>
+        <span>text = response count x output size</span>
+        <span>hover = call summary</span>
+        <span>click = call detail</span>
       </div>
     </div>
   );

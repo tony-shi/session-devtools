@@ -1,4 +1,6 @@
-import { readFile } from "fs/promises";
+import { readFile, readdir } from "fs/promises";
+import { existsSync } from "fs";
+import { join, dirname } from "path";
 import type { SessionMetaV2 } from "./index.ts";
 import { computeFingerprint } from "./fingerprint.ts";
 import { decodeClaudeProjectHash } from "../parser-utils.ts";
@@ -122,6 +124,8 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
     }
   }
 
+  const subAgentCount = await countSubAgents(filePath, sessionId);
+
   return {
     session_id: sessionId,
     tool: "claude",
@@ -141,12 +145,24 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
     models: Array.from(modelCounts.entries()).sort((a, b) => b[1] - a[1]).map(([m]) => m),
     tool_call_count: toolCallCount,
     human_input_count: humanInputCount,
+    sub_agent_count: subAgentCount,
     claude_code_api_error_count: apiErrorCount,
     parser_warnings: Array.from(unknownTypes),
     schema_fingerprint: computeFingerprint(eventTypeSet),
     away_summary: awaySummary,
     last_assistant_text: lastAssistantText,
   };
+}
+
+async function countSubAgents(filePath: string, sessionId: string): Promise<number> {
+  const subagentsDir = join(dirname(filePath), sessionId, "subagents");
+  if (!existsSync(subagentsDir)) return 0;
+  try {
+    const entries = await readdir(subagentsDir);
+    return entries.filter(f => f.endsWith(".jsonl")).length;
+  } catch {
+    return 0;
+  }
 }
 
 function extractText(content: unknown): string {

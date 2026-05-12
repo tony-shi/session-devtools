@@ -903,10 +903,11 @@ export function parseSessionDrilldown(
     .map(([name, count]) => ({ name, count }));
 
   // ── 8. Proxy data availability ───────────────────────────────────────────
+  // Stubbed DBs (e.g. sub-agent drilldown) return undefined here — treat as no proxy.
   const proxyRow = db.prepare(
     "SELECT COUNT(*) as cnt FROM proxy_requests WHERE session_id = ?",
-  ).get(sessionId) as { cnt: number };
-  const hasProxyData = proxyRow.cnt > 0;
+  ).get(sessionId) as { cnt: number } | undefined;
+  const hasProxyData = (proxyRow?.cnt ?? 0) > 0;
 
   return {
     sessionId,
