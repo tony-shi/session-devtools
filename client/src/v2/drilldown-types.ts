@@ -84,11 +84,14 @@ export interface LlmCall {
   // null when no proxy record matches this call
   proxy: ProxyCallData | null;
 
-  // Non-null when this call triggered a sub agent via Agent tool_use
-  subAgent: SubAgentSummary | null;
+  // Sub-agents spawned by this call (one per Agent tool_use; usually 0-1, rarely >1)
+  subAgents: SubAgentSummary[];
 
   // Empty array in v1 backend — frontend fills with mock when empty
   incomingDiff: DiffEntry[];
+
+  // Tool names dispatched in this call's content (tool_use blocks)
+  toolNames: string[];
 }
 
 export interface MidTurnInjection {
@@ -166,4 +169,57 @@ export interface SessionDrilldown {
   subAgents: SubAgentSummary[];
 
   turns: UserTurn[];
+}
+
+// ─── Call detail (per-call drilldown) ────────────────────────────────────────
+
+export interface CallSegment {
+  id: string;
+  section: "system" | "tools" | "messages" | "metadata" | "unknown";
+  category: string;
+  label: string;
+  role?: string;
+  charCount: number;
+  rawText: string;
+  cacheHint: "read" | "write" | "none" | "unknown";
+  rawHash: string;
+}
+
+export type DiffOp = "added" | "removed" | "changed" | "unchanged";
+
+export interface SegmentDiff {
+  op: DiffOp;
+  section: "system" | "tools" | "messages" | "metadata" | "unknown";
+  category: string;
+  label: string;
+  role?: string;
+  charCount: number;
+  charDelta: number;
+  rawHash: string;
+  rawText: string;
+  prevRawText?: string;
+}
+
+export interface CallDetailTokens {
+  contextSize: number;
+  cacheRead: number;
+  cacheWrite: number;
+  freshIn: number;
+  outputTokens: number;
+}
+
+export interface CallDetail {
+  callId: number;
+  sessionId: string;
+  proxyRequestId: number | null;
+
+  model: string;
+  stopReason: string | null;
+  timestamp: string;
+  tokens: CallDetailTokens;
+
+  // null when no proxy data available
+  segments: CallSegment[] | null;
+  diff: SegmentDiff[] | null;
+  rawRequestJson: Record<string, unknown> | null;
 }

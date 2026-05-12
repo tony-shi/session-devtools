@@ -3,7 +3,8 @@ import { getDb } from "./db.ts";
 import { runSyncV2 } from "./sync-v2.ts";
 import { parseJsonField } from "./parser-utils.ts";
 import { buildMockDrilldown } from "./session-drilldown-mock.ts";
-import { parseSessionDrilldown } from "./session-drilldown-parser.ts";
+import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
+import { loadCallDetail } from "./call-detail.ts";
 
 type SqlParam = string | number | bigint | boolean | null | Uint8Array;
 
@@ -128,6 +129,55 @@ export class SessionsV2Controller {
       const mock = buildMockDrilldown(id);
       return { ...mock, _parseError: msg };
     }
+  }
+
+  @Get("sessions/:id/subagent/:agentFileId/drilldown")
+  subAgentDrilldown(@Param("id") id: string, @Param("agentFileId") agentFileId: string) {
+    const db = getDb();
+    const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+    return parseSubAgentDrilldown(row.source_file, agentFileId);
+  }
+
+  @Get("sessions/:id/calls/:callId/detail")
+  async callDetail(@Param("id") id: string, @Param("callId") callIdStr: string) {
+    const db = getDb();
+
+    // Re-parse the session drilldown to find the call and its predecessor
+    const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+
+    let drilldown;
+    try {
+      drilldown = parseSessionDrilldown(row.source_file as string, id, row, db);
+    } catch (err: unknown) {
+      throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
+    }
+
+    const callId = parseInt(callIdStr, 10);
+    const allCalls = drilldown.turns.flatMap(t => t.calls);
+    const callIdx = allCalls.findIndex(c => c.id === callId);
+    if (callIdx === -1) throw Object.assign(new Error("call not found"), { status: 404 });
+
+    const call = allCalls[callIdx];
+    const prevCall = callIdx > 0 ? allCalls[callIdx - 1] : undefined;
+
+    return loadCallDetail(
+      id,
+      call.timestamp,
+      call.model,
+      {
+        contextSize: call.contextSize,
+        cacheRead: call.cacheRead,
+        cacheWrite: call.cacheWrite,
+        freshIn: call.freshIn,
+        outputTokens: call.outputTokens,
+      },
+      call.stopReason,
+      db,
+      callId,
+      prevCall?.timestamp,
+    );
   }
 
   @Get("sessions/:id/proxy")

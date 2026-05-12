@@ -60,8 +60,11 @@ export interface LlmCall {
   isSignificant: boolean;
   significantDelta: number;
   proxy: ProxyCallData | null;
-  subAgent: SubAgentSummary | null;
+  // All sub-agents spawned by this call (one per Agent tool_use block; usually 0-1, rarely >1)
+  subAgents: SubAgentSummary[];
   incomingDiff: DiffEntry[];
+  // Tool names dispatched in this call's content (tool_use blocks)
+  toolNames: string[];
 }
 
 export interface UserTurn {

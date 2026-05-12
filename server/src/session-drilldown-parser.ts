@@ -371,15 +371,21 @@ export function parseSessionDrilldown(
         b.type === "text" && (b.text ?? "").includes("<compaction_summary>")
       );
 
-      // Detect Agent (sub agent) tool_use in this call's content
-      // The tool name is "Agent" in Claude Code; record the tool_use_id for later join.
-      const agentToolUseId = (() => {
-        for (const b of content) {
-          const bc = b as { type?: string; name?: string; id?: string };
-          if (bc.type === "tool_use" && bc.name === "Agent") return bc.id ?? null;
+      // Collect ALL Agent tool_use ids in this call (parallel spawn supported).
+      const agentToolUseIds: string[] = [];
+      for (const b of content) {
+        const bc = b as { type?: string; name?: string; id?: string };
+        if (bc.type === "tool_use" && bc.name === "Agent" && bc.id) {
+          agentToolUseIds.push(bc.id);
         }
-        return null;
-      })();
+      }
+
+      // Collect all tool_use names dispatched in this call
+      const toolNames: string[] = [];
+      for (const b of content) {
+        const bc = b as { type?: string; name?: string };
+        if (bc.type === "tool_use" && bc.name) toolNames.push(bc.name);
+      }
 
       // Context size proxy: sum of all token sources at this call
       const contextSize = freshIn + cacheRead + cacheWrite;
@@ -412,10 +418,11 @@ export function parseSessionDrilldown(
         isSignificant: Math.abs(significantDelta) > 2000,
         significantDelta,
         proxy: null,
-        subAgent: null, // filled below after parsing sub agents
+        subAgents: [], // filled below after parsing sub agents
         incomingDiff: [],
-        _agentToolUseId: agentToolUseId, // temp field for join
-      } as LlmCall & { _agentToolUseId: string | null };
+        toolNames,
+        _agentToolUseIds: agentToolUseIds, // temp field for join
+      } as LlmCall & { _agentToolUseIds: string[] };
     });
 
     // Turn-level aggregates
@@ -491,11 +498,12 @@ export function parseSessionDrilldown(
   // Attach sub agents to matching LlmCalls, then strip temp field
   for (const turn of turns) {
     for (const call of turn.calls) {
-      const c = call as LlmCall & { _agentToolUseId?: string | null };
-      if (c._agentToolUseId) {
-        c.subAgent = subAgentByToolUseId.get(c._agentToolUseId) ?? null;
+      const c = call as LlmCall & { _agentToolUseIds?: string[] };
+      for (const id of c._agentToolUseIds ?? []) {
+        const sa = subAgentByToolUseId.get(id);
+        if (sa) c.subAgents.push(sa);
       }
-      delete c._agentToolUseId;
+      delete c._agentToolUseIds;
     }
   }
 
@@ -577,4 +585,53 @@ export function parseSessionDrilldown(
 
     turns,
   };
+}
+
+// ─── Sub-agent drilldown ──────────────────────────────────────────────────────
+// Parses a sub-agent JSONL as a standalone SessionDrilldown so the frontend
+// can display it with the same components as a regular session.
+
+export function parseSubAgentDrilldown(
+  parentSourceFile: string,
+  agentFileId: string,
+): SessionDrilldown {
+  const sessionBase = basename(parentSourceFile, ".jsonl");
+  const subagentsDir = join(dirname(parentSourceFile), sessionBase, "subagents");
+  const agentPath = join(subagentsDir, `agent-${agentFileId}.jsonl`);
+  const metaPath  = join(subagentsDir, `agent-${agentFileId}.meta.json`);
+
+  if (!existsSync(agentPath)) {
+    throw Object.assign(new Error(`sub-agent file not found: agent-${agentFileId}.jsonl`), { status: 404 });
+  }
+
+  let agentType = "unknown";
+  let description = "";
+  if (existsSync(metaPath)) {
+    try {
+      const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { agentType?: string; description?: string };
+      agentType   = meta.agentType   ?? "unknown";
+      description = meta.description ?? "";
+    } catch { /* ignore */ }
+  }
+
+  // Re-use the core parser with a synthetic sessionRow.
+  // The sub-agent JSONL is in the same format as the parent session JSONL.
+  const fakeRow: Record<string, unknown> = {
+    tool:             "claude",
+    project:          description || agentType,
+    cwd:              "",
+    custom_title:     description || null,
+    ai_title:         agentType !== "unknown" ? agentType : null,
+    first_event_at:   "",
+    last_event_at:    "",
+    system_error_count: 0,
+  };
+
+  // parseSessionDrilldown expects a DB for proxy lookups; sub-agents have none.
+  // We pass a minimal stub — proxy will be empty (null for every call).
+  const stubDb = {
+    prepare: () => ({ all: () => [], get: () => undefined }),
+  } as unknown as import("better-sqlite3").Database;
+
+  return parseSessionDrilldown(agentPath, `subagent:${agentFileId}`, fakeRow, stubDb);
 }
