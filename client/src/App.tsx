@@ -140,7 +140,7 @@ export default function App() {
       />
 
       {/* Body: sidebar + content */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", minHeight: 0 }}>
         {/* Sidebar */}
         <nav style={{
           width: 200,
