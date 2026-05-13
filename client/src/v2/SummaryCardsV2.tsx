@@ -1,4 +1,6 @@
+import { useTranslation } from "react-i18next";
 import type { SummaryV2 } from "./types";
+import { TOKEN_METRICS } from "./metricRegistry";
 
 const TOOL_COLORS: Record<string, { bg: string; color: string }> = {
   claude: { bg: "#f3e8ff", color: "#7c3aed" },
@@ -27,10 +29,10 @@ function fmt(n: number): string {
   return String(n);
 }
 
-function TokenRow({ label, value, color }: { label: string; value: number; color: string }) {
+function TokenRow({ label, value, color, tooltip }: { label: string; value: number; color: string; tooltip?: string }) {
   return (
     <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-      <span style={{ fontSize: 11, color: "#9ca3af" }}>{label}</span>
+      <span style={{ fontSize: 11, color: "#9ca3af" }} title={tooltip}>{label}</span>
       <span style={{ fontSize: 13, fontWeight: 600, color }}>{fmt(value)}</span>
     </div>
   );
@@ -42,6 +44,7 @@ interface Props {
 }
 
 export function SummaryCardsV2({ data, loading }: Props) {
+  const { t } = useTranslation();
   const tools = data ? Object.keys(data.by_tool) : [];
 
   return (
@@ -80,10 +83,30 @@ export function SummaryCardsV2({ data, loading }: Props) {
           <p style={{ fontSize: 14, color: "#9ca3af" }}>—</p>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 2 }}>
-            <TokenRow label="input"        value={data.input_tokens}          color="#6366f1" />
-            <TokenRow label="output"       value={data.output_tokens}         color="#7c3aed" />
-            <TokenRow label="cache write"  value={data.cache_creation_tokens} color="#d97706" />
-            <TokenRow label="cache read"   value={data.cache_read_tokens}     color="#059669" />
+            <TokenRow
+              label={t(TOKEN_METRICS.fresh_input.i18nKey, TOKEN_METRICS.fresh_input.canonical)}
+              value={data.input_tokens}
+              color={TOKEN_METRICS.fresh_input.color}
+              tooltip={t(TOKEN_METRICS.fresh_input.tooltipKey)}
+            />
+            <TokenRow
+              label={t(TOKEN_METRICS.output.i18nKey, TOKEN_METRICS.output.canonical)}
+              value={data.output_tokens}
+              color={TOKEN_METRICS.output.color}
+              tooltip={t(TOKEN_METRICS.output.tooltipKey)}
+            />
+            <TokenRow
+              label={t(TOKEN_METRICS.cache_write.i18nKey, TOKEN_METRICS.cache_write.canonical)}
+              value={data.cache_creation_tokens}
+              color={TOKEN_METRICS.cache_write.color}
+              tooltip={t(TOKEN_METRICS.cache_write.tooltipKey)}
+            />
+            <TokenRow
+              label={t(TOKEN_METRICS.cache_read.i18nKey, TOKEN_METRICS.cache_read.canonical)}
+              value={data.cache_read_tokens}
+              color={TOKEN_METRICS.cache_read.color}
+              tooltip={t(TOKEN_METRICS.cache_read.tooltipKey)}
+            />
           </div>
         )}
       </div>
