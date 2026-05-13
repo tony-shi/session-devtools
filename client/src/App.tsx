@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { apiV2 } from "./v2/api";
 import { Header } from "./components/Header";
 import { ProxyV2Setup } from "./components/ProxyV2Setup";
@@ -9,6 +10,7 @@ import type { SessionsV2Response, SummaryV2 } from "./v2/types";
 type Tab = "sessions-v2" | "proxy-v2" | "trends";
 
 export default function App() {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<Tab>("sessions-v2");
   const [navOpen, setNavOpen] = useState(true);
 
@@ -61,7 +63,7 @@ export default function App() {
   const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode }[] = [
     {
       id: "sessions-v2",
-      label: "Sessions",
+      label: t("nav.sessions"),
       icon: (
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -71,7 +73,7 @@ export default function App() {
     },
     {
       id: "trends",
-      label: "Trends",
+      label: t("nav.trends"),
       icon: (
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -81,7 +83,7 @@ export default function App() {
     },
     {
       id: "proxy-v2",
-      label: "Proxy",
+      label: t("nav.proxy"),
       icon: (
         <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}

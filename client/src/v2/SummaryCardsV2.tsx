@@ -200,7 +200,7 @@ export function SummaryCardsV2({ data, loading }: Props) {
     <div style={{ display: "flex", gap: 12, alignItems: "stretch" }}>
       <StatCard label={t("dashboard.sessions")}  value={data?.total_sessions ?? "—"}              loading={loading} />
       <StatCard label={t("dashboard.userTurns")} value={data ? fmt(data.human_input_count) : "—"} loading={loading} />
-      <StatCard label={t("dashboard.llmCalls")}  value="—" sub={t("dashboard.comingSoon")}        loading={loading} />
+      <StatCard label={t("dashboard.llmCalls")}  value={data ? fmt(data.llm_call_count) : "—"}    loading={loading} />
       <TokenLedgerCard data={data} loading={loading} />
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
     </div>
@@ -255,7 +255,7 @@ export function MiniTokenLedger({ session, maxTotal }: { session: MiniLedgerSess
         {cacheRatio !== null && (
           <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
             <span style={{ fontSize: 9, color: "#9ca3af", fontWeight: 500, whiteSpace: "nowrap" }}>
-              {t("dashboard.cacheRatio")}
+              {TOKEN_METRICS.cache_ratio.label}
             </span>
             <span style={{ fontSize: 11, fontWeight: 700, color: TOKEN_METRICS.cache_ratio.color, lineHeight: 1 }}>
               {fmtPct(cacheRatio)}

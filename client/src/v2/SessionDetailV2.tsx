@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import React, { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import ReactMarkdown from "react-markdown";
@@ -372,6 +373,7 @@ function ChangeTypeIcon({ type }: { type: MockDiffEntry["changeType"] }) {
 // ─── Inspector Panels ─────────────────────────────────────────────────────────
 
 function SessionHotspotsPanel({ turns }: { turns: MockUserTurn[] }) {
+  const { t } = useTranslation();
   const biggestTurn = [...turns].sort((a, b) => b.netContextDelta - a.netContextDelta)[0];
   const biggestPeak = [...turns].sort((a, b) => b.peakContext - a.peakContext)[0];
   const unknownTurn = [...turns].sort((a, b) => b.unknownDelta - a.unknownDelta)[0];
@@ -380,14 +382,14 @@ function SessionHotspotsPanel({ turns }: { turns: MockUserTurn[] }) {
   return (
     <div style={{ padding: "16px 14px" }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.06em", marginBottom: 12 }}>
-        SESSION HOTSPOTS <MockBadge />
+        {t("sessionOverview.hotspots.title")} <MockBadge />
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <HotspotCard icon="↑" label="Largest growth" value={`Turn ${biggestTurn.id} · +${fmtK(biggestTurn.netContextDelta)}`} color="#d97706" />
-        <HotspotCard icon="⚡" label="Peak context" value={`Turn ${biggestPeak.id} · ${fmtK(biggestPeak.peakContext)}`} color="#6366f1" />
-        <HotspotCard icon="?" label="Largest unknown" value={`Turn ${unknownTurn.id} · +${fmtK(unknownTurn.unknownDelta)}`} color="#94a3b8" />
+        <HotspotCard icon="↑" label={t("sessionOverview.hotspots.largestGrowth")} value={`Turn ${biggestTurn.id} · +${fmtK(biggestTurn.netContextDelta)}`} color="#d97706" />
+        <HotspotCard icon="▲" label={t("sessionOverview.hotspots.peakContext")} value={`Turn ${biggestPeak.id} · ${fmtK(biggestPeak.peakContext)}`} color="#6366f1" />
+        <HotspotCard icon="?" label={t("sessionOverview.hotspots.largestUnknown")} value={`Turn ${unknownTurn.id} · +${fmtK(unknownTurn.unknownDelta)}`} color="#94a3b8" />
         {compactionTurns.length > 0 && (
-          <HotspotCard icon="◆" label="Compaction turns" value={compactionTurns.map(t => `Turn ${t.id}`).join(", ")} color="#ef4444" />
+          <HotspotCard icon="◆" label={t("sessionOverview.hotspots.compactionTurns")} value={compactionTurns.map(t => `Turn ${t.id}`).join(", ")} color="#ef4444" />
         )}
         <div style={{ borderTop: "1px solid #f3f4f6", paddingTop: 10, marginTop: 2 }}>
           <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>Top context contributors <MockBadge /></div>
@@ -550,6 +552,7 @@ function SessionOverviewPanel({
   drilldown: SessionDrilldown | null;
   onSelectTurn: (t: MockUserTurn) => void;
 }) {
+  const { t } = useTranslation();
   const isMock = drilldown === null;
 
   // Use deriveSessionMetrics when real data available; fallback to turn-computed values
@@ -620,10 +623,10 @@ function SessionOverviewPanel({
         {/* Row 1: Activity */}
         <div style={{ display: "flex", alignItems: "flex-end", gap: 24, paddingBottom: 10, borderBottom: "1px solid #f3f4f6", flexWrap: "wrap" }}>
           {[
-            { label: "User Turns", value: String(drilldown?.turns.length ?? turns.length), color: undefined as string | undefined },
-            { label: "LLM Calls",  value: String(totalCalls), color: undefined },
-            { label: "Tool Calls", value: String(totalToolCalls), color: undefined },
-            { label: "Duration",   value: durationStr, color: undefined },
+            { label: t("sessionOverview.activity.userTurns"), value: String(drilldown?.turns.length ?? turns.length), color: undefined as string | undefined },
+            { label: t("sessionOverview.activity.llmCalls"),  value: String(totalCalls), color: undefined },
+            { label: t("sessionOverview.activity.toolCalls"), value: String(totalToolCalls), color: undefined },
+            { label: t("sessionOverview.activity.duration"),  value: durationStr, color: undefined },
           ].map(({ label, value, color }) => (
             <div key={label}>
               <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{label}</div>
@@ -649,7 +652,7 @@ function SessionOverviewPanel({
                   color: modelsExpanded ? "#7c3aed" : "#6b7280", cursor: "pointer",
                 }}
               >
-                {Object.keys(modelBreakdown!).length} models
+                {t("sessionOverview.activity.models", { n: Object.keys(modelBreakdown!).length })}
                 <svg width="9" height="9" fill="none" stroke="currentColor" viewBox="0 0 24 24"
                   style={{ transform: modelsExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
@@ -671,12 +674,12 @@ function SessionOverviewPanel({
         <div style={{ paddingTop: 10 }}>
           {/* label + cache ratio */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-            <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>Token Ledger</span>
+            <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>{t("dashboard.tokenLedger")}</span>
             {cacheRatio !== null && (
               <>
                 <div style={{ width: 1, height: 10, background: "#e5e7eb" }} />
                 <span style={{ fontSize: 9, fontWeight: 700, color: M.cache_ratio.color }}>
-                  {M.cache_ratio.label} {fmtPct(cacheRatio)}
+                  {t("metrics.cacheRatio.label", M.cache_ratio.label)} {fmtPct(cacheRatio)}
                 </span>
               </>
             )}
@@ -712,11 +715,11 @@ function SessionOverviewPanel({
         const { compactionCount, errorCount, subAgentTurns, subAgentTotal, commandTurns, unknownTurns } = badgeSummary;
         type BS = { key: string; icon: React.ReactNode; label: string; detail: string; color: string };
         const items: BS[] = [
-          compactionCount > 0 ? { key: "C", icon: BADGE_ICONS.compaction(10, "#ef4444"), label: "Compaction", detail: `${compactionCount}t`, color: "#ef4444" } : null,
-          errorCount > 0      ? { key: "E", icon: BADGE_ICONS.error(10, "#dc2626"),      label: "Errors",      detail: `${errorCount}`,    color: "#dc2626" } : null,
-          subAgentTotal > 0   ? { key: "A", icon: BADGE_ICONS.subAgent(10, "#7c3aed"),   label: "Sub Agents",  detail: `${subAgentTotal} · ${subAgentTurns}t`, color: "#7c3aed" } : null,
-          commandTurns > 0    ? { key: "/", icon: BADGE_ICONS.command(10, "#d97706"),    label: "Commands",    detail: `${commandTurns}t`, color: "#d97706" } : null,
-          unknownTurns > 0    ? { key: "?", icon: BADGE_ICONS.unknown(10, "#9ca3af"),    label: "Unknown",     detail: `${unknownTurns}t`, color: "#9ca3af" } : null,
+          compactionCount > 0 ? { key: "C", icon: BADGE_ICONS.compaction(10, "#ef4444"), label: t("sessionOverview.badges.compaction"), detail: `${compactionCount}t`, color: "#ef4444" } : null,
+          errorCount > 0      ? { key: "E", icon: BADGE_ICONS.error(10, "#dc2626"),      label: t("sessionOverview.badges.errors"),      detail: `${errorCount}`,    color: "#dc2626" } : null,
+          subAgentTotal > 0   ? { key: "A", icon: BADGE_ICONS.subAgent(10, "#7c3aed"),   label: t("sessionOverview.badges.subAgents"),   detail: `${subAgentTotal} · ${subAgentTurns}t`, color: "#7c3aed" } : null,
+          commandTurns > 0    ? { key: "/", icon: BADGE_ICONS.command(10, "#d97706"),    label: t("sessionOverview.badges.commands"),    detail: `${commandTurns}t`, color: "#d97706" } : null,
+          unknownTurns > 0    ? { key: "?", icon: BADGE_ICONS.unknown(10, "#9ca3af"),    label: t("sessionOverview.badges.unknown"),     detail: `${unknownTurns}t`, color: "#9ca3af" } : null,
         ].filter(Boolean) as BS[];
         if (items.length === 0) return null;
         return (
@@ -735,7 +738,7 @@ function SessionOverviewPanel({
       {/* Context Overview Timeline */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
-          Context Timeline {isMock && <MockBadge />}
+          {t("sessionOverview.charts.contextTimeline")} {isMock && <MockBadge />}
         </div>
         <ContextTimelineChart turns={turns} isMock={isMock} />
       </div>
@@ -748,7 +751,7 @@ function SessionOverviewPanel({
         const maxCount = dist[0].count;
         return (
           <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Tool Usage</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>{t("sessionOverview.charts.toolUsage")}</div>
             <div>
               {dist.map(entry => (
                 <div key={entry.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
@@ -765,11 +768,11 @@ function SessionOverviewPanel({
       })()}
 
       {/* User Turn List */}
-      <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 10 }}>User Turns</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 10 }}>{t("sessionOverview.charts.userTurns")}</div>
       <div style={{ display: "flex", gap: 0 }}>
         {/* Left USER rail */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 26, flexShrink: 0 }}>
-          <span style={{ fontSize: 9, fontWeight: 600, color: "#93c5fd", letterSpacing: "0.05em", marginBottom: 4 }}>U</span>
+          <span style={{ fontSize: 9, fontWeight: 600, color: "#93c5fd", letterSpacing: "0.05em", marginBottom: 4 }}>{t("sessionOverview.turn.roleUser")}</span>
           <div style={{ flex: 1, width: 1, background: "#dbeafe" }} />
         </div>
         {/* Center content */}
@@ -780,7 +783,7 @@ function SessionOverviewPanel({
               <div style={{ display: "flex", alignItems: "center", gap: 8, margin: idx === 0 ? "0 0 8px" : "20px 0 8px" }}>
                 <div style={{ flex: 1, height: 1, background: "#f3f4f6" }} />
                 <span style={{ fontSize: 10, whiteSpace: "nowrap", flexShrink: 0 }}>
-                  <strong style={{ color: "#6366f1", fontWeight: 600 }}>Turn {turn.id}</strong>
+                  <strong style={{ color: "#6366f1", fontWeight: 600 }}>{t("sessionOverview.turn.label")} {turn.id}</strong>
                   {turn.startedAt ? <span style={{ color: "#d1d5db" }}>{`  ·  ${new Date(turn.startedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}`}</span> : null}
                 </span>
                 <div style={{ flex: 1, height: 1, background: "#f3f4f6" }} />
@@ -791,7 +794,7 @@ function SessionOverviewPanel({
         </div>
         {/* Right AI rail */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 26, flexShrink: 0 }}>
-          <span style={{ fontSize: 9, fontWeight: 600, color: "#86efac", letterSpacing: "0.05em", marginBottom: 4 }}>A</span>
+          <span style={{ fontSize: 9, fontWeight: 600, color: "#86efac", letterSpacing: "0.05em", marginBottom: 4 }}>{t("sessionOverview.turn.roleAgent")}</span>
           <div style={{ flex: 1, width: 1, background: "#dcfce7" }} />
         </div>
       </div>
@@ -820,6 +823,7 @@ function modelColor(m: string): string {
 function ModelBreakdownBlock({
   breakdown,
 }: { breakdown: Record<string, ModelStats> }) {
+  const { t } = useTranslation();
   const M = TOKEN_METRICS;
   const entries = Object.entries(breakdown).sort((a, b) => b[1].calls - a[1].calls);
   const totalCalls = entries.reduce((s, [, v]) => s + v.calls, 0);
@@ -834,7 +838,9 @@ function ModelBreakdownBlock({
       { id: "cache_write", value: stats.cacheWrite },
       { id: "output",      value: stats.outputTokens },
     ];
-    return { model, stats, ledger, ledgerTotal: ledger.reduce((s, r) => s + r.value, 0) };
+    const cacheInputTotal = (stats.freshIn ?? 0) + stats.cacheRead + stats.cacheWrite;
+    const cacheRatio = cacheInputTotal > 0 ? stats.cacheRead / cacheInputTotal * 100 : null;
+    return { model, stats, ledger, ledgerTotal: ledger.reduce((s, r) => s + r.value, 0), cacheRatio };
   });
   const maxLedgerTotal = Math.max(...rowData.map(r => r.ledgerTotal), 1);
 
@@ -843,13 +849,13 @@ function ModelBreakdownBlock({
       {/* header */}
       <div style={{ display: "grid", gridTemplateColumns: `1fr ${COL} 1fr`, alignItems: "end", paddingBottom: 4, borderBottom: "1px solid #f3f4f6" }}>
         <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>Model</span>
-        {["Calls", "Out"].map(h => (
+        {[t("sessionOverview.models.calls"), t("sessionOverview.models.output")].map(h => (
           <span key={h} style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textAlign: "right", textTransform: "uppercase", letterSpacing: "0.05em" }}>{h}</span>
         ))}
-        <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", paddingLeft: 16 }}>Token Ledger</span>
+        <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", paddingLeft: 16 }}>{t("dashboard.tokenLedger")}</span>
       </div>
 
-      {rowData.map(({ model, stats, ledger, ledgerTotal }, i) => {
+      {rowData.map(({ model, stats, ledger, ledgerTotal, cacheRatio }, i) => {
         const pct = totalCalls > 0 ? Math.round((stats.calls / totalCalls) * 100) : 0;
         const color = modelColor(model);
         // Bar width is proportional to global max — allows visual comparison across rows
@@ -892,6 +898,12 @@ function ModelBreakdownBlock({
                     </div>
                   );
                 })}
+                {cacheRatio !== null && (
+                  <div style={{ marginLeft: 4 }}>
+                    <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 500, marginBottom: 1, whiteSpace: "nowrap" }}>{t("metrics.cacheRatio.label", M.cache_ratio.label)}</div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: M.cache_ratio.color, lineHeight: 1 }}>{fmtPct(cacheRatio)}</div>
+                  </div>
+                )}
               </div>
               {/* Bar: outer track = full width, inner fill = proportion of max */}
               <div style={{ height: 3, borderRadius: 2, background: "#f3f4f6", overflow: "hidden" }}>
@@ -969,6 +981,7 @@ type TimelineXMode = "linear" | "time";
 function ContextTimelineChart({
   turns, isMock,
 }: { turns: MockUserTurn[]; isMock: boolean }) {
+  const { t } = useTranslation();
   const [xMode, setXMode] = useState<TimelineXMode>("linear");
   const chartRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<echarts.ECharts | null>(null);
@@ -1267,7 +1280,7 @@ function ContextTimelineChart({
               border: `1px solid ${xMode === mode ? "#6366f1" : "#e5e7eb"}`,
             }}
           >
-            {mode === "linear" ? "Linear" : "Time"}
+            {mode === "linear" ? t("sessionOverview.charts.xAxisLinear") : t("sessionOverview.charts.xAxisTime")}
           </button>
         ))}
       </div>
@@ -1277,8 +1290,8 @@ function ContextTimelineChart({
       {/* Footer annotation */}
       {!isMock && (
         <div style={{ padding: "2px 10px 6px", fontSize: 10, color: "#9ca3af", display: "flex", gap: 16, flexWrap: "wrap" }}>
-          <span>Peak: <strong style={{ color: "#374151" }}>{fmtK(peakCtx)}</strong></span>
-          {xMode === "time" && <span style={{ color: "#c4b5d5" }}>X axis = cumulative active time (user idle excluded)</span>}
+          <span>{t("sessionOverview.charts.peak")}: <strong style={{ color: "#374151" }}>{fmtK(peakCtx)}</strong></span>
+          {xMode === "time" && <span style={{ color: "#c4b5d5" }}>{t("sessionOverview.charts.xAxisTimeHint")}</span>}
         </div>
       )}
     </div>
@@ -1348,18 +1361,14 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
       {/* ── User bubble ── */}
       <div style={{ marginBottom: 6 }}>
         <div style={{ position: "relative" }}>
-          {/* left connector arrow */}
-          <div style={{
-            position: "absolute", left: -7, top: 10,
-            width: 0, height: 0,
-            borderTop: "5px solid transparent",
-            borderBottom: "5px solid transparent",
-            borderRight: "7px solid #bfdbfe",
-          }} />
+          {/* left soft arrow */}
+          <svg style={{ position: "absolute", left: -8, top: 8 }} width="9" height="14" viewBox="0 0 9 14" fill="none">
+            <path d="M9 2 Q9 0 7 1 L1 7 L7 13 Q9 14 9 12 Z" fill="#eff6ff" stroke="#bfdbfe" strokeWidth="1" strokeLinejoin="round"/>
+          </svg>
           <div style={{
             fontSize: 12, color: "#1e3a5f", lineHeight: 1.55,
             background: "#eff6ff", border: "1px solid #bfdbfe",
-            borderRadius: "2px 12px 12px 12px",
+            borderRadius: "12px",
             padding: "8px 12px",
             whiteSpace: "pre-wrap", wordBreak: "break-word",
           }}>
@@ -1416,18 +1425,14 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
             </button>
           </div>
           <div style={{ position: "relative" }}>
-            {/* right connector arrow */}
-            <div style={{
-              position: "absolute", right: -7, top: 10,
-              width: 0, height: 0,
-              borderTop: "5px solid transparent",
-              borderBottom: "5px solid transparent",
-              borderLeft: "7px solid #bbf7d0",
-            }} />
+            {/* right soft arrow */}
+            <svg style={{ position: "absolute", right: -8, top: 8 }} width="9" height="14" viewBox="0 0 9 14" fill="none">
+              <path d="M0 2 Q0 0 2 1 L8 7 L2 13 Q0 14 0 12 Z" fill="#f0fdf4" stroke="#bbf7d0" strokeWidth="1" strokeLinejoin="round"/>
+            </svg>
           <div style={{
             fontSize: 12, color: "#14532d", lineHeight: 1.6,
             background: "#f0fdf4", border: "1px solid #bbf7d0",
-            borderRadius: "12px 2px 12px 12px",
+            borderRadius: "12px",
             padding: "8px 12px",
           }}>
             {mdMode ? (
@@ -2652,91 +2657,61 @@ function callDescription(call: MockLlmCall): string {
   return parts.join(" + ");
 }
 
-// ── inputLabel: strip JSON wrapper to get the key argument ────────────────────
-function inputLabel(tc: ToolCallSlot): string {
-  // Try to pull the single most-meaningful value (url, command, file_path, query, pattern)
-  try {
-    const obj = JSON.parse(tc.inputPreview) as Record<string, unknown>;
-    for (const k of ["command", "url", "file_path", "pattern", "query", "prompt", "path", "description"]) {
-      if (typeof obj[k] === "string") return (obj[k] as string).slice(0, 120);
-    }
-  } catch { /* not JSON */ }
-  return tc.inputPreview.slice(0, 120);
-}
-
-// ── ToolCallPair: one dispatched tool_use + its tool_result, grouped ──────────
-function ToolCallPair({ tc }: { tc: ToolCallSlot }) {
+// ── ToolCallRow: dispatched from call + result injected into next ─────────────
+function ToolCallRow({ tc }: { tc: ToolCallSlot }) {
   const [expanded, setExpanded] = useState(false);
   const chip = toolChip(tc.name);
   const hasOutput = tc.outputSize > 0;
-  const label = inputLabel(tc);
 
   return (
-    <div style={{ border: `1px solid ${tc.isError ? "#fecaca" : "#e5e7eb"}`, borderRadius: 7, overflow: "hidden", marginBottom: 4 }}>
-      {/* ── Dispatch row ── */}
+    <div style={{ marginBottom: 3 }}>
       <div
         onClick={() => setExpanded(v => !v)}
         style={{
-          display: "flex", alignItems: "center", gap: 6, padding: "5px 10px",
-          cursor: "pointer",
+          display: "flex", alignItems: "center", gap: 6, padding: "4px 8px",
+          borderRadius: 6, cursor: "pointer",
           background: tc.isError ? "#fef2f2" : "#fafafa",
-          borderBottom: expanded ? `1px solid ${tc.isError ? "#fecaca" : "#e5e7eb"}` : "none",
+          border: `1px solid ${tc.isError ? "#fecaca" : "#f0f0f0"}`,
         }}
         onMouseEnter={e => { e.currentTarget.style.background = tc.isError ? "#fee2e2" : "#f3f4f6"; }}
         onMouseLeave={e => { e.currentTarget.style.background = tc.isError ? "#fef2f2" : "#fafafa"; }}
       >
-        <span style={{ fontSize: 9, color: "#94a3b8", flexShrink: 0, userSelect: "none" }}>↳</span>
+        {/* Dispatch arrow */}
+        <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>↳</span>
+        {/* Tool chip */}
         <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: chip.bg, border: `1px solid ${chip.border}`, color: chip.fg, flexShrink: 0 }}>
           {tc.name}
         </span>
+        {/* Input preview — most important identifier */}
         <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-          {label}
+          {tc.inputPreview.replace(/^\{?\s*"(?:command|file_path|pattern|query|prompt|url|description)"\s*:\s*"/, "").replace(/",?\s*.*$/, "").slice(0, 100)}
         </span>
+        {/* Size badges */}
         <div style={{ display: "flex", gap: 5, flexShrink: 0, alignItems: "center" }}>
           {tc.inputSize > 0 && <span style={{ fontSize: 9, color: "#9ca3af" }}>in {fmtBytes(tc.inputSize)}</span>}
-          {tc.isError && <span style={{ fontSize: 9, fontWeight: 700, color: "#dc2626" }}>ERR</span>}
+          {hasOutput && <span style={{ fontSize: 9, fontWeight: 600, color: tc.outputSize > 10_000 ? "#d97706" : "#059669" }}>out {fmtBytes(tc.outputSize)}</span>}
+          {tc.isError && <span style={{ fontSize: 9, fontWeight: 700, color: "#dc2626", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 3, padding: "1px 4px" }}>ERR</span>}
+          {!hasOutput && !tc.isError && <span style={{ fontSize: 9, color: "#d1d5db" }}>no result</span>}
           <span style={{ fontSize: 9, color: "#d1d5db" }}>{expanded ? "▲" : "▼"}</span>
         </div>
       </div>
 
-      {/* ── Result row (always visible when not expanded, compact) ── */}
-      {!expanded && hasOutput && (
-        <div
-          onClick={() => setExpanded(true)}
-          style={{ display: "flex", alignItems: "flex-start", gap: 6, padding: "4px 10px", background: "#f0fdf4", cursor: "pointer" }}
-          onMouseEnter={e => { e.currentTarget.style.background = "#dcfce7"; }}
-          onMouseLeave={e => { e.currentTarget.style.background = "#f0fdf4"; }}
-        >
-          <span style={{ fontSize: 9, color: "#22c55e", flexShrink: 0, paddingTop: 1, userSelect: "none" }}>↩</span>
-          <span style={{ fontSize: 10, color: "#166534", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.4 }}>
-            {tc.outputPreview.slice(0, 160)}
-          </span>
-          <span style={{ fontSize: 9, color: "#86efac", flexShrink: 0 }}>{fmtBytes(tc.outputSize)}</span>
-        </div>
-      )}
-      {!expanded && !hasOutput && !tc.isError && (
-        <div style={{ padding: "3px 10px 4px 26px", fontSize: 9, color: "#d1d5db" }}>no result</div>
-      )}
-
-      {/* ── Expanded: full input + full result ── */}
       {expanded && (
-        <div>
+        <div style={{ marginLeft: 12, marginTop: 2, display: "flex", flexDirection: "column", gap: 3 }}>
+          {/* INPUT — what was dispatched */}
           {tc.inputPreview && (
-            <div style={{ padding: "6px 10px", background: "#f8fafc", borderBottom: hasOutput ? "1px solid #e5e7eb" : "none" }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", letterSpacing: "0.05em", marginBottom: 3 }}>
-                INPUT <span style={{ fontWeight: 400, color: "#94a3b8" }}>{fmtBytes(tc.inputSize)}</span>
-              </div>
-              <pre style={{ margin: 0, fontSize: 11, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 120, overflow: "auto" }}>
-                {tc.inputPreview}
-              </pre>
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderLeft: "3px solid #94a3b8", borderRadius: "0 5px 5px 0", padding: "5px 8px" }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "#64748b", letterSpacing: "0.05em" }}>INPUT &nbsp;</span>
+              <span style={{ fontSize: 9, color: "#94a3b8" }}>{fmtBytes(tc.inputSize)}</span>
+              <pre style={{ margin: "3px 0 0", fontSize: 11, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 100, overflow: "auto" }}>{tc.inputPreview}</pre>
             </div>
           )}
+          {/* OUTPUT — what was injected back */}
           {hasOutput && (
-            <div style={{ padding: "6px 10px", background: "#f0fdf4" }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", letterSpacing: "0.05em", marginBottom: 3 }}>
-                RESULT <span style={{ fontWeight: 400, color: "#86efac" }}>{fmtBytes(tc.outputSize)}</span>
-              </div>
-              <pre style={{ margin: 0, fontSize: 11, color: "#166534", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 160, overflow: "auto" }}>
+            <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderLeft: "3px solid #22c55e", borderRadius: "0 5px 5px 0", padding: "5px 8px" }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", letterSpacing: "0.05em" }}>RESULT &nbsp;</span>
+              <span style={{ fontSize: 9, color: "#86efac" }}>{fmtBytes(tc.outputSize)} injected → next call</span>
+              <pre style={{ margin: "3px 0 0", fontSize: 11, color: "#166534", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 140, overflow: "auto" }}>
                 {tc.outputPreview}{tc.outputSize > 300 ? "\n…" : ""}
               </pre>
             </div>
@@ -2790,86 +2765,7 @@ function IntervalEventRow({ ev }: { ev: IntervalEvent }) {
   );
 }
 
-// ── Conversation chat layout ─────────────────────────────────────────────────
-// Layout: a single vertical spine on the very left (git-tree style) with a
-// circular node per event. Events are message-shaped bubbles to the right of
-// the spine, biased left or right by role.
-//
-// Semantics (Anthropic API messages model):
-//   - role=user (left side)      → user input, tool_results, mid-turn injections
-//   - role=assistant (right side) → LLM response: tool_use blocks, text blocks
-//
-// "LLM Call" === one assistant message. Its tool_use blocks are the *request*
-// the LLM emits asking us to run tools; the *responses* to those requests come
-// back as the next user message's tool_result blocks (rendered left-side).
-
-const SPINE_X       = 14;   // px from container left edge
-const CONTENT_LEFT  = 30;   // px — start of content (past spine + dot)
-const BUBBLE_GAP    = 12;   // px between left and right bubbles
-const BUBBLE_MAX_W  = "62%";
-
-function SpineNode({ color }: { color: string }) {
-  return (
-    <div style={{
-      position: "absolute", left: SPINE_X - 4, top: 6,
-      width: 10, height: 10, borderRadius: "50%",
-      background: "#fff", border: `2px solid ${color}`,
-      zIndex: 1,
-    }} />
-  );
-}
-
-function EventRow({ side, dotColor, children }: {
-  side: "left" | "right" | "full";
-  dotColor: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{ position: "relative", paddingLeft: CONTENT_LEFT, marginBottom: 6 }}>
-      <SpineNode color={dotColor} />
-      <div style={{
-        display: "flex",
-        justifyContent: side === "left" ? "flex-start" : side === "right" ? "flex-end" : "stretch",
-      }}>
-        <div style={{ maxWidth: side === "full" ? "100%" : BUBBLE_MAX_W, width: side === "full" ? "100%" : undefined, marginRight: side === "left" ? BUBBLE_GAP : 0, marginLeft: side === "right" ? BUBBLE_GAP : 0 }}>
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── ToolResultRow ─────────────────────────────────────────────────────────────
-function ToolResultRow({ ev, col, isResult }: { ev: IntervalEvent; col: { bg: string; border: string; fg: string }; isResult: boolean }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div onClick={() => setExpanded(v => !v)} style={{ cursor: "pointer" }}>
-      <div style={{
-        background: isResult ? "#fafafa" : col.bg,
-        border: `1px solid ${isResult ? "#e5e7eb" : col.border}`,
-        borderRadius: 6, padding: "5px 9px",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 9, fontWeight: 700, color: col.fg, flexShrink: 0 }}>
-            {KIND_LABEL[ev.kind]}
-          </span>
-          <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-            {ev.contentPreview.slice(0, 100)}
-          </span>
-          {ev.contentSize > 0 && <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>{fmtBytes(ev.contentSize)}</span>}
-          <span style={{ fontSize: 8, color: "#d1d5db" }}>{expanded ? "▲" : "▼"}</span>
-        </div>
-        {expanded && (
-          <pre style={{ margin: "5px 0 0", fontSize: 10, color: "#374151", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 160, overflowY: "auto" }}>
-            {ev.rawJson.length > 1200 ? ev.rawJson.slice(0, 1200) + "\n…" : ev.rawJson}
-          </pre>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── JsonlCallChain ────────────────────────────────────────────────────────────
+// ── JsonlCallChain: main component ────────────────────────────────────────────
 function JsonlCallChain({
   turn, onSelectCall, onSubAgentClick,
 }: {
@@ -2877,6 +2773,7 @@ function JsonlCallChain({
   onSelectCall: (c: MockLlmCall) => void;
   onSubAgentClick?: (sa: import("./drilldown-types").SubAgentSummary) => void;
 }) {
+  // Filter state: null means "show all" (default); populated = active filter set
   const [hiddenKinds, setHiddenKinds] = useState<Set<IntervalEventKind>>(new Set());
   const [filterOpen, setFilterOpen] = useState(false);
 
@@ -2892,215 +2789,202 @@ function JsonlCallChain({
     });
   }
 
-  function evSide(kind: IntervalEventKind): "left" | "pill" {
-    if (kind === "user:human" || kind === "user:tool_result" || kind === "user:command") return "left";
-    return "pill";
-  }
-
   return (
     <div>
-      {/* ── Stats + filter ──────────────────────────────────── */}
-      <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 9, color: "#d1d5db" }}>
-          {turn.calls.length} calls · {turn.calls.reduce((s, c) => s + c.intervalEvents.length, 0)} events
-        </span>
+      {/* ── Filter bar ──────────────────────────────────────────── */}
+      <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
         <button
           onClick={() => setFilterOpen(v => !v)}
-          style={{ fontSize: 9, padding: "2px 8px", borderRadius: 4, cursor: "pointer", border: "1px solid #e5e7eb", background: "transparent", color: filterOpen ? "#6366f1" : "#9ca3af" }}
+          style={{
+            fontSize: 10, padding: "3px 10px", borderRadius: 5, cursor: "pointer",
+            border: "1px solid #e5e7eb", background: filterOpen ? "#6366f1" : "#f9fafb",
+            color: filterOpen ? "#fff" : "#6b7280", fontWeight: 600,
+          }}
         >
-          {filterOpen ? "hide filter" : "filter"}{hiddenKinds.size > 0 ? ` (${hiddenKinds.size})` : ""}
+          ⚙ Filter events {hiddenKinds.size > 0 && `(${hiddenKinds.size} hidden)`}
         </button>
         {hiddenKinds.size > 0 && (
-          <button onClick={() => setHiddenKinds(new Set())} style={{ fontSize: 9, color: "#6366f1", background: "none", border: "none", cursor: "pointer", padding: 0 }}>reset</button>
+          <button onClick={() => setHiddenKinds(new Set())} style={{ fontSize: 10, color: "#6366f1", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+            show all
+          </button>
         )}
+        <span style={{ fontSize: 9, color: "#d1d5db", marginLeft: "auto" }}>
+          {turn.calls.length} calls · {turn.calls.reduce((s, c) => s + c.intervalEvents.length, 0)} events
+        </span>
       </div>
+
+      {/* Filter panel */}
       {filterOpen && (
-        <div style={{ marginBottom: 12, padding: "6px 10px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6, display: "flex", flexWrap: "wrap", gap: 4 }}>
+        <div style={{ marginBottom: 10, padding: "8px 10px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, display: "flex", flexWrap: "wrap", gap: 5 }}>
           {ALL_KINDS.map(k => {
             const hidden = hiddenKinds.has(k);
             const col = KIND_COLOR[k];
             return (
-              <button key={k} onClick={() => toggleKind(k)} style={{
-                fontSize: 9, padding: "2px 6px", borderRadius: 3, cursor: "pointer",
-                background: hidden ? "#f3f4f6" : col.bg,
-                border: `1px solid ${hidden ? "#d1d5db" : col.border}`,
-                color: hidden ? "#9ca3af" : col.fg,
-                textDecoration: hidden ? "line-through" : "none",
-              }}>{KIND_LABEL[k]}</button>
+              <button
+                key={k}
+                onClick={() => toggleKind(k)}
+                style={{
+                  fontSize: 9, padding: "2px 7px", borderRadius: 4, cursor: "pointer",
+                  background: hidden ? "#f3f4f6" : col.bg,
+                  border: `1px solid ${hidden ? "#d1d5db" : col.border}`,
+                  color: hidden ? "#9ca3af" : col.fg,
+                  fontWeight: 600,
+                  textDecoration: hidden ? "line-through" : "none",
+                }}
+              >
+                {KIND_LABEL[k]}
+              </button>
             );
           })}
         </div>
       )}
 
-      {/* ── Conversation stream ─────────────────────────────── */}
-      <div style={{ position: "relative" }}>
-        {/* Spine — single vertical line on the left, git-style */}
-        <div style={{ position: "absolute", left: SPINE_X, top: 6, bottom: 6, width: 1, background: "#e5e7eb", pointerEvents: "none" }} />
+      {/* ── Call chain ──────────────────────────────────────────── */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 0, position: "relative" }}>
+        {/* Vertical spine */}
+        <div style={{ position: "absolute", left: 11, top: 8, bottom: 8, width: 2, background: "#e5e7eb", zIndex: 0 }} />
 
-        {/* User input */}
-        {turn.userInput && (
-          <EventRow side="left" dotColor="#10b981">
-            <div style={{ background: "#f0fdf4", border: "1px solid #d1fae5", borderRadius: "4px 10px 10px 10px", padding: "7px 11px" }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: "#10b981", marginBottom: 3, letterSpacing: "0.05em" }}>USER</div>
-              <div style={{ fontSize: 11, color: "#065f46", lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 100, overflow: "hidden" }}>
-                {turn.userInput}
-              </div>
-            </div>
-          </EventRow>
-        )}
-
-        {/* Mid-turn injections */}
-        {turn.midTurnInjections?.map((inj, i) => (
-          <EventRow key={`inj-${i}`} side="left" dotColor="#d97706">
-            <div style={{ background: "#fffbeb", border: "1px solid #fcd34d", borderRadius: "4px 10px 10px 10px", padding: "6px 10px" }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: "#d97706", marginBottom: 2, letterSpacing: "0.05em" }}>↩ INTERRUPT · after call {inj.afterCallIndex}</div>
-              <div style={{ fontSize: 11, color: "#78350f", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{inj.text}</div>
-            </div>
-          </EventRow>
-        ))}
-
-        {/* Per-call block */}
-        {turn.calls.map((call) => {
-          const delta       = call.significantDelta;
+        {turn.calls.map((call, idx) => {
+          const delta    = call.significantDelta;
+          // Context bar: absolute width proportional to contextSize / maxCtx
           const ctxWidthPct = Math.round(call.contextSize / maxCtx * 100);
-          const readFrac    = call.contextSize > 0 ? call.cacheRead  / call.contextSize : 0;
-          const writeFrac   = call.contextSize > 0 ? call.cacheWrite / call.contextSize : 0;
-          const freshFrac   = call.contextSize > 0 ? call.freshIn    / call.contextSize : 0;
+          // Segment percentages within the bar
+          const readFrac  = call.contextSize > 0 ? call.cacheRead  / call.contextSize : 0;
+          const writeFrac = call.contextSize > 0 ? call.cacheWrite / call.contextSize : 0;
+          const freshFrac = call.contextSize > 0 ? call.freshIn    / call.contextSize : 0;
+
           const visibleIntervals = call.intervalEvents.filter(ev => !hiddenKinds.has(ev.kind));
-          const leftEvs  = visibleIntervals.filter(ev => evSide(ev.kind) === "left");
-          const pillEvs  = visibleIntervals.filter(ev => evSide(ev.kind) === "pill");
 
           return (
-            <React.Fragment key={call.id}>
+            <div key={call.id} style={{ position: "relative", zIndex: 1, marginBottom: 8 }}>
 
-              {/* LEFT — tool results / user events that landed before this LLM response */}
-              {leftEvs.map((ev, ei) => {
-                const col = KIND_COLOR[ev.kind];
-                return (
-                  <EventRow key={`${ev.lineIdx}-${ei}`} side="left" dotColor={col.fg}>
-                    <ToolResultRow ev={ev} col={col} isResult={ev.kind === "user:tool_result"} />
-                  </EventRow>
-                );
-              })}
+              {/* ── LLM Call card ───────────────────────────── */}
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                {/* Spine dot */}
+                <div style={{ flexShrink: 0, marginTop: 10, width: 24, display: "flex", justifyContent: "center" }}>
+                  <div style={{
+                    width: 14, height: 14, borderRadius: "50%", border: "2px solid #fff",
+                    background: call.isCompaction ? "#ef4444" : call.isSignificant ? "#3b82f6" : "#6366f1",
+                    boxShadow: "0 0 0 2px " + (call.isCompaction ? "#ef444440" : "#6366f140"),
+                  }} />
+                </div>
 
-              {/* CENTRE — small system pills */}
-              {pillEvs.length > 0 && (
-                <div style={{ paddingLeft: CONTENT_LEFT, display: "flex", justifyContent: "center", gap: 4, flexWrap: "wrap", marginBottom: 5 }}>
-                  {pillEvs.map((ev, ei) => {
-                    const col = KIND_COLOR[ev.kind];
-                    return (
-                      <span key={`${ev.lineIdx}-${ei}`} title={ev.contentPreview.slice(0, 200)} style={{
-                        fontSize: 9, color: col.fg, background: col.bg, border: `1px solid ${col.border}`,
-                        borderRadius: 10, padding: "1px 7px",
-                      }}>
-                        {KIND_LABEL[ev.kind]}{ev.contentSize > 0 ? ` · ${fmtBytes(ev.contentSize)}` : ""}
+                {/* Card */}
+                <div
+                  onClick={() => onSelectCall(call)}
+                  style={{ flex: 1, border: "1px solid #e5e7eb", borderRadius: 8, background: "#fff", cursor: "pointer", overflow: "hidden" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "#6366f1"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e7eb"; }}
+                >
+                  {/* Header */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderBottom: "1px solid #f3f4f6" }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>
+                      Call #{call.id}
+                      {call.isCompaction && <span style={{ marginLeft: 5, fontSize: 10, color: "#ef4444" }}>◆</span>}
+                    </span>
+                    <span style={{ fontSize: 11, color: "#9ca3af" }}>{fmtK(call.contextSize)}</span>
+                    {delta !== 0 && (
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, color: delta > 0 ? "#d97706" : "#16a34a", background: delta > 0 ? "#fffbeb" : "#f0fdf4" }}>
+                        {delta > 0 ? "+" : ""}{fmtK(delta)}
                       </span>
-                    );
-                  })}
+                    )}
+                    <span style={{ marginLeft: "auto", fontSize: 10, color: call.stopReason === "end_turn" ? "#16a34a" : "#9ca3af", fontWeight: 600 }}>
+                      {call.stopReason === "end_turn" ? "✓ end_turn" : call.stopReason === "tool_use" ? "⚙ tool_use" : (call.stopReason ?? "")}
+                    </span>
+                    <span style={{ fontSize: 10, color: "#d1d5db" }}>›</span>
+                  </div>
+
+                  {/* Context bar — ABSOLUTE width shows context size visually */}
+                  <div style={{ padding: "6px 12px 7px" }}>
+                    {/* Outer track = full Turn max context */}
+                    <div style={{ height: 8, background: "#f3f4f6", borderRadius: 4, overflow: "hidden" }}>
+                      {/* Inner fill = this call's contextSize / maxCtx */}
+                      <div style={{ width: `${ctxWidthPct}%`, height: "100%", display: "flex", borderRadius: 4, overflow: "hidden" }}>
+                        <div style={{ flex: readFrac,  background: "#a5b4fc" }} title={`cache_read ${fmtK(call.cacheRead)}`} />
+                        <div style={{ flex: writeFrac, background: "#6366f1" }} title={`cache_write ${fmtK(call.cacheWrite)}`} />
+                        <div style={{ flex: freshFrac, background: "#f97316" }} title={`fresh ${fmtK(call.freshIn)}`} />
+                      </div>
+                    </div>
+                    {/* Legend */}
+                    <div style={{ display: "flex", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+                      {[
+                        { color: "#a5b4fc", label: "read",  val: call.cacheRead,  pct: Math.round(readFrac * 100) },
+                        { color: "#6366f1", label: "write", val: call.cacheWrite, pct: Math.round(writeFrac * 100) },
+                        { color: "#f97316", label: "fresh", val: call.freshIn,    pct: Math.round(freshFrac * 100) },
+                      ].map(({ color, label, val, pct }) => val > 0 ? (
+                        <span key={label} style={{ fontSize: 9, color: "#6b7280", display: "flex", alignItems: "center", gap: 3 }}>
+                          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 1, background: color }} />
+                          {label} {fmtK(val)} ({pct}%)
+                        </span>
+                      ) : null)}
+                      <span style={{ fontSize: 9, color: "#9ca3af", marginLeft: "auto" }}>out {fmtK(call.outputTokens)}</span>
+                    </div>
+                  </div>
+
+                  {/* Assistant text */}
+                  {call.assistantText && (
+                    <div style={{ padding: "0 12px 7px" }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", marginBottom: 2, letterSpacing: "0.04em" }}>ASSISTANT TEXT</div>
+                      <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, background: "#f9fafb", borderRadius: 5, padding: "5px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
+                        {call.assistantText}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ── Dispatched tool calls ─────────────────────── */}
+              {call.toolCalls.length > 0 && (
+                <div style={{ marginLeft: 32, marginTop: 3 }}>
+                  <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, letterSpacing: "0.04em", fontWeight: 600 }}>
+                    DISPATCHED ({call.toolCalls.length})
+                  </div>
+                  {call.toolCalls.map((tc, ti) => (
+                    <ToolCallRow key={tc.toolUseId || ti} tc={tc} />
+                  ))}
                 </div>
               )}
 
-              {/* RIGHT — LLM response (assistant message) */}
-              <EventRow side="right" dotColor={call.isCompaction ? "#ef4444" : "#6366f1"}>
-                <div>
-                  <div
-                    onClick={() => onSelectCall(call)}
-                    style={{ border: "1px solid #e5e7eb", borderRadius: "10px 4px 10px 10px", background: "#fff", cursor: "pointer", overflow: "hidden" }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = "#a5b4fc"; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e7eb"; }}
-                  >
-                    {/* Header — describes what LLM responded with */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 11px", borderBottom: "1px solid #f3f4f6" }}>
-                      <span style={{ fontSize: 9, fontWeight: 700, color: call.isCompaction ? "#ef4444" : "#6366f1", flexShrink: 0, letterSpacing: "0.05em" }}>
-                        LLM #{call.indexInTurn}{call.isCompaction ? " ◆" : ""}
-                      </span>
-                      <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-                        {callDescription(call)}
-                      </span>
-                      <span style={{ fontSize: 9, color: "#d1d5db", flexShrink: 0 }}>›</span>
-                    </div>
-
-                    {/* Request meta: what context was sent */}
-                    <div style={{ padding: "5px 11px", borderBottom: call.assistantText || call.toolCalls.length > 0 ? "1px solid #f3f4f6" : "none", background: "#fafafa" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                        <span style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600 }}>REQUEST</span>
-                        <span style={{ fontSize: 9, color: "#6b7280" }}>ctx {fmtK(call.contextSize)}</span>
-                        {delta !== 0 && (
-                          <span style={{ fontSize: 9, fontWeight: 700, color: delta > 0 ? "#d97706" : "#16a34a" }}>
-                            {delta > 0 ? "+" : ""}{fmtK(delta)}
-                          </span>
-                        )}
-                        <span style={{ fontSize: 9, color: "#c4c9d4", marginLeft: "auto" }}>out {fmtK(call.outputTokens)}</span>
-                      </div>
-                      <div style={{ height: 3, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
-                        <div style={{ width: `${ctxWidthPct}%`, height: "100%", display: "flex", borderRadius: 2, overflow: "hidden" }}>
-                          <div style={{ flex: readFrac,  background: "#a5b4fc" }} />
-                          <div style={{ flex: writeFrac, background: "#6366f1" }} />
-                          <div style={{ flex: freshFrac, background: "#f97316" }} />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Assistant text — response text content */}
-                    {call.assistantText && (
-                      <div style={{ padding: "6px 11px", borderBottom: call.toolCalls.length > 0 ? "1px solid #f3f4f6" : "none" }}>
-                        <div style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", marginBottom: 3, letterSpacing: "0.05em" }}>RESPONSE TEXT</div>
-                        <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 80, overflow: "hidden" }}>
-                          {call.assistantText}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* tool_use blocks — these are requests FROM the LLM asking us to run tools */}
-                    {call.toolCalls.length > 0 && (
-                      <div style={{ padding: "6px 9px", display: "flex", flexDirection: "column", gap: 3 }}>
-                        <div style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", marginBottom: 1, letterSpacing: "0.05em" }}>
-                          TOOL_USE REQUESTS{call.toolCalls.length > 1 ? ` · ∥ ×${call.toolCalls.length}` : ""}
-                        </div>
-                        {call.toolCalls.map((tc, ti) => (
-                          <ToolCallPair key={tc.toolUseId || ti} tc={tc} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Sub-agent branch */}
+              {/* ── Sub-agent branches ────────────────────────── */}
+              {call.subAgents.length > 0 && (
+                <div style={{ marginLeft: 32, marginTop: 3 }}>
                   {call.subAgents.map(sa => (
-                    <button
-                      key={sa.agentFileId}
-                      onClick={() => onSubAgentClick?.(sa)}
-                      style={{ display: "flex", flexDirection: "column", gap: 2, width: "100%", marginTop: 4, border: "1.5px dashed #c4b5fd", borderRadius: 8, background: "#faf5ff", padding: "6px 10px", cursor: onSubAgentClick ? "pointer" : "default", textAlign: "left" }}
-                      onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "#ede9fe"; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = "#faf5ff"; }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <span style={{ fontSize: 11, color: "#7c3aed", fontWeight: 700 }}>⎇</span>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6" }}>{sa.agentType}</span>
-                        <span style={{ fontSize: 9, color: "#7c3aed" }}>{sa.llmCallCount}c · {sa.toolCallCount}t · {fmtDuration(sa.durationMs)}</span>
-                        <CompressionCapsule sa={sa} />
-                        {onSubAgentClick && <span style={{ fontSize: 9, color: "#a5b4fc", marginLeft: "auto" }}>›</span>}
+                    <div key={sa.agentFileId} style={{ display: "flex", alignItems: "flex-start", marginBottom: 4 }}>
+                      <div style={{ width: 16, flexShrink: 0 }}>
+                        <div style={{ width: 12, height: 10, borderLeft: "1.5px solid #6366f180", borderBottom: "1.5px solid #6366f180", borderBottomLeftRadius: 4, marginTop: 4 }} />
                       </div>
-                      {sa.description && <div style={{ fontSize: 10, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.description}</div>}
-                    </button>
+                      <button
+                        onClick={() => onSubAgentClick?.(sa)}
+                        style={{ flex: 1, border: "1.5px solid #6366f1", borderRadius: 7, background: "#fafafe", padding: "5px 9px", cursor: onSubAgentClick ? "pointer" : "default", textAlign: "left", display: "flex", flexDirection: "column", gap: 2 }}
+                        onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "#eff6ff"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "#fafafe"; }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: "#4338ca" }}>{sa.agentType}</span>
+                          <span style={{ fontSize: 9, color: "#6366f1" }}>{sa.llmCallCount}c · {sa.toolCallCount}t · {fmtDuration(sa.durationMs)}</span>
+                          <span style={{ fontSize: 9, color: "#6366f1", background: "#eff6ff", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
+                          {onSubAgentClick && <span style={{ fontSize: 9, color: "#a5b4fc", marginLeft: "auto" }}>›</span>}
+                        </div>
+                        {sa.description && <div style={{ fontSize: 10, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.description}</div>}
+                        {sa.resultPreview && <div style={{ fontSize: 10, color: "#374151", background: "#f5f3ff", borderRadius: 4, padding: "1px 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.resultPreview.slice(0, 100)}{sa.resultPreview.length > 100 ? "…" : ""}</div>}
+                      </button>
+                    </div>
                   ))}
                 </div>
-              </EventRow>
+              )}
 
-            </React.Fragment>
+              {/* ── Interval events (filtered) ────────────────── */}
+              {visibleIntervals.length > 0 && (
+                <div style={{ marginLeft: 32, marginTop: 3 }}>
+                  {visibleIntervals.map((ev, ei) => (
+                    <IntervalEventRow key={`${ev.lineIdx}-${ei}`} ev={ev} />
+                  ))}
+                </div>
+              )}
+
+            </div>
           );
         })}
-
-        {/* Final output */}
-        {turn.finalOutput && (
-          <EventRow side="right" dotColor="#16a34a">
-            <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "10px 4px 10px 10px", padding: "7px 11px" }}>
-              <div style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", marginBottom: 3, letterSpacing: "0.05em" }}>AI · FINAL</div>
-              <div style={{ fontSize: 11, color: "#14532d", lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 140, overflow: "hidden" }}>
-                {turn.finalOutput}
-              </div>
-            </div>
-          </EventRow>
-        )}
       </div>
     </div>
   );
@@ -3109,6 +2993,7 @@ function JsonlCallChain({
 function UserTurnDetailPanel({
   turn, onSelectCall, isMockSession = false, onSubAgentClick, trailingInterTurnBlock = null,
 }: { turn: MockUserTurn; onSelectCall: (c: MockLlmCall) => void; isMockSession?: boolean; onSubAgentClick?: (sa: SubAgentSummary) => void; trailingInterTurnBlock?: InterTurnBlock | null }) {
+  const { t } = useTranslation();
 
   const callsWithSubAgents = turn.calls.map((c, ci) => {
     // For mock sessions, inject mock sub-agent if none present
@@ -3161,17 +3046,17 @@ function UserTurnDetailPanel({
         <div style={{ display: "flex", alignItems: "flex-end", gap: 24, paddingBottom: 10, borderBottom: "1px solid #f3f4f6", flexWrap: "wrap" }}>
           {/* Turn label */}
           <div>
-            <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Turn</div>
+            <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{t("sessionOverview.turn.label")}</div>
             <div style={{ fontSize: 14, fontWeight: 700, color: "#111827", lineHeight: 1 }}>{turn.id}</div>
           </div>
 
           {[
-            { label: "LLM Calls",  value: String(turn.llmCallCount) },
-            { label: "Tool Calls", value: String(turn.toolCallCount) },
+            { label: t("sessionOverview.activity.llmCalls"),  value: String(turn.llmCallCount) },
+            { label: t("sessionOverview.activity.toolCalls"), value: String(turn.toolCallCount) },
             ...(turnSubAgents.length > 0
-              ? [{ label: "Sub Agents", value: String(turnSubAgents.length), color: "#6366f1" as string | undefined }]
+              ? [{ label: t("sessionOverview.badges.subAgents"), value: String(turnSubAgents.length), color: "#6366f1" as string | undefined }]
               : []),
-            { label: "Duration",   value: dur || "—" },
+            { label: t("sessionOverview.activity.duration"),  value: dur || "—" },
           ].map(({ label, value, color }) => (
             <div key={label}>
               <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{label}</div>
@@ -3202,12 +3087,12 @@ function UserTurnDetailPanel({
         {/* Row 2: Token Ledger — identical to Session style */}
         <div style={{ paddingTop: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-            <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>Token Ledger</span>
+            <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>{t("dashboard.tokenLedger")}</span>
             {cacheRatio !== null && (
               <>
                 <div style={{ width: 1, height: 10, background: "#e5e7eb" }} />
                 <span style={{ fontSize: 9, fontWeight: 700, color: M.cache_ratio.color }}>
-                  {M.cache_ratio.label} {fmtPct(cacheRatio)}
+                  {t("metrics.cacheRatio.label", M.cache_ratio.label)} {fmtPct(cacheRatio)}
                 </span>
               </>
             )}
@@ -3931,7 +3816,7 @@ function RealSegmentTree({
   return (
     <div>
       {/* ── Level 0: Top bar — one block per section ─────────────── */}
-      <div style={{ height: 40, display: "flex", borderRadius: 10, overflow: "hidden", gap: 3, marginBottom: 10 }}>
+      <div style={{ height: 56, display: "flex", borderRadius: 8, overflow: "hidden", marginBottom: 10 }}>
         {SECTION_ORDER.filter(sec => bySection[sec]?.length).map(sec => {
           const secChars = bySection[sec].reduce((s, g) => s + g.charCount, 0);
           const secPct   = Math.round(secChars / totalChars * 100);
@@ -3943,24 +3828,24 @@ function RealSegmentTree({
               onClick={() => handleSectionClick(sec)}
               title={`${SECTION_LABEL[sec]}: ~${fmtK(charsToTokens(secChars))} (${secPct}%)`}
               style={{
-                flex: secChars, minWidth: 32, cursor: "pointer",
-                background: isActive ? color : color + "90",
+                flex: secChars, minWidth: 0, cursor: "pointer",
+                background: isActive ? color : color + "a0",
                 display: "flex", flexDirection: "column", justifyContent: "center",
-                padding: "0 8px", overflow: "hidden",
-                outline: isActive ? `2px solid ${color}` : "none",
-                outlineOffset: -2,
+                padding: "0 10px", overflow: "hidden",
+                borderRight: "2px solid rgba(255,255,255,0.15)",
+                // removed outline
                 transition: "background 0.12s",
               }}
-              onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = color + "c0"; }}
-              onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = color + "90"; }}
+              onMouseEnter={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = color + "cc"; }}
+              onMouseLeave={e => { if (!isActive) (e.currentTarget as HTMLDivElement).style.background = color + "a0"; }}
             >
-              {secPct >= 8 && (
-                <span style={{ fontSize: 10, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {secPct >= 5 && (
+                <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {SECTION_LABEL[sec]}
                 </span>
               )}
               {secPct >= 5 && (
-                <span style={{ fontSize: 9, color: "rgba(255,255,255,0.8)", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.85)", whiteSpace: "nowrap" }}>
                   ~{fmtK(charsToTokens(secChars))}
                 </span>
               )}
@@ -5198,6 +5083,7 @@ function LlmCallDetailPanel({
   mode?: "main" | "panel";
   onShowTurnContext?: () => void;
 }) {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<CallTab>("attribution");
   const [callDetail, setCallDetail] = useState<CallDetail | null>(null);
   const [callDetailLoading, setCallDetailLoading] = useState(true);
@@ -5245,76 +5131,103 @@ function LlmCallDetailPanel({
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: mode === "panel" ? "12px 14px" : "16px 22px", minWidth: 0 }}>
 
-      {/* ── Compact Header ──────────────────────── */}
+      {/* ── Header ──────────────────────────────── */}
       <div style={{ marginBottom: 14, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
 
         {/* Title row */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 15, fontWeight: 800, color: "#111827" }}>Call #{call.id}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: "#111827" }}>Call #{call.id}</span>
           <span style={{ fontSize: 10, color: "#9ca3af" }}>#{call.indexInTurn} in turn</span>
           {call.isCompaction && <RiskBadge type="compaction" />}
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {onShowTurnContext && (
-              <button
-                onClick={onShowTurnContext}
-                style={{
-                  border: "1px solid #dbeafe",
-                  background: "#eff6ff",
-                  color: "#2563eb",
-                  borderRadius: 5,
-                  padding: "3px 8px",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
+              <button onClick={onShowTurnContext} style={{ border: "1px solid #dbeafe", background: "#eff6ff", color: "#2563eb", borderRadius: 5, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
                 Show in turn
               </button>
             )}
-            <span style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{call.model ? shortModelName(call.model) : "—"}</span>
-            <span style={{ fontSize: 10, color: "#9ca3af" }}>
-              {call.timestamp ? fmtDateShort(call.timestamp) : "—"}
-            </span>
+            {call.model && (
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ width: 7, height: 7, borderRadius: 2, background: modelColor(call.model), flexShrink: 0 }} />
+                <span style={{ fontSize: 11, color: "#6b7280" }}>{shortModelName(call.model)}</span>
+              </div>
+            )}
+            <span style={{ fontSize: 10, color: "#9ca3af" }}>{call.timestamp ? fmtDateShort(call.timestamp) : "—"}</span>
             {call.stopReason && (
-              <span style={{ fontSize: 9, color: "#6b7280", background: "#f3f4f6", borderRadius: 3, padding: "1px 6px" }}>
-                stop: {call.stopReason}
-              </span>
+              <span style={{ fontSize: 9, color: "#6b7280", background: "#f3f4f6", borderRadius: 3, padding: "1px 6px" }}>stop: {call.stopReason}</span>
             )}
             {call.proxy?.durationMs != null && (
               <span style={{ fontSize: 9, color: "#6b7280" }}>{call.proxy.durationMs >= 1000 ? `${(call.proxy.durationMs / 1000).toFixed(1)}s` : `${call.proxy.durationMs}ms`}</span>
             )}
-            {/* Proxy status — only show when loaded and no proxy */}
             {!callDetailLoading && !hasProxy && (
               <span style={{ fontSize: 9, color: "#d97706", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 3, padding: "1px 6px" }}>
-                no proxy · <a href="/settings" style={{ color: "#d97706", textDecoration: "underline" }}>enable dump</a>
+                no proxy
               </span>
             )}
           </div>
         </div>
 
-        {/* Inline metric row — compact, single line */}
-        <div style={{ display: "flex", gap: 0, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+        {/* Activity row — flat, same style as session overview */}
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 24, paddingBottom: 10, borderBottom: "1px solid #f3f4f6", flexWrap: "wrap" }}>
           {[
-            { label: "Context",     value: fmtK(call.contextSize),
-              color: nearLimit ? "#ea580c" : "#111827",
-              tooltip: "Total input context (fresh + cache_read + cache_write)" },
-            { label: "Δ vs prev",   value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`,
-              color: call.significantDelta > 10000 ? "#dc2626" : call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : "#111827",
+            { label: "Context",   value: fmtK(call.contextSize),
+              color: nearLimit ? "#ea580c" : undefined,
+              tooltip: "Total input context" },
+            { label: "Δ vs prev", value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`,
+              color: call.significantDelta > 10000 ? "#dc2626" : call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : undefined,
               tooltip: "Context size delta vs previous call" },
-            { label: "Cache Read",  value: fmtK(call.cacheRead),  color: "#111827", tooltip: "cache_read_input_tokens" },
-            { label: "Cache Write", value: fmtK(call.cacheWrite), color: "#111827", tooltip: "cache_creation_input_tokens" },
-            { label: "Fresh In",    value: fmtK(freshIn),         color: "#111827", tooltip: "Non-cached input (context − cache_read − cache_write)" },
-            { label: "Fresh Out",   value: fmtK(call.outputTokens), color: "#111827", tooltip: "output_tokens" },
-          ].map(({ label, value, color, tooltip }, i, arr) => (
-            <div key={label} title={tooltip} style={{
-              flex: 1, padding: "6px 10px", borderRight: i < arr.length - 1 ? "1px solid #e5e7eb" : "none",
-              minWidth: 0,
-            }}>
-              <div style={{ fontSize: 9, color: "#9ca3af", whiteSpace: "nowrap", marginBottom: 2 }}>{label}</div>
-              <div style={{ fontSize: 12, fontWeight: 700, color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
+            { label: "Tool Calls", value: String(call.toolCalls?.length ?? 0), color: undefined, tooltip: "" },
+          ].map(({ label, value, color, tooltip }) => (
+            <div key={label} title={tooltip}>
+              <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{label}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: color ?? "#111827", lineHeight: 1 }}>{value}</div>
             </div>
           ))}
         </div>
+
+        {/* Token Ledger — same compact style as session overview */}
+        {(() => {
+          const M = TOKEN_METRICS;
+          const ledger = [
+            { id: "fresh_input", value: freshIn },
+            { id: "cache_read",  value: call.cacheRead },
+            { id: "cache_write", value: call.cacheWrite },
+            { id: "output",      value: call.outputTokens },
+          ];
+          const total = freshIn + call.cacheRead + call.cacheWrite + call.outputTokens;
+          const inputTotal = freshIn + call.cacheRead;
+          const cacheRatio = inputTotal > 0 ? call.cacheRead / inputTotal * 100 : null;
+          return (
+            <div style={{ paddingTop: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>{t("dashboard.tokenLedger")}</span>
+                {cacheRatio !== null && (
+                  <>
+                    <div style={{ width: 1, height: 10, background: "#e5e7eb" }} />
+                    <span style={{ fontSize: 9, fontWeight: 700, color: M.cache_ratio.color }}>{t("metrics.cacheRatio.label", M.cache_ratio.label)} {fmtPct(cacheRatio)}</span>
+                  </>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 16, alignItems: "flex-end", marginBottom: 5 }}>
+                {ledger.map(({ id, value }) => {
+                  const m = M[id];
+                  return (
+                    <div key={id} title={m.description}>
+                      <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 500, marginBottom: 2 }}>{m.label}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: value > 0 ? m.color : "#d1d5db", lineHeight: 1 }}>{value > 0 ? fmtK(value) : "—"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              {total > 0 && (
+                <div style={{ height: 3, borderRadius: 2, overflow: "hidden", display: "flex", background: "#f3f4f6" }}>
+                  {ledger.filter(r => r.value > 0).map(({ id, value }) => (
+                    <div key={id} style={{ flex: value, background: M[id].color }} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Tabs ──────────────────────────────────── */}
@@ -5479,6 +5392,7 @@ function SubAgentSessionPanel({
   parentLabel?: string;          // e.g. "Turn 3"
   onReturnToParent?: () => void; // closes sub-turn, returns to parent turn detail
 }) {
+  const { t } = useTranslation();
   // Default-select the sub agent's first turn — a sub agent is conceptually one
   // turn of work, so the Turn detail view (not the Session overview) is the
   // right landing surface. Multi-turn agents still get a mini nav to switch.
@@ -5529,10 +5443,10 @@ function SubAgentSessionPanel({
             }}
           >
             <span style={{ fontSize: 12, lineHeight: 1 }}>↩</span>
-            Back to {parentLabel}
+            {t("sessionOverview.subAgent.backTo", { name: parentLabel })}
           </button>
           <span style={{ fontSize: 10, color: "#7c3aed", letterSpacing: "0.04em" }}>
-            <ForkIcon size={10} color="#7c3aed" /> Side branch · {turns.length} turn{turns.length > 1 ? "s" : ""} · {drilldown.subAgents.length > 0 ? `${drilldown.subAgents.length} nested` : "leaf"}
+            <ForkIcon size={10} color="#7c3aed" /> {t("sessionOverview.subAgent.sideBranch")} · {turns.length} · {drilldown.subAgents.length > 0 ? t("sessionOverview.subAgent.nested", { n: drilldown.subAgents.length }) : t("sessionOverview.subAgent.leaf")}
           </span>
         </div>
       )}
@@ -5608,6 +5522,7 @@ interface Props {
 }
 
 export function SessionDetailV2({ session, onClose }: Props) {
+  const { t } = useTranslation();
   const [drilldown, setDrilldown] = useState<SessionDrilldown | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ok" | "error">("loading");
 
@@ -5803,10 +5718,10 @@ export function SessionDetailV2({ session, onClose }: Props) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {loadState === "loading" && (
-              <span style={{ fontSize: 10, color: "#6366f1", background: "#eff6ff", borderRadius: 4, padding: "2px 8px" }}>loading…</span>
+              <span style={{ fontSize: 10, color: "#6366f1", background: "#eff6ff", borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.loading")}</span>
             )}
             {loadState === "error" && (
-              <span style={{ fontSize: 10, color: "#dc2626", background: "#fef2f2", borderRadius: 4, padding: "2px 8px" }}>error</span>
+              <span style={{ fontSize: 10, color: "#dc2626", background: "#fef2f2", borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.error")}</span>
             )}
             <button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer", color: "#9ca3af", fontSize: 20, lineHeight: 1, padding: 4 }}>×</button>
           </div>
@@ -5816,14 +5731,14 @@ export function SessionDetailV2({ session, onClose }: Props) {
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           {/* Left Nav */}
           <div style={{ width: 200, borderRight: "1px solid #e5e7eb", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
-            <div style={{ padding: "12px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>SESSION</div>
+            <div style={{ padding: "12px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>{t("sessionOverview.nav.session")}</div>
             <NavItem
-              label="Overview"
+              label={t("sessionOverview.nav.overview")}
               active={navLevel === "session"}
               onClick={handleNavSession}
             />
 
-            <div style={{ padding: "10px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>USER TURNS</div>
+            <div style={{ padding: "10px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>{t("sessionOverview.nav.userTurns")}</div>
             {(() => {
               return turns.map(turn => {
                 const isThisTurnSelected = selectedTurn?.id === turn.id;

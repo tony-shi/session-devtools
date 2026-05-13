@@ -45,6 +45,7 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
   let cacheCreationTokens = 0;
   let cacheReadTokens = 0;
   let toolCallCount = 0;
+  let llmCallCount = 0;
   let humanInputCount = 0;
   let apiErrorCount = 0;
   const modelCounts = new Map<string, number>();
@@ -98,6 +99,7 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
       // is intentional — we depend on this Claude Code implementation detail for now.
       // TODO: replace with Anthropic API contract check (msg.id?.startsWith("msg_")) once validated.
       if (msg.model && msg.model !== "<synthetic>") {
+        llmCallCount++;
         modelCounts.set(msg.model, (modelCounts.get(msg.model) ?? 0) + 1);
         const text = extractText(msg.content);
         if (text) lastAssistantText = text.slice(0, 300);
@@ -144,6 +146,7 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
     cache_read_tokens: cacheReadTokens,
     models: Array.from(modelCounts.entries()).sort((a, b) => b[1] - a[1]).map(([m]) => m),
     tool_call_count: toolCallCount,
+    llm_call_count: llmCallCount,
     human_input_count: humanInputCount,
     sub_agent_count: subAgentCount,
     claude_code_api_error_count: apiErrorCount,

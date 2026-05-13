@@ -70,7 +70,71 @@
     "contextUsed":  { "tooltip": "本次调用放入模型窗口的 token 数，不等于计费 token。" },
     "contextDelta": { "tooltip": "相对上一次 call 增加的上下文量，用于定位「哪一步把窗口撑大」。" },
     "peakContext":  { "tooltip": "本 session 或 turn 内观测到的最大上下文占用。" },
-    "cacheRatio":   { "tooltip": "cache_read / (fresh_in + cache_read + cache_write)，越高说明缓存利用越充分。" }
+    "cacheRatio":   { "label": "缓存命中率", "tooltip": "cache_read / (fresh_in + cache_read + cache_write)，越高说明缓存利用越充分。" }
+  },
+  "nav": {
+    "sessions": "会话",
+    "trends": "趋势",
+    "proxy": "代理"
+  },
+  "sessionOverview": {
+    "nav": {
+      "session": "会话",
+      "userTurns": "用户轮次",
+      "overview": "总览"
+    },
+    "activity": {
+      "userTurns": "用户轮次",
+      "llmCalls": "LLM 调用",
+      "toolCalls": "工具调用",
+      "duration": "时长",
+      "models": "{{n}} 个模型"
+    },
+    "charts": {
+      "contextTimeline": "上下文时间线",
+      "topContributors": "上下文贡献分布",
+      "toolUsage": "工具使用",
+      "userTurns": "用户轮次",
+      "peak": "峰值",
+      "xAxisLinear": "会话次数",
+      "xAxisTime": "耗时",
+      "xAxisTimeHint": "X 轴 = 累计活跃时间（不含用户空闲）"
+    },
+    "turn": {
+      "label": "轮次",
+      "roleUser": "用户",
+      "roleAgent": "Agent"
+    },
+    "badges": {
+      "compaction": "压缩",
+      "errors": "错误",
+      "subAgents": "子 Agent",
+      "commands": "命令",
+      "unknown": "未知事件"
+    },
+    "models": {
+      "title": "模型分布",
+      "calls": "调用",
+      "output": "输出"
+    },
+    "hotspots": {
+      "title": "会话热点",
+      "largestGrowth": "最大增长",
+      "peakContext": "峰值上下文",
+      "largestUnknown": "最大未知增量",
+      "compactionTurns": "压缩轮次"
+    },
+    "subAgent": {
+      "sideBranch": "子分支",
+      "leaf": "叶节点",
+      "nested": "{{n}} 层嵌套",
+      "backTo": "返回 {{name}}"
+    },
+    "status": {
+      "loading": "加载中…",
+      "error": "错误",
+      "mockData": "模拟数据"
+    }
   },
   "sessionDetail": {
     "aiReply": "AI 最终回复",

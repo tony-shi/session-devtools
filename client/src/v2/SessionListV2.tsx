@@ -48,16 +48,6 @@ function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onCl
   const badge = TOOL_BADGE[session.tool] ?? { bg: "#f3f4f6", color: "#374151" };
 
   const displayName = getSessionTitle(session);
-  const isIdFallback = !session.custom_title && !session.ai_title;
-  const [copied, setCopied] = useState(false);
-
-  function copySessionId(e: React.MouseEvent) {
-    e.stopPropagation();
-    navigator.clipboard.writeText(session.session_id).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  }
 
   const cwdLabel = session.cwd
     ? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd
@@ -84,15 +74,6 @@ function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onCl
           <p style={{ fontSize: 13, fontWeight: 500, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: preview ? 2 : 0 }}>
             {displayName}
           </p>
-          {isIdFallback && (
-            <button
-              onClick={copySessionId}
-              title={session.session_id}
-              style={{ flexShrink: 0, fontSize: 10, padding: "1px 5px", borderRadius: 4, border: "1px solid #d1d5db", background: copied ? "#d1fae5" : "#f9fafb", color: copied ? "#065f46" : "#6b7280", cursor: "pointer", whiteSpace: "nowrap" }}
-            >
-              {copied ? t("dashboard.copied") : t("dashboard.copyId")}
-            </button>
-          )}
         </div>
         {preview && (
           <p style={{ fontSize: 11, color: "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginLeft: 13 }}>
@@ -115,9 +96,11 @@ function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onCl
         </span>
       </td>
 
-      {/* LLM 调用 (not yet in DB) */}
+      {/* LLM 调用 */}
       <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
-        <span style={{ fontSize: 12, color: "#d1d5db" }}>—</span>
+        <span style={{ fontSize: 12, color: "#6b7280" }}>
+          {session.llm_call_count > 0 ? session.llm_call_count : "—"}
+        </span>
       </td>
 
       {/* Token Ledger */}

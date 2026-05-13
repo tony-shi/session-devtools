@@ -95,6 +95,7 @@ export class SessionsV2Controller {
         COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens,
         COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
         COALESCE(SUM(tool_call_count), 0) AS tool_call_count,
+        COALESCE(SUM(llm_call_count), 0) AS llm_call_count,
         COALESCE(SUM(human_input_count), 0) AS human_input_count
       FROM sessions_meta_v2
       WHERE source_present = 1
@@ -106,6 +107,7 @@ export class SessionsV2Controller {
       cache_creation_tokens: number;
       cache_read_tokens: number;
       tool_call_count: number;
+      llm_call_count: number;
       human_input_count: number;
     };
 

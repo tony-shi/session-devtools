@@ -73,7 +73,71 @@
     "contextUsed":  { "tooltip": "Tokens placed in the model's context window. Not the same as billed input tokens." },
     "contextDelta": { "tooltip": "Change in context size vs. the previous call. Spot which step inflated the window." },
     "peakContext":  { "tooltip": "Largest context window size observed in this session or turn." },
-    "cacheRatio":   { "tooltip": "cache_read / (fresh_input + cache_read + cache_write). Higher = better cache efficiency." }
+    "cacheRatio":   { "label": "Cache Ratio", "tooltip": "cache_read / (fresh_input + cache_read + cache_write). Higher = better cache efficiency." }
+  },
+  "nav": {
+    "sessions": "Sessions",
+    "trends": "Trends",
+    "proxy": "Proxy"
+  },
+  "sessionOverview": {
+    "nav": {
+      "session": "Session",
+      "userTurns": "User Turns",
+      "overview": "Overview"
+    },
+    "activity": {
+      "userTurns": "User Turns",
+      "llmCalls": "LLM Calls",
+      "toolCalls": "Tool Calls",
+      "duration": "Duration",
+      "models": "{{n}} models"
+    },
+    "charts": {
+      "contextTimeline": "Context Timeline",
+      "topContributors": "Top Context Contributors",
+      "toolUsage": "Tool Usage",
+      "userTurns": "User Turns",
+      "peak": "Peak",
+      "xAxisLinear": "Sessions",
+      "xAxisTime": "Duration",
+      "xAxisTimeHint": "X axis = cumulative active time (user idle excluded)"
+    },
+    "turn": {
+      "label": "Turn",
+      "roleUser": "U",
+      "roleAgent": "A"
+    },
+    "badges": {
+      "compaction": "Compaction",
+      "errors": "Errors",
+      "subAgents": "Sub Agents",
+      "commands": "Commands",
+      "unknown": "Unknown"
+    },
+    "models": {
+      "title": "Models",
+      "calls": "Calls",
+      "output": "Out"
+    },
+    "hotspots": {
+      "title": "Session Hotspots",
+      "largestGrowth": "Largest growth",
+      "peakContext": "Peak context",
+      "largestUnknown": "Largest unknown",
+      "compactionTurns": "Compaction turns"
+    },
+    "subAgent": {
+      "sideBranch": "Side branch",
+      "leaf": "leaf",
+      "nested": "{{n}} nested",
+      "backTo": "Back to {{name}}"
+    },
+    "status": {
+      "loading": "loading…",
+      "error": "error",
+      "mockData": "mock data"
+    }
   },
   "sessionDetail": {
     "aiReply": "AI Final Reply",

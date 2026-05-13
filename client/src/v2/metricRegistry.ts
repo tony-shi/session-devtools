@@ -2,27 +2,16 @@ import { useTranslation } from "react-i18next";
 
 export interface TokenMetric {
   id: string;
-  /** Canonical English label — used directly in all UI. Never translated. */
+  /** Canonical English label — used as fallback when no labelKey translation exists. */
   label: string;
   color: string;
   category: "input" | "cache" | "output" | "context" | "derived";
   unit: "tokens" | "percent";
-  /**
-   * English description of what this metric measures.
-   * Authoritative help-text source — future tooltip/popover components read from here.
-   * Not rendered in UI yet this iteration.
-   */
   description: string;
-  /**
-   * How this metric relates to others (formula / accounting identity).
-   * Not rendered in UI yet this iteration.
-   */
   relation?: string;
-  /**
-   * i18n key for a localised version of `description`, if provided.
-   * UI tooltip components will prefer this when available.
-   * Not rendered in UI yet this iteration.
-   */
+  /** i18n key for localised label, e.g. "metrics.cacheRatio.label". */
+  labelKey?: string;
+  /** i18n key for localised tooltip/description. */
   tooltipKey?: string;
 }
 
@@ -105,6 +94,7 @@ export const TOKEN_METRICS: Record<string, TokenMetric> = {
     unit: "percent",
     description: "Cache read as a share of total reusable input. Formula: cache_read / (fresh_input + cache_read + cache_write).",
     relation: "Higher ratio = better cache efficiency",
+    labelKey: "metrics.cacheRatio.label",
     tooltipKey: "metrics.cacheRatio.tooltip",
   },
 };
@@ -125,7 +115,7 @@ export function useMetricLabel(id: string): { label: string; tooltip: string; co
   const m = TOKEN_METRICS[id];
   if (!m) return { label: id, tooltip: "", color: "#6b7280" };
   return {
-    label: m.label,
+    label: m.labelKey ? t(m.labelKey, m.label) : m.label,
     tooltip: m.tooltipKey ? t(m.tooltipKey, m.description) : m.description,
     color: m.color,
   };

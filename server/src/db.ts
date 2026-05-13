@@ -269,6 +269,7 @@ export function initV2Schema(): void {
       models                     TEXT NOT NULL DEFAULT '[]',
 
       tool_call_count            INTEGER NOT NULL DEFAULT 0,
+      llm_call_count             INTEGER NOT NULL DEFAULT 0,
       human_input_count          INTEGER NOT NULL DEFAULT 0,
       sub_agent_count            INTEGER NOT NULL DEFAULT 0,
 
@@ -305,6 +306,9 @@ export function initV2Schema(): void {
   }
   if (!v2colSet.has("sub_agent_count")) {
     db.exec("ALTER TABLE sessions_meta_v2 ADD COLUMN sub_agent_count INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!v2colSet.has("llm_call_count")) {
+    db.exec("ALTER TABLE sessions_meta_v2 ADD COLUMN llm_call_count INTEGER NOT NULL DEFAULT 0");
   }
 }
 

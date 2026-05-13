@@ -21,6 +21,7 @@ export interface SessionV2 {
   cache_read_tokens: number;
   models: string[];
   tool_call_count: number;
+  llm_call_count: number;
   human_input_count: number;
   sub_agent_count: number;
   claude_code_api_error_count: number;
@@ -45,6 +46,7 @@ export interface SummaryV2 {
   cache_creation_tokens: number;
   cache_read_tokens: number;
   tool_call_count: number;
+  llm_call_count: number;
   human_input_count: number;
   by_tool: Record<string, number>;
 }
