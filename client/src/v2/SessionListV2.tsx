@@ -203,6 +203,7 @@ interface Props {
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: number) => void;
   onSearchChange: (search: string) => void;
+  onSync?: () => Promise<{ synced: number; skipped: number; errors: number }>;
 }
 
 function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange }: {
@@ -292,9 +293,27 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
   );
 }
 
-export function SessionListV2({ data, loading, page, pageSize, search, onPageChange, onPageSizeChange, onSearchChange }: Props) {
+export function SessionListV2({ data, loading, page, pageSize, search, onPageChange, onPageSizeChange, onSearchChange, onSync }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [localFilter, setLocalFilter] = useState("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+
+  async function handleSync() {
+    if (!onSync) return;
+    setSyncing(true);
+    setSyncMsg("");
+    try {
+      const r = await onSync();
+      setSyncMsg(`synced ${r.synced}`);
+      setTimeout(() => setSyncMsg(""), 3000);
+    } catch {
+      setSyncMsg("failed");
+      setTimeout(() => setSyncMsg(""), 3000);
+    } finally {
+      setSyncing(false);
+    }
+  }
   const selectedSession = selectedId ? (data?.sessions.find((s) => s.session_id === selectedId) ?? null) : null;
   const total = data?.total ?? 0;
 
@@ -315,11 +334,33 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
   return (
     <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb", overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid #f3f4f6", flexWrap: "wrap", gap: 8 }}>
-        <h2 style={{ fontSize: 13, fontWeight: 600, color: "#111827", flexShrink: 0 }}>
-          会话列表
-          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "#9ca3af", background: "#f3f4f6", padding: "2px 7px", borderRadius: 12 }}>v2</span>
-          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "#6b7280" }}>· 仅展示有 LLM 交互的会话</span>
-        </h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <h2 style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>
+            Sessions
+            <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "#6b7280" }}>· LLM interactions only</span>
+          </h2>
+          {onSync && (
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              title="Sync now"
+              style={{
+                display: "flex", alignItems: "center", gap: 4,
+                fontSize: 12, padding: "3px 9px", borderRadius: 6,
+                background: "#f3f4f6", color: "#374151", border: "none",
+                cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.6 : 1,
+              }}
+            >
+              <svg width="11" height="11" style={{ animation: syncing ? "spin 1s linear infinite" : "none" }}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              {syncing ? "Syncing…" : "Sync"}
+            </button>
+          )}
+          {syncMsg && <span style={{ fontSize: 11, color: "#6b7280" }}>{syncMsg}</span>}
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {/* Search box */}
           <div style={{ position: "relative", display: "flex", alignItems: "center" }}>

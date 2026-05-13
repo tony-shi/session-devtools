@@ -9,10 +9,7 @@ digest.cfg
 .env
 
 # Internal design docs (local only)
-docs/draft
-docs/contract
-docs/archive
-docs/
+docs/inner
 
 # Python virtualenv
 .venv/
