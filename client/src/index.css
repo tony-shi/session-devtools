@@ -34,4 +34,7 @@ body {
 .md-prose strong { font-weight: 700; }
 .md-prose em { font-style: italic; }
 .md-prose hr { border: none; border-top: 1px solid #e5e7eb; margin: 8px 0; }
+.md-prose table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 11px; }
+.md-prose th, .md-prose td { border-bottom: 1px solid #e5e7eb; padding: 4px 8px; text-align: left; }
+.md-prose th { font-weight: 600; color: #6b7280; border-bottom: 2px solid #e5e7eb; }
 .md-prose a { color: #6366f1; text-decoration: underline; }

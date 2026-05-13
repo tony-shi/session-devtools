@@ -781,7 +781,7 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
   const data = buildData(turn);
 
   return (
-    <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, background: "#ffffff", overflow: "hidden" }}>
+    <div style={{ background: "#ffffff", overflow: "hidden" }}>
       <div style={{
         display: "flex",
         alignItems: "center",

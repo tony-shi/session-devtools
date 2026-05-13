@@ -10,6 +10,7 @@ type Tab = "sessions-v2" | "proxy-v2" | "trends";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("sessions-v2");
+  const [navOpen, setNavOpen] = useState(true);
 
   // v2 state
   const [summaryV2, setSummaryV2] = useState<SummaryV2 | null>(null);
@@ -17,8 +18,9 @@ export default function App() {
   const [sessionsV2, setSessionsV2] = useState<SessionsV2Response | null>(null);
   const [sessionsV2Loading, setSessionsV2Loading] = useState(true);
   const [v2Page, setV2Page] = useState(0);
-  const [v2PageSize, setV2PageSize] = useState(10);
+  const [v2PageSize, setV2PageSize] = useState(8);
   const [v2Search, setV2Search] = useState("");
+  const [v2SearchInput, setV2SearchInput] = useState("");
 
   function fetchV2Sessions(page: number, pageSize = v2PageSize, search = v2Search) {
     setSessionsV2Loading(true);
@@ -39,6 +41,15 @@ export default function App() {
 
   useEffect(() => { fetchV2(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { fetchV2Sessions(v2Page, v2PageSize, v2Search); }, [v2Page, v2PageSize, v2Search]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounce search input: only fire API after 350ms of inactivity
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setV2Search(v2SearchInput);
+      setV2Page(0);
+    }, 350);
+    return () => clearTimeout(id);
+  }, [v2SearchInput]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSyncV2() {
     const result = await apiV2.sync();
@@ -87,36 +98,63 @@ export default function App() {
       <div style={{ display: "flex", flex: 1 }}>
         {/* Sidebar */}
         <nav style={{
-          width: 200,
+          width: navOpen ? 160 : 40,
           flexShrink: 0,
           background: "#fff",
           borderRight: "1px solid #e5e7eb",
           display: "flex",
           flexDirection: "column",
-          padding: "12px 8px",
+          padding: "8px 6px",
           gap: 2,
+          transition: "width 0.15s ease",
+          overflow: "hidden",
         }}>
+          {/* nav items */}
           {NAV_ITEMS.map(({ id, label, icon }) => {
             const active = tab === id;
             return (
               <button
                 key={id}
                 onClick={() => setTab(id)}
+                title={!navOpen ? label : undefined}
                 style={{
-                  display: "flex", alignItems: "center", gap: 9,
-                  padding: "7px 10px", borderRadius: 7, border: "none",
+                  display: "flex", alignItems: "center", gap: navOpen ? 8 : 0,
+                  justifyContent: navOpen ? "flex-start" : "center",
+                  padding: "6px 8px", borderRadius: 7, border: "none",
                   background: active ? "#f3e8ff" : "transparent",
                   color: active ? "#7c3aed" : "#4b5563",
-                  cursor: "pointer", fontSize: 13, fontWeight: active ? 600 : 400,
-                  textAlign: "left", width: "100%",
+                  cursor: "pointer", fontSize: 12, fontWeight: active ? 600 : 400,
+                  textAlign: "left", width: "100%", whiteSpace: "nowrap",
                   transition: "background 0.1s",
                 }}
               >
                 <span style={{ color: active ? "#7c3aed" : "#9ca3af", flexShrink: 0 }}>{icon}</span>
-                {label}
+                {navOpen && label}
               </button>
             );
           })}
+
+          {/* collapse toggle — just below nav items */}
+          <div style={{ height: 8 }} />
+          <button
+            onClick={() => setNavOpen((v) => !v)}
+            title={navOpen ? "Collapse" : "Expand"}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: "6px", borderRadius: 6, border: "none",
+              background: "transparent", cursor: "pointer", color: "#d1d5db",
+              flexShrink: 0, marginBottom: 2,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = "#9ca3af")}
+            onMouseLeave={(e) => (e.currentTarget.style.color = "#d1d5db")}
+          >
+            <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              {navOpen
+                ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              }
+            </svg>
+          </button>
         </nav>
 
         {/* Main content */}
@@ -137,10 +175,10 @@ export default function App() {
                 loading={sessionsV2Loading}
                 page={v2Page}
                 pageSize={v2PageSize}
-                search={v2Search}
+                search={v2SearchInput}
                 onPageChange={(p) => setV2Page(p)}
                 onPageSizeChange={(size) => { setV2PageSize(size); setV2Page(0); }}
-                onSearchChange={(s) => { setV2Search(s); setV2Page(0); }}
+                onSearchChange={(s) => setV2SearchInput(s)}
                 onSync={handleSyncV2}
               />
             </>

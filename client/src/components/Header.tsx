@@ -9,6 +9,8 @@ const LANGS = [
 function LangToggle() {
   const { i18n: i18nInstance } = useTranslation();
   const current = i18nInstance.language;
+  const currentLabel = LANGS.find((l) => l.code === current)?.label ?? "EN";
+  const otherLabel   = LANGS.find((l) => l.code !== current)?.label ?? "中文";
 
   function toggle() {
     const next = current === "zh-CN" ? "en" : "zh-CN";
@@ -16,14 +18,12 @@ function LangToggle() {
     localStorage.setItem("lang", next);
   }
 
-  const other = LANGS.find((l) => l.code !== current) ?? LANGS[1];
-
   return (
     <button
       onClick={toggle}
-      title={other.label}
+      title={`Switch to ${otherLabel}`}
       style={{
-        display: "flex", alignItems: "center", justifyContent: "center",
+        display: "flex", alignItems: "center", gap: 5,
         height: 28, padding: "0 10px", borderRadius: 7,
         border: "1px solid #e5e7eb", background: "#f9fafb",
         color: "#374151", fontSize: 12, fontWeight: 500,
@@ -33,7 +33,13 @@ function LangToggle() {
       onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
       onMouseLeave={(e) => (e.currentTarget.style.background = "#f9fafb")}
     >
-      {other.label}
+      {/* current language indicator */}
+      <span style={{ color: "#9ca3af", fontWeight: 400 }}>{currentLabel}</span>
+      <svg width="10" height="10" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: "#d1d5db" }}>
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+      </svg>
+      {/* target language */}
+      <span>{otherLabel}</span>
     </button>
   );
 }

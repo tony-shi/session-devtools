@@ -27,14 +27,16 @@ export interface TokenMetric {
 }
 
 export const TOKEN_METRICS: Record<string, TokenMetric> = {
+  // Fresh In = input_tokens + cache_creation_input_tokens: all tokens the model processed
+  // fresh this call. Cache writes count as fresh (first-time processing), not reuse.
   fresh_input: {
     id: "fresh_input",
     label: "Fresh In",
     color: "#6366f1",
     category: "input",
     unit: "tokens",
-    description: "Input tokens not served from cache — the model had to process them fresh. Drives compute cost and latency.",
-    relation: "Total input ≈ Fresh In + Cache Read + Cache Write",
+    description: "Tokens freshly processed this call: non-cached input + cache writes. Cache writes are first-time processing, not reuse.",
+    relation: "Fresh In = input_tokens + cache_write; Total = Fresh In + Cache Read",
     tooltipKey: "metrics.freshInput.tooltip",
   },
   cache_read: {

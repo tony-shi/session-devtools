@@ -73,18 +73,17 @@ function isHumanInput(ev: JUserEvent): boolean {
 }
 
 function extractUserText(content: unknown): string {
-  if (typeof content === "string") return content.slice(0, 200);
+  if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return (content as Array<{ type?: string; text?: string }>)
     .filter(b => b?.type !== "thinking" && b?.type !== "redacted_thinking" && b?.type !== "tool_result")
     .map(b => {
       if (typeof b === "string") return b;
-      if (b?.type === "text") return (b.text ?? "").slice(0, 200);
+      if (b?.type === "text") return (b.text ?? "");
       return "";
     })
     .join(" ")
-    .trim()
-    .slice(0, 200);
+    .trim();
 }
 
 function tsOf(ev: JEvent): string {
@@ -461,10 +460,12 @@ export function parseSessionDrilldown(
     const calls: LlmCall[] = rawCalls.map(({ ev: aev }, callIdx) => {
       globalCallIndex++;
       const usage = aev.message?.usage ?? {};
-      const freshIn   = usage.input_tokens ?? 0;
       const freshOut  = usage.output_tokens ?? 0;
       const cacheRead = usage.cache_read_input_tokens ?? 0;
       const cacheWrite = usage.cache_creation_input_tokens ?? 0;
+      // Fresh In = non-cached input + cache_write: all tokens the model processed
+      // fresh this call (first-time writes count as fresh processing, not reuse).
+      const freshIn = (usage.input_tokens ?? 0) + cacheWrite;
       const stopReason = aev.message?.stop_reason ?? null;
       const rawModel = aev.message?.model ?? "";
       const model = rawModel === "<synthetic>" ? "" : normaliseModelName(rawModel);

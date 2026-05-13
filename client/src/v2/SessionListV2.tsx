@@ -1,8 +1,9 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { SessionDetailV2 } from "./SessionDetailV2";
 import type { SessionV2, SessionsV2Response } from "./types";
 import { getSessionTitle, getSessionSubtitle } from "./session-display";
-import { TOKEN_METRICS } from "./metricRegistry";
+import { MiniTokenLedger } from "./SummaryCardsV2";
 
 const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
   claude: { bg: "#f3e8ff", color: "#7c3aed" },
@@ -10,19 +11,21 @@ const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
   gemini: { bg: "#d1fae5", color: "#065f46" },
 };
 
-
 function fmtTime(ts: string) {
   if (!ts) return "—";
-  return new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  return new Date(ts).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-function fmtRelative(ts: string) {
-  if (!ts) return "";
-  const diff = Date.now() - new Date(ts).getTime();
-  if (diff < 60_000) return "刚刚";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m 前`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h 前`;
-  return `${Math.floor(diff / 86_400_000)}d 前`;
+function useRelativeTime() {
+  const { t } = useTranslation();
+  return (ts: string) => {
+    if (!ts) return "";
+    const diff = Date.now() - new Date(ts).getTime();
+    if (diff < 60_000)       return t("dashboard.justNow");
+    if (diff < 3_600_000)    return t("dashboard.minutesAgo", { n: Math.floor(diff / 60_000) });
+    if (diff < 86_400_000)   return t("dashboard.hoursAgo",   { n: Math.floor(diff / 3_600_000) });
+    return                          t("dashboard.daysAgo",    { n: Math.floor(diff / 86_400_000) });
+  };
 }
 
 function fmtTokens(n: number): string {
@@ -38,8 +41,10 @@ const TH: React.CSSProperties = {
 };
 
 
-function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () => void }) {
+function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onClick: () => void; maxTotal: number }) {
   const [hovered, setHovered] = useState(false);
+  const { t } = useTranslation();
+  const fmtRelative = useRelativeTime();
   const badge = TOOL_BADGE[session.tool] ?? { bg: "#f3f4f6", color: "#374151" };
 
   const displayName = getSessionTitle(session);
@@ -58,11 +63,6 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
     ? session.cwd.split("/").filter(Boolean).pop() ?? session.cwd
     : session.project?.split("/").pop() ?? "—";
   const preview = getSessionSubtitle(session) ?? "";
-
-  // Detect cross-day: first and last event are on different dates
-  const firstDate = session.first_event_at?.slice(0, 10);
-  const lastDate = session.last_event_at?.slice(0, 10);
-  const crossDay = firstDate && lastDate && firstDate !== lastDate;
 
   return (
     <tr
@@ -83,7 +83,6 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <p style={{ fontSize: 13, fontWeight: 500, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: preview ? 2 : 0 }}>
             {displayName}
-            {crossDay && <span style={{ marginLeft: 5, fontSize: 10, color: "#9ca3af", fontWeight: 400 }}>跨天</span>}
           </p>
           {isIdFallback && (
             <button
@@ -91,7 +90,7 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
               title={session.session_id}
               style={{ flexShrink: 0, fontSize: 10, padding: "1px 5px", borderRadius: 4, border: "1px solid #d1d5db", background: copied ? "#d1fae5" : "#f9fafb", color: copied ? "#065f46" : "#6b7280", cursor: "pointer", whiteSpace: "nowrap" }}
             >
-              {copied ? "copied" : "copy id"}
+              {copied ? t("dashboard.copied") : t("dashboard.copyId")}
             </button>
           )}
         </div>
@@ -109,52 +108,21 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
         </p>
       </td>
 
-      {/* 人工交互 */}
+      {/* 用户轮次 */}
       <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
         <span style={{ fontSize: 12, color: "#6b7280" }}>
           {session.human_input_count > 0 ? session.human_input_count : "—"}
         </span>
       </td>
 
-      {/* Tokens (lifetime) */}
-      <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 10px" }}>
-          <span
-            style={{ fontSize: 10, color: TOKEN_METRICS.cache_write.color }}
-            title={TOKEN_METRICS.cache_write.description}
-          >
-            {TOKEN_METRICS.cache_write.label}{" "}
-            {session.cache_creation_tokens > 0 ? fmtTokens(session.cache_creation_tokens) : "—"}
-          </span>
-          <span
-            style={{ fontSize: 10, color: TOKEN_METRICS.cache_read.color }}
-            title={TOKEN_METRICS.cache_read.description}
-          >
-            {TOKEN_METRICS.cache_read.label}{" "}
-            {session.cache_read_tokens > 0 ? fmtTokens(session.cache_read_tokens) : "—"}
-          </span>
-          <span
-            style={{ fontSize: 10, color: TOKEN_METRICS.fresh_input.color }}
-            title={TOKEN_METRICS.fresh_input.description}
-          >
-            {TOKEN_METRICS.fresh_input.label}{" "}
-            {session.input_tokens > 0 ? fmtTokens(session.input_tokens) : "—"}
-          </span>
-          <span
-            style={{ fontSize: 10, color: TOKEN_METRICS.output.color }}
-            title={TOKEN_METRICS.output.description}
-          >
-            {TOKEN_METRICS.output.label}{" "}
-            {session.output_tokens > 0 ? fmtTokens(session.output_tokens) : "—"}
-          </span>
-        </div>
+      {/* LLM 调用 (not yet in DB) */}
+      <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
+        <span style={{ fontSize: 12, color: "#d1d5db" }}>—</span>
       </td>
 
-      {/* 工具调用 */}
-      <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
-        <span style={{ fontSize: 12, color: "#6b7280" }}>
-          {session.tool_call_count > 0 ? session.tool_call_count : "—"}
-        </span>
+      {/* Token Ledger */}
+      <td style={{ padding: "8px 12px" }}>
+        <MiniTokenLedger session={session} maxTotal={maxTotal} />
       </td>
 
       {/* Sub agents */}
@@ -182,20 +150,6 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
         </div>
       </td>
 
-      {/* Proxy 请求数 */}
-      <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
-        {session.proxy_count > 0 ? (
-          <span style={{
-            fontSize: 11, padding: "1px 7px", borderRadius: 12,
-            background: "#eff6ff", color: "#3b82f6", fontWeight: 500,
-          }}>
-            {session.proxy_count}
-          </span>
-        ) : (
-          <span style={{ fontSize: 12, color: "#d1d5db" }}>—</span>
-        )}
-      </td>
-
       {/* 最后活跃 */}
       <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
         <span style={{ fontSize: 11, color: "#9ca3af" }} title={session.last_event_at}>
@@ -217,7 +171,7 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
   );
 }
 
-const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+const PAGE_SIZE_OPTIONS = [8, 10, 20, 50, 100];
 
 interface Props {
   data: SessionsV2Response | null;
@@ -236,6 +190,7 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
   onChange: (p: number) => void;
   onPageSizeChange: (size: number) => void;
 }) {
+  const { t } = useTranslation();
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const btnBase: React.CSSProperties = {
     padding: "4px 10px", borderRadius: 6, border: "1px solid #e5e7eb",
@@ -259,7 +214,7 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
       {/* Page size selector */}
       <div style={{ display: "flex", alignItems: "center", gap: 4, marginRight: 4 }}>
-        <span style={{ fontSize: 11, color: "#9ca3af" }}>每页</span>
+        <span style={{ fontSize: 11, color: "#9ca3af" }}>{t("dashboard.perPage")}</span>
         <select
           value={pageSize}
           onChange={(e) => onPageSizeChange(Number(e.target.value))}
@@ -276,7 +231,7 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
-        <span style={{ fontSize: 11, color: "#9ca3af" }}>条</span>
+        <span style={{ fontSize: 11, color: "#9ca3af" }}></span>
       </div>
 
       {/* Prev button */}
@@ -312,15 +267,15 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
       >›</button>
 
       <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 2 }}>
-        第 {page + 1} / {totalPages} 页，共 {total} 条
+        {t("dashboard.pageInfo", { page: page + 1, total: totalPages, count: total })}
       </span>
     </div>
   );
 }
 
 export function SessionListV2({ data, loading, page, pageSize, search, onPageChange, onPageSizeChange, onSearchChange, onSync }: Props) {
+  const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [localFilter, setLocalFilter] = useState("");
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
 
@@ -341,28 +296,23 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
   }
   const selectedSession = selectedId ? (data?.sessions.find((s) => s.session_id === selectedId) ?? null) : null;
   const total = data?.total ?? 0;
+  const visibleSessions = data?.sessions ?? [];
 
-  // Front-end filter on current page sessions
-  const visibleSessions = localFilter.trim()
-    ? (data?.sessions ?? []).filter((s) => {
-        const q = localFilter.toLowerCase();
-        return (
-          s.session_id.toLowerCase().includes(q) ||
-          (s.custom_title ?? "").toLowerCase().includes(q) ||
-          (s.ai_title ?? "").toLowerCase().includes(q) ||
-          (s.cwd ?? "").toLowerCase().includes(q) ||
-          (s.first_user_message ?? "").toLowerCase().includes(q)
-        );
-      })
-    : (data?.sessions ?? []);
+  const maxTotal = visibleSessions.reduce((max, s) => {
+    const t = s.input_tokens + s.cache_read_tokens + s.cache_creation_tokens + s.output_tokens;
+    return t > max ? t : max;
+  }, 0);
 
   return (
     <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb", overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid #f3f4f6", flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <h2 style={{ fontSize: 13, fontWeight: 600, color: "#111827" }}>
-            Sessions
-            <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "#6b7280" }}>· LLM interactions only</span>
+          <h2 style={{ fontSize: 13, fontWeight: 600, color: "#111827", display: "flex", alignItems: "baseline", gap: 8 }}>
+            {t("dashboard.sessionList")}
+            {!loading && total > 0 && (
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>{total}</span>
+            )}
+            <span style={{ fontSize: 11, fontWeight: 400, color: "#9ca3af" }}>{t("dashboard.llmOnly")}</span>
           </h2>
           {onSync && (
             <button
@@ -381,7 +331,7 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              {syncing ? "Syncing…" : "Sync"}
+              {syncing ? t("dashboard.syncing") : t("dashboard.sync")}
             </button>
           )}
           {syncMsg && <span style={{ fontSize: 11, color: "#6b7280" }}>{syncMsg}</span>}
@@ -395,7 +345,7 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
             </svg>
             <input
               type="text"
-              placeholder="搜索 ID / 名称 / 路径…"
+              placeholder={t("dashboard.searchPlaceholder")}
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
               style={{
@@ -409,31 +359,6 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
             {search && (
               <button
                 onClick={() => onSearchChange("")}
-                style={{ position: "absolute", right: 7, background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 14, lineHeight: 1, padding: 0 }}
-              >×</button>
-            )}
-          </div>
-          {/* Page-level quick filter */}
-          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-            <svg width="13" height="13" fill="none" stroke="#9ca3af" viewBox="0 0 24 24" style={{ position: "absolute", left: 8, pointerEvents: "none" }}>
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h18M7 8h10M11 12h2" />
-            </svg>
-            <input
-              type="text"
-              placeholder="当页过滤…"
-              value={localFilter}
-              onChange={(e) => setLocalFilter(e.target.value)}
-              style={{
-                paddingLeft: 28, paddingRight: 28, paddingTop: 5, paddingBottom: 5,
-                fontSize: 12, borderRadius: 7, border: "1px solid #e5e7eb",
-                outline: "none", width: 160, color: "#374151",
-                background: localFilter ? "#eff6ff" : "#fff",
-                borderColor: localFilter ? "#93c5fd" : "#e5e7eb",
-              }}
-            />
-            {localFilter && (
-              <button
-                onClick={() => setLocalFilter("")}
                 style={{ position: "absolute", right: 7, background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 14, lineHeight: 1, padding: 0 }}
               >×</button>
             )}
@@ -456,22 +381,21 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
         </div>
       ) : visibleSessions.length === 0 ? (
         <p style={{ fontSize: 13, color: "#9ca3af", textAlign: "center", padding: "40px 0" }}>
-          {localFilter || search ? "未找到匹配的会话" : "暂无会话"}
+          {search ? t("dashboard.noResults") : t("dashboard.noSessions")}
         </p>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "#fafafa" }}>
-              <th style={TH}>工具</th>
-              <th style={TH}>会话</th>
-              <th style={TH}>工作区</th>
-              <th style={{ ...TH, textAlign: "right" }}>交互</th>
-              <th style={TH}>Tokens (lifetime)</th>
-              <th style={{ ...TH, textAlign: "right" }}>工具调用</th>
-              <th style={{ ...TH, textAlign: "right" }}>子 Agent</th>
-              <th style={TH}>模型</th>
-              <th style={{ ...TH, textAlign: "right" }}>Proxy</th>
-              <th style={{ ...TH, textAlign: "right" }}>最后活跃</th>
+              <th style={TH}>{t("dashboard.colTool")}</th>
+              <th style={TH}>{t("dashboard.colSession")}</th>
+              <th style={TH}>{t("dashboard.colWorkdir")}</th>
+              <th style={{ ...TH, textAlign: "right" }}>{t("dashboard.colUserTurns")}</th>
+              <th style={{ ...TH, textAlign: "right" }}>{t("dashboard.colLlmCalls")}</th>
+              <th style={TH}>{t("dashboard.colTokenLedger")}</th>
+              <th style={{ ...TH, textAlign: "right" }}>{t("dashboard.colSubAgent")}</th>
+              <th style={TH}>{t("dashboard.colModel")}</th>
+              <th style={{ ...TH, textAlign: "right" }}>{t("dashboard.colLastActive")}</th>
               <th style={TH} />
             </tr>
           </thead>
@@ -480,6 +404,7 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
               <SessionRowV2
                 key={s.session_id}
                 session={s}
+                maxTotal={maxTotal}
                 onClick={() => setSelectedId(s.session_id)}
               />
             ))}
