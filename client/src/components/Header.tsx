@@ -1,3 +1,43 @@
+import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
+
+const LANGS = [
+  { code: "zh-CN", label: "中文" },
+  { code: "en",    label: "EN"   },
+];
+
+function LangToggle() {
+  const { i18n: i18nInstance } = useTranslation();
+  const current = i18nInstance.language;
+
+  function toggle() {
+    const next = current === "zh-CN" ? "en" : "zh-CN";
+    i18n.changeLanguage(next);
+    localStorage.setItem("lang", next);
+  }
+
+  const other = LANGS.find((l) => l.code !== current) ?? LANGS[1];
+
+  return (
+    <button
+      onClick={toggle}
+      title={other.label}
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        height: 28, padding: "0 10px", borderRadius: 7,
+        border: "1px solid #e5e7eb", background: "#f9fafb",
+        color: "#374151", fontSize: 12, fontWeight: 500,
+        cursor: "pointer", letterSpacing: "0.01em",
+        transition: "background 0.1s",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "#f9fafb")}
+    >
+      {other.label}
+    </button>
+  );
+}
+
 export function Header() {
   return (
     <header style={{
@@ -20,8 +60,9 @@ export function Header() {
         <span style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>session-devtools</span>
       </div>
 
-      {/* Right: external links */}
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      {/* Right: lang toggle + external links */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <LangToggle />
         {/* Docs */}
         <a
           href="https://tony-shi.github.io/session-devtools"

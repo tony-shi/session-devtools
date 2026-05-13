@@ -1,4 +1,3 @@
-import { useTranslation } from "react-i18next";
 import type { SummaryV2 } from "./types";
 import { TOKEN_METRICS } from "./metricRegistry";
 
@@ -44,7 +43,6 @@ interface Props {
 }
 
 export function SummaryCardsV2({ data, loading }: Props) {
-  const { t } = useTranslation();
   const tools = data ? Object.keys(data.by_tool) : [];
 
   return (
@@ -84,28 +82,28 @@ export function SummaryCardsV2({ data, loading }: Props) {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 2 }}>
             <TokenRow
-              label={t(TOKEN_METRICS.fresh_input.i18nKey, TOKEN_METRICS.fresh_input.canonical)}
+              label={TOKEN_METRICS.fresh_input.label}
               value={data.input_tokens}
               color={TOKEN_METRICS.fresh_input.color}
-              tooltip={t(TOKEN_METRICS.fresh_input.tooltipKey)}
+              tooltip={TOKEN_METRICS.fresh_input.description}
             />
             <TokenRow
-              label={t(TOKEN_METRICS.output.i18nKey, TOKEN_METRICS.output.canonical)}
+              label={TOKEN_METRICS.output.label}
               value={data.output_tokens}
               color={TOKEN_METRICS.output.color}
-              tooltip={t(TOKEN_METRICS.output.tooltipKey)}
+              tooltip={TOKEN_METRICS.output.description}
             />
             <TokenRow
-              label={t(TOKEN_METRICS.cache_write.i18nKey, TOKEN_METRICS.cache_write.canonical)}
+              label={TOKEN_METRICS.cache_write.label}
               value={data.cache_creation_tokens}
               color={TOKEN_METRICS.cache_write.color}
-              tooltip={t(TOKEN_METRICS.cache_write.tooltipKey)}
+              tooltip={TOKEN_METRICS.cache_write.description}
             />
             <TokenRow
-              label={t(TOKEN_METRICS.cache_read.i18nKey, TOKEN_METRICS.cache_read.canonical)}
+              label={TOKEN_METRICS.cache_read.label}
               value={data.cache_read_tokens}
               color={TOKEN_METRICS.cache_read.color}
-              tooltip={t(TOKEN_METRICS.cache_read.tooltipKey)}
+              tooltip={TOKEN_METRICS.cache_read.description}
             />
           </div>
         )}

@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useTranslation } from "react-i18next";
 import { SessionDetailV2 } from "./SessionDetailV2";
 import type { SessionV2, SessionsV2Response } from "./types";
 import { getSessionTitle, getSessionSubtitle } from "./session-display";
@@ -41,7 +40,6 @@ const TH: React.CSSProperties = {
 
 function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () => void }) {
   const [hovered, setHovered] = useState(false);
-  const { t } = useTranslation();
   const badge = TOOL_BADGE[session.tool] ?? { bg: "#f3f4f6", color: "#374151" };
 
   const displayName = getSessionTitle(session);
@@ -123,30 +121,30 @@ function SessionRowV2({ session, onClick }: { session: SessionV2; onClick: () =>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 10px" }}>
           <span
             style={{ fontSize: 10, color: TOKEN_METRICS.cache_write.color }}
-            title={t(TOKEN_METRICS.cache_write.tooltipKey)}
+            title={TOKEN_METRICS.cache_write.description}
           >
-            {t(TOKEN_METRICS.cache_write.i18nKey, TOKEN_METRICS.cache_write.canonical)}{" "}
+            {TOKEN_METRICS.cache_write.label}{" "}
             {session.cache_creation_tokens > 0 ? fmtTokens(session.cache_creation_tokens) : "—"}
           </span>
           <span
             style={{ fontSize: 10, color: TOKEN_METRICS.cache_read.color }}
-            title={t(TOKEN_METRICS.cache_read.tooltipKey)}
+            title={TOKEN_METRICS.cache_read.description}
           >
-            {t(TOKEN_METRICS.cache_read.i18nKey, TOKEN_METRICS.cache_read.canonical)}{" "}
+            {TOKEN_METRICS.cache_read.label}{" "}
             {session.cache_read_tokens > 0 ? fmtTokens(session.cache_read_tokens) : "—"}
           </span>
           <span
             style={{ fontSize: 10, color: TOKEN_METRICS.fresh_input.color }}
-            title={t(TOKEN_METRICS.fresh_input.tooltipKey)}
+            title={TOKEN_METRICS.fresh_input.description}
           >
-            {t(TOKEN_METRICS.fresh_input.i18nKey, TOKEN_METRICS.fresh_input.canonical)}{" "}
+            {TOKEN_METRICS.fresh_input.label}{" "}
             {session.input_tokens > 0 ? fmtTokens(session.input_tokens) : "—"}
           </span>
           <span
             style={{ fontSize: 10, color: TOKEN_METRICS.output.color }}
-            title={t(TOKEN_METRICS.output.tooltipKey)}
+            title={TOKEN_METRICS.output.description}
           >
-            {t(TOKEN_METRICS.output.i18nKey, TOKEN_METRICS.output.canonical)}{" "}
+            {TOKEN_METRICS.output.label}{" "}
             {session.output_tokens > 0 ? fmtTokens(session.output_tokens) : "—"}
           </span>
         </div>

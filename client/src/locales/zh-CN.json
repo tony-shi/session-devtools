@@ -29,51 +29,14 @@
     "pairCount": "，共 {{count}} 对对话"
   },
   "metrics": {
-    "freshInput": {
-      "label": "新处理",
-      "shortLabel": "新处理",
-      "tooltip": "本次未命中缓存、需要模型重新处理的输入 token。越高通常意味着成本和延迟越高。",
-      "relation": "输入处理 ≈ 新处理 + 缓存复用 + 写入缓存"
-    },
-    "cacheRead": {
-      "label": "缓存复用",
-      "shortLabel": "缓存复用",
-      "tooltip": "本次从缓存命中并复用的输入 token。命中越多，成本和延迟越低。",
-      "relation": "属于总输入的一部分，不产生新的计算成本"
-    },
-    "cacheWrite": {
-      "label": "写入缓存",
-      "shortLabel": "写入缓存",
-      "tooltip": "本次写入缓存、供后续请求复用的 token。按独立单价计费，不归入新处理也不归入输出。",
-      "relation": "独立账本项——既非新处理，也非输出"
-    },
-    "output": {
-      "label": "生成输出",
-      "shortLabel": "输出",
-      "tooltip": "模型本次生成的 token。是影响延迟尾部的主要因素之一。",
-      "relation": "总输出 = 可见输出 + 推理输出（如单独展示）"
-    },
-    "contextUsed": {
-      "label": "上下文占用",
-      "shortLabel": "上下文",
-      "tooltip": "本次调用放入模型窗口的 token 数。不等于计费 token。",
-      "relation": "上下文占用 = 新处理 + 缓存复用 + 已写入缓存的复用部分"
-    },
-    "contextDelta": {
-      "label": "上下文增量",
-      "shortLabel": "上下文 Δ",
-      "tooltip": "相对上一次 call 增加的上下文量。用于定位「哪一步把窗口撑大」。"
-    },
-    "peakContext": {
-      "label": "峰值上下文",
-      "shortLabel": "峰值",
-      "tooltip": "本 session 或 turn 内观测到的最大上下文占用。"
-    },
-    "cacheRatio": {
-      "label": "缓存命中率",
-      "shortLabel": "命中率",
-      "tooltip": "cache_read / (新处理 + 缓存复用 + 写入缓存)。越高说明缓存利用越充分。"
-    }
+    "freshInput":   { "tooltip": "本次未命中缓存、需要模型重新处理的输入 token。越高意味着成本和延迟越高。" },
+    "cacheRead":    { "tooltip": "本次从缓存命中并复用的输入 token。命中越多，成本和延迟越低。" },
+    "cacheWrite":   { "tooltip": "本次写入缓存、供后续请求复用的 token。独立计费项，不归入输入也不归入输出。" },
+    "output":       { "tooltip": "模型本次生成的 token，是影响延迟尾部的主要因素之一。" },
+    "contextUsed":  { "tooltip": "本次调用放入模型窗口的 token 数，不等于计费 token。" },
+    "contextDelta": { "tooltip": "相对上一次 call 增加的上下文量，用于定位「哪一步把窗口撑大」。" },
+    "peakContext":  { "tooltip": "本 session 或 turn 内观测到的最大上下文占用。" },
+    "cacheRatio":   { "tooltip": "cache_read / (fresh_in + cache_read + cache_write)，越高说明缓存利用越充分。" }
   },
   "sessionDetail": {
     "aiReply": "AI 最终回复",
