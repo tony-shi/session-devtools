@@ -2331,61 +2331,106 @@ const KIND_COLOR: Record<IntervalEventKind, { bg: string; border: string; fg: st
   "unknown":                  { bg: "#f8fafc", border: "#e2e8f0", fg: "#94a3b8" },
 };
 
-// ── ToolCallRow: dispatched from call + result injected into next ─────────────
-function ToolCallRow({ tc }: { tc: ToolCallSlot }) {
+// ── callDescription: one-line semantic summary of what a call did ─────────────
+function callDescription(call: MockLlmCall): string {
+  const tcs = call.toolCalls;
+  if (tcs.length === 0) {
+    if (call.assistantText) return "answered";
+    if (call.stopReason === "end_turn") return "end_turn";
+    return call.stopReason ?? "";
+  }
+  // Group tool names; count parallels
+  const counts: Record<string, number> = {};
+  for (const tc of tcs) counts[tc.name] = (counts[tc.name] ?? 0) + 1;
+  const parts = Object.entries(counts).map(([name, n]) => n > 1 ? `${name} ×${n}` : name);
+  return parts.join(" + ");
+}
+
+// ── inputLabel: strip JSON wrapper to get the key argument ────────────────────
+function inputLabel(tc: ToolCallSlot): string {
+  // Try to pull the single most-meaningful value (url, command, file_path, query, pattern)
+  try {
+    const obj = JSON.parse(tc.inputPreview) as Record<string, unknown>;
+    for (const k of ["command", "url", "file_path", "pattern", "query", "prompt", "path", "description"]) {
+      if (typeof obj[k] === "string") return (obj[k] as string).slice(0, 120);
+    }
+  } catch { /* not JSON */ }
+  return tc.inputPreview.slice(0, 120);
+}
+
+// ── ToolCallPair: one dispatched tool_use + its tool_result, grouped ──────────
+function ToolCallPair({ tc }: { tc: ToolCallSlot }) {
   const [expanded, setExpanded] = useState(false);
   const chip = toolChip(tc.name);
   const hasOutput = tc.outputSize > 0;
+  const label = inputLabel(tc);
 
   return (
-    <div style={{ marginBottom: 3 }}>
+    <div style={{ border: `1px solid ${tc.isError ? "#fecaca" : "#e5e7eb"}`, borderRadius: 7, overflow: "hidden", marginBottom: 4 }}>
+      {/* ── Dispatch row ── */}
       <div
         onClick={() => setExpanded(v => !v)}
         style={{
-          display: "flex", alignItems: "center", gap: 6, padding: "4px 8px",
-          borderRadius: 6, cursor: "pointer",
+          display: "flex", alignItems: "center", gap: 6, padding: "5px 10px",
+          cursor: "pointer",
           background: tc.isError ? "#fef2f2" : "#fafafa",
-          border: `1px solid ${tc.isError ? "#fecaca" : "#f0f0f0"}`,
+          borderBottom: expanded ? `1px solid ${tc.isError ? "#fecaca" : "#e5e7eb"}` : "none",
         }}
         onMouseEnter={e => { e.currentTarget.style.background = tc.isError ? "#fee2e2" : "#f3f4f6"; }}
         onMouseLeave={e => { e.currentTarget.style.background = tc.isError ? "#fef2f2" : "#fafafa"; }}
       >
-        {/* Dispatch arrow */}
-        <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>↳</span>
-        {/* Tool chip */}
+        <span style={{ fontSize: 9, color: "#94a3b8", flexShrink: 0, userSelect: "none" }}>↳</span>
         <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: chip.bg, border: `1px solid ${chip.border}`, color: chip.fg, flexShrink: 0 }}>
           {tc.name}
         </span>
-        {/* Input preview — most important identifier */}
         <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-          {tc.inputPreview.replace(/^\{?\s*"(?:command|file_path|pattern|query|prompt|url|description)"\s*:\s*"/, "").replace(/",?\s*.*$/, "").slice(0, 100)}
+          {label}
         </span>
-        {/* Size badges */}
         <div style={{ display: "flex", gap: 5, flexShrink: 0, alignItems: "center" }}>
           {tc.inputSize > 0 && <span style={{ fontSize: 9, color: "#9ca3af" }}>in {fmtBytes(tc.inputSize)}</span>}
-          {hasOutput && <span style={{ fontSize: 9, fontWeight: 600, color: tc.outputSize > 10_000 ? "#d97706" : "#059669" }}>out {fmtBytes(tc.outputSize)}</span>}
-          {tc.isError && <span style={{ fontSize: 9, fontWeight: 700, color: "#dc2626", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 3, padding: "1px 4px" }}>ERR</span>}
-          {!hasOutput && !tc.isError && <span style={{ fontSize: 9, color: "#d1d5db" }}>no result</span>}
+          {tc.isError && <span style={{ fontSize: 9, fontWeight: 700, color: "#dc2626" }}>ERR</span>}
           <span style={{ fontSize: 9, color: "#d1d5db" }}>{expanded ? "▲" : "▼"}</span>
         </div>
       </div>
 
+      {/* ── Result row (always visible when not expanded, compact) ── */}
+      {!expanded && hasOutput && (
+        <div
+          onClick={() => setExpanded(true)}
+          style={{ display: "flex", alignItems: "flex-start", gap: 6, padding: "4px 10px", background: "#f0fdf4", cursor: "pointer" }}
+          onMouseEnter={e => { e.currentTarget.style.background = "#dcfce7"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = "#f0fdf4"; }}
+        >
+          <span style={{ fontSize: 9, color: "#22c55e", flexShrink: 0, paddingTop: 1, userSelect: "none" }}>↩</span>
+          <span style={{ fontSize: 10, color: "#166534", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.4 }}>
+            {tc.outputPreview.slice(0, 160)}
+          </span>
+          <span style={{ fontSize: 9, color: "#86efac", flexShrink: 0 }}>{fmtBytes(tc.outputSize)}</span>
+        </div>
+      )}
+      {!expanded && !hasOutput && !tc.isError && (
+        <div style={{ padding: "3px 10px 4px 26px", fontSize: 9, color: "#d1d5db" }}>no result</div>
+      )}
+
+      {/* ── Expanded: full input + full result ── */}
       {expanded && (
-        <div style={{ marginLeft: 12, marginTop: 2, display: "flex", flexDirection: "column", gap: 3 }}>
-          {/* INPUT — what was dispatched */}
+        <div>
           {tc.inputPreview && (
-            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderLeft: "3px solid #94a3b8", borderRadius: "0 5px 5px 0", padding: "5px 8px" }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "#64748b", letterSpacing: "0.05em" }}>INPUT &nbsp;</span>
-              <span style={{ fontSize: 9, color: "#94a3b8" }}>{fmtBytes(tc.inputSize)}</span>
-              <pre style={{ margin: "3px 0 0", fontSize: 11, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 100, overflow: "auto" }}>{tc.inputPreview}</pre>
+            <div style={{ padding: "6px 10px", background: "#f8fafc", borderBottom: hasOutput ? "1px solid #e5e7eb" : "none" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "#64748b", letterSpacing: "0.05em", marginBottom: 3 }}>
+                INPUT <span style={{ fontWeight: 400, color: "#94a3b8" }}>{fmtBytes(tc.inputSize)}</span>
+              </div>
+              <pre style={{ margin: 0, fontSize: 11, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 120, overflow: "auto" }}>
+                {tc.inputPreview}
+              </pre>
             </div>
           )}
-          {/* OUTPUT — what was injected back */}
           {hasOutput && (
-            <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderLeft: "3px solid #22c55e", borderRadius: "0 5px 5px 0", padding: "5px 8px" }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", letterSpacing: "0.05em" }}>RESULT &nbsp;</span>
-              <span style={{ fontSize: 9, color: "#86efac" }}>{fmtBytes(tc.outputSize)} injected → next call</span>
-              <pre style={{ margin: "3px 0 0", fontSize: 11, color: "#166534", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 140, overflow: "auto" }}>
+            <div style={{ padding: "6px 10px", background: "#f0fdf4" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", letterSpacing: "0.05em", marginBottom: 3 }}>
+                RESULT <span style={{ fontWeight: 400, color: "#86efac" }}>{fmtBytes(tc.outputSize)}</span>
+              </div>
+              <pre style={{ margin: 0, fontSize: 11, color: "#166534", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 160, overflow: "auto" }}>
                 {tc.outputPreview}{tc.outputSize > 300 ? "\n…" : ""}
               </pre>
             </div>
@@ -2575,20 +2620,21 @@ function JsonlCallChain({
                 >
                   {/* Header */}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderBottom: "1px solid #f3f4f6" }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>
-                      Call #{call.id}
-                      {call.isCompaction && <span style={{ marginLeft: 5, fontSize: 10, color: "#ef4444" }}>◆</span>}
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", flexShrink: 0 }}>
+                      #{call.indexInTurn}
+                      {call.isCompaction && <span style={{ marginLeft: 4, color: "#ef4444" }}>◆</span>}
                     </span>
-                    <span style={{ fontSize: 11, color: "#9ca3af" }}>{fmtK(call.contextSize)}</span>
+                    {/* Semantic description */}
+                    <span style={{ fontSize: 11, color: "#111827", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                      {callDescription(call)}
+                    </span>
+                    <span style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0 }}>{fmtK(call.contextSize)}</span>
                     {delta !== 0 && (
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, color: delta > 0 ? "#d97706" : "#16a34a", background: delta > 0 ? "#fffbeb" : "#f0fdf4" }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, flexShrink: 0, color: delta > 0 ? "#d97706" : "#16a34a", background: delta > 0 ? "#fffbeb" : "#f0fdf4" }}>
                         {delta > 0 ? "+" : ""}{fmtK(delta)}
                       </span>
                     )}
-                    <span style={{ marginLeft: "auto", fontSize: 10, color: call.stopReason === "end_turn" ? "#16a34a" : "#9ca3af", fontWeight: 600 }}>
-                      {call.stopReason === "end_turn" ? "✓ end_turn" : call.stopReason === "tool_use" ? "⚙ tool_use" : (call.stopReason ?? "")}
-                    </span>
-                    <span style={{ fontSize: 10, color: "#d1d5db" }}>›</span>
+                    <span style={{ fontSize: 10, color: "#d1d5db", flexShrink: 0 }}>›</span>
                   </div>
 
                   {/* Context bar — ABSOLUTE width shows context size visually */}
@@ -2633,12 +2679,23 @@ function JsonlCallChain({
               {/* ── Dispatched tool calls ─────────────────────── */}
               {call.toolCalls.length > 0 && (
                 <div style={{ marginLeft: 32, marginRight: 72, marginTop: 3 }}>
-                  <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, letterSpacing: "0.04em", fontWeight: 600 }}>
-                    DISPATCHED ({call.toolCalls.length})
-                  </div>
-                  {call.toolCalls.map((tc, ti) => (
-                    <ToolCallRow key={tc.toolUseId || ti} tc={tc} />
-                  ))}
+                  {call.toolCalls.length > 1 ? (
+                    /* Parallel group */
+                    <div style={{ border: "1px solid #e0e7ff", borderRadius: 8, overflow: "hidden" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", background: "#eef2ff", borderBottom: "1px solid #e0e7ff" }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: "#6366f1", letterSpacing: "0.05em" }}>PARALLEL ×{call.toolCalls.length}</span>
+                        <span style={{ fontSize: 9, color: "#a5b4fc" }}>dispatched simultaneously</span>
+                      </div>
+                      <div style={{ padding: "6px 8px", display: "flex", flexDirection: "column", gap: 0 }}>
+                        {call.toolCalls.map((tc, ti) => (
+                          <ToolCallPair key={tc.toolUseId || ti} tc={tc} />
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    /* Single call */
+                    <ToolCallPair tc={call.toolCalls[0]} />
+                  )}
                 </div>
               )}
 

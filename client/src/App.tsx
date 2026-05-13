@@ -33,6 +33,7 @@ export default function App() {
   const [sessionsV2Loading, setSessionsV2Loading] = useState(true);
   const [v2Page, setV2Page] = useState(0);
   const [v2PageSize, setV2PageSize] = useState(10);
+  const [v2Search, setV2Search] = useState("");
 
   function handleDateChange(newDate: string) {
     setDate(newDate);
@@ -57,9 +58,9 @@ export default function App() {
       .finally(() => setSessionsLoading(false));
   }, [date]);
 
-  function fetchV2Sessions(page: number, pageSize = v2PageSize) {
+  function fetchV2Sessions(page: number, pageSize = v2PageSize, search = v2Search) {
     setSessionsV2Loading(true);
-    apiV2.sessions({ limit: pageSize, offset: page * pageSize })
+    apiV2.sessions({ limit: pageSize, offset: page * pageSize, search: search || undefined })
       .then(setSessionsV2)
       .catch(console.error)
       .finally(() => setSessionsV2Loading(false));
@@ -77,7 +78,7 @@ export default function App() {
   // V2: fetch once on mount (lifecycle view, not date-driven)
   useEffect(() => { fetchV2(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { fetchV2Sessions(v2Page, v2PageSize); }, [v2Page, v2PageSize]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchV2Sessions(v2Page, v2PageSize, v2Search); }, [v2Page, v2PageSize, v2Search]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSyncV2() {
     const result = await apiV2.sync();
@@ -193,8 +194,10 @@ export default function App() {
                 loading={sessionsV2Loading}
                 page={v2Page}
                 pageSize={v2PageSize}
+                search={v2Search}
                 onPageChange={(p) => setV2Page(p)}
                 onPageSizeChange={(size) => { setV2PageSize(size); setV2Page(0); }}
+                onSearchChange={(s) => { setV2Search(s); setV2Page(0); }}
               />
             </>
           )}

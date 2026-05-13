@@ -25,6 +25,7 @@ export class SessionsV2Controller {
     @Query("limit") limitParam?: string,
     @Query("offset") offsetParam?: string,
     @Query("include_deleted") includeDeleted?: string,
+    @Query("search") search?: string,
   ) {
     const limit = Math.min(parseInt(limitParam ?? "50"), 200);
     const offset = parseInt(offsetParam ?? "0");
@@ -37,6 +38,11 @@ export class SessionsV2Controller {
     conds.push("(input_tokens > 0 OR output_tokens > 0)");
     if (tool) { conds.push("tool = ?"); params.push(tool); }
     if (project) { conds.push("project = ?"); params.push(project); }
+    if (search) {
+      const like = `%${search}%`;
+      conds.push("(session_id LIKE ? OR custom_title LIKE ? OR ai_title LIKE ? OR cwd LIKE ? OR first_user_message LIKE ?)");
+      params.push(like, like, like, like, like);
+    }
 
     // Optional: filter by last active date (date the session was last active)
     if (lastActiveDate) {

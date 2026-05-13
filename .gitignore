@@ -38,3 +38,5 @@ server/test/README.md
 
 mock-to-real.md
 session-devtools-*.tgz
+
+.playwright-cli

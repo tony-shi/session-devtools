@@ -12,12 +12,13 @@ export const apiV2 = {
   summary: () =>
     get<SummaryV2>("/api/v2/summary"),
 
-  sessions: (opts?: { lastActiveDate?: string; activeSinceHours?: number; limit?: number; offset?: number }) => {
+  sessions: (opts?: { lastActiveDate?: string; activeSinceHours?: number; limit?: number; offset?: number; search?: string }) => {
     const params = new URLSearchParams();
     params.set("limit", String(opts?.limit ?? 50));
     if (opts?.offset) params.set("offset", String(opts.offset));
     if (opts?.lastActiveDate) params.set("last_active_date", opts.lastActiveDate);
     if (opts?.activeSinceHours != null) params.set("active_since_hours", String(opts.activeSinceHours));
+    if (opts?.search) params.set("search", opts.search);
     return get<SessionsV2Response>(`/api/v2/sessions?${params}`);
   },
 

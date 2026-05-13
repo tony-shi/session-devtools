@@ -199,8 +199,10 @@ interface Props {
   loading: boolean;
   page: number;
   pageSize: number;
+  search: string;
   onPageChange: (page: number) => void;
   onPageSizeChange: (size: number) => void;
+  onSearchChange: (search: string) => void;
 }
 
 function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange }: {
@@ -290,10 +292,25 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
   );
 }
 
-export function SessionListV2({ data, loading, page, pageSize, onPageChange, onPageSizeChange }: Props) {
+export function SessionListV2({ data, loading, page, pageSize, search, onPageChange, onPageSizeChange, onSearchChange }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [localFilter, setLocalFilter] = useState("");
   const selectedSession = selectedId ? (data?.sessions.find((s) => s.session_id === selectedId) ?? null) : null;
   const total = data?.total ?? 0;
+
+  // Front-end filter on current page sessions
+  const visibleSessions = localFilter.trim()
+    ? (data?.sessions ?? []).filter((s) => {
+        const q = localFilter.toLowerCase();
+        return (
+          s.session_id.toLowerCase().includes(q) ||
+          (s.custom_title ?? "").toLowerCase().includes(q) ||
+          (s.ai_title ?? "").toLowerCase().includes(q) ||
+          (s.cwd ?? "").toLowerCase().includes(q) ||
+          (s.first_user_message ?? "").toLowerCase().includes(q)
+        );
+      })
+    : (data?.sessions ?? []);
 
   return (
     <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb", overflow: "hidden" }}>
@@ -303,7 +320,60 @@ export function SessionListV2({ data, loading, page, pageSize, onPageChange, onP
           <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "#9ca3af", background: "#f3f4f6", padding: "2px 7px", borderRadius: 12 }}>v2</span>
           <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "#6b7280" }}>· 仅展示有 LLM 交互的会话</span>
         </h2>
-        <Pagination page={page} pageSize={pageSize} total={total} loading={loading} onChange={onPageChange} onPageSizeChange={onPageSizeChange} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {/* Search box */}
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <svg width="13" height="13" fill="none" stroke="#9ca3af" viewBox="0 0 24 24" style={{ position: "absolute", left: 8, pointerEvents: "none" }}>
+              <circle cx="11" cy="11" r="8" strokeWidth={2} />
+              <path strokeLinecap="round" strokeWidth={2} d="M21 21l-4.35-4.35" />
+            </svg>
+            <input
+              type="text"
+              placeholder="搜索 ID / 名称 / 路径…"
+              value={search}
+              onChange={(e) => onSearchChange(e.target.value)}
+              style={{
+                paddingLeft: 28, paddingRight: 28, paddingTop: 5, paddingBottom: 5,
+                fontSize: 12, borderRadius: 7, border: "1px solid #e5e7eb",
+                outline: "none", width: 200, color: "#374151",
+                background: search ? "#faf5ff" : "#fff",
+                borderColor: search ? "#a78bfa" : "#e5e7eb",
+              }}
+            />
+            {search && (
+              <button
+                onClick={() => onSearchChange("")}
+                style={{ position: "absolute", right: 7, background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 14, lineHeight: 1, padding: 0 }}
+              >×</button>
+            )}
+          </div>
+          {/* Page-level quick filter */}
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <svg width="13" height="13" fill="none" stroke="#9ca3af" viewBox="0 0 24 24" style={{ position: "absolute", left: 8, pointerEvents: "none" }}>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h18M7 8h10M11 12h2" />
+            </svg>
+            <input
+              type="text"
+              placeholder="当页过滤…"
+              value={localFilter}
+              onChange={(e) => setLocalFilter(e.target.value)}
+              style={{
+                paddingLeft: 28, paddingRight: 28, paddingTop: 5, paddingBottom: 5,
+                fontSize: 12, borderRadius: 7, border: "1px solid #e5e7eb",
+                outline: "none", width: 160, color: "#374151",
+                background: localFilter ? "#eff6ff" : "#fff",
+                borderColor: localFilter ? "#93c5fd" : "#e5e7eb",
+              }}
+            />
+            {localFilter && (
+              <button
+                onClick={() => setLocalFilter("")}
+                style={{ position: "absolute", right: 7, background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 14, lineHeight: 1, padding: 0 }}
+              >×</button>
+            )}
+          </div>
+          <Pagination page={page} pageSize={pageSize} total={total} loading={loading} onChange={onPageChange} onPageSizeChange={onPageSizeChange} />
+        </div>
       </div>
 
       {loading ? (
@@ -318,8 +388,10 @@ export function SessionListV2({ data, loading, page, pageSize, onPageChange, onP
             </div>
           ))}
         </div>
-      ) : !data || data.sessions.length === 0 ? (
-        <p style={{ fontSize: 13, color: "#9ca3af", textAlign: "center", padding: "40px 0" }}>暂无会话</p>
+      ) : visibleSessions.length === 0 ? (
+        <p style={{ fontSize: 13, color: "#9ca3af", textAlign: "center", padding: "40px 0" }}>
+          {localFilter || search ? "未找到匹配的会话" : "暂无会话"}
+        </p>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -338,7 +410,7 @@ export function SessionListV2({ data, loading, page, pageSize, onPageChange, onP
             </tr>
           </thead>
           <tbody>
-            {data.sessions.map((s) => (
+            {visibleSessions.map((s) => (
               <SessionRowV2
                 key={s.session_id}
                 session={s}
