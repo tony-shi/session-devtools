@@ -75,8 +75,11 @@ export interface RemovedLeaf {
   jsonPath: string;
 }
 
+export type PrevLeafDiffStatus = "unchanged" | "removed";
+
 export interface AttributionTreeDiff {
   leafStatus: Record<string, LeafDiffStatus>;
+  previousLeafStatus?: Record<string, PrevLeafDiffStatus>;
   removedFromPrevious: RemovedLeaf[];
   summary: {
     currentLeaves: number;
@@ -87,6 +90,17 @@ export interface AttributionTreeDiff {
     addedChars: number;
     removedChars: number;
   };
+}
+
+export interface PreviousLeafLite {
+  nodeId: string;
+  slotType: string;
+  charCount: number;
+  rawHash: string;
+  preview: string;
+  jsonPath: string;
+  rootSlotType: string;
+  diffStatus: "unchanged" | "removed";
 }
 
 export interface LinkJsonlReport {
@@ -102,5 +116,7 @@ export interface AttributionTreeResult {
   snapshot: SerializedSnapshot | null;
   linkReport: LinkJsonlReport | null;
   diff: AttributionTreeDiff | null;
+  /** previous snapshot 的叶子（用于双行 strip 上一行）；首个 call 时不存在 */
+  previousLeaves?: PreviousLeafLite[];
   error?: string;
 }

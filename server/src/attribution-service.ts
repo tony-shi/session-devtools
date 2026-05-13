@@ -24,6 +24,7 @@ import type { Database } from "better-sqlite3";
 import {
   attributeWithJsonl,
   computeTreeDiff,
+  collectLeaves,
   type ParsedQuerySnapshot,
   type LinkableJsonlEvent,
   type LinkJsonlReport,
@@ -46,8 +47,28 @@ export interface AttributionTreeResult {
   linkReport: LinkJsonlReport | null;
   /** tree diff vs previous call；首个 call 或无 previous proxy 时为 null */
   diff: AttributionTreeDiff | null;
+  /**
+   * previous snapshot 的叶子摘要（含 rootSlotType + diffStatus），按 in-order 排列。
+   * 仅当 prev snapshot 存在时有值。前端两行 strip 的"上一行"消费此数据。
+   *
+   * 不发送完整 prev 树以节省带宽 — 视图层只需要叶子，container 关系由 rootSlotType 表达。
+   */
+  previousLeaves?: PreviousLeafLite[];
   /** 错误信息（reqBody 缺失 / 解析失败等） */
   error?: string;
+}
+
+export interface PreviousLeafLite {
+  nodeId: string;
+  slotType: string;
+  charCount: number;
+  rawHash: string;
+  preview: string;
+  jsonPath: string;
+  /** 该叶子归属的顶层 root 的 slotType（如 system.identity / messages.text / tools.builtin.Read） */
+  rootSlotType: string;
+  /** 双行 strip 上一行的着色：unchanged 灰、removed 红 */
+  diffStatus: "unchanged" | "removed";
 }
 
 /**
@@ -185,13 +206,49 @@ export async function loadAttributionTree(
   }
 
   const diff = computeTreeDiff(snapshot, previousSnapshot);
+  const previousLeaves = previousSnapshot
+    ? serializePreviousLeaves(previousSnapshot, diff.previousLeafStatus ?? {})
+    : undefined;
   return {
     callId, sessionId, hasProxy: true,
     previousCallId: meta.prevCall?.id ?? null,
     snapshot: serializeSnapshot(snapshot),
     linkReport,
     diff,
+    ...(previousLeaves && { previousLeaves }),
   };
+}
+
+// ─── prev snapshot → PreviousLeafLite[] ─────────────────────────────────────
+
+function rootSlotTypeOf(snapshot: ParsedQuerySnapshot, leaf: SegmentNode): string {
+  let cur: SegmentNode | undefined = leaf;
+  while (cur?.parentId) {
+    cur = snapshot.index[cur.parentId];
+  }
+  return cur?.slotType ?? leaf.slotType;
+}
+
+function shortPreview(text: string, max = 80): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length > max ? t.slice(0, max - 3) + "..." : t;
+}
+
+function serializePreviousLeaves(
+  snapshot: ParsedQuerySnapshot,
+  statusByNodeId: Record<string, "unchanged" | "removed">,
+): PreviousLeafLite[] {
+  const leaves = collectLeaves(snapshot.roots);
+  return leaves.map((leaf) => ({
+    nodeId: leaf.id,
+    slotType: leaf.slotType,
+    charCount: leaf.charCount,
+    rawHash: leaf.rawHash,
+    preview: shortPreview(leaf.rawText),
+    jsonPath: leaf.jsonPath,
+    rootSlotType: rootSlotTypeOf(snapshot, leaf),
+    diffStatus: statusByNodeId[leaf.id] ?? "unchanged",
+  }));
 }
 
 // ─── JSONL → LinkableJsonlEvent 适配 ──────────────────────────────────────────

@@ -162,6 +162,16 @@ describe("attribution-service — loadAttributionTree 端到端", () => {
       expect(result.diff!.summary.unchangedLeaves).toBeGreaterThan(0);
       // 新增字符数 > 0
       expect(result.diff!.summary.addedChars).toBeGreaterThan(0);
+
+      // —— previousLeaves: 用于双行 strip 的 prev 行 —— //
+      expect(result.previousLeaves).toBeDefined();
+      expect(result.previousLeaves!.length).toBeGreaterThan(0);
+      // 每个 leaf 必有 rootSlotType + diffStatus + preview
+      for (const pl of result.previousLeaves!) {
+        expect(pl.rootSlotType).toBeTruthy();
+        expect(["unchanged", "removed"]).toContain(pl.diffStatus);
+        expect(pl.preview).toBeDefined();
+      }
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }

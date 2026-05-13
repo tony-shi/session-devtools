@@ -33,9 +33,20 @@ export interface RemovedLeaf {
   jsonPath: string;
 }
 
+/**
+ * previousLeafStatus 取值：unchanged 表示该 prev 叶子在 current 中能找到同 hash 配对；
+ * removed 表示 current 找不到对应 hash（或 current 中同 hash 的份数已被消耗完）。
+ */
+export type PrevLeafDiffStatus = "unchanged" | "removed";
+
 export interface AttributionTreeDiff {
   /** current snapshot 中每个叶子的状态。key = node.id */
   leafStatus: Record<string, LeafDiffStatus>;
+  /**
+   * previous snapshot 中每个叶子的状态。key = prev node.id。
+   * 可选：previous 不存在时不出现。前端两行 strip 的上一行用此渲染。
+   */
+  previousLeafStatus?: Record<string, PrevLeafDiffStatus>;
   /** previous snapshot 中存在、current 不存在的叶子列表 */
   removedFromPrevious: RemovedLeaf[];
   /** 汇总：方便 UI 顶部摘要展示 */
@@ -107,6 +118,13 @@ export function computeTreeDiff(
   for (const [hash, list] of prevByHash) {
     remaining.set(hash, list.length);
   }
+  // previousLeafStatus：默认 unchanged，被"剩下来"的 prev 叶子翻成 removed。
+  // 注意：同 hash 的 prev 叶子按出现顺序消耗 — 前 (list.length - remaining) 个匹配，
+  // 后 remaining 个判 removed。这与下方 removedFromPrevious 列表的截取方式一致。
+  const previousLeafStatus: Record<string, PrevLeafDiffStatus> = {};
+  for (const leaf of prevLeaves) {
+    previousLeafStatus[leaf.id] = "unchanged";
+  }
 
   for (const leaf of currentLeaves) {
     const left = remaining.get(leaf.rawHash) ?? 0;
@@ -138,12 +156,14 @@ export function computeTreeDiff(
         charCount: leaf.charCount,
         jsonPath: leaf.jsonPath,
       });
+      previousLeafStatus[leaf.id] = "removed";
       removedChars += leaf.charCount;
     }
   }
 
   return {
     leafStatus,
+    previousLeafStatus,
     removedFromPrevious,
     summary: {
       currentLeaves: currentLeaves.length,

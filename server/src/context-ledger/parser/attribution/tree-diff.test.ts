@@ -105,4 +105,31 @@ describe("PR 4a — tree-diff", () => {
     expect(removed.charCount).toBeGreaterThan(0);
     expect(removed.jsonPath).toContain("messages");
   });
+
+  it("previousLeafStatus: prev 中所有叶子都有状态，removed 节点状态为 removed", () => {
+    const a = build(reqBody("Stay focused.", "to be removed"));
+    const b = build(reqBody("Stay focused.", "fresh"));
+    const diff = computeTreeDiff(b, a);
+    expect(diff.previousLeafStatus).toBeDefined();
+    if (!diff.previousLeafStatus) return;
+
+    // prev 中每个叶子都有 status
+    const prevLeafCount = Object.values(a.index).filter((n) => n.children.length === 0).length;
+    expect(Object.keys(diff.previousLeafStatus).length).toBe(prevLeafCount);
+
+    // 与 removedFromPrevious 数量一致
+    const removedCount = Object.values(diff.previousLeafStatus).filter((s) => s === "removed").length;
+    expect(removedCount).toBe(diff.removedFromPrevious.length);
+
+    // removedFromPrevious 中每个 nodeId 在 status 中都标 removed
+    for (const removed of diff.removedFromPrevious) {
+      expect(diff.previousLeafStatus[removed.nodeId]).toBe("removed");
+    }
+  });
+
+  it("previous=null 时不返回 previousLeafStatus", () => {
+    const cur = build(reqBody("Stay focused.", "hello"));
+    const diff = computeTreeDiff(cur, null);
+    expect(diff.previousLeafStatus).toBeUndefined();
+  });
 });
