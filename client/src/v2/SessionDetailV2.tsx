@@ -3089,7 +3089,7 @@ function CallInspectorOverview({
   return (
     <div style={{ padding: "14px 14px" }}>
       {/* Summary header */}
-      <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", letterSpacing: "0.05em", marginBottom: 12, textTransform: "uppercase", fontSize: 10 as unknown as number }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.05em", marginBottom: 12, textTransform: "uppercase" }}>
         Call #{call.id} Summary
       </div>
 
@@ -4726,8 +4726,14 @@ function AttributionSection({
 }
 
 function LlmCallDetailPanel({
-  call, sessionId,
-}: { call: MockLlmCall; onSelectEntry: (e: MockDiffEntry) => void; sessionId: string }) {
+  call, sessionId, mode = "main", onShowTurnContext,
+}: {
+  call: MockLlmCall;
+  onSelectEntry: (e: MockDiffEntry) => void;
+  sessionId: string;
+  mode?: "main" | "panel";
+  onShowTurnContext?: () => void;
+}) {
   const [tab, setTab] = useState<CallTab>("attribution");
   const [callDetail, setCallDetail] = useState<CallDetail | null>(null);
   const [callDetailLoading, setCallDetailLoading] = useState(true);
@@ -4773,7 +4779,7 @@ function LlmCallDetailPanel({
   ];
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "16px 22px", minWidth: 0 }}>
+    <div style={{ flex: 1, overflowY: "auto", padding: mode === "panel" ? "12px 14px" : "16px 22px", minWidth: 0 }}>
 
       {/* ── Compact Header ──────────────────────── */}
       <div style={{ marginBottom: 14, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
@@ -4784,6 +4790,23 @@ function LlmCallDetailPanel({
           <span style={{ fontSize: 10, color: "#9ca3af" }}>#{call.indexInTurn} in turn</span>
           {call.isCompaction && <RiskBadge type="compaction" />}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            {onShowTurnContext && (
+              <button
+                onClick={onShowTurnContext}
+                style={{
+                  border: "1px solid #dbeafe",
+                  background: "#eff6ff",
+                  color: "#2563eb",
+                  borderRadius: 5,
+                  padding: "3px 8px",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Show in turn
+              </button>
+            )}
             <span style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{call.model ? shortModelName(call.model) : "—"}</span>
             <span style={{ fontSize: 10, color: "#9ca3af" }}>
               {call.timestamp ? fmtDateShort(call.timestamp) : "—"}
@@ -5111,6 +5134,10 @@ type InspectorState =
   | { type: "call-diff"; call: MockLlmCall }
   | { type: "evidence"; entry: MockDiffEntry };
 
+type LinkedPanelState =
+  | { type: "call"; call: MockLlmCall; turn: MockUserTurn }
+  | { type: "turn-excerpt"; turn: MockUserTurn; focusCall: MockLlmCall | null };
+
 interface Props {
   session: SessionV2;
   onClose: () => void;
@@ -5139,19 +5166,66 @@ export function SessionDetailV2({ session, onClose }: Props) {
   const [selectedSubAgent, setSelectedSubAgent] = useState<SubAgentSummary | null>(null);
   const [subAgentDrilldown, setSubAgentDrilldown] = useState<SessionDrilldown | null>(null);
   const [subAgentLoadState, setSubAgentLoadState] = useState<"loading" | "ok" | "error">("loading");
+  const [linkedPanel, setLinkedPanel] = useState<LinkedPanelState | null>(null);
+  const [linkedPanelPinned, setLinkedPanelPinned] = useState(false);
 
   const title = getSessionDisplayName(session, drilldown?.title);
+
+  function findTurnForCall(callId: number): MockUserTurn | null {
+    return turns.find(t => t.calls.some(c => c.id === callId)) ?? selectedTurn ?? null;
+  }
+
+  function openLinkedCall(call: MockLlmCall, turnHint?: MockUserTurn | null) {
+    const turn = turnHint ?? findTurnForCall(call.id);
+    if (!turn) {
+      handleSelectCall(call);
+      return;
+    }
+    setLinkedPanel({ type: "call", call, turn });
+  }
+
+  function openLinkedTurnExcerpt(turn: MockUserTurn, focusCall: MockLlmCall | null) {
+    setLinkedPanel({ type: "turn-excerpt", turn, focusCall });
+  }
+
+  function closeLinkedPanel() {
+    setLinkedPanel(null);
+    setLinkedPanelPinned(false);
+  }
+
+  function openLinkedPanelAsMain() {
+    if (!linkedPanel) return;
+    if (linkedPanel.type === "call") {
+      setSelectedTurn(linkedPanel.turn);
+      setSelectedCall(linkedPanel.call);
+      setNavLevel("call");
+      setInspector({ type: "call-diff", call: linkedPanel.call });
+    } else {
+      setSelectedTurn(linkedPanel.turn);
+      setSelectedCall(null);
+      setNavLevel("turn");
+      setInspector({ type: "turn-rollup", turn: linkedPanel.turn });
+    }
+    setLinkedPanel(null);
+  }
 
   function handleSelectTurn(turn: MockUserTurn) {
     setSelectedTurn(turn);
     setSelectedCall(null);
     setNavLevel("turn");
+    if (!linkedPanelPinned) setLinkedPanel(null);
     setInspector({ type: "turn-rollup", turn });
   }
 
   function handleSelectCall(call: MockLlmCall) {
     setSelectedCall(call);
     setNavLevel("call");
+    if (!linkedPanelPinned) setLinkedPanel(null);
+    setInspector({ type: "call-diff", call });
+  }
+
+  function handleLinkCallFromTurn(call: MockLlmCall) {
+    openLinkedCall(call, selectedTurn);
     setInspector({ type: "call-diff", call });
   }
 
@@ -5164,6 +5238,8 @@ export function SessionDetailV2({ session, onClose }: Props) {
     setSelectedTurn(null);
     setSelectedInterTurnBlock(null);
     setSelectedCall(null);
+    setLinkedPanel(null);
+    setLinkedPanelPinned(false);
     setInspector({ type: "hotspots" });
   }
 
@@ -5172,18 +5248,21 @@ export function SessionDetailV2({ session, onClose }: Props) {
     setSelectedTurn(null);
     setSelectedCall(null);
     setNavLevel("inter-turn");
+    if (!linkedPanelPinned) setLinkedPanel(null);
   }
 
   function handleNavTurn(turn: MockUserTurn) {
     setSelectedTurn(turn);
     setSelectedCall(null);
     setNavLevel("turn");
+    if (!linkedPanelPinned) setLinkedPanel(null);
     setInspector({ type: "turn-rollup", turn });
   }
 
   function handleSelectSubAgent(sa: SubAgentSummary) {
     setSelectedSubAgent(sa);
     setNavLevel("subagent");
+    if (!linkedPanelPinned) setLinkedPanel(null);
     setSubAgentDrilldown(null);
     setSubAgentLoadState("loading");
     apiV2.subAgentDrilldown(session.session_id, sa.agentFileId)
@@ -5212,7 +5291,16 @@ export function SessionDetailV2({ session, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        style={{ width: "calc(100vw - 200px)", maxWidth: 1200, height: "100%", background: "#fff", boxShadow: "-4px 0 24px rgba(0,0,0,0.12)", display: "flex", flexDirection: "column" }}
+        style={{
+          width: linkedPanel ? "calc(100vw - 64px)" : "calc(100vw - 200px)",
+          maxWidth: linkedPanel ? 1560 : 1200,
+          height: "100%",
+          background: "#fff",
+          boxShadow: "-4px 0 24px rgba(0,0,0,0.12)",
+          display: "flex",
+          flexDirection: "column",
+          transition: "width 180ms ease, max-width 180ms ease",
+        }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -5321,7 +5409,11 @@ export function SessionDetailV2({ session, onClose }: Props) {
                           indent
                           label={call.isCompaction ? `#${call.id} compact` : `#${call.id}`}
                           sublabel={call.isSignificant ? `+${fmtK(call.significantDelta ?? 0)}` : fmtK(call.contextSize)}
-                          active={selectedCall?.id === call.id}
+                          active={
+                            selectedCall?.id === call.id
+                            || (linkedPanel?.type === "call" && linkedPanel.call.id === call.id)
+                            || (linkedPanel?.type === "turn-excerpt" && linkedPanel.focusCall?.id === call.id)
+                          }
                           badge={call.isCompaction ? "◆" : call.isSignificant ? "●" : undefined}
                           badgeColor={call.isCompaction ? "#ef4444" : "#3b82f6"}
                           onClick={() => handleSelectCall(call)}
@@ -5344,7 +5436,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
               <SessionOverviewPanel turns={turns} drilldown={drilldown} onSelectTurn={handleSelectTurn} />
             )}
             {navLevel === "turn" && selectedTurn && !selectedCall && (
-              <UserTurnDetailPanel turn={selectedTurn} onSelectCall={handleSelectCall} isMockSession={isMockData} onSubAgentClick={handleSelectSubAgent}
+              <UserTurnDetailPanel turn={selectedTurn} onSelectCall={handleLinkCallFromTurn} isMockSession={isMockData} onSubAgentClick={handleSelectSubAgent}
                 trailingInterTurnBlock={interTurnBlocks.find(b => b.prevTurnId === selectedTurn.id && b.nextTurnId !== selectedTurn.id) ?? null}
               />
             )}
@@ -5352,7 +5444,15 @@ export function SessionDetailV2({ session, onClose }: Props) {
               <InterTurnBlockPanel block={selectedInterTurnBlock} />
             )}
             {navLevel === "call" && selectedCall && (
-              <LlmCallDetailPanel call={selectedCall} onSelectEntry={handleSelectEntry} sessionId={session.session_id} />
+              <LlmCallDetailPanel
+                call={selectedCall}
+                onSelectEntry={handleSelectEntry}
+                sessionId={session.session_id}
+                onShowTurnContext={() => {
+                  const turn = findTurnForCall(selectedCall.id);
+                  if (turn) openLinkedTurnExcerpt(turn, selectedCall);
+                }}
+              />
             )}
             {navLevel === "subagent" && (
               <SubAgentSessionPanel
@@ -5364,8 +5464,258 @@ export function SessionDetailV2({ session, onClose }: Props) {
             )}
           </div>
 
+          <LinkedContextPanel
+            panel={linkedPanel}
+            pinned={linkedPanelPinned}
+            sessionId={session.session_id}
+            onClose={closeLinkedPanel}
+            onTogglePin={() => setLinkedPanelPinned(v => !v)}
+            onOpenAsMain={openLinkedPanelAsMain}
+            onSelectCall={(call, turn) => openLinkedCall(call, turn)}
+            onShowTurnContext={(turn, focusCall) => openLinkedTurnExcerpt(turn, focusCall)}
+            onSelectEntry={handleSelectEntry}
+          />
+
         </div>
       </div>
+    </div>
+  );
+}
+
+function LinkedContextPanel({
+  panel,
+  pinned,
+  sessionId,
+  onClose,
+  onTogglePin,
+  onOpenAsMain,
+  onSelectCall,
+  onShowTurnContext,
+  onSelectEntry,
+}: {
+  panel: LinkedPanelState | null;
+  pinned: boolean;
+  sessionId: string;
+  onClose: () => void;
+  onTogglePin: () => void;
+  onOpenAsMain: () => void;
+  onSelectCall: (call: MockLlmCall, turn: MockUserTurn) => void;
+  onShowTurnContext: (turn: MockUserTurn, focusCall: MockLlmCall | null) => void;
+  onSelectEntry: (entry: MockDiffEntry) => void;
+}) {
+  const open = panel !== null;
+  const title = !panel
+    ? ""
+    : panel.type === "call"
+      ? `Call #${panel.call.id}`
+      : `Turn ${panel.turn.id} context`;
+  const subtitle = !panel
+    ? ""
+    : panel.type === "call"
+      ? `Linked from Turn ${panel.turn.id}`
+      : panel.focusCall
+        ? `Focused around Call #${panel.focusCall.id}`
+        : "Transaction excerpt";
+
+  return (
+    <aside
+      style={{
+        width: open ? "min(560px, 42vw)" : 0,
+        minWidth: open ? 420 : 0,
+        flexShrink: 0,
+        borderLeft: open ? "1px solid #e5e7eb" : "0 solid transparent",
+        background: "#fff",
+        overflow: "hidden",
+        transition: "width 180ms ease, min-width 180ms ease, border-color 180ms ease",
+        boxShadow: open ? "-8px 0 18px rgba(15, 23, 42, 0.06)" : "none",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      {panel && (
+        <>
+          <div style={{
+            flexShrink: 0,
+            padding: "10px 12px",
+            borderBottom: "1px solid #e5e7eb",
+            background: "#fafafa",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 800, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {title}
+                </span>
+                <span style={{
+                  fontSize: 9,
+                  color: pinned ? "#7c3aed" : "#64748b",
+                  border: `1px solid ${pinned ? "#ddd6fe" : "#e5e7eb"}`,
+                  background: pinned ? "#f5f3ff" : "#fff",
+                  borderRadius: 4,
+                  padding: "1px 5px",
+                  whiteSpace: "nowrap",
+                }}>
+                  {pinned ? "pinned" : "linked"}
+                </span>
+              </div>
+              <div style={{ fontSize: 10, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
+                {subtitle}
+              </div>
+            </div>
+            <button
+              onClick={onTogglePin}
+              style={linkedPanelButtonStyle(pinned ? "active" : "neutral")}
+              title="Keep this panel open while navigating"
+            >
+              Pin
+            </button>
+            <button
+              onClick={onOpenAsMain}
+              style={linkedPanelButtonStyle("primary")}
+              title="Promote linked content into the main view"
+            >
+              Open as main
+            </button>
+            <button
+              onClick={onClose}
+              style={linkedPanelButtonStyle("ghost")}
+              title="Close linked panel"
+            >
+              ×
+            </button>
+          </div>
+
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
+            {panel.type === "call" ? (
+              <LlmCallDetailPanel
+                call={panel.call}
+                onSelectEntry={onSelectEntry}
+                sessionId={sessionId}
+                mode="panel"
+                onShowTurnContext={() => onShowTurnContext(panel.turn, panel.call)}
+              />
+            ) : (
+              <LinkedTurnExcerptPanel
+                turn={panel.turn}
+                focusCall={panel.focusCall}
+                onSelectCall={onSelectCall}
+              />
+            )}
+          </div>
+        </>
+      )}
+    </aside>
+  );
+}
+
+function linkedPanelButtonStyle(kind: "primary" | "active" | "neutral" | "ghost"): React.CSSProperties {
+  const base: React.CSSProperties = {
+    borderRadius: 5,
+    padding: "3px 7px",
+    fontSize: 10,
+    fontWeight: 700,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  };
+  if (kind === "primary") return { ...base, border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca" };
+  if (kind === "active") return { ...base, border: "1px solid #c4b5fd", background: "#f5f3ff", color: "#6d28d9" };
+  if (kind === "neutral") return { ...base, border: "1px solid #e5e7eb", background: "#fff", color: "#64748b" };
+  return { ...base, border: "1px solid #e5e7eb", background: "#fff", color: "#94a3b8", fontSize: 14, lineHeight: 1, padding: "1px 7px" };
+}
+
+function LinkedTurnExcerptPanel({
+  turn,
+  focusCall,
+  onSelectCall,
+}: {
+  turn: MockUserTurn;
+  focusCall: MockLlmCall | null;
+  onSelectCall: (call: MockLlmCall, turn: MockUserTurn) => void;
+}) {
+  const calls = turn.calls;
+  const focusIdx = focusCall ? calls.findIndex(c => c.id === focusCall.id) : -1;
+  const start = focusIdx >= 0 ? Math.max(0, focusIdx - 2) : 0;
+  const end = focusIdx >= 0 ? Math.min(calls.length, focusIdx + 3) : Math.min(calls.length, 6);
+  const visibleCalls = calls.slice(start, end);
+
+  return (
+    <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 18px", background: "#fff" }}>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: "#111827", marginBottom: 4 }}>
+          Transaction Excerpt
+        </div>
+        <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.6 }}>
+          The main view stays on the request. This panel shows nearby calls and events from the source turn.
+        </div>
+      </div>
+
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+        {visibleCalls.map((call, idx) => {
+          const active = focusCall?.id === call.id;
+          const prev = calls[calls.findIndex(c => c.id === call.id) - 1];
+          const delta = prev ? call.contextSize - prev.contextSize : call.contextSize;
+          return (
+            <button
+              key={call.id}
+              onClick={() => onSelectCall(call, turn)}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                border: "none",
+                borderBottom: idx < visibleCalls.length - 1 ? "1px solid #f1f5f9" : "none",
+                background: active ? "#eff6ff" : "#fff",
+                padding: "10px 12px",
+                cursor: "pointer",
+                display: "block",
+              }}
+              onMouseEnter={e => { if (!active) e.currentTarget.style.background = "#f8fafc"; }}
+              onMouseLeave={e => { if (!active) e.currentTarget.style.background = "#fff"; }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 800, color: active ? "#2563eb" : "#111827" }}>Call #{call.id}</span>
+                <span style={{ fontSize: 10, color: "#94a3b8" }}>C{call.indexInTurn}</span>
+                <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: delta >= 0 ? "#d97706" : "#16a34a" }}>
+                  {delta >= 0 ? "+" : ""}{fmtK(delta)}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: call.assistantText || call.toolCalls.length ? 6 : 0 }}>
+                {call.toolCalls.slice(0, 4).map(tc => (
+                  <span key={tc.toolUseId} style={{
+                    fontSize: 10,
+                    color: "#166534",
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    borderRadius: 4,
+                    padding: "1px 5px",
+                    maxWidth: "100%",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}>
+                    {tc.name} · {fmtK(tc.outputSize)}
+                  </span>
+                ))}
+                {call.toolCalls.length > 4 && (
+                  <span style={{ fontSize: 10, color: "#94a3b8" }}>+{call.toolCalls.length - 4}</span>
+                )}
+              </div>
+              {call.assistantText && (
+                <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                  {call.assistantText}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {focusIdx >= 0 && (start > 0 || end < calls.length) && (
+        <div style={{ marginTop: 8, fontSize: 10, color: "#94a3b8" }}>
+          Showing calls {start + 1}-{end} of {calls.length}. Open as main to inspect the full turn.
+        </div>
+      )}
     </div>
   );
 }
