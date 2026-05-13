@@ -100,7 +100,7 @@ async function readLineFromPlain(filePath: string, offset: number): Promise<stri
   }
 }
 
-async function readProxyRecord(
+export async function readProxyRecord(
   jsonlFile: string,
   byteOffset: number,
 ): Promise<Record<string, unknown> | null> {

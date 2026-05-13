@@ -21,6 +21,7 @@ import {
   type SessionMetrics,
 } from "./drilldown-real-fill";
 import { getSessionDisplayName } from "./session-display";
+import { AttributionTreePanel } from "./AttributionTreePanel";
 
 // Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
 type MockDiffEntry = DiffEntry;
@@ -4654,6 +4655,76 @@ function DiffSegmentRow({ d, style }: { d: SegmentDiff; style: { bg: string; bor
   );
 }
 
+// ─── Attribution section: 双视图（origin tree / legacy segments）────────────────
+// origin tree = 新归因管线产物（含 jsonl-linker、tree-diff），默认显示。
+// legacy segments = 旧 RealSegmentTree，保留用于对照与 fallback。
+
+type AttributionView = "tree" | "segments";
+
+function AttributionSection({
+  callDetailLoading, realSegments, callDetail, call, freshIn, sessionId,
+}: {
+  callDetailLoading: boolean;
+  realSegments: ReturnType<typeof Object> | null; // CallSegment[] | null
+  callDetail: CallDetail | null;
+  call: MockLlmCall;
+  freshIn: number;
+  sessionId: string;
+}) {
+  const [view, setView] = useState<AttributionView>("tree");
+
+  return (
+    <div>
+      {/* 视图切换 */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+        {([
+          { id: "tree" as const, label: "Origin Tree" },
+          { id: "segments" as const, label: "Segments (legacy)" },
+        ]).map(({ id, label }) => (
+          <button
+            key={id}
+            onClick={() => setView(id)}
+            style={{
+              fontSize: 10, padding: "3px 10px",
+              background: view === id ? "#eef2ff" : "transparent",
+              border: `1px solid ${view === id ? "#c7d2fe" : "#e5e7eb"}`,
+              borderRadius: 4, cursor: "pointer",
+              color: view === id ? "#4338ca" : "#6b7280",
+              fontWeight: view === id ? 600 : 400,
+            }}
+          >{label}</button>
+        ))}
+      </div>
+
+      {view === "tree" ? (
+        <AttributionTreePanel sessionId={sessionId} callId={call.id} />
+      ) : callDetailLoading ? (
+        <div style={{ fontSize: 11, color: "#9ca3af", padding: "32px 0", textAlign: "center" }}>Loading…</div>
+      ) : realSegments ? (
+        <RealSegmentTree
+          segments={realSegments as Parameters<typeof RealSegmentTree>[0]["segments"]}
+          diff={callDetail?.diff ?? null}
+          call={call}
+        />
+      ) : (
+        <div style={{ padding: "24px 0", textAlign: "center" }}>
+          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>No proxy data — segment breakdown unavailable</div>
+          <div style={{ fontSize: 10, color: "#9ca3af" }}>
+            Token counts from JSONL:{" "}
+            <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.contextSize)}</span> context ·{" "}
+            <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheRead)}</span> cache read ·{" "}
+            <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheWrite)}</span> cache write ·{" "}
+            <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(freshIn)}</span> fresh in
+          </div>
+          <div style={{ marginTop: 14, fontSize: 10, color: "#d97706" }}>
+            <a href="/settings" style={{ color: "#d97706" }}>Enable proxy dump</a> to see per-segment breakdown
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LlmCallDetailPanel({
   call, sessionId,
 }: { call: MockLlmCall; onSelectEntry: (e: MockDiffEntry) => void; sessionId: string }) {
@@ -4774,29 +4845,14 @@ function LlmCallDetailPanel({
 
       {/* ══ Attribution ══════════════════════════════ */}
       {tab === "attribution" && (
-        callDetailLoading ? (
-          <div style={{ fontSize: 11, color: "#9ca3af", padding: "32px 0", textAlign: "center" }}>Loading…</div>
-        ) : realSegments ? (
-          <RealSegmentTree
-            segments={realSegments}
-            diff={callDetail?.diff ?? null}
-            call={call}
-          />
-        ) : (
-          <div style={{ padding: "24px 0", textAlign: "center" }}>
-            <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>No proxy data — segment breakdown unavailable</div>
-            <div style={{ fontSize: 10, color: "#9ca3af" }}>
-              Token counts from JSONL:{" "}
-              <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.contextSize)}</span> context ·{" "}
-              <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheRead)}</span> cache read ·{" "}
-              <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheWrite)}</span> cache write ·{" "}
-              <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(freshIn)}</span> fresh in
-            </div>
-            <div style={{ marginTop: 14, fontSize: 10, color: "#d97706" }}>
-              <a href="/settings" style={{ color: "#d97706" }}>Enable proxy dump</a> to see per-segment breakdown
-            </div>
-          </div>
-        )
+        <AttributionSection
+          callDetailLoading={callDetailLoading}
+          realSegments={realSegments}
+          callDetail={callDetail}
+          call={call}
+          freshIn={freshIn}
+          sessionId={sessionId}
+        />
       )}
 
       {/* ══ Diff vs Previous ══════════════════════════ */}

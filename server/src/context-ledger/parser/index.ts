@@ -56,6 +56,14 @@ export type {
   CallContext,
   LinkJsonlReport,
 } from "./attribution/jsonl-linker";
+export {
+  computeTreeDiff,
+} from "./attribution/tree-diff";
+export type {
+  AttributionTreeDiff,
+  LeafDiffStatus,
+  RemovedLeaf,
+} from "./attribution/tree-diff";
 
 export interface ParseQueryInput {
   reqBody: MatchSlotsInput["reqBody"];
