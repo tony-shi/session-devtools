@@ -320,6 +320,9 @@ function call(id: number, indexInTurn: number, overrides: CallOverrides): LlmCal
   return {
     id,
     indexInTurn,
+    messageId: null,
+    jsonlLineIdx: null,
+    jsonlFrameLineIdxs: [],
     model: "claude-opus-4-7",
     stopReason: "end_turn",
     isCompaction: false,

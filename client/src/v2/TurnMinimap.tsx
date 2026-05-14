@@ -1,40 +1,37 @@
 // Turn-level ECharts visualization.
 //
-// Design intent:
-//   Grid 0: context step line, x = call index C1..Cn.
-//   Grid 1: observed tool response heatmap, x = "before call i", y = tool family.
-//
-// The heatmap is intentionally factual. It uses JSONL-derived toolCalls:
-//   call[i - 1].toolCalls -> tool responses observed before call[i].
-// It does not claim full context attribution or reuse.
+// Grid 0: context step line, x = call index C1..Cn.
+// Grid 1: dual-channel tool heatmap (custom series).
+//   Each cell is split vertically:
+//     Top half  = tool REQUEST input size  (what LLM wrote to invoke the tool)
+//     Bottom half = tool RESPONSE output size (what the tool returned)
+//   Both channels use red palette; top = brighter red, bottom = darker red.
+//   This correctly attributes context growth to Write/Edit (whose request is
+//   large but response is tiny) vs Read/Bash (whose response dominates).
 
 import { useEffect, useRef } from "react";
 import * as echarts from "echarts/core";
-import { HeatmapChart, LineChart } from "echarts/charts";
+import { CustomChart, LineChart } from "echarts/charts";
 import {
   AxisPointerComponent,
   DataZoomComponent,
   GridComponent,
   MarkPointComponent,
   TooltipComponent,
-  VisualMapComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { LlmCall, UserTurn } from "./drilldown-types";
 
 echarts.use([
   LineChart,
-  HeatmapChart,
+  CustomChart,
   GridComponent,
   TooltipComponent,
   AxisPointerComponent,
   DataZoomComponent,
-  VisualMapComponent,
   MarkPointComponent,
   CanvasRenderer,
 ]);
-
-// Formatting
 
 function fmtK(n: number): string {
   const abs = Math.abs(n);
@@ -43,34 +40,16 @@ function fmtK(n: number): string {
   return String(Math.round(n));
 }
 
-// Tool taxonomy
-
-const TOOL_ROWS = [
-  "Read",
-  "Write",
-  "Edit",
-  "Bash",
-  "Grep",
-  "Agent",
-  "Web",
-  "Other",
-] as const;
+const TOOL_ROWS = ["Read", "Write", "Edit", "Bash", "Grep", "Agent", "Web", "Other"] as const;
 type ToolRow = typeof TOOL_ROWS[number];
 
 const TOOL_ACCENT: Record<ToolRow, string> = {
-  Read: "#4f46e5",
-  Write: "#d97706",
-  Edit: "#ea580c",
-  Bash: "#16a34a",
-  Grep: "#2563eb",
-  Agent: "#7c3aed",
-  Web: "#0891b2",
-  Other: "#64748b",
+  Read: "#4f46e5", Write: "#d97706", Edit: "#ea580c", Bash: "#16a34a",
+  Grep: "#2563eb", Agent: "#7c3aed", Web: "#0891b2", Other: "#64748b",
 };
 
 function classifyTool(name: string): ToolRow {
-  const raw = name.trim();
-  const base = raw.match(/^([A-Za-z_]+)/)?.[1] ?? raw.split(/\s|\(/)[0] ?? raw;
+  const base = name.trim().match(/^([A-Za-z_]+)/)?.[1] ?? name.split(/\s|\(/)[0] ?? name;
   if (base === "Read") return "Read";
   if (base === "Write" || base === "NotebookWrite") return "Write";
   if (base === "Edit" || base === "MultiEdit") return "Edit";
@@ -81,13 +60,23 @@ function classifyTool(name: string): ToolRow {
   return "Other";
 }
 
-// Data model
-
-interface CallPoint {
-  idx: number;
-  label: string;
-  contextSize: number;
-  isCompaction: boolean;
+// Color interpolation for red palette
+function redColor(value: number, max: number, dark: boolean): string {
+  if (max === 0 || value === 0) return dark ? "#fff1f2" : "#fff7f7";
+  const t = Math.min(value / max, 1);
+  if (dark) {
+    // Darker palette: light pink → deep crimson
+    const r = Math.round(255 - t * (255 - 127));
+    const g = Math.round(241 - t * 241);
+    const b = Math.round(242 - t * 242);
+    return `rgb(${r},${g},${b})`;
+  } else {
+    // Brighter palette: very light → rose red
+    const r = Math.round(255 - t * (255 - 220));
+    const g = Math.round(247 - t * (247 - 38));
+    const b = Math.round(247 - t * (247 - 38));
+    return `rgb(${r},${g},${b})`;
+  }
 }
 
 interface ToolEvent {
@@ -101,7 +90,7 @@ interface ToolEvent {
 }
 
 interface ToolCell {
-  callIdx: number; // Target call column: observed before this call.
+  callIdx: number;
   sourceCall: LlmCall;
   targetCall: LlmCall;
   toolRow: ToolRow;
@@ -112,102 +101,58 @@ interface ToolCell {
   events: ToolEvent[];
 }
 
-// One sub-agent invocation absorbed into a parent call.
-// `peakContext` is the sub-agent's own peak context — what main context would
-// have peaked at had this exploration happened inline.
-// `returnedSize` is the size of the tool_result actually folded back into main.
-// `savings = max(0, peakContext - returnedSize)` is the compressed-away amount.
 interface SubAgentAgent {
-  agentType: string;
-  description: string;
-  toolUseId: string;
-  llmCallCount: number;
-  durationMs: number;
-  peakContext: number;
-  lastContext: number;
-  returnedSize: number;
-  savings: number;
+  agentType: string; description: string; toolUseId: string;
+  llmCallCount: number; durationMs: number;
+  peakContext: number; lastContext: number; returnedSize: number; savings: number;
 }
-
-// A sub-agent "compression event" anchored at a single parent call.
-// `terminateIdx` is the call index (inclusive) where the savings stop being
-// visualized — either the call just before the next compaction, or the last
-// call of the turn.
 interface SubAgentEvent {
-  triggerIdx: number;
-  terminateIdx: number;
-  totalSavings: number;
-  agents: SubAgentAgent[];
+  triggerIdx: number; terminateIdx: number; totalSavings: number; agents: SubAgentAgent[];
 }
 
 interface MinimapData {
-  calls: CallPoint[];
+  calls: Array<{ idx: number; label: string; contextSize: number; isCompaction: boolean }>;
   cells: ToolCell[];
   activeRows: ToolRow[];
   maxCtx: number;
+  maxInput: number;
   maxOutput: number;
   totalToolEvents: number;
+  totalInputSize: number;
   totalOutputSize: number;
   subAgentEvents: SubAgentEvent[];
-  // Per-call counterfactual context. Same length as calls. null where no
-  // active sub-agent savings are in effect (or value equals actual).
   counterfactual: Array<number | null>;
   totalSubAgentSavings: number;
 }
 
-// Compression below this threshold is hidden to reduce visual noise on
-// trivial Agent calls (e.g. a 200-char status-check sub-agent).
 const SUB_AGENT_MIN_SAVINGS = 2_000;
 
 function buildData(turn: UserTurn): MinimapData {
   const calls = turn.calls.map((c, i) => ({
-    idx: i,
-    label: `C${c.indexInTurn}`,
-    contextSize: c.contextSize,
-    isCompaction: c.isCompaction,
+    idx: i, label: `C${c.indexInTurn}`,
+    contextSize: c.contextSize, isCompaction: c.isCompaction,
   }));
 
   const cellMap = new Map<string, ToolCell>();
-
-  // Column C_i represents tool responses produced after C_(i-1) and observed
-  // before C_i. C1 is usually empty because no prior tool result exists in turn.
   for (let targetIdx = 1; targetIdx < turn.calls.length; targetIdx++) {
     const sourceCall = turn.calls[targetIdx - 1];
     const targetCall = turn.calls[targetIdx];
-    const toolCalls = sourceCall.toolCalls ?? [];
-
-    for (const tc of toolCalls) {
+    for (const tc of (sourceCall.toolCalls ?? [])) {
       const row = classifyTool(tc.name);
       const key = `${targetIdx}:${row}`;
-      const existing = cellMap.get(key);
-      const event: ToolEvent = {
-        toolUseId: tc.toolUseId,
-        name: tc.name,
-        inputPreview: tc.inputPreview,
-        inputSize: tc.inputSize,
-        outputPreview: tc.outputPreview,
-        outputSize: tc.outputSize,
-        isError: tc.isError,
+      const ev: ToolEvent = {
+        toolUseId: tc.toolUseId, name: tc.name,
+        inputPreview: tc.inputPreview, inputSize: tc.inputSize,
+        outputPreview: tc.outputPreview, outputSize: tc.outputSize, isError: tc.isError,
       };
-
-      if (existing) {
-        existing.outputSize += tc.outputSize;
-        existing.inputSize += tc.inputSize;
-        existing.count += 1;
-        existing.errorCount += tc.isError ? 1 : 0;
-        existing.events.push(event);
+      const ex = cellMap.get(key);
+      if (ex) {
+        ex.outputSize += tc.outputSize; ex.inputSize += tc.inputSize;
+        ex.count++; ex.errorCount += tc.isError ? 1 : 0; ex.events.push(ev);
       } else {
-        cellMap.set(key, {
-          callIdx: targetIdx,
-          sourceCall,
-          targetCall,
-          toolRow: row,
-          outputSize: tc.outputSize,
-          inputSize: tc.inputSize,
-          count: 1,
-          errorCount: tc.isError ? 1 : 0,
-          events: [event],
-        });
+        cellMap.set(key, { callIdx: targetIdx, sourceCall, targetCall, toolRow: row,
+          outputSize: tc.outputSize, inputSize: tc.inputSize, count: 1,
+          errorCount: tc.isError ? 1 : 0, events: [ev] });
       }
     }
   }
@@ -216,93 +161,53 @@ function buildData(turn: UserTurn): MinimapData {
   const usedRows = new Set(cells.map(c => c.toolRow));
   const activeRows = TOOL_ROWS.filter(r => usedRows.has(r));
 
-  // Sub-agent compression events: identify trigger calls, compute per-agent
-  // returnedSize via toolUseId lookup, and pick a terminateIdx at the next
-  // compaction (or end of turn) — savings are persistent until reset.
   const subAgentEvents: SubAgentEvent[] = [];
   for (let i = 0; i < turn.calls.length; i++) {
     const call = turn.calls[i];
-    const subAgents = call.subAgents ?? [];
-    if (!subAgents.length) continue;
-
     const agents: SubAgentAgent[] = [];
     let totalSavings = 0;
-    for (const sa of subAgents) {
+    for (const sa of (call.subAgents ?? [])) {
       const slot = call.toolCalls.find(tc => tc.toolUseId === sa.toolUseId);
       const returnedSize = slot?.outputSize ?? 0;
       const savings = Math.max(0, sa.peakContext - returnedSize);
       if (savings < SUB_AGENT_MIN_SAVINGS) continue;
-      agents.push({
-        agentType: sa.agentType,
-        description: sa.description,
-        toolUseId: sa.toolUseId,
-        llmCallCount: sa.llmCallCount,
-        durationMs: sa.durationMs,
-        peakContext: sa.peakContext,
-        lastContext: sa.lastContext,
-        returnedSize,
-        savings,
-      });
+      agents.push({ agentType: sa.agentType, description: sa.description, toolUseId: sa.toolUseId,
+        llmCallCount: sa.llmCallCount, durationMs: sa.durationMs,
+        peakContext: sa.peakContext, lastContext: sa.lastContext, returnedSize, savings });
       totalSavings += savings;
     }
     if (!agents.length) continue;
-
-    // Terminate at the call BEFORE the next compaction (compaction itself
-    // resets both lines to a much lower value, so the gap is meaningless
-    // afterwards). If no compaction follows, run to end of turn.
     let terminateIdx = turn.calls.length - 1;
     for (let j = i + 1; j < turn.calls.length; j++) {
       if (turn.calls[j].isCompaction) { terminateIdx = j - 1; break; }
     }
     if (terminateIdx < i) terminateIdx = i;
-
     subAgentEvents.push({ triggerIdx: i, terminateIdx, totalSavings, agents });
   }
 
-  // Per-call cumulative active savings: at any call k, sum savings of all
-  // sub-agent events whose [triggerIdx, terminateIdx] window contains k.
-  // The counterfactual line equals actual + active savings (or null when 0).
   const counterfactual: Array<number | null> = calls.map((c, k) => {
-    let active = 0;
-    let anyTouches = false;
+    let active = 0; let anyTouches = false;
     for (const ev of subAgentEvents) {
-      // The trigger call C_t itself is anchored to the actual line (the agent
-      // hasn't run yet at C_t) — savings start showing at C_(t+1).
-      if (k > ev.triggerIdx && k <= ev.terminateIdx) {
-        active += ev.totalSavings;
-        anyTouches = true;
-      } else if (k === ev.triggerIdx) {
-        anyTouches = true; // anchor point — counterfactual touches actual here
-      }
+      if (k > ev.triggerIdx && k <= ev.terminateIdx) { active += ev.totalSavings; anyTouches = true; }
+      else if (k === ev.triggerIdx) anyTouches = true;
     }
     if (!anyTouches) return null;
     return c.contextSize + active;
   });
 
-  const maxCounterfactual = counterfactual.reduce<number>(
-    (m, v) => (v != null && v > m ? v : m), 0,
-  );
+  const maxCounterfactual = counterfactual.reduce<number>((m, v) => (v != null && v > m ? v : m), 0);
   const maxCtx = Math.max(...calls.map(c => c.contextSize), maxCounterfactual, 50_000);
+  const maxInput  = Math.max(...cells.map(c => c.inputSize), 1);
   const maxOutput = Math.max(...cells.map(c => c.outputSize), 1);
-  const totalToolEvents = cells.reduce((sum, c) => sum + c.count, 0);
-  const totalOutputSize = cells.reduce((sum, c) => sum + c.outputSize, 0);
+  const totalToolEvents  = cells.reduce((s, c) => s + c.count, 0);
+  const totalInputSize   = cells.reduce((s, c) => s + c.inputSize, 0);
+  const totalOutputSize  = cells.reduce((s, c) => s + c.outputSize, 0);
   const totalSubAgentSavings = subAgentEvents.reduce((s, e) => s + e.totalSavings, 0);
 
-  return {
-    calls,
-    cells,
-    activeRows,
-    maxCtx,
-    maxOutput,
-    totalToolEvents,
-    totalOutputSize,
-    subAgentEvents,
-    counterfactual,
-    totalSubAgentSavings,
-  };
+  return { calls, cells, activeRows, maxCtx, maxInput, maxOutput,
+    totalToolEvents, totalInputSize, totalOutputSize,
+    subAgentEvents, counterfactual, totalSubAgentSavings };
 }
-
-// ECharts option
 
 const PAD_L = 64;
 const PAD_R = 18;
@@ -314,21 +219,16 @@ const ZOOM_THRESHOLD = 36;
 const ZOOM_WINDOW = 34;
 const ZOOM_H = 28;
 
-type HeatmapValue = [number, number, number, number, number, number, number];
 type TooltipParam = { seriesName?: string; dataIndex?: number; value?: unknown; axisValue?: string | number };
 
 function buildOption(data: MinimapData): echarts.EChartsCoreOption {
-  const { calls, cells, activeRows, maxCtx, maxOutput, subAgentEvents, counterfactual } = data;
+  const { calls, cells, activeRows, maxCtx, maxInput, maxOutput, subAgentEvents, counterfactual } = data;
   if (!calls.length) return {};
 
-  // Lookup: trigger index → SubAgentEvent (for tooltip / markPoint annotation).
   const subAgentByTrigger = new Map<number, SubAgentEvent>();
-  for (const ev of subAgentEvents) subAgentByTrigger.set(ev.triggerIdx, ev);
-
-  // Lookup: any call → list of sub-agent events whose window covers it
-  // (used to expose "active savings" in the tooltip on downstream calls).
   const activeSubAgentByCall = new Map<number, SubAgentEvent[]>();
   for (const ev of subAgentEvents) {
+    subAgentByTrigger.set(ev.triggerIdx, ev);
     for (let k = ev.triggerIdx; k <= ev.terminateIdx; k++) {
       const list = activeSubAgentByCall.get(k) ?? [];
       list.push(ev);
@@ -338,22 +238,10 @@ function buildOption(data: MinimapData): echarts.EChartsCoreOption {
 
   const visibleRows: string[] = activeRows.length ? [...activeRows] : ["No tools"];
   const callCats = calls.map(c => c.label);
-  const rowCats = visibleRows;
   const matrixH = Math.max(visibleRows.length, 1) * ROW_H;
-  const labelMode = calls.length <= 20 ? "full" : calls.length <= 36 ? "compact" : "sparse";
   const showZoom = calls.length > ZOOM_THRESHOLD;
   const zoomEndValue = Math.min(calls.length - 1, ZOOM_WINDOW - 1);
   const xLabelInterval = calls.length > 54 ? 2 : calls.length > 32 ? 1 : 0;
-
-  const heatmapData = cells.map((cell): HeatmapValue => [
-    cell.callIdx,
-    visibleRows.indexOf(cell.toolRow),
-    cell.outputSize,
-    cell.count,
-    cell.inputSize,
-    cell.errorCount,
-    cell.sourceCall.indexInTurn,
-  ]);
 
   const cellsByCall = new Map<number, ToolCell[]>();
   for (const cell of cells) {
@@ -362,38 +250,87 @@ function buildOption(data: MinimapData): echarts.EChartsCoreOption {
     cellsByCall.set(cell.callIdx, list);
   }
 
-  function heatmapLabelFormatter(params: { value?: unknown }): string {
-    const value = params.value as HeatmapValue | undefined;
-    if (!value) return "";
-    const outputSize = value[2];
-    const count = value[3];
-    if (outputSize <= 0) return "";
-    if (labelMode === "full") return `${count}x\n${fmtK(outputSize)}`;
-    if (labelMode === "compact") return outputSize >= maxOutput * 0.16 ? `${count}x` : "";
-    return outputSize >= maxOutput * 0.32 ? fmtK(outputSize) : "";
+  // Custom renderer: split each cell vertically into top (input) + bottom (output).
+  // ECharts passes (params, api) where api.value(dim) reads the data dimensions
+  // and api.coord([x, y]) converts data coords to pixel coords.
+  // api.size([1, 1]) gives the pixel size of one data unit in each axis.
+  function renderDualCell(
+    params: Record<string, unknown>,
+    api: { value: (dim: number) => number; coord: (pt: number[]) => number[]; size: (s: number[]) => number[] },
+  ) {
+    const callIdx   = api.value(0);
+    const rowIdx    = api.value(1);
+    const inputSize  = api.value(2);
+    const outputSize = api.value(3);
+
+    const [px, py] = api.coord([callIdx, rowIdx]);
+    const [cellW, cellH] = api.size([1, 1]);
+
+    const BORDER = 2;
+    const x = px - cellW / 2 + BORDER / 2;
+    const y = py - cellH / 2 + BORDER / 2;
+    const w = cellW - BORDER;
+    const h = cellH - BORDER;
+    const topH = Math.max(1, Math.floor(h / 2));
+    const botH = h - topH;
+
+    // Both channels share the same max so colors are directly comparable:
+    // same shade = same size, regardless of which half it's in.
+    const sharedMax = Math.max(maxInput, maxOutput);
+    const topColor = redColor(inputSize,  sharedMax, false); // bright red = request
+    const botColor = redColor(outputSize, sharedMax, true);  // dark red = response
+
+    const children: object[] = [
+      { type: "rect", shape: { x, y, width: w, height: topH },
+        style: { fill: topColor, lineWidth: 0 }, z2: 1 },
+      { type: "rect", shape: { x, y: y + topH, width: w, height: botH },
+        style: { fill: botColor, lineWidth: 0 }, z2: 1 },
+      { type: "line", shape: { x1: x, y1: y + topH, x2: x + w, y2: y + topH },
+        style: { stroke: "rgba(255,255,255,0.5)", lineWidth: 0.5 }, z2: 2 },
+    ];
+
+    const showLabel = w > 22 && h > 18;
+    if (showLabel && inputSize > 0) {
+      children.push({ type: "text", style: {
+        x: x + w / 2, y: y + topH / 2, text: fmtK(inputSize),
+        textAlign: "center", textVerticalAlign: "middle",
+        fill: "#111827", fontSize: 8, fontWeight: "bold",
+        textShadowBlur: 2, textShadowColor: "rgba(255,255,255,0.7)",
+      }, z2: 3 });
+    }
+    if (showLabel && outputSize > 0) {
+      children.push({ type: "text", style: {
+        x: x + w / 2, y: y + topH + botH / 2, text: fmtK(outputSize),
+        textAlign: "center", textVerticalAlign: "middle",
+        fill: "#fff", fontSize: 8, fontWeight: "bold",
+        textShadowBlur: 2, textShadowColor: "rgba(0,0,0,0.3)",
+      }, z2: 3 });
+    }
+
+    return { type: "group", children };
   }
+
+  // Custom data: [callIdx, rowIdx, inputSize, outputSize, count]
+  const customData = cells.map(cell => [
+    cell.callIdx,
+    visibleRows.indexOf(cell.toolRow),
+    cell.inputSize,
+    cell.outputSize,
+    cell.count,
+  ]);
 
   function tooltipFormatter(params: unknown): string {
     const arr = (Array.isArray(params) ? params : [params]) as TooltipParam[];
-    if (!arr.length) return "";
     let callIdx = -1;
-
     for (const p of arr) {
-      const value = p.value as HeatmapValue | number | undefined;
-      if (Array.isArray(value) && typeof value[0] === "number") {
-        callIdx = value[0];
-        break;
-      }
-      if (p.seriesName === "Context" && typeof p.dataIndex === "number") {
-        callIdx = p.dataIndex;
-        break;
-      }
+      const value = p.value as unknown[] | number | undefined;
+      if (Array.isArray(value) && typeof value[0] === "number") { callIdx = value[0]; break; }
+      if (p.seriesName === "Context" && typeof p.dataIndex === "number") { callIdx = p.dataIndex; break; }
       if (typeof p.axisValue === "string") {
         const idx = callCats.indexOf(p.axisValue);
         if (idx >= 0) callIdx = idx;
       }
     }
-
     if (callIdx < 0) return "";
     const call = calls[callIdx];
     if (!call) return "";
@@ -401,48 +338,44 @@ function buildOption(data: MinimapData): echarts.EChartsCoreOption {
     const prev = calls[callIdx - 1];
     const delta = prev ? call.contextSize - prev.contextSize : 0;
     const deltaColor = delta >= 0 ? "#d97706" : "#16a34a";
-    const toolCells = [...(cellsByCall.get(callIdx) ?? [])].sort((a, b) => b.outputSize - a.outputSize);
-    const toolOutput = toolCells.reduce((sum, c) => sum + c.outputSize, 0);
-    const toolCount = toolCells.reduce((sum, c) => sum + c.count, 0);
+    const toolCells = [...(cellsByCall.get(callIdx) ?? [])].sort((a, b) => (b.inputSize + b.outputSize) - (a.inputSize + a.outputSize));
     const toolLines = toolCells.slice(0, 5).map(cell => (
       `<br/><span style="color:${TOOL_ACCENT[cell.toolRow]};font-weight:700">${cell.toolRow}</span>` +
-      ` ${cell.count}x · <strong>${fmtK(cell.outputSize)}</strong>`
+      ` ${cell.count}x` +
+      ` · req <span style="color:#f87171">${fmtK(cell.inputSize)}</span>` +
+      ` · resp <span style="color:#9f1239">${fmtK(cell.outputSize)}</span>`
     )).join("");
-    const more = toolCells.length > 5 ? `<br/><span style="color:#9ca3af">+${toolCells.length - 5} tool rows</span>` : "";
+    const more = toolCells.length > 5 ? `<br/><span style="color:#9ca3af">+${toolCells.length - 5} more</span>` : "";
 
-    // Sub-agent compression block. Two states:
-    //   1. callIdx is a trigger — show each agent's peak/returned/saved breakdown.
-    //   2. callIdx is downstream of a still-active trigger — show "carried savings".
     let subAgentBlock = "";
     const triggerEvent = subAgentByTrigger.get(callIdx);
     const activeEvents = activeSubAgentByCall.get(callIdx) ?? [];
     if (triggerEvent) {
       const lines = triggerEvent.agents.map(a => (
         `<br/><span style="color:#a855f7;font-weight:700">${a.agentType}</span> ` +
-        `· ${a.llmCallCount} calls · peak <strong>${fmtK(a.peakContext)}</strong> ` +
-        `→ returned <strong>${fmtK(a.returnedSize)}</strong> ` +
-        `<span style="color:#a855f7">(saved ${fmtK(a.savings)})</span>`
+        `· ${a.llmCallCount} calls · peak <strong>${fmtK(a.peakContext)}</strong>` +
+        ` → returned <strong>${fmtK(a.returnedSize)}</strong>` +
+        ` <span style="color:#a855f7">(saved ${fmtK(a.savings)})</span>`
       )).join("");
-      subAgentBlock = (
-        `<br/><span style="color:#a855f7;font-weight:700">Sub-agent compression</span> ` +
-        `<span style="color:#d8b4fe">total saved ${fmtK(triggerEvent.totalSavings)}</span>` +
-        lines
-      );
+      subAgentBlock = `<br/><span style="color:#a855f7;font-weight:700">Sub-agent compression</span> ` +
+        `<span style="color:#d8b4fe">total saved ${fmtK(triggerEvent.totalSavings)}</span>` + lines;
     } else if (activeEvents.length) {
       const total = activeEvents.reduce((s, e) => s + e.totalSavings, 0);
       const triggers = activeEvents.map(e => calls[e.triggerIdx]?.label ?? "?").join(", ");
-      subAgentBlock = (
-        `<br/><span style="color:#a855f7;font-weight:700">Carrying sub-agent savings</span> ` +
-        `<span style="color:#d8b4fe">${fmtK(total)} ` +
-        `(from ${triggers})</span>`
-      );
+      subAgentBlock = `<br/><span style="color:#a855f7;font-weight:700">Carrying sub-agent savings</span> ` +
+        `<span style="color:#d8b4fe">${fmtK(total)} (from ${triggers})</span>`;
     }
+
+    const toolCount = toolCells.reduce((s, c) => s + c.count, 0);
+    const totalInput = toolCells.reduce((s, c) => s + c.inputSize, 0);
+    const totalOutput = toolCells.reduce((s, c) => s + c.outputSize, 0);
 
     return [
       `<strong>${call.label}</strong>`,
       `<br/>Context: <strong>${fmtK(call.contextSize)}</strong>`,
       callIdx > 0 ? `<br/>Delta: <span style="color:${deltaColor}">${delta >= 0 ? "+" : ""}${fmtK(delta)}</span>` : "",
-      `<br/>Tool responses before call: <strong>${toolCount}x</strong> · <strong>${fmtK(toolOutput)}</strong>`,
+      `<br/>Tools before call: <strong>${toolCount}x</strong>`,
+      toolCount > 0 ? ` · req <span style="color:#f87171">${fmtK(totalInput)}</span> · resp <span style="color:#9f1239">${fmtK(totalOutput)}</span>` : "",
       toolLines || `<br/><span style="color:#9ca3af">No tool response observed</span>`,
       more,
       subAgentBlock,
@@ -454,272 +387,120 @@ function buildOption(data: MinimapData): echarts.EChartsCoreOption {
     animation: false,
     backgroundColor: "transparent",
     axisPointer: {
-      type: "line",
-      snap: true,
-      link: [{ xAxisIndex: [0, 1] }],
+      type: "line", snap: true, link: [{ xAxisIndex: [0, 1] }],
       label: { backgroundColor: "#111827" },
     },
     grid: [
-      { id: "ctx", left: PAD_L, right: PAD_R, top: 10, height: CTX_H },
-      {
-        id: "matrix",
-        left: PAD_L,
-        right: PAD_R,
-        top: 10 + CTX_H + GAP + X_LABEL_H,
-        height: matrixH,
-      },
+      { id: "ctx",    left: PAD_L, right: PAD_R, top: 10, height: CTX_H },
+      { id: "matrix", left: PAD_L, right: PAD_R, top: 10 + CTX_H + GAP + X_LABEL_H, height: matrixH },
     ],
-    visualMap: {
-      show: false,
-      min: 0,
-      max: maxOutput,
-      dimension: 2,
-      // series order: 0=ctx-line, 1=ctx-counterfactual, 2=tool-heatmap.
-      // visualMap targets ONLY the heatmap.
-      seriesIndex: 2,
-      inRange: {
-        color: ["#fff1f2", "#fecdd3", "#fb7185", "#e11d48", "#7f1d1d"],
-      },
-      outOfRange: {
-        color: ["#fff7f7"],
-      },
-    },
     dataZoom: [
       {
-        type: "inside",
-        xAxisIndex: [0, 1],
-        filterMode: "none",
-        startValue: 0,
-        endValue: showZoom ? zoomEndValue : calls.length - 1,
-        moveOnMouseWheel: true,
-        zoomOnMouseWheel: "ctrl",
+        type: "inside", xAxisIndex: [0, 1], filterMode: "none",
+        startValue: 0, endValue: showZoom ? zoomEndValue : calls.length - 1,
+        moveOnMouseWheel: true, zoomOnMouseWheel: "ctrl",
       },
       ...(showZoom ? [{
-        type: "slider",
-        xAxisIndex: [0, 1],
-        filterMode: "none",
-        height: 18,
-        bottom: 4,
-        showDetail: false,
-        brushSelect: false,
-        borderColor: "#fecdd3",
-        fillerColor: "rgba(254, 202, 202, 0.45)",
-        handleSize: 12,
-        handleStyle: { color: "#e11d48" },
-        dataBackground: {
-          lineStyle: { color: "#fecdd3" },
-          areaStyle: { color: "#fff1f2" },
-        },
+        type: "slider", xAxisIndex: [0, 1], filterMode: "none",
+        height: 18, bottom: 4, showDetail: false, brushSelect: false,
+        borderColor: "#fecdd3", fillerColor: "rgba(254, 202, 202, 0.45)",
+        handleSize: 12, handleStyle: { color: "#e11d48" },
+        dataBackground: { lineStyle: { color: "#fecdd3" }, areaStyle: { color: "#fff1f2" } },
       }] : []),
     ],
     xAxis: [
       {
-        id: "xCtx",
-        gridId: "ctx",
-        gridIndex: 0,
-        type: "category",
-        data: callCats,
-        boundaryGap: true,
-        axisLine: { lineStyle: { color: "#e5e7eb" } },
-        axisTick: { show: false },
-        axisLabel: { show: false },
+        id: "xCtx", gridId: "ctx", gridIndex: 0, type: "category", data: callCats,
+        boundaryGap: true, axisLine: { lineStyle: { color: "#e5e7eb" } },
+        axisTick: { show: false }, axisLabel: { show: false },
         splitLine: { show: true, lineStyle: { color: "#f3f4f6" } },
       },
       {
-        id: "xMatrix",
-        gridId: "matrix",
-        gridIndex: 1,
-        type: "category",
-        data: callCats,
-        boundaryGap: true,
-        position: "top",
-        axisLine: { lineStyle: { color: "#e5e7eb" } },
-        axisTick: { show: false },
-        axisLabel: {
-          interval: xLabelInterval,
-          hideOverlap: true,
-          fontSize: 9,
-          color: "#94a3b8",
-        },
+        id: "xMatrix", gridId: "matrix", gridIndex: 1, type: "category", data: callCats,
+        boundaryGap: true, position: "top",
+        axisLine: { lineStyle: { color: "#e5e7eb" } }, axisTick: { show: false },
+        axisLabel: { interval: xLabelInterval, hideOverlap: true, fontSize: 9, color: "#94a3b8" },
         splitLine: { show: true, lineStyle: { color: "#f1f5f9" } },
         splitArea: { show: true, areaStyle: { color: ["#ffffff", "#fafafa"] } },
       },
     ],
     yAxis: [
       {
-        id: "yCtx",
-        gridId: "ctx",
-        gridIndex: 0,
-        type: "value",
-        min: 0,
-        max: maxCtx,
-        axisLabel: {
-          fontSize: 8,
-          color: "#cbd5e1",
-          formatter: (v: number) => fmtK(v),
-          width: 54,
-          overflow: "truncate",
-        },
-        axisLine: { show: false },
-        axisTick: { show: false },
+        id: "yCtx", gridId: "ctx", gridIndex: 0, type: "value", min: 0, max: maxCtx,
+        axisLabel: { fontSize: 8, color: "#cbd5e1", formatter: (v: number) => fmtK(v), width: 54, overflow: "truncate" },
+        axisLine: { show: false }, axisTick: { show: false },
         splitLine: { show: true, lineStyle: { color: "#f1f5f9" } },
       },
       {
-        id: "yMatrix",
-        gridId: "matrix",
-        gridIndex: 1,
-        type: "category",
-        data: rowCats,
-        inverse: false,
-        axisLine: { show: false },
-        axisTick: { show: false },
-        axisLabel: {
-          fontSize: 10,
-          color: "#374151",
-          fontWeight: 700,
-        },
+        id: "yMatrix", gridId: "matrix", gridIndex: 1, type: "category", data: visibleRows,
+        inverse: false, axisLine: { show: false }, axisTick: { show: false },
+        axisLabel: { fontSize: 10, color: "#374151", fontWeight: 700 },
         splitLine: { show: true, lineStyle: { color: "#f1f5f9" } },
         splitArea: { show: true, areaStyle: { color: ["#ffffff", "#fbfdff"] } },
       },
     ],
     tooltip: {
-      trigger: "axis",
-      axisPointer: { type: "line" },
-      backgroundColor: "#111827",
-      borderColor: "#374151",
-      borderWidth: 1,
+      trigger: "axis", axisPointer: { type: "line" },
+      backgroundColor: "#111827", borderColor: "#374151", borderWidth: 1,
       textStyle: { color: "#f9fafb", fontSize: 11 },
       extraCssText: "max-width: 520px; white-space: normal;",
       formatter: tooltipFormatter,
     },
     series: [
       {
-        id: "ctx-line",
-        name: "Context",
-        type: "line",
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: calls.map(c => c.contextSize),
+        id: "ctx-line", name: "Context", type: "line",
+        xAxisIndex: 0, yAxisIndex: 0, data: calls.map(c => c.contextSize),
         lineStyle: { color: "#6366f1", width: 2.5 },
-        symbol: "circle",
-        showSymbol: calls.length <= ZOOM_THRESHOLD,
-        symbolSize: 4,
+        symbol: "circle", showSymbol: calls.length <= ZOOM_THRESHOLD, symbolSize: 4,
         itemStyle: { color: "#6366f1" },
-        areaStyle: {
-          color: {
-            type: "linear",
-            x: 0,
-            y: 0,
-            x2: 0,
-            y2: 1,
-            colorStops: [
-              { offset: 0, color: "#6366f11f" },
-              { offset: 1, color: "#6366f103" },
-            ],
-          },
-        },
+        areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [{ offset: 0, color: "#6366f11f" }, { offset: 1, color: "#6366f103" }] } },
         markPoint: {
-          symbol: "diamond",
-          symbolSize: 11,
+          symbol: "diamond", symbolSize: 11,
           data: [
-            // Compaction markers (red diamonds) — context-resetting events.
-            ...calls
-              .filter(c => c.isCompaction)
-              .map(c => ({
-                coord: [c.idx, c.contextSize],
-                itemStyle: { color: "#dc2626" },
-                label: { show: false },
-              })),
-            // Sub-agent trigger markers (purple triangles). Annotated with
-            // total savings so the compression value is visible at a glance.
+            ...calls.filter(c => c.isCompaction).map(c => ({
+              coord: [c.idx, c.contextSize],
+              itemStyle: { color: "#dc2626" }, label: { show: false },
+            })),
             ...subAgentEvents.map(ev => {
               const call = calls[ev.triggerIdx];
               return {
                 coord: [ev.triggerIdx, call?.contextSize ?? 0],
-                symbol: "triangle",
-                symbolSize: 12,
+                symbol: "triangle", symbolSize: 12,
                 itemStyle: { color: "#a855f7", borderColor: "#ffffff", borderWidth: 1 },
-                label: {
-                  show: true,
-                  position: "top" as const,
-                  formatter: `-${fmtK(ev.totalSavings)}`,
-                  color: "#7e22ce",
-                  fontSize: 9,
-                  fontWeight: 700,
-                  backgroundColor: "#faf5ff",
-                  borderColor: "#d8b4fe",
-                  borderWidth: 1,
-                  borderRadius: 3,
-                  padding: [1, 4],
-                },
+                label: { show: true, position: "top" as const,
+                  formatter: `-${fmtK(ev.totalSavings)}`, color: "#7e22ce",
+                  fontSize: 9, fontWeight: 700, backgroundColor: "#faf5ff",
+                  borderColor: "#d8b4fe", borderWidth: 1, borderRadius: 3, padding: [1, 4] },
               };
             }),
           ],
         },
         z: 3,
       },
-      // Counterfactual line: where main context WOULD have peaked had each
-      // sub-agent exploration happened inline. Drawn dashed in purple, with a
-      // translucent purple area down to 0 — the actual line's own (more
-      // opaque) area fill covers everything below it, so the purple shows
-      // visually only in the strip BETWEEN the two lines = the "saved" band.
       {
-        id: "ctx-counterfactual",
-        name: "If inline (no sub-agent)",
-        type: "line",
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: counterfactual,
-        connectNulls: false,
-        showSymbol: false,
-        symbol: "none",
+        id: "ctx-counterfactual", name: "If inline (no sub-agent)", type: "line",
+        xAxisIndex: 0, yAxisIndex: 0, data: counterfactual,
+        connectNulls: false, showSymbol: false, symbol: "none",
         lineStyle: { color: "#a855f7", width: 1.5, type: "dashed" },
         itemStyle: { color: "#a855f7" },
-        areaStyle: {
-          color: "#a855f714",
-          origin: "start",
-        },
-        emphasis: { focus: "none" },
-        z: 2,
-        silent: false,
+        areaStyle: { color: "#a855f714", origin: "start" },
+        emphasis: { focus: "none" }, z: 2, silent: false,
       },
       {
-        id: "tool-heatmap",
-        name: "Tool responses",
-        type: "heatmap",
+        id: "tool-dual",
+        name: "Tool calls",
+        type: "custom",
         xAxisIndex: 1,
         yAxisIndex: 1,
-        data: heatmapData,
-        encode: { x: 0, y: 1, value: 2 },
-        label: {
-          show: true,
-          formatter: heatmapLabelFormatter,
-          color: "#111827",
-          fontSize: 9,
-          lineHeight: 11,
-          textBorderColor: "#ffffff",
-          textBorderWidth: 2,
-        },
-        itemStyle: {
-          borderColor: "#ffffff",
-          borderWidth: 2,
-          borderRadius: 3,
-        },
-        emphasis: {
-          itemStyle: {
-            borderColor: "#111827",
-            borderWidth: 1,
-            shadowBlur: 8,
-            shadowColor: "rgba(17, 24, 39, 0.18)",
-          },
-        },
+        data: customData,
+        renderItem: renderDualCell as unknown as echarts.CustomSeriesOption["renderItem"],
+        encode: { x: 0, y: 1 },
         z: 2,
       },
     ],
   };
 }
-
-// React component
 
 export interface TurnMinimapProps {
   turn: UserTurn;
@@ -739,39 +520,29 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
     chart.on("click", (params) => {
       if (!onSelectCall) return;
       if (params.seriesName === "Context") {
-        const idx = params.dataIndex as number;
-        const call = turn.calls[idx];
+        const call = turn.calls[params.dataIndex as number];
         if (call) onSelectCall(call.id);
       }
-      if (params.seriesName === "Tool responses") {
-        const value = params.value as HeatmapValue | undefined;
-        const targetIdx = value?.[0];
-        const call = typeof targetIdx === "number" ? turn.calls[targetIdx] : undefined;
+      if (params.seriesName === "Tool calls") {
+        const value = params.value as number[] | undefined;
+        const call = typeof value?.[0] === "number" ? turn.calls[value[0]] : undefined;
         if (call) onSelectCall(call.id);
       }
     });
 
     const ro = new ResizeObserver(() => chart.resize());
     ro.observe(el);
-    return () => {
-      ro.disconnect();
-      chart.dispose();
-      chartRef.current = null;
-    };
+    return () => { ro.disconnect(); chart.dispose(); chartRef.current = null; };
   }, [onSelectCall, turn.calls]);
 
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
     const data = buildData(turn);
-
     const rowCount = Math.max(data.activeRows.length, 1);
     const showZoom = turn.calls.length > ZOOM_THRESHOLD;
     const totalH = 10 + CTX_H + GAP + X_LABEL_H + rowCount * ROW_H + (showZoom ? ZOOM_H : 10);
-    if (containerRef.current) {
-      containerRef.current.style.height = `${totalH}px`;
-    }
-
+    if (containerRef.current) containerRef.current.style.height = `${totalH}px`;
     chart.resize();
     chart.setOption(buildOption(data), true);
   }, [turn]);
@@ -782,13 +553,8 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
 
   return (
     <div style={{ background: "#ffffff", overflow: "hidden" }}>
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        padding: "7px 10px",
-        borderBottom: "1px solid #f1f5f9",
-      }}>
+      {/* Legend */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 10px", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
           <div style={{ width: 16, height: 0, borderTop: "2px solid #6366f1" }} />
           <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>context</span>
@@ -806,44 +572,39 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
           </>
         )}
         <div style={{ width: 1, height: 14, background: "#e5e7eb" }} />
-        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <div style={{
-            width: 44,
-            height: 9,
-            borderRadius: 2,
-            background: "linear-gradient(90deg, #fff1f2, #fb7185, #7f1d1d)",
-            border: "1px solid #fecdd3",
-          }} />
-          <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>response size</span>
-          <span style={{ fontSize: 10, color: "#94a3b8" }}>max {fmtK(data.maxOutput)}</span>
+        {/* Dual cell legend */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <div style={{ width: 22, height: 18, borderRadius: 3, overflow: "hidden", display: "flex", flexDirection: "column", border: "1px solid #fecdd3" }}>
+            <div style={{ flex: 1, background: "#fca5a5" }} />
+            <div style={{ height: "0.5px", background: "#ffffff80" }} />
+            <div style={{ flex: 1, background: "#dc2626" }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            <span style={{ fontSize: 9, color: "#f87171", fontWeight: 600, lineHeight: 1.3 }}>↑ req</span>
+            <span style={{ fontSize: 9, color: "#9f1239", fontWeight: 600, lineHeight: 1.3 }}>↓ resp</span>
+          </div>
+          <span style={{ fontSize: 10, color: "#94a3b8" }}>
+            max {fmtK(Math.max(data.maxInput, data.maxOutput))}
+          </span>
         </div>
-        <span style={{ fontSize: 10, color: "#94a3b8" }}>label = count x size</span>
         {turn.calls.length > ZOOM_THRESHOLD && (
           <span style={{ fontSize: 10, color: "#be123c", background: "#fff1f2", border: "1px solid #fecdd3", borderRadius: 4, padding: "1px 6px" }}>
             drag window
           </span>
         )}
         <span style={{ marginLeft: "auto", fontSize: 10, color: "#cbd5e1" }}>
-          {turn.calls.length} calls / {data.totalToolEvents} tool responses / {fmtK(data.totalOutputSize)} chars
+          {turn.calls.length} calls / {data.totalToolEvents} tool calls / req {fmtK(data.totalInputSize)} · resp {fmtK(data.totalOutputSize)}
         </span>
       </div>
 
       <div ref={containerRef} style={{ width: "100%", height: 220 }} />
 
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 10,
-        padding: "5px 10px",
-        borderTop: "1px solid #f1f5f9",
-        fontSize: 10,
-        color: "#94a3b8",
-      }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 10px", borderTop: "1px solid #f1f5f9", fontSize: 10, color: "#94a3b8" }}>
         <span style={{ fontWeight: 700, color: "#64748b" }}>cell:</span>
-        <span>color = total tool_result output size</span>
-        <span>text = response count x output size</span>
-        <span>hover = call summary</span>
-        <span>click = call detail</span>
+        <span style={{ color: "#f87171" }}>top = tool request size (what LLM wrote)</span>
+        <span>·</span>
+        <span style={{ color: "#9f1239" }}>bottom = tool response size (what tool returned)</span>
+        <span>· hover = call summary · click = call detail</span>
       </div>
     </div>
   );

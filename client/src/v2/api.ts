@@ -1,6 +1,7 @@
 import type { SessionProxyResponse, SessionsV2Response, SummaryV2 } from "./types";
 import type { SessionDrilldown, CallDetail } from "./drilldown-types";
 import type { AttributionTreeResult } from "./attribution-tree-types";
+import type { ResponseTreeResult } from "./response-tree-types";
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -33,6 +34,9 @@ export const apiV2 = {
 
   attributionTree: (sessionId: string, callId: number) =>
     get<AttributionTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/attribution-tree`),
+
+  responseTree: (sessionId: string, callId: number) =>
+    get<ResponseTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/response-tree`),
 
   subAgentDrilldown: (sessionId: string, agentFileId: string) =>
     get<SessionDrilldown>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/subagent/${encodeURIComponent(agentFileId)}/drilldown`),

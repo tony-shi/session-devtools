@@ -25,6 +25,7 @@ import {
 } from "./drilldown-real-fill";
 import { getSessionDisplayName } from "./session-display";
 import { AttributionTreePanel } from "./AttributionTreePanel";
+import { ResponseTreePanel } from "./ResponseTreePanel";
 import { TOKEN_METRICS } from "./metricRegistry";
 
 // Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
@@ -32,7 +33,8 @@ type MockDiffEntry = DiffEntry;
 // LlmCall fields added in drilldown-types are optional in the raw fallback
 // data below; normalizeTurns() fills them in.
 type RawMockCall = Omit<LlmCall,
-  "indexInTurn" | "model" | "stopReason" | "proxy" | "subAgents" |
+  "indexInTurn" | "messageId" | "jsonlLineIdx" | "jsonlFrameLineIdxs" |
+  "model" | "stopReason" | "proxy" | "subAgents" |
   "isCompaction" | "isUnknownHeavy" | "isSignificant" | "significantDelta" | "freshIn" |
   "toolNames" | "toolCalls" | "assistantText" | "intervalEvents"
 > & {
@@ -59,6 +61,9 @@ function normalizeTurns(raw: RawMockTurn[]): UserTurn[] {
     calls: t.calls.map((c, ci) => ({
       ...c,
       indexInTurn: ci + 1,
+      messageId: null,
+      jsonlLineIdx: null,
+      jsonlFrameLineIdxs: [],
       model: "claude-opus-4-7",
       stopReason: "end_turn" as const,
       proxy: null,
@@ -2677,6 +2682,77 @@ function shortToolUseId(id: string): string {
   return id.length > 14 ? `${id.slice(0, 10)}...` : id;
 }
 
+function shortMessageId(id: string | null | undefined): string {
+  if (!id) return "";
+  return id.length > 18 ? `${id.slice(0, 10)}...${id.slice(-5)}` : id;
+}
+
+function formatJsonlLines(call: MockLlmCall): string {
+  const rawLines = call.jsonlFrameLineIdxs?.length
+    ? call.jsonlFrameLineIdxs
+    : call.jsonlLineIdx != null
+      ? [call.jsonlLineIdx]
+      : [];
+  const lines = [...new Set(rawLines.map(i => i + 1))].sort((a, b) => a - b);
+  if (!lines.length) return "";
+  if (lines.length === 1) return `L${lines[0]}`;
+
+  const contiguous = lines.every((line, idx) => idx === 0 || line === lines[idx - 1] + 1);
+  if (contiguous) return `L${lines[0]}-${lines[lines.length - 1]}`;
+  return lines.slice(0, 3).map(line => `L${line}`).join(", ") + (lines.length > 3 ? ` +${lines.length - 3}` : "");
+}
+
+function ChainNarrativeNode({
+  kind, label, text, meta,
+}: {
+  kind: "user" | "interrupt" | "final";
+  label: string;
+  text: string;
+  meta?: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const limit = kind === "final" ? 420 : 300;
+  const needsExpand = text.length > limit;
+  const shown = needsExpand && !expanded ? text.slice(0, limit) + "..." : text;
+  const tone = kind === "user"
+    ? { bg: "#eff6ff", border: "#bfdbfe", fg: "#1e3a5f", dot: "#3b82f6" }
+    : kind === "interrupt"
+      ? { bg: "#fffbeb", border: "#fcd34d", fg: "#78350f", dot: "#d97706" }
+      : { bg: "#f0fdf4", border: "#bbf7d0", fg: "#14532d", dot: "#16a34a" };
+
+  if (!text.trim()) return null;
+
+  return (
+    <div style={{ position: "relative", zIndex: 1, marginBottom: 8 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+        <div style={{ flexShrink: 0, marginTop: 10, width: 24, display: "flex", justifyContent: "center" }}>
+          <div style={{
+            width: 13, height: 13, borderRadius: "50%", border: "2px solid #fff",
+            background: tone.dot, boxShadow: `0 0 0 2px ${tone.border}`,
+          }} />
+        </div>
+        <div style={{ flex: 1, border: `1px solid ${tone.border}`, borderRadius: 8, background: tone.bg, padding: "8px 12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: tone.fg, letterSpacing: "0.05em", textTransform: "uppercase" }}>{label}</span>
+            {meta && <span style={{ fontSize: 10, color: "#94a3b8" }}>{meta}</span>}
+          </div>
+          <div style={{ fontSize: 12, color: tone.fg, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {shown}
+          </div>
+          {needsExpand && (
+            <button
+              onClick={() => setExpanded(v => !v)}
+              style={{ marginTop: 5, fontSize: 10, color: tone.fg, background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 700 }}
+            >
+              {expanded ? "Show less" : "Show more"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── ToolCallRow: tool_use request carried by the assistant response ───────────
 function ToolCallRow({
   tc, active, onHoverToolUse,
@@ -2783,7 +2859,7 @@ function IntervalEventRow({
         <div style={{ marginLeft: 10, marginTop: 2, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 5, padding: "6px 8px" }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
             <span style={{ fontSize: 9, color: "#64748b" }}>kind: <b>{ev.kind}</b></span>
-            <span style={{ fontSize: 9, color: "#64748b" }}>line: {ev.lineIdx}</span>
+            <span style={{ fontSize: 9, color: "#64748b" }}>line: {ev.lineIdx + 1}</span>
             {ev.timestamp && <span style={{ fontSize: 9, color: "#64748b" }}>{ev.timestamp.slice(11, 19)}</span>}
           </div>
           <pre style={{ margin: 0, fontSize: 10, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 160, overflow: "auto" }}>
@@ -2806,11 +2882,27 @@ function JsonlCallChain({
   // Filter state: null means "show all" (default); populated = active filter set
   const [hiddenKinds, setHiddenKinds] = useState<Set<IntervalEventKind>>(new Set());
   const [filterOpen, setFilterOpen] = useState(false);
+  const [showFoldedSubAgentResults, setShowFoldedSubAgentResults] = useState(false);
   const [activeToolUseId, setActiveToolUseId] = useState<string | null>(null);
 
   if (!turn.calls.length) return null;
 
   const maxCtx = Math.max(...turn.calls.map(c => c.contextSize), 1);
+  const subAgentByToolUseId = new Map<string, SubAgentSummary>();
+  for (const call of turn.calls) {
+    for (const sa of call.subAgents) {
+      if (sa.toolUseId) subAgentByToolUseId.set(sa.toolUseId, sa);
+    }
+  }
+  const finalOutput = turn.finalOutput?.trim()
+    ? turn.finalOutput
+    : ([...turn.calls].reverse().find(c => c.stopReason !== "tool_use" && c.assistantText)?.assistantText ?? "");
+  const foldedSubAgentResultCount = turn.calls.reduce((sum, call) => {
+    return sum + call.intervalEvents.filter(ev =>
+      ev.kind === "user:tool_result"
+      && toolUseIdsFromIntervalEvent(ev).some(id => subAgentByToolUseId.has(id))
+    ).length;
+  }, 0);
 
   function toggleKind(k: IntervalEventKind) {
     setHiddenKinds(prev => {
@@ -2822,7 +2914,7 @@ function JsonlCallChain({
 
   return (
     <div>
-      {/* ── Filter bar ──────────────────────────────────────────── */}
+      {/* ── Event graph filter bar ──────────────────────────────── */}
       <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
         <button
           onClick={() => setFilterOpen(v => !v)}
@@ -2832,7 +2924,7 @@ function JsonlCallChain({
             color: filterOpen ? "#fff" : "#6b7280", fontWeight: 600,
           }}
         >
-          ⚙ Filter events {hiddenKinds.size > 0 && `(${hiddenKinds.size} hidden)`}
+          Filter event graph {hiddenKinds.size > 0 && `(${hiddenKinds.size} hidden)`}
         </button>
         {hiddenKinds.size > 0 && (
           <button onClick={() => setHiddenKinds(new Set())} style={{ fontSize: 10, color: "#6366f1", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
@@ -2840,8 +2932,16 @@ function JsonlCallChain({
           </button>
         )}
         <span style={{ fontSize: 9, color: "#d1d5db", marginLeft: "auto" }}>
-          {turn.calls.length} calls · {turn.calls.reduce((s, c) => s + c.intervalEvents.length, 0)} events
+          {turn.calls.length} calls · {turn.calls.reduce((s, c) => s + c.intervalEvents.length, 0)} JSONL events
         </span>
+        {foldedSubAgentResultCount > 0 && (
+          <button
+            onClick={() => setShowFoldedSubAgentResults(v => !v)}
+            style={{ fontSize: 10, color: "#4f46e5", background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 5, cursor: "pointer", padding: "3px 8px", fontWeight: 700 }}
+          >
+            {showFoldedSubAgentResults ? "Fold sub-agent results" : `Show ${foldedSubAgentResultCount} folded sub-agent results`}
+          </button>
+        )}
       </div>
 
       {/* Filter panel */}
@@ -2875,7 +2975,25 @@ function JsonlCallChain({
         {/* Vertical spine */}
         <div style={{ position: "absolute", left: 11, top: 8, bottom: 8, width: 2, background: "#e5e7eb", zIndex: 0 }} />
 
-        {turn.calls.map((call, idx) => {
+        <ChainNarrativeNode
+          kind="user"
+          label="User input"
+          text={turn.userInput}
+          meta={turn.startedAt ? turn.startedAt.slice(11, 19) : undefined}
+        />
+        {turn.midTurnInjections
+          .filter(inj => inj.afterCallIndex === 0)
+          .map((inj, injIdx) => (
+            <ChainNarrativeNode
+              key={`inj-before-${injIdx}`}
+              kind="interrupt"
+              label="Mid-turn input"
+              text={inj.text}
+              meta={inj.timestamp ? `before C1 · ${inj.timestamp.slice(11, 19)}` : "before C1"}
+            />
+          ))}
+
+        {turn.calls.map((call) => {
           const delta    = call.significantDelta;
           // Context bar: absolute width proportional to contextSize / maxCtx
           const ctxWidthPct = Math.round(call.contextSize / maxCtx * 100);
@@ -2884,10 +3002,21 @@ function JsonlCallChain({
           const writeFrac = call.contextSize > 0 ? call.cacheWrite / call.contextSize : 0;
           const freshFrac = call.contextSize > 0 ? call.freshIn    / call.contextSize : 0;
 
-          const visibleIntervals = call.intervalEvents.filter(ev => !hiddenKinds.has(ev.kind));
+          const jsonlLines = formatJsonlLines(call);
+          const frameCount = call.jsonlFrameLineIdxs?.length ?? 0;
+          const matchedSubAgentIds = new Set(call.toolCalls.map(tc => tc.toolUseId).filter(id => subAgentByToolUseId.has(id)));
+          const isFoldedSubAgentResult = (ev: IntervalEvent) =>
+            ev.kind === "user:tool_result"
+            && toolUseIdsFromIntervalEvent(ev).some(id => matchedSubAgentIds.has(id));
+          const visibleIntervals = call.intervalEvents.filter(ev =>
+            !hiddenKinds.has(ev.kind)
+            && (showFoldedSubAgentResults || !isFoldedSubAgentResult(ev))
+          );
+          const hideAssistantTextAsFinal = Boolean(finalOutput && call.id === turn.calls[turn.calls.length - 1]?.id && call.stopReason !== "tool_use");
 
           return (
-            <div key={call.id} style={{ position: "relative", zIndex: 1, marginBottom: 8 }}>
+            <React.Fragment key={call.id}>
+            <div style={{ position: "relative", zIndex: 1, marginBottom: 8 }}>
 
               {/* ── LLM Call card ───────────────────────────── */}
               <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
@@ -2913,6 +3042,19 @@ function JsonlCallChain({
                       Call #{call.id}
                       {call.isCompaction && <span style={{ marginLeft: 5, fontSize: 10, color: "#ef4444" }}>◆</span>}
                     </span>
+                    <span style={{ fontSize: 10, color: "#6b7280", background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>
+                      C{call.indexInTurn}
+                    </span>
+                    {jsonlLines && (
+                      <span style={{ fontSize: 10, color: frameCount > 1 ? "#4f46e5" : "#94a3b8", background: frameCount > 1 ? "#eef2ff" : "#f9fafb", border: `1px solid ${frameCount > 1 ? "#c7d2fe" : "#e5e7eb"}`, borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>
+                        {frameCount > 1 ? `${frameCount} frames ${jsonlLines}` : jsonlLines}
+                      </span>
+                    )}
+                    {call.messageId && (
+                      <span style={{ fontSize: 10, color: "#9ca3af", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        msg {shortMessageId(call.messageId)}
+                      </span>
+                    )}
                     <span style={{ fontSize: 11, color: "#9ca3af" }}>{fmtK(call.contextSize)}</span>
                     {delta !== 0 && (
                       <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, color: delta > 0 ? "#d97706" : "#16a34a", background: delta > 0 ? "#fffbeb" : "#f0fdf4" }}>
@@ -2953,7 +3095,7 @@ function JsonlCallChain({
                   </div>
 
                   {/* Assistant text */}
-	                  {call.assistantText && (
+	                  {call.assistantText && !hideAssistantTextAsFinal && (
 	                    <div style={{ padding: "0 12px 7px" }}>
 	                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", marginBottom: 2, letterSpacing: "0.04em" }}>ASSISTANT TEXT</div>
 	                      <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, background: "#f9fafb", borderRadius: 5, padding: "5px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
@@ -2962,9 +3104,9 @@ function JsonlCallChain({
 	                    </div>
 	                  )}
 
-	                  {/* tool_use blocks are part of this assistant response. The matching
-	                      tool_result events remain in the JSONL event stream below. */}
-	                  {call.toolCalls.length > 0 && (
+		                  {/* tool_use blocks are part of this assistant response. Sub-agent
+		                      executions are rendered below as derived JSONL events. */}
+		                  {call.toolCalls.length > 0 && (
 	                    <div style={{ padding: "0 12px 7px" }}>
 	                      <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, letterSpacing: "0.04em", fontWeight: 700 }}>
 	                        TOOL_USE REQUESTS ({call.toolCalls.length})
@@ -2982,37 +3124,74 @@ function JsonlCallChain({
 	                </div>
 	              </div>
 
-	              {/* ── Sub-agent branches ────────────────────────── */}
-	              {call.subAgents.length > 0 && (
-                <div style={{ marginLeft: 32, marginTop: 3 }}>
-                  {call.subAgents.map(sa => (
+	              {/* ── Sub-agent JSONL events derived from Agent tool_use ─── */}
+		              {call.subAgents.length > 0 && (
+	                <div style={{ marginLeft: 32, marginTop: 3 }}>
+                    <div style={{ fontSize: 9, color: "#818cf8", fontWeight: 800, letterSpacing: "0.04em", margin: "0 0 3px 8px" }}>
+                      SUB-AGENT EVENTS
+                    </div>
+	                  {call.subAgents.map(sa => {
+                      const active = activeToolUseId === sa.toolUseId;
+                      const branchColor = active ? "#f59e0b" : "#6366f1";
+                      return (
                     <div key={sa.agentFileId} style={{ display: "flex", alignItems: "flex-start", marginBottom: 4 }}>
                       <div style={{ width: 16, flexShrink: 0 }}>
-                        <div style={{ width: 12, height: 10, borderLeft: "1.5px solid #6366f180", borderBottom: "1.5px solid #6366f180", borderBottomLeftRadius: 4, marginTop: 4 }} />
+                        <div style={{
+                          width: 12,
+                          height: 10,
+                          borderLeft: `2px solid ${branchColor}`,
+                          borderBottom: `2px solid ${branchColor}`,
+                          borderBottomLeftRadius: 4,
+                          marginTop: 4,
+                          opacity: active ? 1 : 0.75,
+                        }} />
                       </div>
                       <button
                         onClick={() => onSubAgentClick?.(sa)}
-                        style={{ flex: 1, border: "1.5px solid #6366f1", borderRadius: 7, background: "#fafafe", padding: "5px 9px", cursor: onSubAgentClick ? "pointer" : "default", textAlign: "left", display: "flex", flexDirection: "column", gap: 2 }}
-                        onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "#eff6ff"; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = "#fafafe"; }}
+                        onMouseEnter={e => {
+                          setActiveToolUseId(sa.toolUseId);
+                          if (onSubAgentClick) e.currentTarget.style.background = "#fff7ed";
+                        }}
+                        onMouseLeave={e => {
+                          setActiveToolUseId(null);
+                          e.currentTarget.style.background = "#fafafe";
+                        }}
+                        style={{
+                          flex: 1,
+                          border: `1.5px solid ${branchColor}`,
+                          borderRadius: 7,
+                          background: active ? "#fff7ed" : "#fafafe",
+                          padding: "5px 9px",
+                          cursor: onSubAgentClick ? "pointer" : "default",
+                          textAlign: "left",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 2,
+                          boxShadow: active ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
+                        }}
                       >
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <span style={{ fontSize: 10, fontWeight: 700, color: "#4338ca" }}>{sa.agentType}</span>
                           <span style={{ fontSize: 9, color: "#6366f1" }}>{sa.llmCallCount}c · {sa.toolCallCount}t · {fmtDuration(sa.durationMs)}</span>
                           <span style={{ fontSize: 9, color: "#6366f1", background: "#eff6ff", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
-                          {onSubAgentClick && <span style={{ fontSize: 9, color: "#a5b4fc", marginLeft: "auto" }}>›</span>}
+                          <span style={{ fontSize: 9, color: active ? "#d97706" : "#c4c9d4", marginLeft: "auto" }}>{shortToolUseId(sa.toolUseId)}</span>
+                          {onSubAgentClick && <span style={{ fontSize: 9, color: "#a5b4fc" }}>›</span>}
                         </div>
                         {sa.description && <div style={{ fontSize: 10, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.description}</div>}
                         {sa.resultPreview && <div style={{ fontSize: 10, color: "#374151", background: "#f5f3ff", borderRadius: 4, padding: "1px 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.resultPreview.slice(0, 100)}{sa.resultPreview.length > 100 ? "…" : ""}</div>}
                       </button>
                     </div>
-                  ))}
+                      );
+                    })}
                 </div>
               )}
 
               {/* ── Interval events (filtered) ────────────────── */}
 	              {visibleIntervals.length > 0 && (
 	                <div style={{ marginLeft: 32, marginTop: 3 }}>
+                    <div style={{ fontSize: 9, color: "#c4c9d4", fontWeight: 700, letterSpacing: "0.04em", margin: "0 0 3px 8px" }}>
+                      JSONL EVENT GRAPH
+                    </div>
 	                  {visibleIntervals.map((ev, ei) => (
 	                    <IntervalEventRow
 	                      key={`${ev.lineIdx}-${ei}`}
@@ -3025,8 +3204,26 @@ function JsonlCallChain({
 	              )}
 
             </div>
+            {turn.midTurnInjections
+              .filter(inj => inj.afterCallIndex === call.indexInTurn)
+              .map((inj, injIdx) => (
+                <ChainNarrativeNode
+                  key={`inj-${call.id}-${injIdx}`}
+                  kind="interrupt"
+                  label="Mid-turn input"
+                  text={inj.text}
+                  meta={inj.timestamp ? `after C${call.indexInTurn} · ${inj.timestamp.slice(11, 19)}` : `after C${call.indexInTurn}`}
+                />
+              ))}
+            </React.Fragment>
           );
         })}
+        <ChainNarrativeNode
+          kind="final"
+          label="Final AI output"
+          text={finalOutput}
+          meta={turn.endedAt ? turn.endedAt.slice(11, 19) : undefined}
+        />
       </div>
     </div>
   );
@@ -3184,7 +3381,7 @@ function UserTurnDetailPanel({
         )}
       </div>
 
-      {/* ── JSONL Event Chain ─────────────────────────────────────── */}
+      {/* ── Semantic call chain + raw JSONL event graph ────────────── */}
       <div style={{ marginBottom: 20 }}>
         <div style={{
           position: "sticky",
@@ -3197,7 +3394,7 @@ function UserTurnDetailPanel({
           padding: "2px 0 6px",
           background: "#fff",
         }}>
-          <SectionLabel>Call Chain</SectionLabel>
+          <SectionLabel>Semantic Call Chain</SectionLabel>
           <button
             type="button"
             onClick={() => document.getElementById(minimapAnchorId)?.scrollIntoView({ behavior: "smooth", block: "start" })}
@@ -5117,13 +5314,15 @@ function AttributionSection({
 }
 
 function LlmCallDetailPanel({
-  call, sessionId, mode = "main", onShowTurnContext,
+  call, sessionId, mode = "main", onShowTurnContext, onLinkCall,
 }: {
   call: MockLlmCall;
   onSelectEntry: (e: MockDiffEntry) => void;
   sessionId: string;
   mode?: "main" | "panel";
   onShowTurnContext?: () => void;
+  /** 双向 link 回调：点击 Response 中的 forwarding link 时触发，传入下游 call id */
+  onLinkCall?: (callId: number) => void;
 }) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<CallTab>("attribution");
@@ -5314,71 +5513,11 @@ function LlmCallDetailPanel({
 
       {/* ══ Response & Tools ═══════════════════════════ */}
       {tab === "response-tools" && (
-        <div>
-          <SectionLabel>Produced</SectionLabel>
-          <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
-            {response.hasThinking && (
-              <div style={{ padding: "10px 14px", borderBottom: "1px solid #f3f4f6", background: "#faf5ff" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "#7c3aed", background: "#f3e8ff", borderRadius: 3, padding: "1px 5px" }}>thinking</span>
-                  <span style={{ fontSize: 10, color: "#9ca3af" }}>Extended Thinking</span>
-                </div>
-                <div style={{ fontSize: 11, color: "#7c3aed", fontStyle: "italic", lineHeight: 1.5 }}>
-                  {response.thinkingPreview}<span style={{ color: "#c4b5fd" }}> … [redacted]</span>
-                </div>
-              </div>
-            )}
-            {response.toolUseBlocks.map(tu => (
-              <div key={tu.id} style={{ padding: "10px 14px", borderBottom: "1px solid #f3f4f6", background: "#fffbeb" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "#d97706", background: "#fef3c7", borderRadius: 3, padding: "1px 5px" }}>tool_use</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#92400e" }}>{tu.name}</span>
-                  <code style={{ fontSize: 10, color: "#9ca3af" }}>{tu.id}</code>
-                </div>
-                <pre style={{ fontSize: 10, color: "#374151", margin: 0, overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5 }}>{tu.input}</pre>
-              </div>
-            ))}
-            <div style={{ padding: "8px 14px", background: "#f9fafb", display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 9, color: "#6b7280", background: "#e5e7eb", borderRadius: 3, padding: "1px 5px" }}>stop: {response.stopReason}</span>
-              <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtK(response.outputTokens)} output tokens</span>
-            </div>
-            {response.textOutput && (
-              <div style={{ padding: "10px 14px", background: "#f0fdf4", borderTop: "1px solid #f3f4f6" }}>
-                <div style={{ fontSize: 12, color: "#14532d", lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{response.textOutput}</div>
-              </div>
-            )}
-          </div>
-          <SectionLabel>Feeds Next Call</SectionLabel>
-          <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
-            {response.toolUseBlocks.map(tu => (
-              <div key={tu.id} style={{ padding: "8px 14px", borderBottom: "1px solid #f3f4f6", display: "flex", gap: 10 }}>
-                <span style={{ fontSize: 10, color: "#d97706", fontWeight: 700, width: 80, flexShrink: 0, paddingTop: 1 }}>tool_result</span>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>{tu.name}() → Tool Output</div>
-                  <div style={{ fontSize: 10, color: "#9ca3af" }}>{tu.id}</div>
-                </div>
-              </div>
-            ))}
-            {response.textOutput && (
-              <div style={{ padding: "8px 14px", borderBottom: "1px solid #f3f4f6", display: "flex", gap: 10 }}>
-                <span style={{ fontSize: 10, color: "#16a34a", fontWeight: 700, width: 80, flexShrink: 0, paddingTop: 1 }}>→ history</span>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>Assistant response → history</div>
-                  <div style={{ fontSize: 10, color: "#9ca3af" }}>+{fmtK(response.outputTokens)} tokens</div>
-                </div>
-              </div>
-            )}
-            {call.cacheWrite > 0 && (
-              <div style={{ padding: "8px 14px", display: "flex", gap: 10 }}>
-                <span style={{ fontSize: 10, color: "#6366f1", fontWeight: 700, width: 80, flexShrink: 0, paddingTop: 1 }}>cache write</span>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>→ cache read next call</div>
-                  <div style={{ fontSize: 10, color: "#9ca3af" }}>{fmtK(call.cacheWrite)} tokens</div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <ResponseTreePanel
+          sessionId={sessionId}
+          callId={call.id}
+          onLinkCall={onLinkCall}
+        />
       )}
 
       {/* ══ Raw / Evidence ═══════════════════════════ */}
@@ -5852,6 +5991,11 @@ export function SessionDetailV2({ session, onClose }: Props) {
                   const turn = findTurnForCall(selectedCall.id);
                   if (turn) openLinkedTurnExcerpt(turn, selectedCall);
                 }}
+                onLinkCall={(cid) => {
+                  const target = turns.flatMap(t => t.calls).find(c => c.id === cid);
+                  const targetTurn = target ? turns.find(t => t.calls.some(c => c.id === cid)) : null;
+                  if (target && targetTurn) openLinkedTurnExcerpt(targetTurn, target);
+                }}
               />
             )}
             {navLevel === "subagent" && (
@@ -5874,6 +6018,11 @@ export function SessionDetailV2({ session, onClose }: Props) {
             onSelectCall={(call, turn) => openLinkedCall(call, turn)}
             onShowTurnContext={(turn, focusCall) => openLinkedTurnExcerpt(turn, focusCall)}
             onSelectEntry={handleSelectEntry}
+            onLinkCall={(cid) => {
+              const target = turns.flatMap(t => t.calls).find(c => c.id === cid);
+              const targetTurn = target ? turns.find(t => t.calls.some(c => c.id === cid)) : null;
+              if (target && targetTurn) openLinkedTurnExcerpt(targetTurn, target);
+            }}
           />
 
         </div>
@@ -5892,6 +6041,7 @@ function LinkedContextPanel({
   onSelectCall,
   onShowTurnContext,
   onSelectEntry,
+  onLinkCall,
 }: {
   panel: LinkedPanelState | null;
   pinned: boolean;
@@ -5902,6 +6052,7 @@ function LinkedContextPanel({
   onSelectCall: (call: MockLlmCall, turn: MockUserTurn) => void;
   onShowTurnContext: (turn: MockUserTurn, focusCall: MockLlmCall | null) => void;
   onSelectEntry: (entry: MockDiffEntry) => void;
+  onLinkCall?: (callId: number) => void;
 }) {
   const open = panel !== null;
   const title = !panel
@@ -5995,6 +6146,7 @@ function LinkedContextPanel({
                 sessionId={sessionId}
                 mode="panel"
                 onShowTurnContext={() => onShowTurnContext(panel.turn, panel.call)}
+                onLinkCall={onLinkCall}
               />
             ) : (
               <LinkedTurnExcerptPanel

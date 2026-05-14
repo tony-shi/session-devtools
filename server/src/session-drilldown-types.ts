@@ -96,6 +96,11 @@ export interface ToolCallSlot {
 export interface LlmCall {
   id: number;
   indexInTurn: number;
+  // JSONL provenance for the logical assistant message behind this call.
+  // Indices are 0-based line offsets in the source JSONL file.
+  messageId: string | null;
+  jsonlLineIdx: number | null;
+  jsonlFrameLineIdxs: number[];
   contextSize: number;
   outputTokens: number;
   cacheRead: number;

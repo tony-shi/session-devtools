@@ -23,7 +23,17 @@ interface JAssistantEvent {
     id?: string;
     model?: string;
     stop_reason?: string;
-    content?: Array<{ type?: string; text?: string }>;
+    content?: Array<{
+      type?: string;
+      text?: string;
+      id?: string;
+      name?: string;
+      input?: unknown;
+      tool_use_id?: string;
+      content?: unknown;
+      is_error?: boolean;
+      [key: string]: unknown;
+    }>;
     usage?: {
       input_tokens?: number;
       output_tokens?: number;
@@ -44,6 +54,8 @@ interface JSystemEvent {
 }
 
 type JEvent = JUserEvent | JAssistantEvent | JSystemEvent | { type: string; [k: string]: unknown };
+
+type AssistantContentBlock = NonNullable<NonNullable<JAssistantEvent["message"]>["content"]>[number];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -90,6 +102,96 @@ function tsOf(ev: JEvent): string {
   const ts = ("timestamp" in ev ? (ev as { timestamp?: string }).timestamp : undefined)
     ?? ("ts" in ev ? (ev as { ts?: string }).ts : undefined);
   return ts ?? "";
+}
+
+function assistantUsageTotal(ev: JAssistantEvent): number {
+  const u = ev.message?.usage ?? {};
+  return (u.input_tokens ?? 0)
+    + (u.cache_read_input_tokens ?? 0)
+    + (u.cache_creation_input_tokens ?? 0)
+    + (u.output_tokens ?? 0);
+}
+
+function pickCanonicalAssistantFrame(
+  frames: Array<{ ev: JAssistantEvent; lineIdx: number }>,
+): { ev: JAssistantEvent; lineIdx: number } {
+  const withUsage = [...frames].reverse().find(({ ev }) => assistantUsageTotal(ev) > 0);
+  if (withUsage) return withUsage;
+  return frames[frames.length - 1];
+}
+
+function cloneAssistantBlock(block: AssistantContentBlock): AssistantContentBlock {
+  return { ...block };
+}
+
+function mergeAssistantContentBlocks(
+  frames: Array<{ ev: JAssistantEvent; lineIdx: number }>,
+): AssistantContentBlock[] {
+  const merged: AssistantContentBlock[] = [];
+  const toolUseIndex = new Map<string, number>();
+  const seenText = new Set<string>();
+  const seenOther = new Set<string>();
+
+  for (const { ev } of frames) {
+    for (const block of ev.message?.content ?? []) {
+      if (block.type === "text") {
+        const text = block.text ?? "";
+        if (!text.trim() || seenText.has(text)) continue;
+        seenText.add(text);
+        merged.push(cloneAssistantBlock(block));
+        continue;
+      }
+
+      if (block.type === "tool_use" && block.id) {
+        const existingIdx = toolUseIndex.get(block.id);
+        if (existingIdx !== undefined) {
+          // Later streaming frames may carry a more complete input object.
+          merged[existingIdx] = cloneAssistantBlock(block);
+        } else {
+          toolUseIndex.set(block.id, merged.length);
+          merged.push(cloneAssistantBlock(block));
+        }
+        continue;
+      }
+
+      const key = `${block.type ?? "unknown"}:${JSON.stringify(block)}`;
+      if (seenOther.has(key)) continue;
+      seenOther.add(key);
+      merged.push(cloneAssistantBlock(block));
+    }
+  }
+
+  return merged;
+}
+
+interface LogicalAssistantCall {
+  ev: JAssistantEvent;
+  lineIdx: number;
+  firstLineIdx: number;
+  frameLineIdxs: number[];
+  messageId: string | null;
+}
+
+function mergeAssistantFrames(
+  frames: Array<{ ev: JAssistantEvent; lineIdx: number }>,
+): LogicalAssistantCall {
+  const canonical = pickCanonicalAssistantFrame(frames);
+  const base = canonical.ev as JAssistantEvent & Record<string, unknown>;
+  const merged: JAssistantEvent = {
+    ...base,
+    message: {
+      ...(canonical.ev.message ?? {}),
+      content: mergeAssistantContentBlocks(frames),
+    },
+  };
+
+  return {
+    ev: merged,
+    lineIdx: canonical.lineIdx,
+    firstLineIdx: frames[0]?.lineIdx ?? canonical.lineIdx,
+    frameLineIdxs: frames.map(({ lineIdx }) => lineIdx),
+    messageId: canonical.ev.message?.id ?? null,
+  };
 }
 
 function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
@@ -360,35 +462,35 @@ export function parseSessionDrilldown(
     try { events.push(JSON.parse(line)); } catch { /* skip malformed */ }
   }
 
-  // ── 3. Deduplicate assistant events (same msg.id → keep the LAST one) ───
+  // ── 3. Build logical assistant calls from streaming JSONL frames ─────────
   // Claude Code streams responses by writing multiple events per message:
   //   Frame 1 (phantom, usage=0): text block — the AI's spoken text
   //   Frame 2 (phantom, usage=0): tool_use block — tool dispatch decision
   //   Frame N (real, usage>0):    final tool_use + full usage — text block ABSENT
   //
-  // We keep the LAST frame (canonical, has usage) but must also preserve the
-  // text from earlier frames since it disappears in the real frame.
+  // A single API response can also contain multiple tool_use blocks. JSONL may
+  // split those into separate assistant rows, while the next wire request
+  // reconstructs them as one assistant message. Keep one logical call per
+  // message.id, but merge all text/tool_use blocks across its frames.
   const lastAssistantByMsgId = new Map<string, number>();
-  // Collect the first non-empty text seen for each message.id across all frames.
-  const textByMsgId = new Map<string, string>();
+  const assistantFramesByMsgId = new Map<string, Array<{ ev: JAssistantEvent; lineIdx: number }>>();
+  const logicalCallByCanonicalLine = new Map<number, LogicalAssistantCall>();
   events.forEach((ev, idx) => {
     if (ev.type !== "assistant" || (ev as JAssistantEvent).isSidechain) return;
     const aev = ev as JAssistantEvent;
     const msgId = aev.message?.id;
     if (msgId) {
       lastAssistantByMsgId.set(msgId, idx);
-      // Collect text from any frame (phantoms carry the text that the real frame drops)
-      if (!textByMsgId.has(msgId)) {
-        for (const b of aev.message?.content ?? []) {
-          const bc = b as { type?: string; text?: string };
-          if (bc.type === "text" && bc.text && bc.text.trim()) {
-            textByMsgId.set(msgId, bc.text);
-            break;
-          }
-        }
-      }
+      const frames = assistantFramesByMsgId.get(msgId) ?? [];
+      frames.push({ ev: aev, lineIdx: idx });
+      assistantFramesByMsgId.set(msgId, frames);
     }
   });
+  for (const frames of assistantFramesByMsgId.values()) {
+    const logical = mergeAssistantFrames(frames);
+    logicalCallByCanonicalLine.set(logical.lineIdx, logical);
+    if (logical.messageId) lastAssistantByMsgId.set(logical.messageId, logical.lineIdx);
+  }
 
   // ── 4. Identify all system errors ────────────────────────────────────────
   let systemErrorCount = 0;
@@ -423,7 +525,7 @@ export function parseSessionDrilldown(
     // Collect deduplicated assistant events until end_turn.
     // Also capture any human-input user events that arrive mid-turn
     // (user typed while LLM was executing tool calls).
-    const rawCalls: Array<{ ev: JAssistantEvent; lineIdx: number }> = [];
+    const rawCalls: LogicalAssistantCall[] = [];
     const midTurnInjections: Array<{ text: string; timestamp: string; afterCallIndex: number }> = [];
     let turnErrorCount = 0;
     let j = i + 1;
@@ -444,8 +546,11 @@ export function parseSessionDrilldown(
           ? lastAssistantByMsgId.get(msgId) === j
           : true; // no id → always include
         if (isCanonical) {
-          rawCalls.push({ ev: aev, lineIdx: j });
-          const stopReason = aev.message?.stop_reason ?? "";
+          const logicalCall = msgId
+            ? logicalCallByCanonicalLine.get(j) ?? { ev: aev, lineIdx: j, firstLineIdx: j, frameLineIdxs: [j], messageId: msgId }
+            : { ev: aev, lineIdx: j, firstLineIdx: j, frameLineIdxs: [j], messageId: null };
+          rawCalls.push(logicalCall);
+          const stopReason = logicalCall.ev.message?.stop_reason ?? "";
           if (stopReason && stopReason !== "tool_use") break; // turn ends
         }
       }
@@ -492,15 +597,9 @@ export function parseSessionDrilldown(
         if (bc.type === "tool_use" && bc.name) toolNames.push(bc.name);
       }
 
-      // Extract assistant text: prefer the cross-frame text collected from phantom
-      // streaming frames (where the AI's spoken text lives), since the real final
-      // frame drops the text block and only keeps tool_use + usage.
-      const msgId = aev.message?.id ?? "";
+      // Extract assistant text from the merged logical assistant message.
+      const msgId = rawCalls[callIdx].messageId ?? "";
       const assistantText = (() => {
-        // First try textByMsgId (from phantom frames — most reliable)
-        const fromPhantom = msgId ? (textByMsgId.get(msgId) ?? "") : "";
-        if (fromPhantom) return fromPhantom.slice(0, 500) + (fromPhantom.length > 500 ? "…" : "");
-        // Fallback: text in the real frame itself (end_turn calls often have text here)
         const parts: string[] = [];
         for (const b of content) {
           const bc = b as { type?: string; text?: string };
@@ -529,11 +628,14 @@ export function parseSessionDrilldown(
         }
       }
 
-      // Scan subsequent events (up to next assistant event) for tool_results
+      // Scan subsequent events (up to next logical assistant call) for
+      // tool_results. Use the first frame line, not the canonical/final frame:
+      // Claude Code can interleave tool_result rows between streaming frames
+      // that share the same assistant message.id.
       const toolCallSlots: import("./session-drilldown-types.ts").ToolCallSlot[] = [];
       if (toolUseMap.size > 0) {
-        const startIdx = rawCalls[callIdx].lineIdx + 1;
-        const endIdx = callIdx + 1 < rawCalls.length ? rawCalls[callIdx + 1].lineIdx : events.length;
+        const startIdx = rawCalls[callIdx].firstLineIdx + 1;
+        const endIdx = callIdx + 1 < rawCalls.length ? rawCalls[callIdx + 1].firstLineIdx : events.length;
         for (let ei = startIdx; ei < endIdx; ei++) {
           const uev = events[ei];
           if (uev.type !== "user") continue;
@@ -576,20 +678,22 @@ export function parseSessionDrilldown(
       }
 
       // ── Collect all interval events between this call and the next ───────────
-      // For non-final calls: scan up to (but not including) the next call's lineIdx.
+      // For non-final calls: scan up to (but not including) the next logical
+      // call's first frame. Its canonical frame may come later, after
+      // interleaved tool_result rows that belong to that next logical call.
       // For the FINAL call in the turn: scan up to the turn boundary (j), NOT
       // beyond — otherwise we'd leak events from the next turn.
       // Also skip phantom assistant events (usage=0, same msg.id as a real event).
       const intervalEvents: import("./session-drilldown-types.ts").IntervalEvent[] = [];
       {
         const isLastCall = callIdx === rawCalls.length - 1;
-        const startEi = rawCalls[callIdx].lineIdx + 1;
-        // For non-final calls: scan up to the next call's lineIdx.
+        const startEi = rawCalls[callIdx].firstLineIdx + 1;
+        // For non-final calls: scan up to the next logical call's first frame.
         // For the final call: scan forward but stop at the first human input
         // event (start of next turn) or end of file.
         let endEi: number;
         if (!isLastCall) {
-          endEi = rawCalls[callIdx + 1].lineIdx;
+          endEi = rawCalls[callIdx + 1].firstLineIdx;
         } else {
           endEi = events.length;
           for (let ei2 = startEi; ei2 < events.length; ei2++) {
@@ -642,6 +746,9 @@ export function parseSessionDrilldown(
       return {
         id: globalCallIndex,
         indexInTurn: callIdx + 1,
+        messageId: rawCalls[callIdx].messageId,
+        jsonlLineIdx: rawCalls[callIdx].lineIdx,
+        jsonlFrameLineIdxs: rawCalls[callIdx].frameLineIdxs,
         contextSize,
         outputTokens: freshOut,
         cacheRead,

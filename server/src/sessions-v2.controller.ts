@@ -6,6 +6,7 @@ import { buildMockDrilldown } from "./session-drilldown-mock.ts";
 import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
 import { loadCallDetail, readProxyRecord } from "./call-detail.ts";
 import { loadAttributionTree } from "./attribution-service.ts";
+import { loadResponseTree } from "./response-attribution-service.ts";
 
 type SqlParam = string | number | bigint | boolean | null | Uint8Array;
 
@@ -254,6 +255,50 @@ export class SessionsV2Controller {
           reqHeaders,
           proxyRequestId: proxyRow.id,
           startedAt: proxyRow.started_at ?? ts,
+        };
+      },
+    });
+  }
+
+  @Get("sessions/:id/calls/:callId/response-tree")
+  async responseTree(@Param("id") id: string, @Param("callId") callIdStr: string) {
+    const db = getDb();
+
+    const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+    const sourceFile = row.source_file as string;
+
+    let drilldown;
+    try {
+      drilldown = parseSessionDrilldown(sourceFile, id, row, db);
+    } catch (err: unknown) {
+      throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
+    }
+
+    const callId = parseInt(callIdStr, 10);
+    const allCalls = drilldown.turns.flatMap((t) => t.calls);
+    const idx = allCalls.findIndex((c) => c.id === callId);
+    if (idx === -1) throw Object.assign(new Error("call not found"), { status: 404 });
+
+    return loadResponseTree(id, callId, db, {
+      resolveCallContext: (_sid, cid) => {
+        const curIdx = allCalls.findIndex((c) => c.id === cid);
+        if (curIdx === -1) return null;
+        const cur = allCalls[curIdx];
+        const next = curIdx + 1 < allCalls.length ? allCalls[curIdx + 1] : null;
+        return {
+          sourceFile,
+          callTimestamp: cur.timestamp,
+          toolCalls: cur.toolCalls.map((tc) => ({
+            toolUseId: tc.toolUseId,
+            name: tc.name,
+            outputPreview: tc.outputPreview,
+            outputSize: tc.outputSize,
+            isError: tc.isError,
+          })),
+          nextCallId: next ? next.id : null,
+          stopReason: cur.stopReason,
+          outputTokens: cur.outputTokens,
         };
       },
     });
