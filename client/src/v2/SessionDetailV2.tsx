@@ -2657,27 +2657,53 @@ function callDescription(call: MockLlmCall): string {
   return parts.join(" + ");
 }
 
-// ── ToolCallRow: dispatched from call + result injected into next ─────────────
-function ToolCallRow({ tc }: { tc: ToolCallSlot }) {
+function toolUseIdsFromIntervalEvent(ev: IntervalEvent): string[] {
+  if (ev.kind !== "user:tool_result") return [];
+  try {
+    const obj = JSON.parse(ev.rawJson) as { message?: { content?: unknown } };
+    const content = obj.message?.content;
+    if (!Array.isArray(content)) return [];
+    return content
+      .map(block => (block as { type?: string; tool_use_id?: string })?.type === "tool_result"
+        ? (block as { tool_use_id?: string }).tool_use_id
+        : null)
+      .filter((id): id is string => Boolean(id));
+  } catch {
+    return [];
+  }
+}
+
+function shortToolUseId(id: string): string {
+  return id.length > 14 ? `${id.slice(0, 10)}...` : id;
+}
+
+// ── ToolCallRow: tool_use request carried by the assistant response ───────────
+function ToolCallRow({
+  tc, active, onHoverToolUse,
+}: {
+  tc: ToolCallSlot;
+  active: boolean;
+  onHoverToolUse: (id: string | null) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const chip = toolChip(tc.name);
-  const hasOutput = tc.outputSize > 0;
 
   return (
     <div style={{ marginBottom: 3 }}>
       <div
-        onClick={() => setExpanded(v => !v)}
+        onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
+        onMouseEnter={() => onHoverToolUse(tc.toolUseId)}
+        onMouseLeave={() => onHoverToolUse(null)}
         style={{
           display: "flex", alignItems: "center", gap: 6, padding: "4px 8px",
           borderRadius: 6, cursor: "pointer",
-          background: tc.isError ? "#fef2f2" : "#fafafa",
-          border: `1px solid ${tc.isError ? "#fecaca" : "#f0f0f0"}`,
+          background: active ? "#fff7ed" : "#fafafa",
+          border: `1px solid ${active ? "#f59e0b" : "#f0f0f0"}`,
+          boxShadow: active ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
         }}
-        onMouseEnter={e => { e.currentTarget.style.background = tc.isError ? "#fee2e2" : "#f3f4f6"; }}
-        onMouseLeave={e => { e.currentTarget.style.background = tc.isError ? "#fef2f2" : "#fafafa"; }}
       >
         {/* Dispatch arrow */}
-        <span style={{ fontSize: 9, color: "#9ca3af", flexShrink: 0 }}>↳</span>
+        <span style={{ fontSize: 9, color: active ? "#d97706" : "#9ca3af", flexShrink: 0 }}>↳</span>
         {/* Tool chip */}
         <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: chip.bg, border: `1px solid ${chip.border}`, color: chip.fg, flexShrink: 0 }}>
           {tc.name}
@@ -2689,9 +2715,7 @@ function ToolCallRow({ tc }: { tc: ToolCallSlot }) {
         {/* Size badges */}
         <div style={{ display: "flex", gap: 5, flexShrink: 0, alignItems: "center" }}>
           {tc.inputSize > 0 && <span style={{ fontSize: 9, color: "#9ca3af" }}>in {fmtBytes(tc.inputSize)}</span>}
-          {hasOutput && <span style={{ fontSize: 9, fontWeight: 600, color: tc.outputSize > 10_000 ? "#d97706" : "#059669" }}>out {fmtBytes(tc.outputSize)}</span>}
-          {tc.isError && <span style={{ fontSize: 9, fontWeight: 700, color: "#dc2626", background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 3, padding: "1px 4px" }}>ERR</span>}
-          {!hasOutput && !tc.isError && <span style={{ fontSize: 9, color: "#d1d5db" }}>no result</span>}
+          <span style={{ fontSize: 9, color: "#c4c9d4" }}>{shortToolUseId(tc.toolUseId)}</span>
           <span style={{ fontSize: 9, color: "#d1d5db" }}>{expanded ? "▲" : "▼"}</span>
         </div>
       </div>
@@ -2706,16 +2730,6 @@ function ToolCallRow({ tc }: { tc: ToolCallSlot }) {
               <pre style={{ margin: "3px 0 0", fontSize: 11, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 100, overflow: "auto" }}>{tc.inputPreview}</pre>
             </div>
           )}
-          {/* OUTPUT — what was injected back */}
-          {hasOutput && (
-            <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderLeft: "3px solid #22c55e", borderRadius: "0 5px 5px 0", padding: "5px 8px" }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", letterSpacing: "0.05em" }}>RESULT &nbsp;</span>
-              <span style={{ fontSize: 9, color: "#86efac" }}>{fmtBytes(tc.outputSize)} injected → next call</span>
-              <pre style={{ margin: "3px 0 0", fontSize: 11, color: "#166534", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 140, overflow: "auto" }}>
-                {tc.outputPreview}{tc.outputSize > 300 ? "\n…" : ""}
-              </pre>
-            </div>
-          )}
         </div>
       )}
     </div>
@@ -2723,25 +2737,41 @@ function ToolCallRow({ tc }: { tc: ToolCallSlot }) {
 }
 
 // ── IntervalEventRow: non-tool JSONL events between calls ─────────────────────
-function IntervalEventRow({ ev }: { ev: IntervalEvent }) {
+function IntervalEventRow({
+  ev, activeToolUseId, onHoverToolUse,
+}: {
+  ev: IntervalEvent;
+  activeToolUseId: string | null;
+  onHoverToolUse: (id: string | null) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const col = KIND_COLOR[ev.kind];
+  const linkedToolUseIds = toolUseIdsFromIntervalEvent(ev);
+  const linked = activeToolUseId != null && linkedToolUseIds.includes(activeToolUseId);
+  const hoverLinkedId = linkedToolUseIds[0] ?? null;
 
   return (
     <div style={{ marginBottom: 2 }}>
       <div
         onClick={() => setExpanded(v => !v)}
+        onMouseEnter={() => { if (hoverLinkedId) onHoverToolUse(hoverLinkedId); }}
+        onMouseLeave={() => { if (hoverLinkedId) onHoverToolUse(null); }}
         style={{
           display: "flex", alignItems: "center", gap: 6, padding: "3px 8px",
-          borderRadius: 5, cursor: "pointer", opacity: 0.9,
-          background: col.bg, border: `1px solid ${col.border}`,
+          borderRadius: 5, cursor: "pointer", opacity: linked ? 1 : 0.9,
+          background: linked ? "#fff7ed" : col.bg,
+          border: `1px solid ${linked ? "#f59e0b" : col.border}`,
+          boxShadow: linked ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
         }}
-        onMouseEnter={e => { e.currentTarget.style.opacity = "1"; }}
-        onMouseLeave={e => { e.currentTarget.style.opacity = "0.9"; }}
       >
         <span style={{ fontSize: 9, fontWeight: 700, color: col.fg, flexShrink: 0, minWidth: 90 }}>
           {KIND_LABEL[ev.kind]}
         </span>
+        {linkedToolUseIds.length > 0 && (
+          <span style={{ fontSize: 9, color: linked ? "#d97706" : "#94a3b8", flexShrink: 0 }}>
+            from {shortToolUseId(linkedToolUseIds[0])}
+          </span>
+        )}
         <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
           {ev.contentPreview.slice(0, 120)}
         </span>
@@ -2776,6 +2806,7 @@ function JsonlCallChain({
   // Filter state: null means "show all" (default); populated = active filter set
   const [hiddenKinds, setHiddenKinds] = useState<Set<IntervalEventKind>>(new Set());
   const [filterOpen, setFilterOpen] = useState(false);
+  const [activeToolUseId, setActiveToolUseId] = useState<string | null>(null);
 
   if (!turn.calls.length) return null;
 
@@ -2922,31 +2953,37 @@ function JsonlCallChain({
                   </div>
 
                   {/* Assistant text */}
-                  {call.assistantText && (
-                    <div style={{ padding: "0 12px 7px" }}>
-                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", marginBottom: 2, letterSpacing: "0.04em" }}>ASSISTANT TEXT</div>
-                      <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, background: "#f9fafb", borderRadius: 5, padding: "5px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
-                        {call.assistantText}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
+	                  {call.assistantText && (
+	                    <div style={{ padding: "0 12px 7px" }}>
+	                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", marginBottom: 2, letterSpacing: "0.04em" }}>ASSISTANT TEXT</div>
+	                      <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, background: "#f9fafb", borderRadius: 5, padding: "5px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
+	                        {call.assistantText}
+	                      </div>
+	                    </div>
+	                  )}
 
-              {/* ── Dispatched tool calls ─────────────────────── */}
-              {call.toolCalls.length > 0 && (
-                <div style={{ marginLeft: 32, marginTop: 3 }}>
-                  <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, letterSpacing: "0.04em", fontWeight: 600 }}>
-                    DISPATCHED ({call.toolCalls.length})
-                  </div>
-                  {call.toolCalls.map((tc, ti) => (
-                    <ToolCallRow key={tc.toolUseId || ti} tc={tc} />
-                  ))}
-                </div>
-              )}
+	                  {/* tool_use blocks are part of this assistant response. The matching
+	                      tool_result events remain in the JSONL event stream below. */}
+	                  {call.toolCalls.length > 0 && (
+	                    <div style={{ padding: "0 12px 7px" }}>
+	                      <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, letterSpacing: "0.04em", fontWeight: 700 }}>
+	                        TOOL_USE REQUESTS ({call.toolCalls.length})
+	                      </div>
+	                      {call.toolCalls.map((tc, ti) => (
+	                        <ToolCallRow
+	                          key={tc.toolUseId || ti}
+	                          tc={tc}
+	                          active={activeToolUseId === tc.toolUseId}
+	                          onHoverToolUse={setActiveToolUseId}
+	                        />
+	                      ))}
+	                    </div>
+	                  )}
+	                </div>
+	              </div>
 
-              {/* ── Sub-agent branches ────────────────────────── */}
-              {call.subAgents.length > 0 && (
+	              {/* ── Sub-agent branches ────────────────────────── */}
+	              {call.subAgents.length > 0 && (
                 <div style={{ marginLeft: 32, marginTop: 3 }}>
                   {call.subAgents.map(sa => (
                     <div key={sa.agentFileId} style={{ display: "flex", alignItems: "flex-start", marginBottom: 4 }}>
@@ -2974,13 +3011,18 @@ function JsonlCallChain({
               )}
 
               {/* ── Interval events (filtered) ────────────────── */}
-              {visibleIntervals.length > 0 && (
-                <div style={{ marginLeft: 32, marginTop: 3 }}>
-                  {visibleIntervals.map((ev, ei) => (
-                    <IntervalEventRow key={`${ev.lineIdx}-${ei}`} ev={ev} />
-                  ))}
-                </div>
-              )}
+	              {visibleIntervals.length > 0 && (
+	                <div style={{ marginLeft: 32, marginTop: 3 }}>
+	                  {visibleIntervals.map((ev, ei) => (
+	                    <IntervalEventRow
+	                      key={`${ev.lineIdx}-${ei}`}
+	                      ev={ev}
+	                      activeToolUseId={activeToolUseId}
+	                      onHoverToolUse={setActiveToolUseId}
+	                    />
+	                  ))}
+	                </div>
+	              )}
 
             </div>
           );
