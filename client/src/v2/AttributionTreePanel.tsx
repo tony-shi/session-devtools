@@ -11,7 +11,10 @@
 //   - 「← back」回到上一级。
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
+import { FisheyeStrip, computeLinearPositions } from "./fisheye-strip";
+import type { FisheyeStatus } from "./fisheye-strip";
 import type {
   AttributionTreeResult,
   SerializedNode,
@@ -39,18 +42,23 @@ const SECTION_META: Record<SectionId, SectionMeta> = {
   other:    { label: "Other",    barBg: "#d1d5db", barText: "#fff", rowBg: "#fafafa", marker: "#9ca3af", textColor: "#374151" },
 };
 
+// ORIGIN 配色：与 diff 三色（绿/红/黄）严格错开，避免视觉混淆。
+//   rule:       紫     (#c7d2fe)
+//   jsonl:      蓝     (#bae6fd)
+//   structural: 灰     (#e5e7eb)
+//   unknown:    橙     (#fed7aa)
 const ORIGIN_FILL: Record<OriginKind, string> = {
   rule:       "#c7d2fe",
-  jsonl:      "#bbf7d0",
+  jsonl:      "#bae6fd",
   structural: "#e5e7eb",
-  unknown:    "#fecaca",
+  unknown:    "#fed7aa",
 };
 
 const ORIGIN_BORDER: Record<OriginKind, string> = {
   rule:       "#a5b4fc",
-  jsonl:      "#86efac",
+  jsonl:      "#7dd3fc",
   structural: "#d1d5db",
-  unknown:    "#fca5a5",
+  unknown:    "#fb923c",
 };
 
 // ─── 工具函数 ────────────────────────────────────────────────────────────────
@@ -229,19 +237,19 @@ function SectionBar({
   );
 }
 
-// ─── 二级 strip：leaves（与顶部 bar 等宽） ────────────────────────────────────
+// ─── 二级 strip：leaves（消费 fisheye-strip 模块） ────────────────────────────
 //
-// label 自适应放置：inside → above → below → hidden
-//   - inside：bar 宽度足够直接显示 label
-//   - above：bar 太窄但上方该 x-range 未被占用，label 浮在上方（绝对定位 + 引线点）
-//   - below：上方已被占用，挪到下方
-//   - hidden：上下都已被同样窄的邻居占满 → 隐藏（仍可 tooltip）
+// 组合结构：
+//   [above callout lane]   ← 业务侧：基于线性位置静态布局窄段 label
+//   [FisheyeStrip]         ← 模块：bar 本体 + hover fisheye 放大
+//   [below callout lane]   ← 业务侧
 //
-// 选中某项时其他项 visibility:hidden（保留位置 / 比例）。
+// callout 仅在「未 hover strip」时显示（hover 时由 fisheye 内部放大段直接显示 label）。
+// callout 位置基于线性 origPositions —— fisheye 激活时 bar 移位，callout 会与之错位，
+// 因此 hover 期间整体隐藏 callout。
 
-const STRIP_GAP_PX = 2;
 const STRIP_FONT_PX = 9;
-const STRIP_CHAR_PX = 5.2; // 9px 字体单字符近似宽度（含字距）
+const STRIP_CHAR_PX = 5.2;
 const STRIP_LABEL_PAD = 6;
 const STRIP_LANE_HEIGHT = 13;
 const STRIP_LANE_GAP = 2;
@@ -252,50 +260,49 @@ type LabelPlacement =
   | { type: "below"; left: number; width: number }
   | { type: "hidden" };
 
-function computePlacements(
+/** 基于线性位置（FisheyeStrip 内部静态布局也是线性）算 callout 位置。
+ *  位置被严格 clamp 到 [0, containerWidth]，避免溢出撑开父布局。 */
+function computeCalloutPlacements(
   leaves: LeafLite[],
-  total: number,
+  positions: number[],
   containerWidth: number,
 ): LabelPlacement[] {
   const n = leaves.length;
-  if (n === 0 || total === 0 || containerWidth <= 0) return new Array(n).fill({ type: "hidden" });
-  const totalGap = (n - 1) * STRIP_GAP_PX;
-  const available = Math.max(containerWidth - totalGap, 1);
+  if (n === 0 || positions.length < 2) return [];
 
   const placements: LabelPlacement[] = new Array(n);
   const aboveOcc: Array<[number, number]> = [];
   const belowOcc: Array<[number, number]> = [];
 
-  let cursor = 0;
   for (let i = 0; i < n; i++) {
-    const l = leaves[i];
-    const pct = l.charCount / total;
-    const barW = pct * available;
-    const label = shortSlot(l.slotType);
-    const labelW = Math.min(label.length * STRIP_CHAR_PX + STRIP_LABEL_PAD, 220);
+    const left = positions[i];
+    const right = positions[i + 1];
+    const barW = Math.max(right - left - 1, 0);
+    const label = shortSlot(leaves[i].slotType);
+    // label 宽度上限：不超过容器宽度（极端情况防止溢出）
+    const labelW = Math.min(label.length * STRIP_CHAR_PX + STRIP_LABEL_PAD, 220, Math.max(containerWidth, 0));
 
-    // 1) 能 inside 就 inside
     if (barW >= labelW + 4) {
       placements[i] = { type: "inside" };
     } else {
-      // 2) 尝试 above / below callout
-      const center = cursor + barW / 2;
-      const left = center - labelW / 2;
-      const right = center + labelW / 2;
+      // 居中 → clamp 到容器内
+      let cL = left + barW / 2 - labelW / 2;
+      if (cL < 0) cL = 0;
+      if (cL + labelW > containerWidth) cL = Math.max(0, containerWidth - labelW);
+      const cR = cL + labelW;
       const fits = (occ: Array<[number, number]>) =>
-        !occ.some(([oL, oR]) => !(right <= oL || left >= oR));
+        !occ.some(([oL, oR]) => !(cR <= oL || cL >= oR));
 
       if (fits(aboveOcc)) {
-        placements[i] = { type: "above", left, width: labelW };
-        aboveOcc.push([left, right]);
+        placements[i] = { type: "above", left: cL, width: labelW };
+        aboveOcc.push([cL, cR]);
       } else if (fits(belowOcc)) {
-        placements[i] = { type: "below", left, width: labelW };
-        belowOcc.push([left, right]);
+        placements[i] = { type: "below", left: cL, width: labelW };
+        belowOcc.push([cL, cR]);
       } else {
         placements[i] = { type: "hidden" };
       }
     }
-    cursor += barW + STRIP_GAP_PX;
   }
   return placements;
 }
@@ -315,6 +322,18 @@ function useContainerWidth<T extends HTMLElement>() {
   return { ref, width };
 }
 
+/** Leaf item — 适配 FisheyeStrip 接口（id + size），保留原 leaf 引用便于回调取数据 */
+interface LeafItem {
+  id: string;
+  size: number;
+  leaf: LeafLite;
+}
+
+type LayoutMode = "proportional" | "equal";
+
+/** 过载阈值：最窄段 < 此像素值时认为「太密」，提示用户改用 table */
+const OVERLOAD_MIN_BAR_PX = 1.5;
+
 function LeafStrip({
   leaves, selectedId, onSelect,
 }: {
@@ -322,18 +341,142 @@ function LeafStrip({
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const { ref, width } = useContainerWidth<HTMLDivElement>();
-  if (leaves.length === 0) return null;
-  const total = leaves.reduce((s, l) => s + l.charCount, 0);
-  if (total === 0) return null;
+  const [hoveredLeaf, setHoveredLeaf] = useState<LeafLite | null>(null);
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>("proportional");
+  const [stripStatus, setStripStatus] = useState<FisheyeStatus | null>(null);
+  const isStripHovered = hoveredLeaf !== null;
+  const isOverloaded = (stripStatus?.minBarPx ?? Infinity) < OVERLOAD_MIN_BAR_PX;
 
-  const placements = computePlacements(leaves, total, width);
+  // 业务层把 leaves 转为 FisheyeItem
+  // 等宽模式：所有 size 设为 1（模块仍按线性 size 分配空间 → 每段等宽）
+  const items: LeafItem[] = useMemo(
+    () => leaves.map((l) => ({
+      id: l.nodeId,
+      size: layoutMode === "equal" ? 1 : Math.max(l.charCount, 0.001),
+      leaf: l,
+    })),
+    [leaves, layoutMode],
+  );
+
+  // 线性位置（用于 callout 定位）
+  const { positions: origPositions } = useMemo(
+    () => computeLinearPositions(items, width),
+    [items, width],
+  );
+
+  // callout 仅在 proportional 模式下计算（等宽时每段都够宽，inside 即可）
+  const placements = useMemo(
+    () => layoutMode === "proportional"
+      ? computeCalloutPlacements(leaves, origPositions, width)
+      : leaves.map(() => ({ type: "inside" } as LabelPlacement)),
+    [leaves, origPositions, layoutMode, width],
+  );
+
+  if (leaves.length === 0) return null;
 
   return (
-    <div ref={ref} style={{ display: "flex", flexDirection: "column", gap: STRIP_LANE_GAP }}>
-      {/* 上方 callout lane（绝对定位）*/}
-      <div style={{ position: "relative", height: STRIP_LANE_HEIGHT }}>
-        {placements.map((p, i) => {
+    <div
+      ref={ref}
+      style={{
+        display: "flex", flexDirection: "column", gap: STRIP_LANE_GAP,
+        // 防御：callout 标签绝不允许撑开横轴
+        minWidth: 0, maxWidth: "100%", overflowX: "hidden",
+        // 过载时整条 bar 吸顶，让用户滚 table 时仍能看见分布索引
+        position: isOverloaded ? "sticky" : "static",
+        top: isOverloaded ? 0 : "auto",
+        zIndex: isOverloaded ? 5 : "auto",
+        background: isOverloaded ? "#fff" : "transparent",
+        paddingTop: isOverloaded ? 6 : 0,
+        paddingBottom: isOverloaded ? 6 : 0,
+        boxShadow: isOverloaded ? "0 2px 4px -2px rgba(17,24,39,0.06)" : "none",
+      }}
+    >
+      {/* 过载横幅 */}
+      {isOverloaded && (
+        <div
+          role="status"
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "6px 10px",
+            background: "#fffbeb",
+            border: "1px solid #fde68a",
+            borderRadius: 4,
+            fontSize: 10.5,
+            color: "#92400e",
+            lineHeight: 1.5,
+          }}
+        >
+          <span style={{ flexShrink: 0 }}>⚠️</span>
+          <span>{t("attribution.overloadBanner", { count: leaves.length })}</span>
+        </div>
+      )}
+
+      {/* Hover readout + 布局切换 */}
+      <div style={{
+        height: 20, display: "flex", alignItems: "center", gap: 8,
+        padding: "0 2px",
+        fontSize: 10,
+        whiteSpace: "nowrap", overflow: "hidden",
+      }}>
+        <div style={{
+          flex: 1, display: "flex", alignItems: "center", gap: 8,
+          overflow: "hidden",
+          color: hoveredLeaf ? "#111827" : "#9ca3af",
+          transition: "color 0.15s",
+        }}>
+          {hoveredLeaf ? (
+            <>
+              <span style={{
+                width: 8, height: 8, borderRadius: 2,
+                background: ORIGIN_FILL[hoveredLeaf.origin.kind], flexShrink: 0,
+              }} />
+              <span style={{
+                fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                fontWeight: 600, color: "#111827",
+              }}>{shortSlot(hoveredLeaf.slotType)}</span>
+              <span style={{ color: "#6b7280" }}>{fmtK(hoveredLeaf.charCount)} chars</span>
+              <span style={{ color: "#9ca3af" }}>·</span>
+              <span style={{ color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {originLabel(hoveredLeaf.origin)}
+              </span>
+            </>
+          ) : (
+            <span style={{ fontStyle: "italic", letterSpacing: "0.02em" }}>
+              {isOverloaded ? t("attribution.overloadHint") : t("attribution.hoverHint")}
+            </span>
+          )}
+        </div>
+        {/* 等宽 / 按比例 toggle */}
+        <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+          {([
+            { id: "proportional" as const, label: t("attribution.layoutProportional"), title: t("attribution.layoutProportionalTitle") },
+            { id: "equal" as const,        label: t("attribution.layoutEqual"),        title: t("attribution.layoutEqualTitle") },
+          ]).map((o) => {
+            const isSel = layoutMode === o.id;
+            return (
+              <button
+                key={o.id}
+                title={o.title}
+                onClick={() => setLayoutMode(o.id)}
+                style={{
+                  fontSize: 9, padding: "2px 8px",
+                  background: isSel ? "#4338ca" : "transparent",
+                  color: isSel ? "#fff" : "#6b7280",
+                  border: `1px solid ${isSel ? "#4338ca" : "#e5e7eb"}`,
+                  borderRadius: 3, cursor: "pointer",
+                  fontWeight: isSel ? 600 : 400,
+                }}
+              >{o.label}</button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 上方 callout lane */}
+      <div style={{ position: "relative", height: STRIP_LANE_HEIGHT, overflow: "hidden" }}>
+        {!isStripHovered && placements.map((p, i) => {
           if (p.type !== "above") return null;
           const l = leaves[i];
           const isSel = selectedId === l.nodeId;
@@ -361,45 +504,26 @@ function LeafStrip({
         })}
       </div>
 
-      {/* Strip — bar 本体 */}
-      <div style={{ display: "flex", gap: STRIP_GAP_PX, height: SUB_BAR_HEIGHT }}>
-        {leaves.map((l, i) => {
-          const pct = l.charCount / total;
-          const fill = ORIGIN_FILL[l.origin.kind];
-          const isSel = selectedId === l.nodeId;
-          const dimmed = selectedId !== null && !isSel;
-          const p = placements[i];
-          const insideText = p?.type === "inside" ? shortSlot(l.slotType) : "";
-          return (
-            <button
-              key={l.nodeId}
-              onClick={() => onSelect(l.nodeId)}
-              title={`${shortSlot(l.slotType)} · ${fmtK(l.charCount)} chars · ${originLabel(l.origin)}`}
-              style={{
-                flex: pct, minWidth: 4,
-                background: fill,
-                border: "none",
-                borderRadius: 4,
-                outline: isSel ? "2px solid #374151" : "none",
-                outlineOffset: -2,
-                cursor: "pointer",
-                opacity: dimmed ? 0.32 : 1,
-                transition: "opacity 0.15s",
-                padding: "0 4px",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                whiteSpace: "nowrap", overflow: "hidden",
-                fontSize: STRIP_FONT_PX, color: "#1f2937", fontWeight: 500,
-              }}
-            >
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{insideText}</span>
-            </button>
-          );
-        })}
-      </div>
+      {/* Strip — 委托给 FisheyeStrip 模块。
+          getLabel 总返回真实文字，模块按实测段宽决定是否能放下。
+          minCount=5 让 attribution leaves 天然开启鱼眼。 */}
+      <FisheyeStrip<LeafItem>
+        items={items}
+        getColor={(it) => ORIGIN_FILL[it.leaf.origin.kind]}
+        getLabel={(it) => shortSlot(it.leaf.slotType)}
+        getTitle={(it) => `${shortSlot(it.leaf.slotType)} · ${fmtK(it.leaf.charCount)} chars · ${originLabel(it.leaf.origin)}`}
+        height={SUB_BAR_HEIGHT}
+        background="transparent"
+        autoConfig={{ minCount: 5, clickableThresholdPx: 16 }}
+        selectedId={selectedId}
+        onSelect={(it) => onSelect(it.id)}
+        onHover={(it) => setHoveredLeaf(it?.leaf ?? null)}
+        onStatusChange={setStripStatus}
+      />
 
-      {/* 下方 callout lane（绝对定位）*/}
-      <div style={{ position: "relative", height: STRIP_LANE_HEIGHT }}>
-        {placements.map((p, i) => {
+      {/* 下方 callout lane */}
+      <div style={{ position: "relative", height: STRIP_LANE_HEIGHT, overflow: "hidden" }}>
+        {!isStripHovered && placements.map((p, i) => {
           if (p.type !== "below") return null;
           const l = leaves[i];
           const isSel = selectedId === l.nodeId;
@@ -483,12 +607,13 @@ function LeafTable({
   onSelect: (id: string) => void;
 }) {
   const total = leaves.reduce((s, l) => s + l.charCount, 0);
+  // 选中后只显示该 leaf 行，其他兄弟不再列出（避免与 SelectedDetail 重复信息）
+  const visibleLeaves = selectedId ? leaves.filter((l) => l.nodeId === selectedId) : leaves;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-      {leaves.map((l) => {
+      {visibleLeaves.map((l) => {
         const pct = total > 0 ? (l.charCount / total) * 100 : 0;
         const isSel = selectedId === l.nodeId;
-        const dimmed = selectedId !== null && !isSel;
         const fill = ORIGIN_FILL[l.origin.kind];
         return (
           <button
@@ -500,8 +625,7 @@ function LeafTable({
               background: isSel ? "#eef2ff" : "transparent",
               border: "none", borderRadius: 4,
               cursor: "pointer", textAlign: "left",
-              opacity: dimmed ? 0.4 : 1,
-              transition: "background 0.1s, opacity 0.15s",
+              transition: "background 0.1s",
             }}
             onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = "#f9fafb"; }}
             onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.background = "transparent"; }}
@@ -525,31 +649,26 @@ function LeafTable({
 // ─── 叶子详情 ───────────────────────────────────────────────────────────────
 
 function SelectedDetail({ leaf }: { leaf: LeafLite }) {
-  const fill = ORIGIN_FILL[leaf.origin.kind];
-  const border = ORIGIN_BORDER[leaf.origin.kind];
+  // 扁平展示：无 card 外框、无重复的 slot 名（hover readout / 当前行已显示）
+  // 仅保留 origin 元信息 + raw 内容
   return (
     <div style={{
-      marginTop: 4, padding: 10,
-      background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6,
+      paddingTop: 6,
       display: "flex", flexDirection: "column", gap: 6,
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-        <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 11, color: "#111827", fontWeight: 600 }}>
-          {shortSlot(leaf.slotType)}
-        </span>
-        <span style={{ fontSize: 10, color: "#6b7280" }}>{fmtK(leaf.charCount)} chars</span>
-      </div>
+      {/* origin 元信息（单行，紧凑）*/}
       <div style={{
-        display: "flex", alignItems: "center", gap: 6,
-        padding: "3px 8px", background: fill, border: `1px solid ${border}`, borderRadius: 4,
-        fontSize: 10, color: "#111827",
+        display: "flex", alignItems: "center", gap: 8,
+        fontSize: 10, color: "#374151",
+        padding: "2px 2px",
       }}>
-        <span style={{ fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-          {leaf.origin.kind}
-        </span>
-        <span>{originLabel(leaf.origin)}</span>
+        <span style={{
+          fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em",
+          color: "#4b5563",
+        }}>{leaf.origin.kind}</span>
+        <span style={{ color: "#6b7280" }}>{originLabel(leaf.origin)}</span>
         {(leaf.origin.kind === "rule" || leaf.origin.kind === "jsonl") && (
-          <span style={{ marginLeft: "auto", fontSize: 9, color: "#6b7280" }}>
+          <span style={{ marginLeft: "auto", fontSize: 9, color: "#9ca3af" }}>
             confidence · {leaf.origin.confidence}
           </span>
         )}
@@ -575,7 +694,7 @@ function SelectedDetail({ leaf }: { leaf: LeafLite }) {
       <pre style={{
         margin: 0, fontSize: 11, color: "#374151", lineHeight: 1.5,
         whiteSpace: "pre-wrap", wordBreak: "break-word",
-        background: "#f9fafb", padding: "6px 10px", borderRadius: 4,
+        background: "#fafafa", padding: "8px 10px", borderRadius: 4,
         maxHeight: 240, overflow: "auto",
       }}>{leaf.rawText ?? leaf.preview}</pre>
     </div>
@@ -656,28 +775,9 @@ export function AttributionTreePanel({
         />
       ) : (
         <>
-          {/* Section header + back */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "2px 4px" }}>
-            <button
-              onClick={() => { setSelectedSection(null); setSelectedNodeId(null); }}
-              style={{
-                fontSize: 11, padding: "3px 10px", borderRadius: 4,
-                background: "#fff", border: "1px solid #e5e7eb",
-                cursor: "pointer", color: "#374151",
-              }}
-            >← back</button>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: SECTION_META[selectedStat.id].marker }} />
-            <span style={{ fontSize: 13, fontWeight: 700, color: SECTION_META[selectedStat.id].textColor }}>
-              {SECTION_META[selectedStat.id].label}
-            </span>
-            <span style={{ fontSize: 11, color: "#6b7280" }}>~{fmtK(selectedStat.totalChars)}</span>
-            <span style={{ fontSize: 11, color: "#9ca3af" }}>
-              {totalChars > 0 ? ((selectedStat.totalChars / totalChars) * 100).toFixed(1) : 0}%
-            </span>
-            <span style={{ fontSize: 11, color: "#9ca3af" }}>· {subStatDescription(selectedStat)}</span>
-          </div>
+          {/* drill-in：去掉 header 行（back / size / pct / counts 上方 SectionBar 已有） */}
 
-          {/* Layer 2: leaf strip（与顶部 bar 等宽） */}
+          {/* Layer 2: leaf strip */}
           <LeafStrip
             leaves={selectedStat.leaves}
             selectedId={selectedNodeId}
@@ -691,7 +791,7 @@ export function AttributionTreePanel({
             onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
           />
 
-          {/* Layer 3: leaf detail */}
+          {/* Layer 3: leaf detail（扁平展示） */}
           {selectedLeaf && sectionOf(selectedLeaf.rootSlotType) === selectedStat.id && (
             <SelectedDetail leaf={selectedLeaf} />
           )}

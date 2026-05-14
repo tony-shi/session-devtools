@@ -6,6 +6,7 @@ import { buildMockDrilldown } from "./session-drilldown-mock.ts";
 import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
 import { loadCallDetail, readProxyRecord } from "./call-detail.ts";
 import { loadAttributionTree } from "./attribution-service.ts";
+import { loadDiffTree } from "./diff-tree-service.ts";
 import { loadResponseTree } from "./response-attribution-service.ts";
 
 type SqlParam = string | number | bigint | boolean | null | Uint8Array;
@@ -212,6 +213,75 @@ export class SessionsV2Controller {
     if (idx === -1) throw Object.assign(new Error("call not found"), { status: 404 });
 
     return loadAttributionTree(id, callId, db, {
+      resolveCallMeta: (_sid, cid) => {
+        const cur = allCalls.find((x) => x.call.id === cid);
+        if (!cur) return null;
+        const curIdx = allCalls.indexOf(cur);
+        const prev = curIdx > 0 ? allCalls[curIdx - 1] : null;
+        return {
+          call: { id: cur.call.id, timestamp: cur.call.timestamp, turnId: cur.turnId, sourceFile },
+          prevCall: prev ? { id: prev.call.id, timestamp: prev.call.timestamp } : null,
+        };
+      },
+      fetchProxyReqBodyAt: async (sid, ts, excludeProxyId) => {
+        const sql = excludeProxyId !== undefined
+          ? `SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
+             FROM proxy_requests
+             WHERE session_id = ? AND COALESCE(started_at, ts) <= ? AND id != ?
+             ORDER BY COALESCE(started_at, ts) DESC LIMIT 1`
+          : `SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
+             FROM proxy_requests
+             WHERE session_id = ? AND COALESCE(started_at, ts) <= ?
+             ORDER BY COALESCE(started_at, ts) DESC LIMIT 1`;
+        const params: SqlParam[] = excludeProxyId !== undefined ? [sid, ts, excludeProxyId] : [sid, ts];
+        const proxyRow = db.prepare(sql).get(...params) as {
+          id: number; jsonl_file: string; jsonl_byte_offset: number;
+          req_headers: string | null; started_at: string | null;
+        } | undefined;
+        if (!proxyRow) return null;
+
+        const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
+        const reqBodyStr = rec?.reqBody as string | undefined;
+        if (typeof reqBodyStr !== "string") return null;
+        let reqBody: Record<string, unknown> | null = null;
+        try { reqBody = JSON.parse(reqBodyStr) as Record<string, unknown>; }
+        catch { return null; }
+
+        let reqHeaders: Record<string, string> = {};
+        try { reqHeaders = JSON.parse(proxyRow.req_headers ?? "{}") as Record<string, string>; }
+        catch { /* default empty */ }
+
+        return {
+          reqBody,
+          reqHeaders,
+          proxyRequestId: proxyRow.id,
+          startedAt: proxyRow.started_at ?? ts,
+        };
+      },
+    });
+  }
+
+  @Get("sessions/:id/calls/:callId/diff-tree")
+  async diffTree(@Param("id") id: string, @Param("callId") callIdStr: string) {
+    const db = getDb();
+
+    const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+    const sourceFile = row.source_file as string;
+
+    let drilldown;
+    try {
+      drilldown = parseSessionDrilldown(sourceFile, id, row, db);
+    } catch {
+      throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
+    }
+
+    const callId = parseInt(callIdStr, 10);
+    const allCalls = drilldown.turns.flatMap((t) => t.calls.map((c) => ({ call: c, turnId: t.id })));
+    const idx = allCalls.findIndex((x) => x.call.id === callId);
+    if (idx === -1) throw Object.assign(new Error("call not found"), { status: 404 });
+
+    return loadDiffTree(id, callId, db, {
       resolveCallMeta: (_sid, cid) => {
         const cur = allCalls.find((x) => x.call.id === cid);
         if (!cur) return null;

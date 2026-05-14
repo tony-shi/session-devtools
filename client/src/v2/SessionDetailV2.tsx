@@ -26,6 +26,7 @@ import {
 import { getSessionDisplayName } from "./session-display";
 import { AttributionTreePanel } from "./AttributionTreePanel";
 import { ResponseTreePanel } from "./ResponseTreePanel";
+import { DiffPanel } from "./DiffPanel";
 import { TOKEN_METRICS } from "./metricRegistry";
 
 // Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
@@ -1131,6 +1132,7 @@ function ContextTimelineChart({
               compactionIndices.includes((params as { dataIndex: number }).dataIndex) ? "diamond" : "circle",
             areaStyle: { color: lineColor, opacity: 0.06 },
             label: deltaLabel(values),
+            labelLayout: { hideOverlap: true },
             markPoint: {
               silent: true,
               data: [
@@ -1232,6 +1234,7 @@ function ContextTimelineChart({
             symbol: (_, params) => dataPoints[(params as { dataIndex: number }).dataIndex]?.isCompaction ? "diamond" : "circle",
             areaStyle: { color: lineColor, opacity: 0.06 },
             label: deltaLabel(ctxValues),
+            labelLayout: { hideOverlap: true },
             markPoint: { silent: true, data: timeAnnotations },
           },
         ],
@@ -3043,12 +3046,10 @@ function JsonlCallChain({
                   {/* Header */}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderBottom: "1px solid #f3f4f6" }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>
-                      Call #{call.id}
+                      C{call.indexInTurn}
                       {call.isCompaction && <span style={{ marginLeft: 5, fontSize: 10, color: "#ef4444" }}>◆</span>}
                     </span>
-                    <span style={{ fontSize: 10, color: "#6b7280", background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>
-                      C{call.indexInTurn}
-                    </span>
+                    <span style={{ fontSize: 10, color: "#9ca3af", fontFamily: "monospace" }}>#{call.id}</span>
                     {jsonlLines && (
                       <span style={{ fontSize: 10, color: frameCount > 1 ? "#4f46e5" : "#94a3b8", background: frameCount > 1 ? "#eef2ff" : "#f9fafb", border: `1px solid ${frameCount > 1 ? "#c7d2fe" : "#e5e7eb"}`, borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>
                         {frameCount > 1 ? `${frameCount} frames ${jsonlLines}` : jsonlLines}
@@ -3253,7 +3254,6 @@ function UserTurnDetailPanel({
   const dur = fmtDuration(turn.durationMs);
   const noTools = turn.toolCallCount === 0;
   const [minimapOpen, setMinimapOpen] = useState(!noTools);
-  const [inlineCallId, setInlineCallId] = useState<number | null>(null);
 
   const turnSubAgents = callsWithSubAgents.flatMap(c => c.subAgents);
 
@@ -3384,28 +3384,12 @@ function UserTurnDetailPanel({
         {minimapOpen && (
           <TurnMinimap
             turn={enrichedTurn}
-            onSelectCall={id => setInlineCallId(prev => prev === id ? null : id)}
+            onSelectCall={id => {
+              const anchor = document.getElementById(`turn-${turn.id}-call-${id}`);
+              anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
           />
         )}
-        {/* Inline call detail — expands below minimap on click */}
-        {minimapOpen && inlineCallId !== null && (() => {
-          const inlineCall = enrichedTurn.calls.find(c => c.id === inlineCallId);
-          if (!inlineCall) return null;
-          return (
-            <div style={{ marginTop: 8, border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 12px", background: "#f9fafb", borderBottom: "1px solid #f3f4f6" }}>
-                <span style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>Call #{inlineCall.id}</span>
-                <button onClick={() => setInlineCallId(null)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9ca3af", fontSize: 16, lineHeight: 1 }}>×</button>
-              </div>
-              <LlmCallDetailPanel
-                call={inlineCall}
-                onSelectEntry={() => {}}
-                sessionId={sessionId}
-                mode="panel"
-              />
-            </div>
-          );
-        })()}
       </div>
 
       {/* ── Semantic call chain + raw JSONL event graph ────────────── */}
@@ -3418,8 +3402,11 @@ function UserTurnDetailPanel({
           alignItems: "center",
           justifyContent: "space-between",
           gap: 10,
-          padding: "2px 0 6px",
+          padding: "6px 0",
           background: "#fff",
+          borderTop: "1px solid #e5e7eb",
+          borderBottom: "1px solid #e5e7eb",
+          marginBottom: 12,
         }}>
           <SectionLabel>Semantic Call Chain</SectionLabel>
           <button
@@ -4466,7 +4453,7 @@ function PayloadSegmentEvidenceDrawer({ seg, onClear }: { seg: PayloadSegment; o
 
 // ─── LLM Call Detail Panel ────────────────────────────────────────────────────
 
-type CallTab = "attribution" | "diff" | "request" | "raw";
+type CallTab = "attribution" | "diff" | "raw";
 type DiffMode = "segment" | "range" | "raw";
 
 // ─── Attribution Tab ──────────────────────────────────────────────────────────
@@ -5271,35 +5258,29 @@ function DiffSegmentRow({ d, style }: { d: SegmentDiff; style: { bg: string; bor
 }
 
 // ─── Attribution section: Request / Response 双向归因 ───────────────────────
-// 顶部 sub-tab 切换 Request / Response。
-//   - Request: AttributionTreePanel（origin tree，新归因管线产物）；
-//     提供 Origin Tree / Segments (legacy) 二级切换作为 fallback。
-//   - Response: ResponseTreePanel（response wire body — thinking/text/tool_use 归因）。
+// 子 tab 切换 Request / Response。
+//   - Request: AttributionTreePanel（origin tree）
+//   - Response: ResponseTreePanel（response wire body）
 
 type AttributionSide = "request" | "response";
-type RequestView = "tree" | "segments";
 
 function AttributionSection({
-  callDetailLoading, realSegments, callDetail, call, freshIn, sessionId, onLinkCall,
+  call, sessionId, onLinkCall,
 }: {
-  callDetailLoading: boolean;
-  realSegments: ReturnType<typeof Object> | null; // CallSegment[] | null
-  callDetail: CallDetail | null;
   call: MockLlmCall;
-  freshIn: number;
   sessionId: string;
   onLinkCall?: (callId: number) => void;
 }) {
+  const { t } = useTranslation();
   const [side, setSide] = useState<AttributionSide>("request");
-  const [reqView, setReqView] = useState<RequestView>("tree");
 
   return (
     <div>
       {/* Request / Response 子 tab */}
       <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
         {([
-          { id: "request" as const,  label: "Request" },
-          { id: "response" as const, label: "Response" },
+          { id: "request" as const,  label: t("attribution.request") },
+          { id: "response" as const, label: t("attribution.response") },
         ]).map(({ id, label }) => (
           <button
             key={id}
@@ -5317,54 +5298,7 @@ function AttributionSection({
       </div>
 
       {side === "request" ? (
-        <>
-          {/* 二级切换：origin tree / legacy segments */}
-          <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
-            {([
-              { id: "tree" as const, label: "Origin Tree" },
-              { id: "segments" as const, label: "Segments (legacy)" },
-            ]).map(({ id, label }) => (
-              <button
-                key={id}
-                onClick={() => setReqView(id)}
-                style={{
-                  fontSize: 10, padding: "3px 10px",
-                  background: reqView === id ? "#f5f3ff" : "transparent",
-                  border: `1px solid ${reqView === id ? "#ddd6fe" : "#e5e7eb"}`,
-                  borderRadius: 4, cursor: "pointer",
-                  color: reqView === id ? "#6d28d9" : "#9ca3af",
-                  fontWeight: reqView === id ? 600 : 400,
-                }}
-              >{label}</button>
-            ))}
-          </div>
-
-          {reqView === "tree" ? (
-            <AttributionTreePanel sessionId={sessionId} callId={call.id} />
-          ) : callDetailLoading ? (
-            <div style={{ fontSize: 11, color: "#9ca3af", padding: "32px 0", textAlign: "center" }}>Loading…</div>
-          ) : realSegments ? (
-            <RealSegmentTree
-              segments={realSegments as Parameters<typeof RealSegmentTree>[0]["segments"]}
-              diff={callDetail?.diff ?? null}
-              call={call}
-            />
-          ) : (
-            <div style={{ padding: "24px 0", textAlign: "center" }}>
-              <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>No proxy data — segment breakdown unavailable</div>
-              <div style={{ fontSize: 10, color: "#9ca3af" }}>
-                Token counts from JSONL:{" "}
-                <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.contextSize)}</span> context ·{" "}
-                <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheRead)}</span> cache read ·{" "}
-                <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheWrite)}</span> cache write ·{" "}
-                <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(freshIn)}</span> fresh in
-              </div>
-              <div style={{ marginTop: 14, fontSize: 10, color: "#d97706" }}>
-                <a href="/settings" style={{ color: "#d97706" }}>Enable proxy dump</a> to see per-segment breakdown
-              </div>
-            </div>
-          )}
-        </>
+        <AttributionTreePanel sessionId={sessionId} callId={call.id} />
       ) : (
         <ResponseTreePanel
           sessionId={sessionId}
@@ -5425,10 +5359,9 @@ function LlmCallDetailPanel({
   const response = buildMockCallResponse(call);
 
   const TAB_DEFS: Array<{ id: CallTab; label: string }> = [
-    { id: "attribution",    label: "Attribution" },
-    { id: "diff",           label: "Diff vs Previous" },
-    { id: "request",        label: "Request" },
-    { id: "raw",            label: "Raw / Evidence" },
+    { id: "attribution",    label: t("callTab.attribution") },
+    { id: "diff",           label: t("callTab.diff") },
+    { id: "raw",            label: t("callTab.raw") },
   ];
 
   return (
@@ -5439,8 +5372,8 @@ function LlmCallDetailPanel({
 
         {/* Title row */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: "#111827" }}>Call #{call.id}</span>
-          <span style={{ fontSize: 10, color: "#9ca3af" }}>#{call.indexInTurn} in turn</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: "#111827" }}>C{call.indexInTurn}</span>
+          <span style={{ fontSize: 10, color: "#9ca3af" }}>#{call.id}</span>
           {call.isCompaction && <RiskBadge type="compaction" />}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {onShowTurnContext && (
@@ -5549,11 +5482,7 @@ function LlmCallDetailPanel({
       {/* ══ Attribution (Request / Response) ═════════ */}
       {tab === "attribution" && (
         <AttributionSection
-          callDetailLoading={callDetailLoading}
-          realSegments={realSegments}
-          callDetail={callDetail}
           call={call}
-          freshIn={freshIn}
           sessionId={sessionId}
           onLinkCall={onLinkCall}
         />
@@ -5561,17 +5490,11 @@ function LlmCallDetailPanel({
 
       {/* ══ Diff vs Previous ══════════════════════════ */}
       {tab === "diff" && (
-        <DiffVsPreviousTab
-          diff={callDetail?.diff ?? null}
-          call={call}
-          callDetailLoading={callDetailLoading}
+        <DiffPanel
+          sessionId={sessionId}
+          callId={call.id}
           prevCallId={prevCallId}
         />
-      )}
-
-      {/* ══ Request ════════════════════════════════════ */}
-      {tab === "request" && (
-        <RequestTab call={call} callDetail={callDetail} callDetailLoading={callDetailLoading} />
       )}
 
       {/* ══ Raw / Evidence ═══════════════════════════ */}
@@ -5608,6 +5531,7 @@ function LlmCallDetailPanel({
           })()}
         </div>
       )}
+
     </div>
   );
 }
@@ -5938,7 +5862,10 @@ export function SessionDetailV2({ session, onClose }: Props) {
             {selectedCall && (
               <>
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#6366f1", flexShrink: 0 }}>Call #{selectedCall.id}</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#6366f1", flexShrink: 0 }}>
+                  C{selectedCall.indexInTurn}
+                  <span style={{ fontSize: 10, fontWeight: 400, color: "#9ca3af", marginLeft: 4 }}>#{selectedCall.id}</span>
+                </span>
               </>
             )}
             {selectedSubAgent && navLevel === "subagent" && (
@@ -6005,14 +5932,14 @@ export function SessionDetailV2({ session, onClose }: Props) {
                       <NavItem
                         key={call.id}
                         indent
-                        label={call.isCompaction ? `#${call.id} compact` : `#${call.id}`}
-                        sublabel={call.isSignificant ? `+${fmtK(call.significantDelta ?? 0)}` : fmtK(call.contextSize)}
+                        label={call.isCompaction ? `C${call.indexInTurn} ◆` : `C${call.indexInTurn}`}
+                        sublabel={`#${call.id} · ${call.isSignificant ? `+${fmtK(call.significantDelta ?? 0)}` : fmtK(call.contextSize)}`}
                         active={
                           selectedCall?.id === call.id
                           || (linkedPanel?.type === "call" && linkedPanel.call.id === call.id)
                           || (linkedPanel?.type === "turn-excerpt" && linkedPanel.focusCall?.id === call.id)
                         }
-                        badge={call.isCompaction ? "◆" : undefined}
+                        badge={call.isCompaction ? undefined : undefined}
                         badgeColor="#ef4444"
                         onClick={() => handleSelectCall(call)}
                       />

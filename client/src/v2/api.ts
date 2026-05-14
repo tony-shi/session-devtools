@@ -2,6 +2,7 @@ import type { SessionProxyResponse, SessionsV2Response, SummaryV2 } from "./type
 import type { SessionDrilldown, CallDetail } from "./drilldown-types";
 import type { AttributionTreeResult } from "./attribution-tree-types";
 import type { ResponseTreeResult } from "./response-tree-types";
+import type { DiffTreeResult } from "./diff-tree-types";
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -37,6 +38,9 @@ export const apiV2 = {
 
   responseTree: (sessionId: string, callId: number) =>
     get<ResponseTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/response-tree`),
+
+  diffTree: (sessionId: string, callId: number) =>
+    get<DiffTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/diff-tree`),
 
   subAgentDrilldown: (sessionId: string, agentFileId: string) =>
     get<SessionDrilldown>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/subagent/${encodeURIComponent(agentFileId)}/drilldown`),

@@ -163,5 +163,36 @@
       "cacheRead": "缓存读",
       "toolCalls": "工具调用"
     }
+  },
+  "attribution": {
+    "hoverHint": "悬停查看段详情 · 点击选中",
+    "layoutProportional": "按比例",
+    "layoutEqual": "等宽",
+    "layoutProportionalTitle": "按 char 数比例分配宽度",
+    "layoutEqualTitle": "所有段等宽（忽略大小）",
+    "overloadBanner": "{{count}} 段 — 段数过多，逐个精确点击不现实。Bar 仍可看出分布；请使用下方列表进行检索 / 筛选。",
+    "overloadHint": "过密 — 请使用下方列表",
+    "request": "请求",
+    "response": "响应"
+  },
+  "callTab": {
+    "attribution": "归因",
+    "diff": "与前次的差异",
+    "raw": "原始数据"
+  },
+  "diff": {
+    "loading": "加载 diff…",
+    "loadFailed": "加载失败：{{error}}",
+    "noData": "无 diff 数据。",
+    "noChanges": "✓ 与上一次完全一致",
+    "vsCall": "对比 Call",
+    "added": "新增",
+    "removed": "删除",
+    "modified": "修改",
+    "unchanged": "未变",
+    "hoverHint": "悬停段查看详情 · 点击灰块展开未变段 · 点击变化段查看 before/after",
+    "binDescription": "{{count}} 段未变",
+    "totalChars": "共 {{count}} chars",
+    "clickToExpand": "点击展开"
   }
 }

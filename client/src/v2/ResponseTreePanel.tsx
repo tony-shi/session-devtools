@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { apiV2 } from "./api";
+import { FisheyeStrip } from "./fisheye-strip";
 import type {
   ResponseTreeResult,
   ResponseNode,
@@ -46,54 +47,47 @@ function fmtK(n: number): string {
   return String(n);
 }
 
-// ─── 顶部 stacked bar（无边框 / gap 间隔 / 可点击） ───────────────────────────
+// ─── 顶部 stacked bar — 消费 fisheye-strip 模块 ──────────────────────────────
+//
+// Response 通常只有 3-5 个 block（thinking / text / 几个 tool_use），元素数远少于
+// fisheye auto 阈值 → 实际上 fisheye 默认就是关闭的，行为退化为普通 stacked bar。
+// 但万一某个 response 有大量 tool_use（罕见但可能），fisheye 仍能兜底。
 
 const BAR_HEIGHT = 44;
 
+interface ResponseBlockItem {
+  id: string;
+  size: number;
+  node: ResponseNode;
+}
+
 function ResponseBar({
-  blocks, total, selectedId, onSelect,
+  blocks, selectedId, onSelect,
 }: {
   blocks: ResponseNode[];
-  total: number;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
 }) {
-  if (blocks.length === 0 || total === 0) return null;
+  if (blocks.length === 0) return null;
+  const items: ResponseBlockItem[] = blocks.map((n) => ({
+    id: n.id,
+    size: Math.max(n.charCount, 1),  // 避免极小段被算出 size=0
+    node: n,
+  }));
   return (
-    <div style={{ display: "flex", gap: 4, height: BAR_HEIGHT }}>
-      {blocks.map((n) => {
-        const meta = slotMeta(n.slotType);
-        const pct = n.charCount / total;
-        const isSel = selectedId === n.id;
-        const dimmed = selectedId !== null && !isSel;
-        return (
-          <button
-            key={n.id}
-            onClick={() => onSelect(isSel ? null : n.id)}
-            title={`${meta.label} · ${fmtK(n.charCount)} chars`}
-            style={{
-              flex: Math.max(pct, 0.04), minWidth: 64,
-              background: meta.barBg,
-              opacity: dimmed ? 0.32 : 1,
-              border: "none", borderRadius: 6,
-              padding: "8px 14px",
-              cursor: "pointer", textAlign: "left",
-              color: meta.barText,
-              display: "flex", flexDirection: "column", justifyContent: "center",
-              overflow: "hidden",
-              transition: "opacity 0.15s",
-            }}
-          >
-            <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {n.wireMeta?.toolName ?? meta.label}
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 500, opacity: 0.95, lineHeight: 1.25 }}>
-              ~{fmtK(n.charCount)}
-            </div>
-          </button>
-        );
-      })}
-    </div>
+    <FisheyeStrip<ResponseBlockItem>
+      items={items}
+      getColor={(it) => slotMeta(it.node.slotType).barBg}
+      getLabel={(it) => it.node.wireMeta?.toolName ?? slotMeta(it.node.slotType).label}
+      getTitle={(it) => {
+        const meta = slotMeta(it.node.slotType);
+        return `${meta.label} · ${fmtK(it.node.charCount)} chars`;
+      }}
+      height={BAR_HEIGHT}
+      background="transparent"
+      selectedId={selectedId}
+      onSelect={(it) => onSelect(selectedId === it.id ? null : it.id)}
+    />
   );
 }
 
@@ -347,7 +341,6 @@ export function ResponseTreePanel({ sessionId, callId, onLinkCall }: Props) {
       {/* Layer 1: 顶部 stacked bar */}
       <ResponseBar
         blocks={blocks}
-        total={totalChars}
         selectedId={selectedId}
         onSelect={setSelectedId}
       />

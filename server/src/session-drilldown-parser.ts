@@ -568,9 +568,8 @@ export function parseSessionDrilldown(
       const freshOut  = usage.output_tokens ?? 0;
       const cacheRead = usage.cache_read_input_tokens ?? 0;
       const cacheWrite = usage.cache_creation_input_tokens ?? 0;
-      // Fresh In = non-cached input + cache_write: all tokens the model processed
-      // fresh this call (first-time writes count as fresh processing, not reuse).
-      const freshIn = (usage.input_tokens ?? 0) + cacheWrite;
+      // input_tokens = non-cached tokens the model processed fresh this call.
+      const inputTokens = usage.input_tokens ?? 0;
       const stopReason = aev.message?.stop_reason ?? null;
       const rawModel = aev.message?.model ?? "";
       const model = rawModel === "<synthetic>" ? "" : normaliseModelName(rawModel);
@@ -728,8 +727,11 @@ export function parseSessionDrilldown(
         }
       }
 
-      // Context size proxy: sum of all token sources at this call
-      const contextSize = freshIn + cacheRead + cacheWrite;
+      // Context size = total tokens in the context window at this call.
+      // = input_tokens (non-cached) + cache_read + cache_write
+      // Note: freshIn = inputTokens + cacheWrite, so we use inputTokens here to
+      // avoid double-counting cacheWrite.
+      const contextSize = inputTokens + cacheRead + cacheWrite;
       // Delta vs previous call (across the whole session, not just within turn)
       const prevCall = callIdx > 0 ? rawCalls[callIdx - 1].ev : null;
       const prevUsage = prevCall?.message?.usage ?? {};
