@@ -40,10 +40,13 @@ export function buildParsedQuerySnapshot(params: {
   // childIdOf：根据父节点的 slotType 决定子节点 id 后缀规则
   //   system.main-prompt-block 的子节点 → -s{ci}（H1 section）
   //   messages.text 的子节点            → -inline-{ci}
+  //   messages.tool_result 的子节点     → -inline-{ci}（与 messages.text 同规则；
+  //                                       SmooshContent v2 切分尾部 SR 段）
   //   其他                               → -c{ci}（兜底，目前不触发）
   function childIdOf(parentId: string, parentSlotType: string, ci: number): string {
     if (parentSlotType === "system.main-prompt-block") return `${parentId}-s${ci}`;
     if (parentSlotType === "messages.text") return `${parentId}-inline-${ci}`;
+    if (parentSlotType === "messages.tool_result") return `${parentId}-inline-${ci}`;
     return `${parentId}-c${ci}`;
   }
 
@@ -142,6 +145,21 @@ function expandChildren(match: SlotMatch, template: RequestTemplate): SlotMatch[
   }
 
   if (match.slotType === "messages.text") {
+    return splitInlineTags(match.rawText, match.jsonPath, slot.children);
+  }
+
+  // SmooshContent v2：tool_result.content 字符串尾部（罕见中段）可能含
+  // <system-reminder>...</system-reminder> 段。复用 splitInlineTags 同套切分逻辑
+  // —— 该函数从头到尾扫描 anchor tag，命中即切独立子段，未命中区域归 free-text。
+  // tool_result 中切出的 SR 子段 slotType 仍为 "messages.inline.system-reminder"，
+  // 由 attribution 的 SmooshContent rule（task-reminder.v2 等 6 个）按 regex pattern
+  // 命中。父节点 wireMeta.messageRole 标识上下文（user message + tool_result）。
+  //
+  // 预筛：tool_result 大多数情况无 SR 段（普通工具输出），此时返回空 children 让
+  // tool_result 保持叶节点不变；只有真正含 SR 才进切分。这样既保持现有测试 fixture
+  // 的叶节点假设不破坏，又能在 smoosh 场景切出子段。
+  if (match.slotType === "messages.tool_result") {
+    if (!match.rawText.includes("<system-reminder>")) return [];
     return splitInlineTags(match.rawText, match.jsonPath, slot.children);
   }
 

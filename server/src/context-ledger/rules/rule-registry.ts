@@ -2446,6 +2446,27 @@ export const CLAUDE_CODE_TOOL_MCP_TAVILY_SEARCH_RULE: ContextLedgerRule = {
 export const TASK_REMINDER_PREFIX =
   "<system-reminder>\nThe task tools haven't been used recently.";
 
+// ── SmooshContent rule prefix 常量 ───────────────────────────────────────────
+//
+// 这些常量是 6 类 smoosh 注入内容的固定前缀，用于 AST attribution 时识别。
+// 每个 smoosh 段都形如：<system-reminder>\n{prefix}{动态正文}\n</system-reminder>
+// 真实数据来源：扫描 ~/.api-dashboard/proxy/traffic.jsonl* 共 64,093 个 SR 段后归类。
+
+export const QUEUED_COMMAND_PREFIX =
+  "<system-reminder>\nThe user sent a new message while you were working:";
+
+export const FILE_MODIFIED_PREFIX_FRAG =
+  "<system-reminder>\nNote: ";
+
+export const PLAN_MODE_STRICT_PREFIX =
+  "<system-reminder>\nPlan mode is active. The user indicated that they do not want you to execute yet";
+
+export const PLAN_MODE_REMINDER_PREFIX =
+  "<system-reminder>\nPlan mode still active (see full instructions earlier in conversation).";
+
+export const PLAN_MODE_EXITED_PREFIX =
+  "<system-reminder>\n## Exited Plan Mode";
+
 export const CLAUDE_CODE_TASK_REMINDER_RULE: ContextLedgerRule = {
   ruleId: "claude-code.messages.task-reminder.v1",
   verifiedFor: null,
@@ -2496,6 +2517,303 @@ export const CLAUDE_CODE_TASK_REMINDER_RULE: ContextLedgerRule = {
     comparePolicy: "char_diff",
     confidence: "definitive",
     exactTextExpected: true,
+  },
+};
+
+// ── SmooshContent rule 簇（v2 路径）──────────────────────────────────────────
+//
+// 设计背景：
+//   smoosh 是一个**机制**（smooshSystemReminderSiblings, restored-src/src/utils/messages.ts:1835），
+//   它把 user message 里的 `<system-reminder>...</system-reminder>` 兄弟节点折叠进
+//   同一 message 中最后一个 tool_result 的 content 尾部。该机制承载的**内容**多样：
+//   task-reminder / queued-command / file-modified / plan-mode 三 variant 等。
+//
+//   旧 task-reminder.v1 + TOOL_RESULT_SMOOSH_RULE.tailInjection 只覆盖了 task-reminder 一类。
+//   本批 6 个 v2 rule 让每类 smoosh 内容都有独立 ruleId / pattern，AST 切出 SR 子段后
+//   按 prefix 命中具体 rule。
+//
+//   AST 切分由 ast-builder.ts 在 tool_result.content 尾部增加 SR 切分实现（阶段 2.2）；
+//   SLOT 绑定在 context-rule-registry.ts 的 SLOT_BINDINGS 里追加。
+//
+// 校验依据：扫描 ~/.api-dashboard/proxy/traffic.jsonl* 共 64,093 SR 段，按前缀聚类，
+//          覆盖 top 6 类约 99.6%。
+
+// 1) task-reminder v2
+//
+// 模板演进：CLI 2.1.141 起新版前缀（不含 "Make sure that you NEVER mention..."），
+//          旧版仍存于历史 dump，pattern 同前缀仍可命中。verifiedFor 设为运行版本号。
+export const CLAUDE_CODE_SMOOSH_TASK_REMINDER_V2_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.smoosh.task-reminder.v2",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "Smoosh 内容：task_reminder。" +
+    "每 10 个 assistant turn 触发，proxy 中作为 <system-reminder>...</system-reminder> 段" +
+    "出现在 tool_result.content 字符串尾部。" +
+    "动态部分：可选 task list（#id. [status] subject）。",
+  stability: "semi-static",
+  sourcemapRef: "restored-src/src/utils/attachments.ts:3375 + messages.ts:3680",
+
+  attribution: {
+    // d flag 由 evaluator 自动加。正文允许任意字符（多行 task list 含中文等）。
+    // 命名捕获 dynamicTaskList 提取 "Here are the existing tasks:..." 之后的内容（可空）。
+    pattern: "^<system-reminder>\\nThe task tools haven't been used recently\\..*?(?:\\n\\nHere are the existing tasks:\\n\\n(?<dynamicTaskList>[\\s\\S]*?))?\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "smoosh_content_match",
+    category: "attachment",
+    captureGroups: {
+      dynamicTaskList: "可选：当前会话的 task list 渲染（每条 '#id. [status] subject'）",
+    },
+    location: { section: "messages", segmentPosition: "anywhere" },
+  },
+
+  reconstruction: {
+    trigger: "from_jsonl",
+    materialization: "exact_text",
+    preCondition: {
+      type: "all",
+      conditions: [
+        { type: "harnessFlag", flag: "isTodoV2Enabled()" },
+        { type: "harnessState", description: "turnsSinceLastTaskManagement >= 10" },
+        { type: "harnessState", description: "turnsSinceLastReminder >= 10" },
+      ],
+    },
+    emits: {
+      section: "messages",
+      category: "attachment",
+      lifecycle: "one_shot",
+      flags: ["injected", "smooshed"],
+      contentPattern: null,
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "char_diff",
+    confidence: "definitive",
+    exactTextExpected: true,
+  },
+};
+
+// 2) queued-command v2
+//
+// sourcemap: restored-src/src/utils/messages.ts:5368 附近（pairing 之后 re-smoosh）
+//          attachment.type === "queued_command" 的 prompt 文本被 wrap 后 smoosh。
+// 真实数据：proxy 中固定尾部 "IMPORTANT: After completing your current task, you MUST address the user's message above. Do not ignore it."
+export const CLAUDE_CODE_SMOOSH_QUEUED_COMMAND_V2_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.smoosh.queued-command.v2",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "Smoosh 内容：queued_command。" +
+    "用户在 LLM 调用进行中发新消息时，CLI 把消息排队为 queued_command attachment，" +
+    "随下次 normalize 时被 wrap+smoosh 进上一条 tool_result 尾部。",
+  stability: "semi-static",
+  sourcemapRef: "restored-src/src/utils/messages.ts queued_command flow",
+
+  attribution: {
+    // 用 `[\\s\\S]*?` 因为消息正文可跨行；捕获 messageBody。
+    pattern: "^<system-reminder>\\nThe user sent a new message while you were working:\\n(?<messageBody>[\\s\\S]*?)\\n\\nIMPORTANT: After completing your current task, you MUST address the user's message above\\. Do not ignore it\\.\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "smoosh_content_match",
+    category: "attachment",
+    captureGroups: {
+      messageBody: "用户排队的消息正文（可多行，含图片占位符 [Image #N]）",
+    },
+    location: { section: "messages", segmentPosition: "anywhere" },
+  },
+
+  reconstruction: {
+    trigger: "from_jsonl",
+    materialization: "exact_text",
+    emits: {
+      section: "messages",
+      category: "attachment",
+      lifecycle: "one_shot",
+      flags: ["injected", "smooshed"],
+      contentPattern: null,
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "char_diff",
+    confidence: "definitive",
+    exactTextExpected: true,
+  },
+};
+
+// 3) file-modified v1
+//
+// sourcemap: restored-src/src/utils/messages.ts 文件编辑后再次发起 LLM 调用时
+//          注入的 "Note: {filepath} was modified..." 段。
+// 内容形如：
+//   <system-reminder>
+//   Note: {filepath} was modified, either by the user or by a linter. ...
+//   Here are the relevant changes (shown with line numbers):
+//   1   {line1}
+//   2   {line2}
+//   ...
+//   </system-reminder>
+export const CLAUDE_CODE_SMOOSH_FILE_MODIFIED_V1_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.smoosh.file-modified.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "Smoosh 内容：file-modified。" +
+    "当文件在两次 LLM 调用之间被修改时，harness 注入修改后内容到下一次请求的 SR 中。" +
+    "filepath 与文件正文为动态部分。",
+  stability: "semi-static",
+  sourcemapRef: "restored-src/src/utils/messages.ts (file_modified injection)",
+
+  attribution: {
+    pattern: "^<system-reminder>\\nNote: (?<filepath>[^\\s]+) was modified, either by the user or by a linter\\..*?Here are the relevant changes \\(shown with line numbers\\):\\n(?<fileBody>[\\s\\S]*?)\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "smoosh_content_match",
+    category: "attachment",
+    captureGroups: {
+      filepath: "被修改的文件绝对路径",
+      fileBody: "带行号的文件内容（格式 'N\\t{line}'）",
+    },
+    location: { section: "messages", segmentPosition: "anywhere" },
+  },
+
+  reconstruction: {
+    trigger: "from_jsonl",
+    materialization: "exact_text",
+    emits: {
+      section: "messages",
+      category: "attachment",
+      lifecycle: "one_shot",
+      flags: ["injected", "smooshed"],
+      contentPattern: null,
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "char_diff",
+    confidence: "definitive",
+    exactTextExpected: true,
+  },
+};
+
+// 4) plan-mode strict v1
+//
+// 进入 plan mode 时（或在 plan mode 中需要重申约束时）的长版本指令。
+// 真实数据有两个 variant，统一前缀 "Plan mode is active. The user indicated..."。
+// 内含 plan 文件路径 + 工作流说明，动态部分主要是 plan file path。
+export const CLAUDE_CODE_SMOOSH_PLAN_MODE_STRICT_V1_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.smoosh.plan-mode-strict.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "Smoosh 内容：plan mode 进入/重申。" +
+    "前缀 'Plan mode is active...'，包含 plan 文件路径与工作流说明。" +
+    "harness 注入，jsonl 无直接对应 attachment。",
+  stability: "semi-static",
+  sourcemapRef: "restored-src/src/utils/messages.ts (plan mode prompt)",
+
+  attribution: {
+    pattern: "^<system-reminder>\\nPlan mode is active\\. The user indicated that they do not want you to execute yet[\\s\\S]*?\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "smoosh_content_match",
+    category: "harness_injection",
+    location: { section: "messages", segmentPosition: "anywhere" },
+  },
+
+  reconstruction: {
+    trigger: "from_harness_state",
+    materialization: "shape",
+    emits: {
+      section: "messages",
+      category: "harness_injection",
+      lifecycle: "one_shot",
+      flags: ["injected", "smooshed"],
+      contentPattern: null,
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "presence_only",
+    confidence: "inferred",
+    exactTextExpected: false,
+  },
+};
+
+// 5) plan-mode reminder v1
+//
+// plan mode 进行中每次 turn 注入的短提醒，内容相对静态（只含 plan file path 动态）。
+export const CLAUDE_CODE_SMOOSH_PLAN_MODE_REMINDER_V1_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.smoosh.plan-mode-reminder.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "Smoosh 内容：plan mode 周期提醒。" +
+    "前缀 'Plan mode still active...'，内容含 plan file path。" +
+    "harness 注入，jsonl 无直接对应 attachment。",
+  stability: "semi-static",
+  sourcemapRef: "restored-src/src/utils/messages.ts (plan mode reminder)",
+
+  attribution: {
+    pattern: "^<system-reminder>\\nPlan mode still active \\(see full instructions earlier in conversation\\)\\. Read-only except plan file \\((?<planFilePath>[^)]+)\\)[\\s\\S]*?\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "smoosh_content_match",
+    category: "harness_injection",
+    captureGroups: {
+      planFilePath: "当前 plan 文件路径",
+    },
+    location: { section: "messages", segmentPosition: "anywhere" },
+  },
+
+  reconstruction: {
+    trigger: "from_harness_state",
+    materialization: "shape",
+    emits: {
+      section: "messages",
+      category: "harness_injection",
+      lifecycle: "one_shot",
+      flags: ["injected", "smooshed"],
+      contentPattern: null,
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "presence_only",
+    confidence: "inferred",
+    exactTextExpected: false,
+  },
+};
+
+// 6) plan-mode exited v1
+//
+// 退出 plan mode 时的告知段。短，相对静态。
+export const CLAUDE_CODE_SMOOSH_PLAN_MODE_EXITED_V1_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.smoosh.plan-mode-exited.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "Smoosh 内容：plan mode 退出告知。" +
+    "前缀 '## Exited Plan Mode\\n\\nYou have exited plan mode.'。" +
+    "harness 注入，jsonl 无直接对应 attachment。",
+  stability: "semi-static",
+  sourcemapRef: "restored-src/src/utils/messages.ts (plan mode exited)",
+
+  attribution: {
+    pattern: "^<system-reminder>\\n## Exited Plan Mode\\n\\nYou have exited plan mode\\.[\\s\\S]*?\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "smoosh_content_match",
+    category: "harness_injection",
+    location: { section: "messages", segmentPosition: "anywhere" },
+  },
+
+  reconstruction: {
+    trigger: "from_harness_state",
+    materialization: "shape",
+    emits: {
+      section: "messages",
+      category: "harness_injection",
+      lifecycle: "one_shot",
+      flags: ["injected", "smooshed"],
+      contentPattern: null,
+    },
+  },
+
+  reconciliation: {
+    comparePolicy: "presence_only",
+    confidence: "inferred",
+    exactTextExpected: false,
   },
 };
 
@@ -2840,6 +3158,14 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_TOOL_MCP_TAVILY_RESEARCH_RULE,
   CLAUDE_CODE_TOOL_MCP_TAVILY_SEARCH_RULE,
   // ── messages 层注入 rules ─────────────────────────────────────────────────
+  // SmooshContent v2 rule 簇必须排在 SYSTEM_REMINDER_RULE（通用 SR 前缀兜底）之前，
+  // 否则候选评估时会被 generic rule 抢先命中。
+  CLAUDE_CODE_SMOOSH_TASK_REMINDER_V2_RULE,
+  CLAUDE_CODE_SMOOSH_QUEUED_COMMAND_V2_RULE,
+  CLAUDE_CODE_SMOOSH_FILE_MODIFIED_V1_RULE,
+  CLAUDE_CODE_SMOOSH_PLAN_MODE_STRICT_V1_RULE,
+  CLAUDE_CODE_SMOOSH_PLAN_MODE_REMINDER_V1_RULE,
+  CLAUDE_CODE_SMOOSH_PLAN_MODE_EXITED_V1_RULE,
   CLAUDE_CODE_USER_CONTEXT_RULE,
   CLAUDE_CODE_SYSTEM_REMINDER_RULE,
   CLAUDE_CODE_LOCAL_COMMAND_RULE,

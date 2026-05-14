@@ -259,9 +259,18 @@ interface RawJsonlLine {
   isSidechain?: boolean;
   timestamp?: string;
   ts?: string;
+  uuid?: string;
+  parentUuid?: string;
   message?: {
     id?: string;
     content?: unknown;
+  };
+  attachment?: {
+    type?: string;
+    content?: unknown;
+    prompt?: unknown;
+    filename?: unknown;
+    [k: string]: unknown;
   };
   [k: string]: unknown;
 }
@@ -380,6 +389,23 @@ export function readSessionEventsForLinker(sourceFile: string): LinkableJsonlEve
         ...base,
         ...(assistantText && { assistantText }),
         ...(toolUses.length > 0 && { toolUses }),
+      });
+    } else if (ev.type === "attachment" && ev.attachment && typeof ev.attachment.type === "string") {
+      // SmooshContent 来源：task_reminder / queued_command / edited_text_file 等
+      // attachment 类型记录，被 jsonl-linker 的 linkSmooshSegmentNode 用于把切出的
+      // <system-reminder> 子段 link 到 jsonl 行。filename 兼容 edited_text_file 顶层位置。
+      const att = ev.attachment;
+      const attType = att.type as string; // 已被外层 typeof === "string" 守卫
+      out.push({
+        ...base,
+        attachment: {
+          type: attType,
+          ...(att.content !== undefined && { content: att.content }),
+          ...(att.prompt !== undefined && { prompt: att.prompt }),
+          ...(typeof att.filename === "string" && { content: { filename: att.filename, ...(att.content as object ?? {}) } }),
+          ...(ev.parentUuid && { parentUuid: ev.parentUuid }),
+          ...(ev.uuid && { uuid: ev.uuid }),
+        },
       });
     } else {
       out.push(base);

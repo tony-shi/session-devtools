@@ -189,6 +189,24 @@ export const CLAUDE_CODE_MAIN_SESSION_TEMPLATE: RequestTemplate = {
         id: "messages.tool_result",
         jsonPathPattern: "reqBody.messages[*].content[*]",
         multiplicity: "zero_or_more",
+        // SmooshContent 切分：tool_result.content 字符串尾部（极少数情况也可中段）可能含
+        // 一个或多个 `<system-reminder>...</system-reminder>` 段（smoosh 机制注入）。
+        // 复用与 messages.text 相同的 child slot 定义（同 slotId），由 ast-builder 的
+        // splitInlineTags 切分。tool_result 通常不含 <local-command-*>，但保留 slot
+        // 以兼容理论上的混合 case。
+        children: [
+          {
+            id: "messages.inline.system-reminder",
+            jsonPathPattern: "reqBody.messages[*].content[*]",
+            multiplicity: "zero_or_more",
+            anchor: { kind: "tag_prefix", prefix: "<system-reminder>" },
+          },
+          {
+            id: "messages.inline.free-text",
+            jsonPathPattern: "reqBody.messages[*].content[*]",
+            multiplicity: "optional",
+          },
+        ],
       },
     ],
   },

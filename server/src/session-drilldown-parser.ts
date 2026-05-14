@@ -250,6 +250,22 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
     const attType = att.type ?? "";
     if (attType === "skill_listing") { kind = "attachment:skill_listing"; preview = String(att.content ?? "").slice(0, 300); }
     else if (attType === "task_reminder") { kind = "attachment:task_reminder"; preview = `itemCount: ${att.itemCount ?? 0}`; }
+    else if (attType === "queued_command") {
+      // attachment.prompt 是用户排队的消息文本（可能为 string 或 text-block array）
+      const att2 = att as { prompt?: unknown };
+      const promptText = typeof att2.prompt === "string"
+        ? att2.prompt
+        : Array.isArray(att2.prompt)
+          ? (att2.prompt as Array<{ text?: string }>).map(b => b?.text ?? "").join("\n")
+          : "";
+      kind = "attachment:queued_command";
+      preview = promptText.slice(0, 300);
+    }
+    else if (attType === "edited_text_file") {
+      const att2 = att as { filename?: string; snippet?: string };
+      kind = "attachment:edited_text_file";
+      preview = `${att2.filename ?? "(unknown)"} — ${(att2.snippet ?? "").slice(0, 200)}`;
+    }
     else if (attType === "file") { kind = "attachment:file"; preview = String(att.content ?? "").slice(0, 300); }
     else { kind = "unknown"; preview = raw.slice(0, 300); }
   } else if (iev.type === "file-history-snapshot") {

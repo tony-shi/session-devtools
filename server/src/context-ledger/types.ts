@@ -334,6 +334,7 @@ export interface ProxySegmentAttribution {
     | "large_segment_detector"
     | "cache_hint_detector"
     | "task_reminder_smoosh"
+    | "smoosh_content_match"
     | "manual_fixture"
     | "unknown";
   // P3-2：confidence 拆分为 classification + materialization 两个独立维度

@@ -66,6 +66,8 @@ export type IntervalEventKind =
   | "system:away_summary"
   | "attachment:skill_listing"
   | "attachment:task_reminder"
+  | "attachment:queued_command"
+  | "attachment:edited_text_file"
   | "attachment:file"
   | "file-history-snapshot"
   | "last-prompt"

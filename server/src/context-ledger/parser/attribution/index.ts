@@ -52,9 +52,16 @@ export function attributeSnapshot(snapshot: ParsedQuerySnapshot): SegmentAttribu
   const out: SegmentAttribution[] = [];
 
   for (const node of flattenNodes(snapshot.roots)) {
-    // container 节点：origin 已经是 structural/container_node，不参与 rule 命中。
-    // projection 也跳过（旧 audit 也不会渲染 container 单独的 attribution 行）。
-    if (node.children.length > 0) continue;
+    // container 节点：默认 origin 是 structural/container_node，不参与 rule 命中。
+    // 例外：wire-schema 节点（tool_use/tool_result/tools.builtin.*）即便有 children
+    // 也应保留 wire origin —— 它们的协议含义来自 wire schema，children 是 wire 之下的
+    // 内容切分（如 tool_result 尾部 smoosh 段），不影响父节点的协议归因。
+    // 注意：container 节点只**原地**写 origin，不向 SegmentAttribution[] 输出条目，
+    // 保留"叶子数 = attrs 数"的现有不变量。
+    if (node.children.length > 0) {
+      wireFallback(node); // 副作用：写 node.origin = wire origin（仅当 slotType 命中）
+      continue;
+    }
 
     const rules = getContextRulesForSlotId(node.slotType);
     const evaluation = findFirstRuleEvaluation(node, rules, snapshot.queryKind);

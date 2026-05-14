@@ -1,7 +1,7 @@
 // parser/attribution/jsonl-linker：把 ParsedQuerySnapshot 中能由 JSONL 事件解释的节点
 // 重写为 JsonlOrigin。
 //
-// 处理 4 类 deterministic 归因：
+// 处理 5 类 deterministic 归因：
 //
 //   1. messages.tool_use          → 通过 wireMeta.toolUseId 在 jsonl assistant 事件中
 //                                    匹配 tool_use block id。命中即 exact。
@@ -14,6 +14,13 @@
 //   4. assistant_text (role=assistant 的 messages.text 节点 / inline free-text)
 //                                → 按内容相等匹配 jsonl assistant 事件的纯文本部分。
 //                                   命中即 exact；找不到则保留原 origin。
+//   5. SmooshContent SR 子节点    → tool_result.content 尾部切出的 system-reminder 子段。
+//                                   origin 已由 SmooshContent rule 命中（task-reminder.v2 等），
+//                                   此处用 jsonl attachment 内容指纹升级为 JsonlOrigin：
+//                                   task-reminder ↔ attachment.type=task_reminder
+//                                   queued-command ↔ attachment.type=queued_command
+//                                   file-modified  ↔ attachment.type=edited_text_file
+//                                   plan-mode-* 无 jsonl 来源，保留 rule origin。
 //
 // 设计原则：
 //   - 命中才覆盖 origin；找不到不动（保留 PR 1/2 的 rule 或 structural 默认）。
@@ -50,6 +57,19 @@ export interface LinkableJsonlEvent {
   userText?: string;
   /** assistant 事件的纯文本输出（content 中 type=text 的拼接，用于 #4 匹配）。 */
   assistantText?: string;
+  /** attachment 事件（type === "attachment"）携带的内容，用于 #5 SmooshContent 子段 link。 */
+  attachment?: {
+    /** "task_reminder" | "queued_command" | "edited_text_file" | 其他自定义。 */
+    type: string;
+    /** attachment 的原始内容（任意结构，linker 会做最少必要的解析）。 */
+    content?: unknown;
+    /** queued_command 专用：prompt 文本（content 为空时备用）。 */
+    prompt?: unknown;
+    /** parentUuid 链关系，用于辅助溯源。 */
+    parentUuid?: string;
+    /** record 自身的 uuid。 */
+    uuid?: string;
+  };
 }
 
 /**
@@ -80,6 +100,8 @@ interface JsonlIndex {
   assistantEvents: LinkableJsonlEvent[];
   /** assistantText (修剪后) → 事件，便于 O(1) 内容匹配。 */
   assistantTextIndex: Map<string, LinkableJsonlEvent>;
+  /** attachment.type → 该类型的所有 attachment 事件（用于 #5 SmooshContent link）。 */
+  attachmentEventsByType: Map<string, LinkableJsonlEvent[]>;
 }
 
 function buildIndex(events: LinkableJsonlEvent[]): JsonlIndex {
@@ -88,6 +110,7 @@ function buildIndex(events: LinkableJsonlEvent[]): JsonlIndex {
   const userInputEvents: LinkableJsonlEvent[] = [];
   const assistantEvents: LinkableJsonlEvent[] = [];
   const assistantTextIndex = new Map<string, LinkableJsonlEvent>();
+  const attachmentEventsByType = new Map<string, LinkableJsonlEvent[]>();
 
   for (const ev of events) {
     if (ev.toolUses) {
@@ -112,11 +135,16 @@ function buildIndex(events: LinkableJsonlEvent[]): JsonlIndex {
         assistantTextIndex.set(key, ev);
       }
     }
+    if (ev.attachment) {
+      const bucket = attachmentEventsByType.get(ev.attachment.type) ?? [];
+      bucket.push(ev);
+      attachmentEventsByType.set(ev.attachment.type, bucket);
+    }
   }
   userInputEvents.sort((a, b) => a.lineIdx - b.lineIdx);
   assistantEvents.sort((a, b) => a.lineIdx - b.lineIdx);
 
-  return { toolUseEventById, toolResultEventById, userInputEvents, assistantEvents, assistantTextIndex };
+  return { toolUseEventById, toolResultEventById, userInputEvents, assistantEvents, assistantTextIndex, attachmentEventsByType };
 }
 
 // 文本匹配时统一规范化（trim + 折叠连续空白）。
@@ -282,10 +310,121 @@ function isAssistantTextLikeSlot(slotType: string): boolean {
   return slotType === "messages.text" || slotType === "messages.inline.free-text";
 }
 
+// ─── SmooshContent SR 子节点 link（#5） ──────────────────────────────────────
+
+/** ruleId → 对应的 jsonl attachment.type。plan-mode-* 无 jsonl 来源，返回 null。 */
+function smooshRuleIdToAttachmentType(ruleId: string): string | null {
+  if (ruleId === "claude-code.smoosh.task-reminder.v2") return "task_reminder";
+  if (ruleId === "claude-code.smoosh.queued-command.v2") return "queued_command";
+  if (ruleId === "claude-code.smoosh.file-modified.v1") return "edited_text_file";
+  // task-reminder.v1（旧 ruleId）保留兼容
+  if (ruleId === "claude-code.messages.task-reminder.v1") return "task_reminder";
+  return null;
+}
+
+/** 从 attachment.content（Task[]）渲染期望的 task list 文本，与 dynamicTaskList 字段比对。 */
+function renderTaskListFromAttachment(content: unknown): string | null {
+  if (!Array.isArray(content)) return null;
+  const lines: string[] = [];
+  for (const t of content) {
+    if (!t || typeof t !== "object") continue;
+    const rec = t as { id?: unknown; status?: unknown; subject?: unknown };
+    if (typeof rec.id !== "number" && typeof rec.id !== "string") continue;
+    if (typeof rec.status !== "string") continue;
+    if (typeof rec.subject !== "string") continue;
+    lines.push(`#${rec.id}. [${rec.status}] ${rec.subject}`);
+  }
+  return lines.length > 0 ? lines.join("\n") : "";
+}
+
+/** 从 queued_command attachment 提取消息文本（content 或 prompt）。 */
+function extractQueuedCommandText(attachment: NonNullable<LinkableJsonlEvent["attachment"]>): string | null {
+  const src = attachment.content ?? attachment.prompt;
+  if (typeof src === "string") return src;
+  if (Array.isArray(src)) {
+    return src
+      .filter((b): b is { type?: string; text?: string } => Boolean(b) && typeof b === "object")
+      .filter((b) => b.type === "text" && typeof b.text === "string")
+      .map((b) => b.text as string)
+      .join("\n");
+  }
+  return null;
+}
+
+/** 从 edited_text_file attachment 提取文件路径。 */
+function extractFileModifiedPath(attachment: NonNullable<LinkableJsonlEvent["attachment"]>): string | null {
+  const content = attachment.content;
+  if (content && typeof content === "object" && "filename" in content) {
+    const fn = (content as { filename?: unknown }).filename;
+    if (typeof fn === "string") return fn;
+  }
+  // edited_text_file attachment 在 JSONL 顶层也可能有 filename
+  const att = attachment as unknown as { filename?: unknown };
+  if (typeof att.filename === "string") return att.filename;
+  return null;
+}
+
+function linkSmooshSegmentNode(node: SegmentNode, index: JsonlIndex, ctx: CallContext): boolean {
+  if (node.slotType !== "messages.inline.system-reminder") return false;
+  const origin = node.origin;
+  if (!origin || origin.kind !== "rule") return false;
+  const attachmentType = smooshRuleIdToAttachmentType(origin.ruleId);
+  if (!attachmentType) return false;
+
+  const candidates = index.attachmentEventsByType.get(attachmentType) ?? [];
+  if (candidates.length === 0) return false;
+
+  // 内容指纹匹配：按 attachment 类型走对应渲染算法，与 node.rawText 做 substring 检查。
+  let bestExact: LinkableJsonlEvent | null = null;
+  for (const ev of candidates) {
+    if (!ev.attachment) continue;
+    let fingerprint: string | null = null;
+    if (attachmentType === "task_reminder") {
+      fingerprint = renderTaskListFromAttachment(ev.attachment.content);
+    } else if (attachmentType === "queued_command") {
+      fingerprint = extractQueuedCommandText(ev.attachment);
+    } else if (attachmentType === "edited_text_file") {
+      fingerprint = extractFileModifiedPath(ev.attachment);
+    }
+    // 空指纹（如 itemCount=0 的 task_reminder）退化为 type+turn 匹配；
+    // 非空且 node.rawText 包含指纹则 exact 命中。
+    if (fingerprint && fingerprint.length > 0 && node.rawText.includes(fingerprint)) {
+      bestExact = ev;
+      break;
+    }
+  }
+
+  if (bestExact) {
+    node.origin = buildJsonlOrigin({
+      eventKind: "attachment",
+      event: bestExact,
+      fallbackCallId: ctx.callId,
+      fallbackTurnId: ctx.turnId,
+      confidence: "definitive",
+    });
+    return true;
+  }
+
+  // 指纹未命中 → 取同 turn 范围内首条该 type 的 attachment（inferred）。
+  // 适用于 itemCount=0 task_reminder 等"内容指纹为空"的 case。
+  const inTurn = candidates.find((ev) => ev.turnId === undefined || ev.turnId === ctx.turnId);
+  if (inTurn) {
+    node.origin = buildJsonlOrigin({
+      eventKind: "attachment",
+      event: inTurn,
+      fallbackCallId: ctx.callId,
+      fallbackTurnId: ctx.turnId,
+      confidence: "inferred",
+    });
+    return true;
+  }
+  return false;
+}
+
 // ─── 顶层入口 ────────────────────────────────────────────────────────────────
 
 export interface LinkJsonlReport {
-  matched: { toolUse: number; toolResult: number; userInput: number; assistantText: number };
+  matched: { toolUse: number; toolResult: number; userInput: number; assistantText: number; smooshSegment: number };
   totalLeaves: number;
 }
 
@@ -302,13 +441,20 @@ export function linkJsonl(
 ): LinkJsonlReport {
   const index = buildIndex(events);
   const report: LinkJsonlReport = {
-    matched: { toolUse: 0, toolResult: 0, userInput: 0, assistantText: 0 },
+    matched: { toolUse: 0, toolResult: 0, userInput: 0, assistantText: 0, smooshSegment: 0 },
     totalLeaves: 0,
   };
 
   for (const node of Object.values(snapshot.index)) {
-    if (node.children.length > 0) continue;
-    report.totalLeaves += 1;
+    // tool_result 节点：即便它现在因 SmooshContent 切分而成为 container，也仍要尝试
+    // 通过 tool_use_id 链到 jsonl —— 这是 wire-schema 节点的协议级 origin，独立于
+    // 其 children 的 SR 子段 attribution。其它 container 节点照旧跳过。
+    if (node.children.length > 0 && node.slotType !== "messages.tool_result") {
+      continue;
+    }
+    if (node.children.length === 0) {
+      report.totalLeaves += 1;
+    }
 
     if (linkToolUseNode(node, index, ctx)) {
       report.matched.toolUse += 1;
@@ -324,6 +470,11 @@ export function linkJsonl(
     }
     if (linkAssistantTextNode(node, index, ctx)) {
       report.matched.assistantText += 1;
+      continue;
+    }
+    // #5：SmooshContent SR 子节点 — 仅对已被 SmoothContent rule 命中的 SR 叶节点起作用。
+    if (linkSmooshSegmentNode(node, index, ctx)) {
+      report.matched.smooshSegment += 1;
       continue;
     }
   }

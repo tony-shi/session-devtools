@@ -98,6 +98,17 @@ const SLOT_BINDINGS: Record<string, string[]> = {
   "claude-code.messages.file-attachment.v1": ["messages.inline.system-reminder"],
   "claude-code.messages.tool-result.smoosh.v1": ["messages.tool_result"],
 
+  // SmooshContent v2 rule 簇：tool_result.content 尾部 smoosh 切出的 SR 子段。
+  // 当前 ast-builder 还未切 tool_result 尾部（阶段 2.2 完成后），但 rule 先就位。
+  // 同时绑定 messages.inline.system-reminder 让 messages.text 路径下出现这些 SR
+  // 时也能被识别（兼容历史 user-turn 中独立 SR sibling 的极少数 case）。
+  "claude-code.smoosh.task-reminder.v2": ["messages.inline.system-reminder"],
+  "claude-code.smoosh.queued-command.v2": ["messages.inline.system-reminder"],
+  "claude-code.smoosh.file-modified.v1": ["messages.inline.system-reminder"],
+  "claude-code.smoosh.plan-mode-strict.v1": ["messages.inline.system-reminder"],
+  "claude-code.smoosh.plan-mode-reminder.v1": ["messages.inline.system-reminder"],
+  "claude-code.smoosh.plan-mode-exited.v1": ["messages.inline.system-reminder"],
+
   "claude-code.side-query.session-title.v1": ["side-query.system"],
 };
 

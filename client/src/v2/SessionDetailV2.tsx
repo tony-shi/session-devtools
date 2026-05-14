@@ -2616,7 +2616,8 @@ const ALL_KINDS: IntervalEventKind[] = [
   "user:human", "user:tool_result", "user:command",
   "system:api_error", "system:local_command", "system:turn_duration",
   "system:stop_hook_summary", "system:away_summary",
-  "attachment:skill_listing", "attachment:task_reminder", "attachment:file",
+  "attachment:skill_listing", "attachment:task_reminder", "attachment:queued_command",
+  "attachment:edited_text_file", "attachment:file",
   "file-history-snapshot", "last-prompt", "unknown",
 ];
 
@@ -2631,6 +2632,8 @@ const KIND_LABEL: Record<IntervalEventKind, string> = {
   "system:away_summary":      "Away summary",
   "attachment:skill_listing": "Skills",
   "attachment:task_reminder": "Task reminder",
+  "attachment:queued_command": "Queued msg",
+  "attachment:edited_text_file": "File edited",
   "attachment:file":          "File attach",
   "file-history-snapshot":    "File snapshot",
   "last-prompt":              "Last prompt",
@@ -2648,6 +2651,8 @@ const KIND_COLOR: Record<IntervalEventKind, { bg: string; border: string; fg: st
   "system:away_summary":      { bg: "#fefce8", border: "#fde68a", fg: "#92400e" },
   "attachment:skill_listing": { bg: "#f8fafc", border: "#e2e8f0", fg: "#475569" },
   "attachment:task_reminder": { bg: "#fffbeb", border: "#fde68a", fg: "#92400e" },
+  "attachment:queued_command": { bg: "#fff7ed", border: "#fed7aa", fg: "#c2410c" },
+  "attachment:edited_text_file": { bg: "#ecfeff", border: "#a5f3fc", fg: "#0e7490" },
   "attachment:file":          { bg: "#f0f9ff", border: "#bae6fd", fg: "#0369a1" },
   "file-history-snapshot":    { bg: "#f8fafc", border: "#e2e8f0", fg: "#94a3b8" },
   "last-prompt":              { bg: "#f8fafc", border: "#e2e8f0", fg: "#64748b" },
@@ -4618,14 +4623,16 @@ function deriveSegmentCause(
   const hasToolResult  = intervalEvents.some(e => e.kind === "user:tool_result");
   const hasCommand     = intervalEvents.some(e => e.kind === "user:command");
   const hasAttachment  = intervalEvents.some(e =>
-    e.kind === "attachment:skill_listing" || e.kind === "attachment:task_reminder" || e.kind === "attachment:file");
+    e.kind === "attachment:skill_listing" || e.kind === "attachment:task_reminder" ||
+    e.kind === "attachment:queued_command" || e.kind === "attachment:edited_text_file" || e.kind === "attachment:file");
   const hasSnapshot    = intervalEvents.some(e => e.kind === "file-history-snapshot" || e.kind === "last-prompt");
   const hasAway        = intervalEvents.some(e => e.kind === "system:away_summary" || e.kind === "system:stop_hook_summary");
 
   const firstHuman     = intervalEvents.find(e => e.kind === "user:human");
   const firstTool      = intervalEvents.find(e => e.kind === "user:tool_result");
   const firstAttach    = intervalEvents.find(e =>
-    e.kind === "attachment:skill_listing" || e.kind === "attachment:task_reminder" || e.kind === "attachment:file");
+    e.kind === "attachment:skill_listing" || e.kind === "attachment:task_reminder" ||
+    e.kind === "attachment:queued_command" || e.kind === "attachment:edited_text_file" || e.kind === "attachment:file");
 
   // messages section — added segments
   if (seg.section === "messages" && seg.op === "added") {

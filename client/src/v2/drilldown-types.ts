@@ -70,7 +70,8 @@ export type IntervalEventKind =
   | "user:human" | "user:tool_result" | "user:command"
   | "system:api_error" | "system:local_command" | "system:turn_duration"
   | "system:stop_hook_summary" | "system:away_summary"
-  | "attachment:skill_listing" | "attachment:task_reminder" | "attachment:file"
+  | "attachment:skill_listing" | "attachment:task_reminder" | "attachment:queued_command"
+  | "attachment:edited_text_file" | "attachment:file"
   | "file-history-snapshot" | "last-prompt" | "unknown";
 
 export interface IntervalEvent {
