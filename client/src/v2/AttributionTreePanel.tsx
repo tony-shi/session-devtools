@@ -1,17 +1,16 @@
-// AttributionTreePanel：legacy-style 三层钻取视图。
+// AttributionTreePanel：极简钻取风格的归因视图。
 //
-// Layer 1  CompositionBar     顶部连体堆叠条（system / tools / messages 三段，按字符数比例宽度）。
-//                              视觉照搬 legacy CallSegmentTree 的 stacked bar：浅紫 / 灰 / 蓝。
-// Layer 2  SectionRow         每段一行：色块 + 名称 + 大小 + % + 段数 + 子统计 + expand 按钮。
-//                              展开后内嵌 strip + selected 详情。
-// Layer 3  SectionStrip       单行 strip：每个叶子一个色块，宽度 ∝ charCount，填色 ∝ origin.kind。
-//                              不再带任何 diff 视觉（diff 由 Diff vs Previous tab 承担）。
+// 视觉模型（无边框，靠 gap 间隔）：
+//   Layer 1  顶部 stacked bar（root sections — system / tools / messages 三段；按字符比例宽度）
+//   Layer 2  极简 table（默认状态）— 每段一行：色点 + 名称 + 大小 + % + 段数
 //
-// 设计取向：
-//   - 边框 1px、低饱和度配色，向 legacy CallSegmentTree 看齐。
-//   - 顶部 stacked bar 用 flex 比例，单个圆角容器内分段，不留缝。
+// 点击 == 选中 == 钻取，不展开下拉。
+//   - 点击 top bar 段 / table 行 → 进入对应 section，顶部 bar 仍在（其他段被 dim），
+//     下方多出一根二级 bar（= 顶部 bar 等宽，按 section 内 leaves 比例分块），再加一张 leaves table。
+//   - 点击 leaf bar / leaf 行 → 高亮该 leaf，并显示叶子详情。
+//   - 「← back」回到上一级。
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { apiV2 } from "./api";
 import type {
   AttributionTreeResult,
@@ -26,25 +25,18 @@ type SectionId = "system" | "tools" | "messages" | "other";
 
 interface SectionMeta {
   label: string;
-  /** stacked bar 块的填色（legacy 调色板） */
   barBg: string;
-  /** stacked bar 块文字颜色 */
   barText: string;
-  /** SectionRow 容器底色 */
   rowBg: string;
-  /** SectionRow 边框颜色 */
-  rowBorder: string;
-  /** SectionRow 左侧色块 */
   marker: string;
-  /** SectionRow 文字主色 */
   textColor: string;
 }
 
 const SECTION_META: Record<SectionId, SectionMeta> = {
-  system:   { label: "System",   barBg: "#a5b4fc", barText: "#fff", rowBg: "#eef2ff", rowBorder: "#e0e7ff", marker: "#818cf8", textColor: "#3730a3" },
-  tools:    { label: "Tools",    barBg: "#9ca3af", barText: "#fff", rowBg: "#f3f4f6", rowBorder: "#e5e7eb", marker: "#6b7280", textColor: "#374151" },
-  messages: { label: "Messages", barBg: "#7c8df6", barText: "#fff", rowBg: "#eff6ff", rowBorder: "#dbeafe", marker: "#6366f1", textColor: "#1e40af" },
-  other:    { label: "Other",    barBg: "#d1d5db", barText: "#fff", rowBg: "#fafafa", rowBorder: "#f3f4f6", marker: "#9ca3af", textColor: "#374151" },
+  system:   { label: "System",   barBg: "#818cf8", barText: "#fff", rowBg: "#eef2ff", marker: "#6366f1", textColor: "#3730a3" },
+  tools:    { label: "Tools",    barBg: "#9ca3af", barText: "#fff", rowBg: "#f3f4f6", marker: "#6b7280", textColor: "#374151" },
+  messages: { label: "Messages", barBg: "#7c8df6", barText: "#fff", rowBg: "#eff6ff", marker: "#6366f1", textColor: "#1e40af" },
+  other:    { label: "Other",    barBg: "#d1d5db", barText: "#fff", rowBg: "#fafafa", marker: "#9ca3af", textColor: "#374151" },
 };
 
 const ORIGIN_FILL: Record<OriginKind, string> = {
@@ -59,10 +51,6 @@ const ORIGIN_BORDER: Record<OriginKind, string> = {
   jsonl:      "#86efac",
   structural: "#d1d5db",
   unknown:    "#fca5a5",
-};
-
-const ORIGIN_LABEL: Record<OriginKind, string> = {
-  rule: "rule", jsonl: "jsonl", structural: "structural", unknown: "unknown",
 };
 
 // ─── 工具函数 ────────────────────────────────────────────────────────────────
@@ -110,7 +98,6 @@ interface LeafLite {
   preview: string;
   origin: SegmentOrigin;
   rawText?: string;
-  /** message role：消息类节点用于子统计（user/assistant/system 段数） */
   messageRole?: "user" | "assistant" | "system";
 }
 
@@ -142,9 +129,7 @@ interface SectionStat {
   totalChars: number;
   leafCount: number;
   leaves: LeafLite[];
-  /** 仅 messages 用：按 role 子计数 */
   byRole?: { user: number; assistant: number; system: number };
-  /** 仅 tools 用：tool 个数（顶层 root 为 tools.builtin.* 的去重数） */
   toolCount?: number;
 }
 
@@ -183,183 +168,368 @@ function computeSectionStats(leaves: LeafLite[]): SectionStat[] {
   return out;
 }
 
-// ─── Layer 1: CompositionBar (legacy stacked bar) ────────────────────────────
+function subStatDescription(s: SectionStat): string {
+  const bits: string[] = [`${s.leafCount} segments`];
+  if (s.toolCount !== undefined) bits.push(`${s.toolCount} tools`);
+  if (s.byRole) {
+    if (s.byRole.user > 0) bits.push(`${s.byRole.user} user`);
+    if (s.byRole.assistant > 0) bits.push(`${s.byRole.assistant} assistant`);
+    if (s.byRole.system > 0) bits.push(`${s.byRole.system} system`);
+  }
+  return bits.join(" · ");
+}
 
-function CompositionBar({ stats, totalChars }: { stats: SectionStat[]; totalChars: number }) {
+// ─── 顶部 stacked bar（无边框 / gap 间隔 / 可点击）─────────────────────────────
+
+const BAR_HEIGHT = 44;
+const SUB_BAR_HEIGHT = 36;
+
+function SectionBar({
+  stats, totalChars, selectedSection, onSelect,
+}: {
+  stats: SectionStat[];
+  totalChars: number;
+  selectedSection: SectionId | null;
+  onSelect: (s: SectionId) => void;
+}) {
   if (totalChars === 0) return null;
   return (
-    <div style={{
-      display: "flex", overflow: "hidden", borderRadius: 8,
-      border: "1px solid #e5e7eb",
-    }}>
+    <div style={{ display: "flex", gap: 4, height: BAR_HEIGHT }}>
       {stats.map((s) => {
         const meta = SECTION_META[s.id];
         const pct = s.totalChars / totalChars;
+        const isSel = selectedSection === s.id;
+        const dimmed = selectedSection !== null && !isSel;
         return (
-          <div
+          <button
             key={s.id}
+            onClick={() => onSelect(s.id)}
             title={`${meta.label}: ${fmtK(s.totalChars)} chars (${(pct * 100).toFixed(1)}%)`}
             style={{
-              flex: pct,
-              minWidth: 64,
+              flex: pct, minWidth: 64,
               background: meta.barBg,
+              opacity: dimmed ? 0.32 : 1,
+              border: "none",
+              borderRadius: 6,
+              padding: "8px 14px",
+              cursor: "pointer",
+              textAlign: "left",
               color: meta.barText,
-              padding: "12px 14px",
-              fontSize: 13, fontWeight: 700, lineHeight: 1.3,
               display: "flex", flexDirection: "column", justifyContent: "center",
-              overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
+              overflow: "hidden",
+              transition: "opacity 0.15s",
             }}
           >
-            <div>{meta.label}</div>
-            <div style={{ fontSize: 11, fontWeight: 500, opacity: 0.95 }}>~{fmtK(s.totalChars)}</div>
-          </div>
+            <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{meta.label}</div>
+            <div style={{ fontSize: 11, fontWeight: 500, opacity: 0.95, lineHeight: 1.25 }}>~{fmtK(s.totalChars)}</div>
+          </button>
         );
       })}
     </div>
   );
 }
 
-// ─── Layer 2: SectionRow ─────────────────────────────────────────────────────
+// ─── 二级 strip：leaves（与顶部 bar 等宽） ────────────────────────────────────
+//
+// label 自适应放置：inside → above → below → hidden
+//   - inside：bar 宽度足够直接显示 label
+//   - above：bar 太窄但上方该 x-range 未被占用，label 浮在上方（绝对定位 + 引线点）
+//   - below：上方已被占用，挪到下方
+//   - hidden：上下都已被同样窄的邻居占满 → 隐藏（仍可 tooltip）
+//
+// 选中某项时其他项 visibility:hidden（保留位置 / 比例）。
 
-function SectionRow({
-  stat, totalChars, expanded, onToggle, children,
-}: {
-  stat: SectionStat;
-  totalChars: number;
-  expanded: boolean;
-  onToggle: () => void;
-  children?: React.ReactNode;
-}) {
-  const meta = SECTION_META[stat.id];
-  const pct = totalChars > 0 ? Math.round((stat.totalChars / totalChars) * 100) : 0;
+const STRIP_GAP_PX = 2;
+const STRIP_FONT_PX = 9;
+const STRIP_CHAR_PX = 5.2; // 9px 字体单字符近似宽度（含字距）
+const STRIP_LABEL_PAD = 6;
+const STRIP_LANE_HEIGHT = 13;
+const STRIP_LANE_GAP = 2;
 
-  return (
-    <div style={{
-      background: meta.rowBg,
-      border: `1px solid ${meta.rowBorder}`,
-      borderRadius: 8,
-      overflow: "hidden",
-    }}>
-      <div
-        onClick={onToggle}
-        style={{
-          display: "flex", alignItems: "center", gap: 10,
-          padding: "10px 14px", cursor: "pointer",
-        }}
-      >
-        <span style={{ width: 10, height: 10, background: meta.marker, borderRadius: 2, flexShrink: 0 }} />
-        <span style={{ fontSize: 13, fontWeight: 700, color: meta.textColor }}>{meta.label}</span>
-        <span style={{ fontSize: 11, color: meta.textColor, opacity: 0.7 }}>~{fmtK(stat.totalChars)}</span>
-        <span style={{ fontSize: 11, color: meta.textColor, opacity: 0.7 }}>{pct}%</span>
-        <span style={{ fontSize: 11, color: meta.textColor, opacity: 0.7 }}>{stat.leafCount} segments</span>
+type LabelPlacement =
+  | { type: "inside" }
+  | { type: "above"; left: number; width: number }
+  | { type: "below"; left: number; width: number }
+  | { type: "hidden" };
 
-        {/* 子统计 */}
-        {stat.toolCount !== undefined && (
-          <span style={chipStyle}>{stat.toolCount} tools</span>
-        )}
-        {stat.byRole && (
-          <>
-            {stat.byRole.user > 0 && <span style={chipStyle}>{stat.byRole.user} user</span>}
-            {stat.byRole.assistant > 0 && <span style={chipStyle}>{stat.byRole.assistant} assistant</span>}
-            {stat.byRole.system > 0 && <span style={chipStyle}>{stat.byRole.system} system</span>}
-          </>
-        )}
+function computePlacements(
+  leaves: LeafLite[],
+  total: number,
+  containerWidth: number,
+): LabelPlacement[] {
+  const n = leaves.length;
+  if (n === 0 || total === 0 || containerWidth <= 0) return new Array(n).fill({ type: "hidden" });
+  const totalGap = (n - 1) * STRIP_GAP_PX;
+  const available = Math.max(containerWidth - totalGap, 1);
 
-        <span style={{
-          marginLeft: "auto", fontSize: 11, color: meta.textColor,
-          opacity: 0.85, fontWeight: 500,
-        }}>
-          {expanded ? "▾ collapse" : "▸ expand"}
-        </span>
-      </div>
+  const placements: LabelPlacement[] = new Array(n);
+  const aboveOcc: Array<[number, number]> = [];
+  const belowOcc: Array<[number, number]> = [];
 
-      {expanded && (
-        <div style={{ padding: "10px 14px 14px", borderTop: `1px solid ${meta.rowBorder}`, background: "#fff" }}>
-          {children}
-        </div>
-      )}
-    </div>
-  );
+  let cursor = 0;
+  for (let i = 0; i < n; i++) {
+    const l = leaves[i];
+    const pct = l.charCount / total;
+    const barW = pct * available;
+    const label = shortSlot(l.slotType);
+    const labelW = Math.min(label.length * STRIP_CHAR_PX + STRIP_LABEL_PAD, 220);
+
+    // 1) 能 inside 就 inside
+    if (barW >= labelW + 4) {
+      placements[i] = { type: "inside" };
+    } else {
+      // 2) 尝试 above / below callout
+      const center = cursor + barW / 2;
+      const left = center - labelW / 2;
+      const right = center + labelW / 2;
+      const fits = (occ: Array<[number, number]>) =>
+        !occ.some(([oL, oR]) => !(right <= oL || left >= oR));
+
+      if (fits(aboveOcc)) {
+        placements[i] = { type: "above", left, width: labelW };
+        aboveOcc.push([left, right]);
+      } else if (fits(belowOcc)) {
+        placements[i] = { type: "below", left, width: labelW };
+        belowOcc.push([left, right]);
+      } else {
+        placements[i] = { type: "hidden" };
+      }
+    }
+    cursor += barW + STRIP_GAP_PX;
+  }
+  return placements;
 }
 
-const chipStyle: React.CSSProperties = {
-  fontSize: 10, color: "#6b7280",
-  background: "#fff", border: "1px solid #e5e7eb",
-  borderRadius: 4, padding: "1px 6px",
-};
+function useContainerWidth<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    const el = ref.current;
+    const update = () => setWidth(el.getBoundingClientRect().width);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return { ref, width };
+}
 
-// ─── Layer 3: SectionStrip ───────────────────────────────────────────────────
-
-function SectionStrip({
-  leaves, selectedId, onSelect, containerWidth = 760,
+function LeafStrip({
+  leaves, selectedId, onSelect,
 }: {
   leaves: LeafLite[];
   selectedId: string | null;
-  onSelect: (nodeId: string) => void;
-  containerWidth?: number;
+  onSelect: (id: string) => void;
 }) {
-  if (leaves.length === 0) {
-    return <div style={{ fontSize: 10, color: "#9ca3af", fontStyle: "italic" }}>No segments.</div>;
-  }
-  const totalChars = leaves.reduce((s, l) => s + l.charCount, 0);
-  const scale = containerWidth / Math.max(totalChars, 1);
+  const { ref, width } = useContainerWidth<HTMLDivElement>();
+  if (leaves.length === 0) return null;
+  const total = leaves.reduce((s, l) => s + l.charCount, 0);
+  if (total === 0) return null;
+
+  const placements = computePlacements(leaves, total, width);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ display: "flex", gap: 1, flexWrap: "nowrap", overflow: "hidden" }}>
-        {leaves.map((l) => {
-          const width = Math.max(2, Math.min(l.charCount * scale, 240));
-          const fill = ORIGIN_FILL[l.origin.kind];
-          const border = ORIGIN_BORDER[l.origin.kind];
-          const isSelected = selectedId === l.nodeId;
-          const tip = `${shortSlot(l.slotType)}\n${fmtK(l.charCount)} chars · ${ORIGIN_LABEL[l.origin.kind]}\n${originLabel(l.origin)}\n\n${l.preview}`;
+    <div ref={ref} style={{ display: "flex", flexDirection: "column", gap: STRIP_LANE_GAP }}>
+      {/* 上方 callout lane（绝对定位）*/}
+      <div style={{ position: "relative", height: STRIP_LANE_HEIGHT }}>
+        {placements.map((p, i) => {
+          if (p.type !== "above") return null;
+          const l = leaves[i];
+          const isSel = selectedId === l.nodeId;
+          const dimmed = selectedId !== null && !isSel;
           return (
             <div
-              key={l.nodeId}
-              title={tip}
-              onClick={() => onSelect(l.nodeId)}
+              key={l.nodeId + "-above"}
               style={{
-                width, height: 18, flexShrink: 0,
-                background: fill,
-                border: `1px solid ${isSelected ? "#374151" : border}`,
-                borderRadius: 2,
-                cursor: "pointer",
-                boxShadow: isSelected ? "0 0 0 1px #374151" : "none",
+                position: "absolute",
+                left: p.left, width: p.width,
+                bottom: 0,
+                fontSize: STRIP_FONT_PX, lineHeight: 1.25,
+                color: isSel ? "#111827" : "#6b7280",
+                fontWeight: isSel ? 600 : 400,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                textAlign: "center",
+                opacity: dimmed ? 0.32 : 1,
+                transition: "opacity 0.15s",
+                pointerEvents: "none",
               }}
-            />
+            >
+              {shortSlot(l.slotType)}
+            </div>
           );
         })}
       </div>
-      {/* Legend */}
-      <div style={{ display: "flex", gap: 10, fontSize: 9, color: "#9ca3af" }}>
-        <LegendChip color={ORIGIN_FILL.rule} border={ORIGIN_BORDER.rule} label="rule" />
-        <LegendChip color={ORIGIN_FILL.jsonl} border={ORIGIN_BORDER.jsonl} label="jsonl" />
-        <LegendChip color={ORIGIN_FILL.structural} border={ORIGIN_BORDER.structural} label="structural" />
-        {leaves.some((l) => l.origin.kind === "unknown") && (
-          <LegendChip color={ORIGIN_FILL.unknown} border={ORIGIN_BORDER.unknown} label="unknown" />
-        )}
+
+      {/* Strip — bar 本体 */}
+      <div style={{ display: "flex", gap: STRIP_GAP_PX, height: SUB_BAR_HEIGHT }}>
+        {leaves.map((l, i) => {
+          const pct = l.charCount / total;
+          const fill = ORIGIN_FILL[l.origin.kind];
+          const isSel = selectedId === l.nodeId;
+          const dimmed = selectedId !== null && !isSel;
+          const p = placements[i];
+          const insideText = p?.type === "inside" ? shortSlot(l.slotType) : "";
+          return (
+            <button
+              key={l.nodeId}
+              onClick={() => onSelect(l.nodeId)}
+              title={`${shortSlot(l.slotType)} · ${fmtK(l.charCount)} chars · ${originLabel(l.origin)}`}
+              style={{
+                flex: pct, minWidth: 4,
+                background: fill,
+                border: "none",
+                borderRadius: 4,
+                outline: isSel ? "2px solid #374151" : "none",
+                outlineOffset: -2,
+                cursor: "pointer",
+                opacity: dimmed ? 0.32 : 1,
+                transition: "opacity 0.15s",
+                padding: "0 4px",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                whiteSpace: "nowrap", overflow: "hidden",
+                fontSize: STRIP_FONT_PX, color: "#1f2937", fontWeight: 500,
+              }}
+            >
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{insideText}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* 下方 callout lane（绝对定位）*/}
+      <div style={{ position: "relative", height: STRIP_LANE_HEIGHT }}>
+        {placements.map((p, i) => {
+          if (p.type !== "below") return null;
+          const l = leaves[i];
+          const isSel = selectedId === l.nodeId;
+          const dimmed = selectedId !== null && !isSel;
+          return (
+            <div
+              key={l.nodeId + "-below"}
+              style={{
+                position: "absolute",
+                left: p.left, width: p.width,
+                top: 0,
+                fontSize: STRIP_FONT_PX, lineHeight: 1.25,
+                color: isSel ? "#111827" : "#6b7280",
+                fontWeight: isSel ? 600 : 400,
+                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                textAlign: "center",
+                opacity: dimmed ? 0.32 : 1,
+                transition: "opacity 0.15s",
+                pointerEvents: "none",
+              }}
+            >
+              {shortSlot(l.slotType)}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function LegendChip({ color, border, label }: { color: string; border: string; label: string }) {
+// ─── 极简 table（无边框，行 hover） ─────────────────────────────────────────
+
+function SectionTable({
+  stats, totalChars, selectedSection, onSelect,
+}: {
+  stats: SectionStat[];
+  totalChars: number;
+  selectedSection: SectionId | null;
+  onSelect: (s: SectionId) => void;
+}) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
-      <span style={{ width: 9, height: 8, background: color, border: `1px solid ${border}`, borderRadius: 1 }} />
-      {label}
-    </span>
+    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {stats.map((s) => {
+        const meta = SECTION_META[s.id];
+        const pct = totalChars > 0 ? (s.totalChars / totalChars) * 100 : 0;
+        const isSel = selectedSection === s.id;
+        return (
+          <button
+            key={s.id}
+            onClick={() => onSelect(s.id)}
+            style={{
+              display: "flex", alignItems: "center", gap: 14,
+              padding: "8px 8px",
+              background: isSel ? meta.rowBg : "transparent",
+              border: "none", borderRadius: 4,
+              cursor: "pointer", textAlign: "left",
+              transition: "background 0.1s",
+            }}
+            onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = "#f9fafb"; }}
+            onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.background = "transparent"; }}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.marker, flexShrink: 0 }} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 90 }}>{meta.label}</span>
+            <span style={{ fontSize: 11, color: "#374151", minWidth: 60 }}>~{fmtK(s.totalChars)}</span>
+            <span style={{ fontSize: 11, color: "#9ca3af", minWidth: 44 }}>{pct.toFixed(1)}%</span>
+            <span style={{ fontSize: 10, color: "#9ca3af", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {subStatDescription(s)}
+            </span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
-// ─── Selected detail ─────────────────────────────────────────────────────────
+function LeafTable({
+  leaves, selectedId, onSelect,
+}: {
+  leaves: LeafLite[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const total = leaves.reduce((s, l) => s + l.charCount, 0);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {leaves.map((l) => {
+        const pct = total > 0 ? (l.charCount / total) * 100 : 0;
+        const isSel = selectedId === l.nodeId;
+        const dimmed = selectedId !== null && !isSel;
+        const fill = ORIGIN_FILL[l.origin.kind];
+        return (
+          <button
+            key={l.nodeId}
+            onClick={() => onSelect(l.nodeId)}
+            style={{
+              display: "flex", alignItems: "center", gap: 12,
+              padding: "6px 8px",
+              background: isSel ? "#eef2ff" : "transparent",
+              border: "none", borderRadius: 4,
+              cursor: "pointer", textAlign: "left",
+              opacity: dimmed ? 0.4 : 1,
+              transition: "background 0.1s, opacity 0.15s",
+            }}
+            onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = "#f9fafb"; }}
+            onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.background = "transparent"; }}
+          >
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: fill, flexShrink: 0 }} />
+            <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 11, color: "#111827", minWidth: 180, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {shortSlot(l.slotType)}
+            </span>
+            <span style={{ fontSize: 11, color: "#374151", minWidth: 50 }}>{fmtK(l.charCount)}</span>
+            <span style={{ fontSize: 10, color: "#9ca3af", minWidth: 40 }}>{pct.toFixed(1)}%</span>
+            <span style={{ fontSize: 10, color: "#6b7280", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              {l.preview}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── 叶子详情 ───────────────────────────────────────────────────────────────
 
 function SelectedDetail({ leaf }: { leaf: LeafLite }) {
   const fill = ORIGIN_FILL[leaf.origin.kind];
   const border = ORIGIN_BORDER[leaf.origin.kind];
   return (
     <div style={{
-      marginTop: 10, padding: 10,
+      marginTop: 4, padding: 10,
       background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6,
       display: "flex", flexDirection: "column", gap: 6,
     }}>
@@ -421,14 +591,12 @@ export function AttributionTreePanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // 每段独立 expanded 状态（可同时展开多段）
-  const [expanded, setExpanded] = useState<Set<SectionId>>(new Set());
-  // 当前选中叶子的 nodeId（跨段全局唯一）
+  const [selectedSection, setSelectedSection] = useState<SectionId | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true); setError(null); setExpanded(new Set()); setSelectedNodeId(null);
+    setLoading(true); setError(null); setSelectedSection(null); setSelectedNodeId(null);
     apiV2.attributionTree(sessionId, callId)
       .then((r) => { if (!cancelled) setResult(r); })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
@@ -440,17 +608,14 @@ export function AttributionTreePanel({
   const stats = useMemo(() => computeSectionStats(leaves), [leaves]);
   const totalChars = useMemo(() => leaves.reduce((s, l) => s + l.charCount, 0), [leaves]);
 
+  const selectedStat = useMemo(
+    () => selectedSection ? stats.find((s) => s.id === selectedSection) ?? null : null,
+    [selectedSection, stats],
+  );
   const selectedLeaf = useMemo(
     () => selectedNodeId ? leaves.find((l) => l.nodeId === selectedNodeId) ?? null : null,
     [selectedNodeId, leaves],
   );
-
-  const toggle = (id: SectionId) => setExpanded((prev) => {
-    const next = new Set(prev);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    return next;
-  });
 
   if (loading) {
     return <div style={{ padding: "32px 0", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>Loading attribution tree…</div>;
@@ -470,30 +635,68 @@ export function AttributionTreePanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {/* 顶部 stacked bar */}
-      <CompositionBar stats={stats} totalChars={totalChars} />
+      {/* Layer 1: 顶部 stacked bar */}
+      <SectionBar
+        stats={stats}
+        totalChars={totalChars}
+        selectedSection={selectedSection}
+        onSelect={(s) => {
+          setSelectedSection((cur) => (cur === s ? null : s));
+          setSelectedNodeId(null);
+        }}
+      />
 
-      {/* 每段一行 */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {stats.map((s) => (
-          <SectionRow
-            key={s.id}
-            stat={s}
-            totalChars={totalChars}
-            expanded={expanded.has(s.id)}
-            onToggle={() => toggle(s.id)}
-          >
-            <SectionStrip
-              leaves={s.leaves}
-              selectedId={selectedNodeId}
-              onSelect={(nodeId) => setSelectedNodeId((cur) => cur === nodeId ? null : nodeId)}
-            />
-            {selectedLeaf && sectionOf(selectedLeaf.rootSlotType) === s.id && (
-              <SelectedDetail leaf={selectedLeaf} />
-            )}
-          </SectionRow>
-        ))}
-      </div>
+      {selectedStat === null ? (
+        // 默认：极简 section table
+        <SectionTable
+          stats={stats}
+          totalChars={totalChars}
+          selectedSection={null}
+          onSelect={(s) => setSelectedSection(s)}
+        />
+      ) : (
+        <>
+          {/* Section header + back */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "2px 4px" }}>
+            <button
+              onClick={() => { setSelectedSection(null); setSelectedNodeId(null); }}
+              style={{
+                fontSize: 11, padding: "3px 10px", borderRadius: 4,
+                background: "#fff", border: "1px solid #e5e7eb",
+                cursor: "pointer", color: "#374151",
+              }}
+            >← back</button>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: SECTION_META[selectedStat.id].marker }} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: SECTION_META[selectedStat.id].textColor }}>
+              {SECTION_META[selectedStat.id].label}
+            </span>
+            <span style={{ fontSize: 11, color: "#6b7280" }}>~{fmtK(selectedStat.totalChars)}</span>
+            <span style={{ fontSize: 11, color: "#9ca3af" }}>
+              {totalChars > 0 ? ((selectedStat.totalChars / totalChars) * 100).toFixed(1) : 0}%
+            </span>
+            <span style={{ fontSize: 11, color: "#9ca3af" }}>· {subStatDescription(selectedStat)}</span>
+          </div>
+
+          {/* Layer 2: leaf strip（与顶部 bar 等宽） */}
+          <LeafStrip
+            leaves={selectedStat.leaves}
+            selectedId={selectedNodeId}
+            onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
+          />
+
+          {/* Layer 2.5: leaf table */}
+          <LeafTable
+            leaves={selectedStat.leaves}
+            selectedId={selectedNodeId}
+            onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
+          />
+
+          {/* Layer 3: leaf detail */}
+          {selectedLeaf && sectionOf(selectedLeaf.rootSlotType) === selectedStat.id && (
+            <SelectedDetail leaf={selectedLeaf} />
+          )}
+        </>
+      )}
     </div>
   );
 }

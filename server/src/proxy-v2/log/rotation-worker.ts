@@ -1,4 +1,4 @@
-import { createReadStream, createWriteStream, existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
@@ -22,6 +22,7 @@ function listIntermediateFiles(): string[] {
 
 async function compressFile(filePath: string): Promise<void> {
   const gzPath = filePath + ".gz";
+  const tmpPath = gzPath + ".tmp";
   // 如果已经有 .gz 则跳过（幂等）
   if (existsSync(gzPath)) {
     try { unlinkSync(filePath); } catch {}
@@ -30,9 +31,10 @@ async function compressFile(filePath: string): Promise<void> {
   await pipeline(
     createReadStream(filePath),
     createGzip(),
-    createWriteStream(gzPath),
+    createWriteStream(tmpPath),
   );
-  // gzip 写入成功后才删除原文件
+  // 原子 rename：.gz 出现即完整，消除 cold-indexer 读到半截文件的竞态
+  renameSync(tmpPath, gzPath);
   unlinkSync(filePath);
 }
 

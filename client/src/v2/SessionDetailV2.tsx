@@ -730,10 +730,14 @@ function SessionOverviewPanel({
         return (
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16, paddingTop: 2 }}>
             {items.map(b => (
-              <div key={b.key} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <div key={b.key} style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                padding: "2px 7px", borderRadius: 5,
+                border: `1px solid ${b.color}28`, background: `${b.color}08`,
+              }}>
                 <span style={{ display: "inline-flex", alignItems: "center" }}>{b.icon}</span>
                 <span style={{ fontSize: 10, color: b.color, fontWeight: 600 }}>{b.label}</span>
-                <span style={{ fontSize: 10, color: "#9ca3af" }}>{b.detail}</span>
+                <span style={{ fontSize: 10, color: b.color, opacity: 0.6 }}>{b.detail}</span>
               </div>
             ))}
           </div>
@@ -3016,7 +3020,7 @@ function JsonlCallChain({
 
           return (
             <React.Fragment key={call.id}>
-            <div style={{ position: "relative", zIndex: 1, marginBottom: 8 }}>
+            <div id={`turn-${turn.id}-call-${call.id}`} style={{ position: "relative", zIndex: 1, marginBottom: 8 }}>
 
               {/* ── LLM Call card ───────────────────────────── */}
               <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
@@ -3230,8 +3234,8 @@ function JsonlCallChain({
 }
 
 function UserTurnDetailPanel({
-  turn, onSelectCall, isMockSession = false, onSubAgentClick, trailingInterTurnBlock = null,
-}: { turn: MockUserTurn; onSelectCall: (c: MockLlmCall) => void; isMockSession?: boolean; onSubAgentClick?: (sa: SubAgentSummary) => void; trailingInterTurnBlock?: InterTurnBlock | null }) {
+  turn, onSelectCall, isMockSession = false, onSubAgentClick, trailingInterTurnBlock = null, sessionId = "",
+}: { turn: MockUserTurn; onSelectCall: (c: MockLlmCall) => void; isMockSession?: boolean; onSubAgentClick?: (sa: SubAgentSummary) => void; trailingInterTurnBlock?: InterTurnBlock | null; sessionId?: string }) {
   const { t } = useTranslation();
 
   const callsWithSubAgents = turn.calls.map((c, ci) => {
@@ -3249,6 +3253,7 @@ function UserTurnDetailPanel({
   const dur = fmtDuration(turn.durationMs);
   const noTools = turn.toolCallCount === 0;
   const [minimapOpen, setMinimapOpen] = useState(!noTools);
+  const [inlineCallId, setInlineCallId] = useState<number | null>(null);
 
   const turnSubAgents = callsWithSubAgents.flatMap(c => c.subAgents);
 
@@ -3304,22 +3309,25 @@ function UserTurnDetailPanel({
           ))}
 
           {/* Right side: event badges */}
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-            {turn.hasCompaction && (
-              <span style={{ fontSize: 9, fontWeight: 700, color: "#ef4444", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 4, padding: "2px 6px" }}>
-                ◆ compacted
-              </span>
-            )}
-            {turn.errorCount > 0 && (
-              <span style={{ fontSize: 9, fontWeight: 700, color: "#dc2626", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 4, padding: "2px 6px" }}>
-                ✕ {turn.errorCount} error{turn.errorCount > 1 ? "s" : ""}
-              </span>
-            )}
-            {turn.hasUnknownSpike && (
-              <span style={{ fontSize: 9, fontWeight: 700, color: "#d97706", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 4, padding: "2px 6px" }}>
-                ! spike
-              </span>
-            )}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4 }}>
+            {(() => {
+              const hasCommand = turn.calls.some(c => c.intervalEvents.some(e => e.kind === "user:command"));
+              const hasUnknown = turn.calls.some(c => c.intervalEvents.some(e => e.kind === "unknown"));
+              const subAgentCount = turn.calls.reduce((s, c) => s + c.subAgents.length, 0);
+              type TBadge = { icon: React.ReactNode; label: string; color: string; border: string; bg: string };
+              const tbadges: TBadge[] = [
+                turn.hasCompaction ? { icon: BADGE_ICONS.compaction(9, "#ef4444"), label: t("sessionOverview.badges.compaction"), color: "#ef4444", border: "#fecaca", bg: "#fef2f2" } : null,
+                turn.errorCount > 0 ? { icon: BADGE_ICONS.error(9, "#dc2626"), label: `${turn.errorCount}`, color: "#dc2626", border: "#fecaca", bg: "#fef2f2" } : null,
+                subAgentCount > 0 ? { icon: BADGE_ICONS.subAgent(9, "#7c3aed"), label: `${subAgentCount}`, color: "#7c3aed", border: "#e9d5ff", bg: "#faf5ff" } : null,
+                hasCommand ? { icon: BADGE_ICONS.command(9, "#d97706"), label: t("sessionOverview.badges.commands"), color: "#d97706", border: "#fde68a", bg: "#fffbeb" } : null,
+                hasUnknown ? { icon: BADGE_ICONS.unknown(9, "#9ca3af"), label: t("sessionOverview.badges.unknown"), color: "#9ca3af", border: "#e5e7eb", bg: "#f9fafb" } : null,
+              ].filter(Boolean) as TBadge[];
+              return tbadges.map(b => (
+                <span key={b.label} style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 600, color: b.color, background: b.bg, border: `1px solid ${b.border}`, borderRadius: 4, padding: "2px 5px" }}>
+                  {b.icon}{b.label}
+                </span>
+              ));
+            })()}
           </div>
         </div>
 
@@ -3376,9 +3384,28 @@ function UserTurnDetailPanel({
         {minimapOpen && (
           <TurnMinimap
             turn={enrichedTurn}
-            onSelectCall={id => { const c = enrichedTurn.calls.find(x => x.id === id); if (c) onSelectCall(c); }}
+            onSelectCall={id => setInlineCallId(prev => prev === id ? null : id)}
           />
         )}
+        {/* Inline call detail — expands below minimap on click */}
+        {minimapOpen && inlineCallId !== null && (() => {
+          const inlineCall = enrichedTurn.calls.find(c => c.id === inlineCallId);
+          if (!inlineCall) return null;
+          return (
+            <div style={{ marginTop: 8, border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 12px", background: "#f9fafb", borderBottom: "1px solid #f3f4f6" }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>Call #{inlineCall.id}</span>
+                <button onClick={() => setInlineCallId(null)} style={{ border: "none", background: "none", cursor: "pointer", color: "#9ca3af", fontSize: 16, lineHeight: 1 }}>×</button>
+              </div>
+              <LlmCallDetailPanel
+                call={inlineCall}
+                onSelectEntry={() => {}}
+                sessionId={sessionId}
+                mode="panel"
+              />
+            </div>
+          );
+        })()}
       </div>
 
       {/* ── Semantic call chain + raw JSONL event graph ────────────── */}
@@ -4439,7 +4466,7 @@ function PayloadSegmentEvidenceDrawer({ seg, onClear }: { seg: PayloadSegment; o
 
 // ─── LLM Call Detail Panel ────────────────────────────────────────────────────
 
-type CallTab = "attribution" | "diff" | "request" | "response-tools" | "raw";
+type CallTab = "attribution" | "diff" | "request" | "raw";
 type DiffMode = "segment" | "range" | "raw";
 
 // ─── Attribution Tab ──────────────────────────────────────────────────────────
@@ -5243,14 +5270,17 @@ function DiffSegmentRow({ d, style }: { d: SegmentDiff; style: { bg: string; bor
   );
 }
 
-// ─── Attribution section: 双视图（origin tree / legacy segments）────────────────
-// origin tree = 新归因管线产物（含 jsonl-linker、tree-diff），默认显示。
-// legacy segments = 旧 RealSegmentTree，保留用于对照与 fallback。
+// ─── Attribution section: Request / Response 双向归因 ───────────────────────
+// 顶部 sub-tab 切换 Request / Response。
+//   - Request: AttributionTreePanel（origin tree，新归因管线产物）；
+//     提供 Origin Tree / Segments (legacy) 二级切换作为 fallback。
+//   - Response: ResponseTreePanel（response wire body — thinking/text/tool_use 归因）。
 
-type AttributionView = "tree" | "segments";
+type AttributionSide = "request" | "response";
+type RequestView = "tree" | "segments";
 
 function AttributionSection({
-  callDetailLoading, realSegments, callDetail, call, freshIn, sessionId,
+  callDetailLoading, realSegments, callDetail, call, freshIn, sessionId, onLinkCall,
 }: {
   callDetailLoading: boolean;
   realSegments: ReturnType<typeof Object> | null; // CallSegment[] | null
@@ -5258,56 +5288,89 @@ function AttributionSection({
   call: MockLlmCall;
   freshIn: number;
   sessionId: string;
+  onLinkCall?: (callId: number) => void;
 }) {
-  const [view, setView] = useState<AttributionView>("tree");
+  const [side, setSide] = useState<AttributionSide>("request");
+  const [reqView, setReqView] = useState<RequestView>("tree");
 
   return (
     <div>
-      {/* 视图切换 */}
+      {/* Request / Response 子 tab */}
       <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
         {([
-          { id: "tree" as const, label: "Origin Tree" },
-          { id: "segments" as const, label: "Segments (legacy)" },
+          { id: "request" as const,  label: "Request" },
+          { id: "response" as const, label: "Response" },
         ]).map(({ id, label }) => (
           <button
             key={id}
-            onClick={() => setView(id)}
+            onClick={() => setSide(id)}
             style={{
-              fontSize: 10, padding: "3px 10px",
-              background: view === id ? "#eef2ff" : "transparent",
-              border: `1px solid ${view === id ? "#c7d2fe" : "#e5e7eb"}`,
-              borderRadius: 4, cursor: "pointer",
-              color: view === id ? "#4338ca" : "#6b7280",
-              fontWeight: view === id ? 600 : 400,
+              fontSize: 11, padding: "5px 14px",
+              background: side === id ? "#eef2ff" : "transparent",
+              border: `1px solid ${side === id ? "#c7d2fe" : "#e5e7eb"}`,
+              borderRadius: 5, cursor: "pointer",
+              color: side === id ? "#4338ca" : "#6b7280",
+              fontWeight: side === id ? 700 : 500,
             }}
           >{label}</button>
         ))}
       </div>
 
-      {view === "tree" ? (
-        <AttributionTreePanel sessionId={sessionId} callId={call.id} />
-      ) : callDetailLoading ? (
-        <div style={{ fontSize: 11, color: "#9ca3af", padding: "32px 0", textAlign: "center" }}>Loading…</div>
-      ) : realSegments ? (
-        <RealSegmentTree
-          segments={realSegments as Parameters<typeof RealSegmentTree>[0]["segments"]}
-          diff={callDetail?.diff ?? null}
-          call={call}
-        />
+      {side === "request" ? (
+        <>
+          {/* 二级切换：origin tree / legacy segments */}
+          <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+            {([
+              { id: "tree" as const, label: "Origin Tree" },
+              { id: "segments" as const, label: "Segments (legacy)" },
+            ]).map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setReqView(id)}
+                style={{
+                  fontSize: 10, padding: "3px 10px",
+                  background: reqView === id ? "#f5f3ff" : "transparent",
+                  border: `1px solid ${reqView === id ? "#ddd6fe" : "#e5e7eb"}`,
+                  borderRadius: 4, cursor: "pointer",
+                  color: reqView === id ? "#6d28d9" : "#9ca3af",
+                  fontWeight: reqView === id ? 600 : 400,
+                }}
+              >{label}</button>
+            ))}
+          </div>
+
+          {reqView === "tree" ? (
+            <AttributionTreePanel sessionId={sessionId} callId={call.id} />
+          ) : callDetailLoading ? (
+            <div style={{ fontSize: 11, color: "#9ca3af", padding: "32px 0", textAlign: "center" }}>Loading…</div>
+          ) : realSegments ? (
+            <RealSegmentTree
+              segments={realSegments as Parameters<typeof RealSegmentTree>[0]["segments"]}
+              diff={callDetail?.diff ?? null}
+              call={call}
+            />
+          ) : (
+            <div style={{ padding: "24px 0", textAlign: "center" }}>
+              <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>No proxy data — segment breakdown unavailable</div>
+              <div style={{ fontSize: 10, color: "#9ca3af" }}>
+                Token counts from JSONL:{" "}
+                <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.contextSize)}</span> context ·{" "}
+                <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheRead)}</span> cache read ·{" "}
+                <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheWrite)}</span> cache write ·{" "}
+                <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(freshIn)}</span> fresh in
+              </div>
+              <div style={{ marginTop: 14, fontSize: 10, color: "#d97706" }}>
+                <a href="/settings" style={{ color: "#d97706" }}>Enable proxy dump</a> to see per-segment breakdown
+              </div>
+            </div>
+          )}
+        </>
       ) : (
-        <div style={{ padding: "24px 0", textAlign: "center" }}>
-          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>No proxy data — segment breakdown unavailable</div>
-          <div style={{ fontSize: 10, color: "#9ca3af" }}>
-            Token counts from JSONL:{" "}
-            <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.contextSize)}</span> context ·{" "}
-            <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheRead)}</span> cache read ·{" "}
-            <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(call.cacheWrite)}</span> cache write ·{" "}
-            <span style={{ fontWeight: 600, color: "#374151" }}>{fmtK(freshIn)}</span> fresh in
-          </div>
-          <div style={{ marginTop: 14, fontSize: 10, color: "#d97706" }}>
-            <a href="/settings" style={{ color: "#d97706" }}>Enable proxy dump</a> to see per-segment breakdown
-          </div>
-        </div>
+        <ResponseTreePanel
+          sessionId={sessionId}
+          callId={call.id}
+          onLinkCall={onLinkCall}
+        />
       )}
     </div>
   );
@@ -5365,7 +5428,6 @@ function LlmCallDetailPanel({
     { id: "attribution",    label: "Attribution" },
     { id: "diff",           label: "Diff vs Previous" },
     { id: "request",        label: "Request" },
-    { id: "response-tools", label: "Response & Tools" },
     { id: "raw",            label: "Raw / Evidence" },
   ];
 
@@ -5484,7 +5546,7 @@ function LlmCallDetailPanel({
         ))}
       </div>
 
-      {/* ══ Attribution ══════════════════════════════ */}
+      {/* ══ Attribution (Request / Response) ═════════ */}
       {tab === "attribution" && (
         <AttributionSection
           callDetailLoading={callDetailLoading}
@@ -5493,6 +5555,7 @@ function LlmCallDetailPanel({
           call={call}
           freshIn={freshIn}
           sessionId={sessionId}
+          onLinkCall={onLinkCall}
         />
       )}
 
@@ -5509,15 +5572,6 @@ function LlmCallDetailPanel({
       {/* ══ Request ════════════════════════════════════ */}
       {tab === "request" && (
         <RequestTab call={call} callDetail={callDetail} callDetailLoading={callDetailLoading} />
-      )}
-
-      {/* ══ Response & Tools ═══════════════════════════ */}
-      {tab === "response-tools" && (
-        <ResponseTreePanel
-          sessionId={sessionId}
-          callId={call.id}
-          onLinkCall={onLinkCall}
-        />
       )}
 
       {/* ══ Raw / Evidence ═══════════════════════════ */}
@@ -5977,6 +6031,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
             {navLevel === "turn" && selectedTurn && !selectedCall && (
               <UserTurnDetailPanel turn={selectedTurn} onSelectCall={handleLinkCallFromTurn} isMockSession={isMockData} onSubAgentClick={handleSelectSubAgent}
                 trailingInterTurnBlock={interTurnBlocks.find(b => b.prevTurnId === selectedTurn.id && b.nextTurnId !== selectedTurn.id) ?? null}
+                sessionId={session.session_id}
               />
             )}
             {navLevel === "inter-turn" && selectedInterTurnBlock && (
@@ -6186,88 +6241,24 @@ function LinkedTurnExcerptPanel({
   focusCall: MockLlmCall | null;
   onSelectCall: (call: MockLlmCall, turn: MockUserTurn) => void;
 }) {
-  const calls = turn.calls;
-  const focusIdx = focusCall ? calls.findIndex(c => c.id === focusCall.id) : -1;
-  const start = focusIdx >= 0 ? Math.max(0, focusIdx - 2) : 0;
-  const end = focusIdx >= 0 ? Math.min(calls.length, focusIdx + 3) : Math.min(calls.length, 6);
-  const visibleCalls = calls.slice(start, end);
+  // After mount, scroll the focused call into view if provided.
+  // UserTurnDetailPanel renders each call with an anchor `turn-${id}-call-${cid}`.
+  useEffect(() => {
+    if (!focusCall) return;
+    const id = `turn-${turn.id}-call-${focusCall.id}`;
+    // Defer to next frame so the panel has actually mounted.
+    const handle = requestAnimationFrame(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [turn.id, focusCall?.id]);
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 18px", background: "#fff" }}>
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 11, fontWeight: 800, color: "#111827", marginBottom: 4 }}>
-          Transaction Excerpt
-        </div>
-        <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.6 }}>
-          The main view stays on the request. This panel shows nearby calls and events from the source turn.
-        </div>
-      </div>
-
-      <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
-        {visibleCalls.map((call, idx) => {
-          const active = focusCall?.id === call.id;
-          const prev = calls[calls.findIndex(c => c.id === call.id) - 1];
-          const delta = prev ? call.contextSize - prev.contextSize : call.contextSize;
-          return (
-            <button
-              key={call.id}
-              onClick={() => onSelectCall(call, turn)}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                border: "none",
-                borderBottom: idx < visibleCalls.length - 1 ? "1px solid #f1f5f9" : "none",
-                background: active ? "#eff6ff" : "#fff",
-                padding: "10px 12px",
-                cursor: "pointer",
-                display: "block",
-              }}
-              onMouseEnter={e => { if (!active) e.currentTarget.style.background = "#f8fafc"; }}
-              onMouseLeave={e => { if (!active) e.currentTarget.style.background = "#fff"; }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <span style={{ fontSize: 12, fontWeight: 800, color: active ? "#2563eb" : "#111827" }}>Call #{call.id}</span>
-                <span style={{ fontSize: 10, color: "#94a3b8" }}>C{call.indexInTurn}</span>
-                <span style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: delta >= 0 ? "#d97706" : "#16a34a" }}>
-                  {delta >= 0 ? "+" : ""}{fmtK(delta)}
-                </span>
-              </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: call.assistantText || call.toolCalls.length ? 6 : 0 }}>
-                {call.toolCalls.slice(0, 4).map(tc => (
-                  <span key={tc.toolUseId} style={{
-                    fontSize: 10,
-                    color: "#166534",
-                    background: "#f0fdf4",
-                    border: "1px solid #bbf7d0",
-                    borderRadius: 4,
-                    padding: "1px 5px",
-                    maxWidth: "100%",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}>
-                    {tc.name} · {fmtK(tc.outputSize)}
-                  </span>
-                ))}
-                {call.toolCalls.length > 4 && (
-                  <span style={{ fontSize: 10, color: "#94a3b8" }}>+{call.toolCalls.length - 4}</span>
-                )}
-              </div>
-              {call.assistantText && (
-                <div style={{ fontSize: 11, color: "#64748b", lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
-                  {call.assistantText}
-                </div>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {focusIdx >= 0 && (start > 0 || end < calls.length) && (
-        <div style={{ marginTop: 8, fontSize: 10, color: "#94a3b8" }}>
-          Showing calls {start + 1}-{end} of {calls.length}. Open as main to inspect the full turn.
-        </div>
-      )}
+    <div style={{ flex: 1, overflowY: "auto", background: "#fff" }}>
+      <UserTurnDetailPanel
+        turn={turn}
+        onSelectCall={(c) => onSelectCall(c, turn)}
+      />
     </div>
   );
 }

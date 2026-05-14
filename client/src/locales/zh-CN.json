@@ -134,6 +134,16 @@
       "loading": "加载中…",
       "error": "错误",
       "mockData": "模拟数据"
+    },
+    "minimap": {
+      "reqSize": "↑ req（工具输入）",
+      "respSize": "↓ resp（工具输出）",
+      "sharedScale": "共享色阶",
+      "hoverHint": "悬停查看摘要",
+      "clickHint": "点击展开 Call",
+      "dragWindow": "拖动窗口",
+      "noTools": "无工具调用",
+      "llmCalls": "LLM calls"
     }
   },
   "sessionDetail": {

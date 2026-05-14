@@ -137,6 +137,16 @@
       "loading": "loading…",
       "error": "error",
       "mockData": "mock data"
+    },
+    "minimap": {
+      "reqSize": "↑ req (tool input)",
+      "respSize": "↓ resp (tool output)",
+      "sharedScale": "shared color scale",
+      "hoverHint": "hover for summary",
+      "clickHint": "click to expand call",
+      "dragWindow": "drag window",
+      "noTools": "no tool calls",
+      "llmCalls": "LLM calls"
     }
   },
   "sessionDetail": {

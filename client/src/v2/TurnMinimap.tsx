@@ -10,6 +10,7 @@
 //   large but response is tiny) vs Read/Bash (whose response dominates).
 
 import { useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import * as echarts from "echarts/core";
 import { CustomChart, LineChart } from "echarts/charts";
 import {
@@ -221,7 +222,8 @@ const ZOOM_H = 28;
 
 type TooltipParam = { seriesName?: string; dataIndex?: number; value?: unknown; axisValue?: string | number };
 
-function buildOption(data: MinimapData): echarts.EChartsCoreOption {
+function buildOption(data: MinimapData, tFn: (key: string, fallback?: string) => string): echarts.EChartsCoreOption {
+  const t = tFn;
   const { calls, cells, activeRows, maxCtx, maxInput, maxOutput, subAgentEvents, counterfactual } = data;
   if (!calls.length) return {};
 
@@ -290,20 +292,21 @@ function buildOption(data: MinimapData): echarts.EChartsCoreOption {
     ];
 
     const showLabel = w > 22 && h > 18;
+    // Both labels use black — consistent across all intensity levels
     if (showLabel && inputSize > 0) {
       children.push({ type: "text", style: {
         x: x + w / 2, y: y + topH / 2, text: fmtK(inputSize),
         textAlign: "center", textVerticalAlign: "middle",
         fill: "#111827", fontSize: 8, fontWeight: "bold",
-        textShadowBlur: 2, textShadowColor: "rgba(255,255,255,0.7)",
+        textShadowBlur: 3, textShadowColor: "rgba(255,255,255,0.8)",
       }, z2: 3 });
     }
     if (showLabel && outputSize > 0) {
       children.push({ type: "text", style: {
         x: x + w / 2, y: y + topH + botH / 2, text: fmtK(outputSize),
         textAlign: "center", textVerticalAlign: "middle",
-        fill: "#fff", fontSize: 8, fontWeight: "bold",
-        textShadowBlur: 2, textShadowColor: "rgba(0,0,0,0.3)",
+        fill: "#111827", fontSize: 8, fontWeight: "bold",
+        textShadowBlur: 3, textShadowColor: "rgba(255,255,255,0.8)",
       }, z2: 3 });
     }
 
@@ -342,8 +345,8 @@ function buildOption(data: MinimapData): echarts.EChartsCoreOption {
     const toolLines = toolCells.slice(0, 5).map(cell => (
       `<br/><span style="color:${TOOL_ACCENT[cell.toolRow]};font-weight:700">${cell.toolRow}</span>` +
       ` ${cell.count}x` +
-      ` · req <span style="color:#f87171">${fmtK(cell.inputSize)}</span>` +
-      ` · resp <span style="color:#9f1239">${fmtK(cell.outputSize)}</span>`
+      ` · req <strong>${fmtK(cell.inputSize)}</strong>` +
+      ` · resp <strong>${fmtK(cell.outputSize)}</strong>`
     )).join("");
     const more = toolCells.length > 5 ? `<br/><span style="color:#9ca3af">+${toolCells.length - 5} more</span>` : "";
 
@@ -372,14 +375,15 @@ function buildOption(data: MinimapData): echarts.EChartsCoreOption {
 
     return [
       `<strong>${call.label}</strong>`,
-      `<br/>Context: <strong>${fmtK(call.contextSize)}</strong>`,
-      callIdx > 0 ? `<br/>Delta: <span style="color:${deltaColor}">${delta >= 0 ? "+" : ""}${fmtK(delta)}</span>` : "",
-      `<br/>Tools before call: <strong>${toolCount}x</strong>`,
-      toolCount > 0 ? ` · req <span style="color:#f87171">${fmtK(totalInput)}</span> · resp <span style="color:#9f1239">${fmtK(totalOutput)}</span>` : "",
-      toolLines || `<br/><span style="color:#9ca3af">No tool response observed</span>`,
+      `<span style="color:#9ca3af"> · Context: </span><strong>${fmtK(call.contextSize)}</strong>`,
+      callIdx > 0 ? `<span style="color:${deltaColor}"> ${delta >= 0 ? "+" : ""}${fmtK(delta)}</span>` : "",
+      toolCount > 0
+        ? `<br/>Tools ${toolCount}x · req <strong>${fmtK(totalInput)}</strong> · resp <strong>${fmtK(totalOutput)}</strong>`
+        : `<br/><span style="color:#9ca3af">No tools</span>`,
+      toolLines,
       more,
       subAgentBlock,
-      `<br/><span style="color:#9ca3af">Click to open call detail</span>`,
+      `<br/><span style="color:#6366f1">↑ ${t("sessionOverview.minimap.clickHint", "click to expand")}</span>`,
     ].join("");
   }
 
@@ -508,6 +512,7 @@ export interface TurnMinimapProps {
 }
 
 export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
 
@@ -519,14 +524,19 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
 
     chart.on("click", (params) => {
       if (!onSelectCall) return;
+      // Context line: dataIndex = call array index
       if (params.seriesName === "Context") {
         const call = turn.calls[params.dataIndex as number];
         if (call) onSelectCall(call.id);
+        return;
       }
+      // Custom dual-cell: value[0] = callIdx (array index into turn.calls)
       if (params.seriesName === "Tool calls") {
         const value = params.value as number[] | undefined;
-        const call = typeof value?.[0] === "number" ? turn.calls[value[0]] : undefined;
-        if (call) onSelectCall(call.id);
+        if (typeof value?.[0] === "number") {
+          const call = turn.calls[value[0]];
+          if (call) onSelectCall(call.id);
+        }
       }
     });
 
@@ -544,8 +554,8 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
     const totalH = 10 + CTX_H + GAP + X_LABEL_H + rowCount * ROW_H + (showZoom ? ZOOM_H : 10);
     if (containerRef.current) containerRef.current.style.height = `${totalH}px`;
     chart.resize();
-    chart.setOption(buildOption(data), true);
-  }, [turn]);
+    chart.setOption(buildOption(data, t), true);
+  }, [turn, t]);
 
   if (!turn.calls.length) return null;
 
@@ -557,7 +567,7 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 10px", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
           <div style={{ width: 16, height: 0, borderTop: "2px solid #6366f1" }} />
-          <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>context</span>
+          <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>Context</span>
         </div>
         {data.subAgentEvents.length > 0 && (
           <>
@@ -589,22 +599,27 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
         </div>
         {turn.calls.length > ZOOM_THRESHOLD && (
           <span style={{ fontSize: 10, color: "#be123c", background: "#fff1f2", border: "1px solid #fecdd3", borderRadius: 4, padding: "1px 6px" }}>
-            drag window
+            {t("sessionOverview.minimap.dragWindow")}
           </span>
         )}
         <span style={{ marginLeft: "auto", fontSize: 10, color: "#cbd5e1" }}>
-          {turn.calls.length} calls / {data.totalToolEvents} tool calls / req {fmtK(data.totalInputSize)} · resp {fmtK(data.totalOutputSize)}
+          {turn.calls.length} {t("sessionOverview.minimap.llmCalls", "LLM calls")} · {data.totalToolEvents} {t("sessionOverview.activity.toolCalls").toLowerCase()} · req {fmtK(data.totalInputSize)} · resp {fmtK(data.totalOutputSize)}
         </span>
       </div>
 
       <div ref={containerRef} style={{ width: "100%", height: 220 }} />
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 10px", borderTop: "1px solid #f1f5f9", fontSize: 10, color: "#94a3b8" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", borderTop: "1px solid #f1f5f9", fontSize: 10, color: "#94a3b8" }}>
         <span style={{ fontWeight: 700, color: "#64748b" }}>cell:</span>
-        <span style={{ color: "#f87171" }}>top = tool request size (what LLM wrote)</span>
+        <span>{t("sessionOverview.minimap.reqSize")}</span>
         <span>·</span>
-        <span style={{ color: "#9f1239" }}>bottom = tool response size (what tool returned)</span>
-        <span>· hover = call summary · click = call detail</span>
+        <span>{t("sessionOverview.minimap.respSize")}</span>
+        <span>·</span>
+        <span>{t("sessionOverview.minimap.sharedScale")}</span>
+        <span>·</span>
+        <span>{t("sessionOverview.minimap.hoverHint")}</span>
+        <span>·</span>
+        <span>{t("sessionOverview.minimap.clickHint")}</span>
       </div>
     </div>
   );
