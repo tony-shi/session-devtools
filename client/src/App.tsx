@@ -122,7 +122,7 @@ export default function App() {
                 style={{
                   display: "flex", alignItems: "center", gap: navOpen ? 8 : 0,
                   justifyContent: navOpen ? "flex-start" : "center",
-                  padding: "6px 8px", borderRadius: 7, border: "none",
+                  padding: "6px 8px", borderRadius: 6, border: "none",
                   background: active ? "#eef2ff" : "transparent",
                   color: active ? "#6366f1" : "#4b5563",
                   cursor: "pointer", fontSize: 12, fontWeight: active ? 600 : 400,
@@ -187,7 +187,7 @@ export default function App() {
           )}
           {tab === "trends" && (
             <div style={{
-              background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb",
+              background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb",
               padding: "40px", textAlign: "center",
             }}>
               <p style={{ fontSize: 16, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Trends</p>

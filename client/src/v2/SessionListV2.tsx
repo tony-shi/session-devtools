@@ -4,6 +4,7 @@ import { SessionDetailV2 } from "./SessionDetailV2";
 import type { SessionV2, SessionsV2Response } from "./types";
 import { getSessionTitle, getSessionSubtitle } from "./session-display";
 import { MiniTokenLedger } from "./SummaryCardsV2";
+import { Button } from "./shared/Button";
 
 const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
   claude: { bg: "#eef2ff", color: "#6366f1" },
@@ -112,7 +113,7 @@ function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onCl
       <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
         {session.sub_agent_count > 0 ? (
           <span style={{
-            fontSize: 11, padding: "1px 7px", borderRadius: 12,
+            fontSize: 11, padding: "1px 7px", borderRadius: 8,
             background: "#faf5ff", color: "#7c3aed", fontWeight: 500,
           }}>
             {session.sub_agent_count}
@@ -175,12 +176,6 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
 }) {
   const { t } = useTranslation();
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const btnBase: React.CSSProperties = {
-    padding: "4px 10px", borderRadius: 6, border: "1px solid #e5e7eb",
-    background: "#fff", fontSize: 12, cursor: "pointer", color: "#374151",
-    fontWeight: 500, lineHeight: 1.5,
-  };
-  const disabledStyle: React.CSSProperties = { opacity: 0.4, cursor: "not-allowed" };
 
   const pageNums: (number | "…")[] = [];
   if (totalPages <= 7) {
@@ -218,36 +213,21 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
       </div>
 
       {/* Prev button */}
-      <button
-        style={{ ...btnBase, ...(page === 0 || loading ? disabledStyle : {}) }}
-        disabled={page === 0 || loading}
-        onClick={() => onChange(page - 1)}
-      >‹</button>
+      <Button disabled={page === 0 || loading} onClick={() => onChange(page - 1)}>‹</Button>
 
       {/* Page number buttons */}
       {pageNums.map((p, i) =>
         p === "…" ? (
           <span key={`ellipsis-${i}`} style={{ fontSize: 12, color: "#9ca3af", padding: "0 4px" }}>…</span>
         ) : (
-          <button
-            key={p}
-            style={{
-              ...btnBase,
-              background: p === page ? "#6366f1" : "#fff",
-              color: p === page ? "#fff" : "#374151",
-              borderColor: p === page ? "#6366f1" : "#e5e7eb",
-            }}
-            onClick={() => p !== page && onChange(p)}
-          >{p + 1}</button>
+          <Button key={p} active={p === page} onClick={() => p !== page && onChange(p)}>
+            {p + 1}
+          </Button>
         )
       )}
 
       {/* Next button */}
-      <button
-        style={{ ...btnBase, ...(page >= totalPages - 1 || loading ? disabledStyle : {}) }}
-        disabled={page >= totalPages - 1 || loading}
-        onClick={() => onChange(page + 1)}
-      >›</button>
+      <Button disabled={page >= totalPages - 1 || loading} onClick={() => onChange(page + 1)}>›</Button>
 
       <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 2 }}>
         {t("dashboard.pageInfo", { page: page + 1, total: totalPages, count: total })}
@@ -287,7 +267,7 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
   }, 0);
 
   return (
-    <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb", overflow: "hidden" }}>
+    <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb", overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid #f3f4f6", flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <h2 style={{ fontSize: 13, fontWeight: 600, color: "#111827", display: "flex", alignItems: "baseline", gap: 8 }}>
@@ -298,16 +278,12 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
             <span style={{ fontSize: 11, fontWeight: 400, color: "#9ca3af" }}>{t("dashboard.llmOnly")}</span>
           </h2>
           {onSync && (
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={handleSync}
               disabled={syncing}
               title="Sync now"
-              style={{
-                display: "flex", alignItems: "center", gap: 4,
-                fontSize: 12, padding: "3px 9px", borderRadius: 6,
-                background: "#f3f4f6", color: "#374151", border: "none",
-                cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.6 : 1,
-              }}
             >
               <svg width="11" height="11" style={{ animation: syncing ? "spin 1s linear infinite" : "none" }}
                 fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -315,7 +291,7 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
               {syncing ? t("dashboard.syncing") : t("dashboard.sync")}
-            </button>
+            </Button>
           )}
           {syncMsg && <span style={{ fontSize: 11, color: "#6b7280" }}>{syncMsg}</span>}
         </div>
@@ -333,17 +309,19 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
               onChange={(e) => onSearchChange(e.target.value)}
               style={{
                 paddingLeft: 28, paddingRight: 28, paddingTop: 5, paddingBottom: 5,
-                fontSize: 12, borderRadius: 7, border: "1px solid #e5e7eb",
+                fontSize: 12, borderRadius: 6, border: "1px solid #e5e7eb",
                 outline: "none", width: 200, color: "#374151",
                 background: search ? "#eef2ff" : "#fff",
                 borderColor: search ? "#6366f1" : "#e5e7eb",
               }}
             />
             {search && (
-              <button
+              <Button
+                variant="text"
+                size="sm"
                 onClick={() => onSearchChange("")}
-                style={{ position: "absolute", right: 7, background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 14, lineHeight: 1, padding: 0 }}
-              >×</button>
+                style={{ position: "absolute", right: 4, padding: "0 4px", fontSize: 14 }}
+              >×</Button>
             )}
           </div>
           <Pagination page={page} pageSize={pageSize} total={total} loading={loading} onChange={onPageChange} onPageSizeChange={onPageSizeChange} />

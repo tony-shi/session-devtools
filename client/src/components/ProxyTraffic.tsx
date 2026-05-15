@@ -262,13 +262,13 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
               <span style={{ fontWeight: 700, fontSize: 15 }}>{req.method}</span>
               <span style={{ color: statusColor(req.status), fontWeight: 600, fontSize: 15 }}>{req.status ?? "—"}</span>
               <span style={{
-                fontSize: 11, padding: "2px 7px", borderRadius: 10,
+                fontSize: 11, padding: "2px 7px", borderRadius: 8,
                 background: catMeta.bg, color: catMeta.color, fontWeight: 600,
               }}>
                 {catMeta.label[lang]}
               </span>
               {(req.is_stream === 1 || req.is_stream === true) && (
-                <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 10, background: "#f0f0f0", color: "#666" }}>SSE</span>
+                <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 8, background: "#f0f0f0", color: "#666" }}>SSE</span>
               )}
             </div>
             <div style={{ fontSize: 12, color: "#666", wordBreak: "break-all" }}>{req.url}</div>
@@ -360,7 +360,7 @@ function CaptureTargets({ lang, onSaved }: { lang: Lang; onSaved: () => void }) 
   };
 
   return (
-    <div style={{ background: "#fff", borderRadius: 10, padding: "14px 18px", border: "1px solid #e5e5e5" }}>
+    <div style={{ background: "#fff", borderRadius: 8, padding: "14px 18px", border: "1px solid #e5e5e5" }}>
       <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 14 }}>{t("captureTargets", lang)}</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
         <HostChip label="api.anthropic.com" removable={false} />
@@ -440,7 +440,7 @@ function CategoryTabs({ active, counts, lang, onChange }: {
               <span style={{
                 background: isActive ? "rgba(255,255,255,0.3)" : "#f0f0f0",
                 color: isActive ? "#fff" : "#666",
-                borderRadius: 10, padding: "0 5px", fontSize: 10, fontWeight: 600,
+                borderRadius: 8, padding: "0 5px", fontSize: 10, fontWeight: 600,
               }}>{cnt}</span>
             )}
           </button>
@@ -579,7 +579,7 @@ export function ProxyTraffic() {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <CaptureTargets lang={lang} onSaved={() => {}} />
 
-      <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e5e5", overflow: "hidden" }}>
+      <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e5e5", overflow: "hidden" }}>
         {/* 工具栏 */}
         <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -638,7 +638,7 @@ export function ProxyTraffic() {
                     >
                       <td style={tdStyle}>
                         <span style={{
-                          fontSize: 10, padding: "2px 7px", borderRadius: 10,
+                          fontSize: 10, padding: "2px 7px", borderRadius: 8,
                           background: meta.bg, color: meta.color, fontWeight: 600, whiteSpace: "nowrap",
                         }}>
                           {meta.label[lang]}

@@ -145,6 +145,12 @@ export async function loadAttributionTree(
       call: { id: number; timestamp: string; turnId: number; sourceFile: string; apiRequestId: string | null };
       prevCall: { id: number; timestamp: string; apiRequestId: string | null } | null;
     } | null;
+    /**
+     * 可选：批量调用方可以预读 LinkableJsonlEvent[] 并通过此 hook 复用，避免
+     * 每个 call 都重新解析整个 session jsonl。返回 null 时退回到默认的
+     * readSessionEventsForLinker(sourceFile)。
+     */
+    loadJsonlEvents?: (sourceFile: string) => LinkableJsonlEvent[] | null;
   },
 ): Promise<AttributionTreeResult> {
   const meta = helpers.resolveCallMeta(sessionId, callId);
@@ -170,7 +176,10 @@ export async function loadAttributionTree(
   }
 
   // —— 读 session JSONL 并适配为 LinkableJsonlEvent —— //
-  const jsonlEvents = readSessionEventsForLinker(meta.call.sourceFile);
+  // 优先用 caller 提供的 hook（批量场景下一 session 缓存一次）；否则现读。
+  const jsonlEvents =
+    helpers.loadJsonlEvents?.(meta.call.sourceFile)
+    ?? readSessionEventsForLinker(meta.call.sourceFile);
 
   // —— 跑归因 + jsonl link + audit —— //
   let snapshot: ParsedQuerySnapshot;

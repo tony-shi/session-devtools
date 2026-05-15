@@ -83,14 +83,14 @@ export function ProxyV2Setup() {
       </div>
 
       {/* 状态卡片 */}
-      <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e5e5", padding: "20px 24px" }}>
+      <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e5e5", padding: "20px 24px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: 17 }}>Proxy v2</div>
             <div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>controller-managed</div>
           </div>
           <div style={{
-            padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600,
+            padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
             background: `${phaseColor}15`, color: phaseColor,
           }}>
             ● {phaseLabel}
@@ -133,7 +133,7 @@ export function ProxyV2Setup() {
         {/* 错误展示 */}
         {snap?.lastError && (
           <div style={{
-            marginTop: 14, padding: "10px 12px", borderRadius: 7,
+            marginTop: 14, padding: "10px 12px", borderRadius: 6,
             background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", fontSize: 13,
           }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>✗ 上次失败</div>
@@ -149,7 +149,7 @@ export function ProxyV2Setup() {
         {/* warnings */}
         {snap && snap.lastWarnings.length > 0 && (
           <div style={{
-            marginTop: 14, padding: "10px 12px", borderRadius: 7,
+            marginTop: 14, padding: "10px 12px", borderRadius: 6,
             background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", fontSize: 12,
           }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ 清理 warnings（不阻断完成）</div>
@@ -161,7 +161,7 @@ export function ProxyV2Setup() {
 
         {snap && snap.preflightWarnings.length > 0 && (
           <div style={{
-            marginTop: 10, padding: "8px 12px", borderRadius: 7,
+            marginTop: 10, padding: "8px 12px", borderRadius: 6,
             background: "#f0f9ff", border: "1px solid #bae6fd", color: "#075985", fontSize: 12,
           }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>preflight warnings（已通过）</div>
@@ -173,12 +173,12 @@ export function ProxyV2Setup() {
       </div>
 
       {/* 日志窗口 */}
-      <div style={{ background: "#fff", borderRadius: 10, border: "1px solid #e5e5e5", padding: "14px 20px" }}>
+      <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e5e5", padding: "14px 20px" }}>
         <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>日志（最近 50 条）</div>
         <pre
           ref={logRef}
           style={{
-            background: "#1a1a1a", color: "#d8d8d8", borderRadius: 7,
+            background: "#1a1a1a", color: "#d8d8d8", borderRadius: 6,
             padding: "10px 12px", fontSize: 11, overflow: "auto",
             maxHeight: 280, margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all",
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",

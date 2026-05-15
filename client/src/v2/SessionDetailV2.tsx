@@ -633,7 +633,7 @@ function SessionOverviewPanel({
                   onClick={() => setModelsExpanded(v => !v)}
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
-                    fontSize: 11, padding: "3px 8px", borderRadius: 5,
+                    fontSize: 11, padding: "3px 8px", borderRadius: 6,
                     border: "1px solid #e5e7eb", background: modelsExpanded ? "#eef2ff" : "#f9fafb",
                     color: modelsExpanded ? "#6366f1" : "#6b7280", cursor: "pointer",
                   }}
@@ -683,7 +683,7 @@ function SessionOverviewPanel({
             {items.map(b => (
               <div key={b.key} style={{
                 display: "inline-flex", alignItems: "center", gap: 4,
-                padding: "2px 7px", borderRadius: 5,
+                padding: "2px 7px", borderRadius: 6,
                 border: `1px solid ${b.color}28`, background: `${b.color}08`,
               }}>
                 <span style={{ display: "inline-flex", alignItems: "center" }}>{b.icon}</span>
@@ -1567,7 +1567,7 @@ function AgentLoopTimeline({
                       {tg.tools.map(t => (
                         <div key={t.id} style={{
                           display: "flex", alignItems: "center", gap: 8,
-                          padding: "4px 8px", borderRadius: 5,
+                          padding: "4px 8px", borderRadius: 6,
                           background: t.status !== "ok" ? "#fef2f2" : "#fafafa",
                           border: `1px solid ${t.status !== "ok" ? "#fecaca" : "#f3f4f6"}`,
                         }}>
@@ -1902,7 +1902,7 @@ function AgentLoopFlow({
     : null;
 
   return (
-    <div style={{ background: "#fafafa", border: "1px solid #f3f4f6", borderRadius: 10, overflow: "hidden" }}>
+    <div style={{ background: "#fafafa", border: "1px solid #f3f4f6", borderRadius: 8, overflow: "hidden" }}>
 
       {/* ── Lane 1: context strip (D3 line chart) ──────────── */}
       <D3ContextStrip
@@ -1965,7 +1965,7 @@ function AgentLoopFlow({
                       title={`${call.subAgents.length} sub-agent branch${call.subAgents.length > 1 ? "es" : ""} spawned here`}
                       style={{
                         position: "absolute", bottom: -2, right: -2,
-                        minWidth: 14, height: 14, padding: "0 3px", borderRadius: 7,
+                        minWidth: 14, height: 14, padding: "0 3px", borderRadius: 6,
                         background: "#7c3aed", border: "2px solid #fff",
                         display: "flex", alignItems: "center", justifyContent: "center",
                         gap: 1,
@@ -2086,7 +2086,7 @@ function AgentLoopFlow({
                   <div style={{
                     fontSize: 9, fontWeight: 700, color: "#059669",
                     background: "#f0fdf4", border: "1px solid #a7f3d0",
-                    borderRadius: 5, padding: "2px 6px", whiteSpace: "nowrap", flexShrink: 0,
+                    borderRadius: 6, padding: "2px 6px", whiteSpace: "nowrap", flexShrink: 0,
                   }}>
                     →#{mergeCall.indexInTurn}
                     {mergeCall.significantDelta !== 0 && (
@@ -2750,7 +2750,7 @@ function IntervalEventRow({
         onMouseLeave={() => { if (hoverLinkedId) onHoverToolUse(null); }}
         style={{
           display: "flex", alignItems: "center", gap: 6, padding: "3px 8px",
-          borderRadius: 5, cursor: "pointer", opacity: linked ? 1 : 0.9,
+          borderRadius: 6, cursor: "pointer", opacity: linked ? 1 : 0.9,
           background: linked ? "#fff7ed" : col.bg,
           border: `1px solid ${linked ? "#f59e0b" : col.border}`,
           boxShadow: linked ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
@@ -2772,7 +2772,7 @@ function IntervalEventRow({
       </div>
 
       {expanded && (
-        <div style={{ marginLeft: 10, marginTop: 2, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 5, padding: "6px 8px" }}>
+        <div style={{ marginLeft: 10, marginTop: 2, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "6px 8px" }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
             <span style={{ fontSize: 9, color: "#64748b" }}>kind: <b>{ev.kind}</b></span>
             <span style={{ fontSize: 9, color: "#64748b" }}>line: {ev.lineIdx + 1}</span>
@@ -2795,6 +2795,7 @@ function JsonlCallChain({
   onSelectCall: (c: MockLlmCall) => void;
   onSubAgentClick?: (sa: import("./drilldown-types").SubAgentSummary) => void;
 }) {
+  const { t } = useTranslation();
   // Filter state: null means "show all" (default); populated = active filter set
   const [hiddenKinds, setHiddenKinds] = useState<Set<IntervalEventKind>>(new Set());
   const [filterOpen, setFilterOpen] = useState(false);
@@ -2835,7 +2836,7 @@ function JsonlCallChain({
         <button
           onClick={() => setFilterOpen(v => !v)}
           style={{
-            fontSize: 10, padding: "3px 10px", borderRadius: 5, cursor: "pointer",
+            fontSize: 10, padding: "3px 10px", borderRadius: 6, cursor: "pointer",
             border: "1px solid #e5e7eb", background: filterOpen ? "#6366f1" : "#f9fafb",
             color: filterOpen ? "#fff" : "#6b7280", fontWeight: 600,
           }}
@@ -2853,7 +2854,7 @@ function JsonlCallChain({
         {foldedSubAgentResultCount > 0 && (
           <button
             onClick={() => setShowFoldedSubAgentResults(v => !v)}
-            style={{ fontSize: 10, color: "#4f46e5", background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 5, cursor: "pointer", padding: "3px 8px", fontWeight: 700 }}
+            style={{ fontSize: 10, color: "#4f46e5", background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 6, cursor: "pointer", padding: "3px 8px", fontWeight: 700 }}
           >
             {showFoldedSubAgentResults ? "Fold sub-agent results" : `Show ${foldedSubAgentResultCount} folded sub-agent results`}
           </button>
@@ -3012,7 +3013,7 @@ function JsonlCallChain({
 	                  {call.assistantText && !hideAssistantTextAsFinal && (
 	                    <div style={{ padding: "0 12px 7px" }}>
 	                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", marginBottom: 2, letterSpacing: "0.04em" }}>ASSISTANT TEXT</div>
-	                      <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, background: "#f9fafb", borderRadius: 5, padding: "5px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
+	                      <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, background: "#f9fafb", borderRadius: 6, padding: "5px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
 	                        {call.assistantText}
 	                      </div>
 	                    </div>
@@ -3023,7 +3024,7 @@ function JsonlCallChain({
 		                  {call.toolCalls.length > 0 && (
 	                    <div style={{ padding: "0 12px 7px" }}>
 	                      <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, letterSpacing: "0.04em", fontWeight: 700 }}>
-	                        TOOL_USE REQUESTS ({call.toolCalls.length})
+	                        {t("terms.toolUseRequests", { count: call.toolCalls.length })}
 	                      </div>
 	                      {call.toolCalls.map((tc, ti) => (
 	                        <ToolCallRow
@@ -3042,7 +3043,7 @@ function JsonlCallChain({
 		              {call.subAgents.length > 0 && (
 	                <div style={{ marginLeft: 32, marginTop: 3 }}>
                     <div style={{ fontSize: 9, color: "#818cf8", fontWeight: 800, letterSpacing: "0.04em", margin: "0 0 3px 8px" }}>
-                      SUB-AGENT EVENTS
+                      {t("terms.subAgentEvents")}
                     </div>
 	                  {call.subAgents.map(sa => {
                       const active = activeToolUseId === sa.toolUseId;
@@ -3073,7 +3074,7 @@ function JsonlCallChain({
                         style={{
                           flex: 1,
                           border: `1.5px solid ${branchColor}`,
-                          borderRadius: 7,
+                          borderRadius: 6,
                           background: active ? "#fff7ed" : "#fafafe",
                           padding: "5px 9px",
                           cursor: onSubAgentClick ? "pointer" : "default",
@@ -3104,7 +3105,7 @@ function JsonlCallChain({
 	              {visibleIntervals.length > 0 && (
 	                <div style={{ marginLeft: 32, marginTop: 3 }}>
                     <div style={{ fontSize: 9, color: "#c4c9d4", fontWeight: 700, letterSpacing: "0.04em", margin: "0 0 3px 8px" }}>
-                      JSONL EVENT GRAPH
+                      {t("terms.jsonlEventGraph")}
                     </div>
 	                  {visibleIntervals.map((ev, ei) => (
 	                    <IntervalEventRow
@@ -3232,12 +3233,12 @@ function UserTurnDetailPanel({
       {/* ── Call Minimap ──────────────────────────────────────────── */}
       <div id={minimapAnchorId} style={{ marginBottom: 20, scrollMarginTop: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: minimapOpen ? 8 : 0 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.07em" }}>Call Minimap</span>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.07em" }}>{t("terms.callMinimap")}</span>
           <button
             onClick={() => setMinimapOpen(v => !v)}
             style={{ fontSize: 10, color: "#9ca3af", background: "none", border: "none", cursor: "pointer", padding: "0 4px", lineHeight: 1 }}
           >
-            {minimapOpen ? "▲ hide" : "▼ show"}
+            {minimapOpen ? t("terms.hide") : t("terms.show")}
           </button>
           {noTools && !minimapOpen && (
             <span style={{ fontSize: 9, color: "#d1d5db" }}>no tools — single call</span>
@@ -3270,7 +3271,7 @@ function UserTurnDetailPanel({
           borderBottom: "1px solid #e5e7eb",
           marginBottom: 12,
         }}>
-          <SectionLabel>Semantic Call Chain</SectionLabel>
+          <SectionLabel>{t("terms.semanticCallChain")}</SectionLabel>
           <button
             type="button"
             onClick={() => document.getElementById(minimapAnchorId)?.scrollIntoView({ behavior: "smooth", block: "start" })}
@@ -3319,7 +3320,7 @@ function TrustBadge({ mode, proxy }: { mode: TrustMode; proxy?: MockLlmCall["pro
   };
   const c = cfg[mode];
   return (
-    <div style={{ fontSize: 10, background: c.bg, border: `1px solid ${c.border}`, borderRadius: 5, padding: "5px 10px", marginBottom: 10, display: "flex", gap: 6, alignItems: "center" }}>
+    <div style={{ fontSize: 10, background: c.bg, border: `1px solid ${c.border}`, borderRadius: 6, padding: "5px 10px", marginBottom: 10, display: "flex", gap: 6, alignItems: "center" }}>
       <span style={{ fontWeight: 700, color: c.color }}>{c.icon} {c.label}</span>
       {c.detail && <span style={{ color: "#6b7280" }}>· {c.detail}</span>}
     </div>
@@ -3370,7 +3371,7 @@ function AttributionFlowOverview({ ranges, bridges, onSelectRange }: {
           {bridges.length > 0 ? bridges.map(b => {
             const cfg = BRIDGE_CFG[b.kind];
             return (
-              <div key={b.id} style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 5, padding: "5px 8px", background: cfg.bg, border: `1px solid ${cfg.color}25`, borderLeft: `3px solid ${cfg.color}`, borderRadius: 5 }}>
+              <div key={b.id} style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 5, padding: "5px 8px", background: cfg.bg, border: `1px solid ${cfg.color}25`, borderLeft: `3px solid ${cfg.color}`, borderRadius: 6 }}>
                 <span style={{ fontSize: 11, lineHeight: 1.2, flexShrink: 0 }}>{cfg.icon}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 10, fontWeight: 600, color: cfg.color, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.label}</div>
@@ -3459,7 +3460,7 @@ function AttributedDiffTable({ ranges, selectedId, onSelect }: {
               <span style={{ fontSize: 11, fontWeight: 700, color: cfg.color, textTransform: "capitalize" }}>{ct}</span>
               <span style={{ fontSize: 10, color: "#9ca3af" }}>{entries.length} range{entries.length > 1 ? "s" : ""} · {fmtK(entries.reduce((s, r) => s + Math.abs(r.tokens), 0))} tokens</span>
             </div>
-            <div style={{ border: "1px solid #f3f4f6", borderRadius: 7, overflow: "hidden" }}>
+            <div style={{ border: "1px solid #f3f4f6", borderRadius: 6, overflow: "hidden" }}>
               {entries.map((r, i) => {
                 const isSelected = r.id === selectedId;
                 return (
@@ -3558,7 +3559,7 @@ function CallInspectorOverview({
       </div>
 
       {/* Net delta block */}
-      <div style={{ background: "#fff", border: "1px solid #f3f4f6", borderRadius: 7, padding: "10px 12px", marginBottom: 12 }}>
+      <div style={{ background: "#fff", border: "1px solid #f3f4f6", borderRadius: 6, padding: "10px 12px", marginBottom: 12 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           {[
             { label: "Net Δ",    value: `${netDelta >= 0 ? "+" : ""}${fmtK(netDelta)}`,    color: netDelta > 0 ? "#d97706" : "#16a34a" },
@@ -3692,7 +3693,7 @@ function AttributedRangeEvidenceDrawer({ range, onClear }: { range: AttributedDi
         <div style={{ marginTop: 10 }}>
           <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 6 }}>Evidence references</div>
           {range.evidenceRefs.map((ref, i) => (
-            <div key={i} style={{ padding: "5px 8px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 5, marginBottom: 4 }}>
+            <div key={i} style={{ padding: "5px 8px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 6, marginBottom: 4 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: "#16a34a" }}>{ref.label}</div>
               <div style={{ fontSize: 9, color: "#4b5563", marginTop: 2 }}>{ref.detail}</div>
             </div>
@@ -4109,7 +4110,7 @@ function RequestTab({
       )}
 
       {/* Raw JSONL metadata as fallback */}
-      <div style={{ fontSize: 10, color: "#6b7280", fontWeight: 600, marginBottom: 6 }}>JSONL Metadata</div>
+      <div style={{ fontSize: 10, color: "#6b7280", fontWeight: 600, marginBottom: 6 }}>{t("terms.jsonlMetadata")}</div>
       <CodeBlock variant="json" style={{ marginBottom: 14 }}>
         {JSON.stringify({
           call_id: call.id, index_in_turn: call.indexInTurn,
@@ -4341,8 +4342,8 @@ function LlmCallDetailPanel({
           {call.isCompaction && <RiskBadge type="compaction" />}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {onShowTurnContext && (
-              <button onClick={onShowTurnContext} style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#6366f1", borderRadius: 5, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
-                Show in turn
+              <button onClick={onShowTurnContext} style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#6366f1", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+                {t("terms.showInTurn")}
               </button>
             )}
             {call.model && (
@@ -4437,16 +4438,16 @@ function LlmCallDetailPanel({
             }
             return (
               <>
-                <div style={{ fontSize: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 5, padding: "5px 10px", marginBottom: 12, color: "#374151" }}>
+                <div style={{ fontSize: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 6, padding: "5px 10px", marginBottom: 12, color: "#374151" }}>
                   Proxy — full request body available.
                 </div>
-                <SectionLabel>JSONL Metadata</SectionLabel>
+                <SectionLabel>{t("terms.jsonlMetadata")}</SectionLabel>
                 <CodeBlock variant="json" style={{ marginBottom: 14 }}>
                   {JSON.stringify({ call_id: call.id, index_in_turn: call.indexInTurn, model: call.model, timestamp: call.timestamp, usage: { context_size: call.contextSize, fresh_in: freshIn, cache_read: call.cacheRead, cache_write: call.cacheWrite, output_tokens: call.outputTokens }, stop_reason: call.stopReason, ...(call.proxy ? { proxy_request_id: call.proxy.requestId, duration_ms: call.proxy.durationMs } : {}) }, null, 2)}
                 </CodeBlock>
                 {callDetail?.rawRequestJson && (
                   <>
-                    <SectionLabel>Proxy Request Body</SectionLabel>
+                    <SectionLabel>{t("terms.proxyRequestBody")}</SectionLabel>
                     <CodeBlock variant="json">
                       {JSON.stringify(callDetail.rawRequestJson, null, 2)}
                     </CodeBlock>
@@ -5072,7 +5073,7 @@ function LinkedContextPanel({
 
 function linkedPanelButtonStyle(kind: "primary" | "active" | "neutral" | "ghost"): React.CSSProperties {
   const base: React.CSSProperties = {
-    borderRadius: 5,
+    borderRadius: 6,
     padding: "3px 7px",
     fontSize: 10,
     fontWeight: 700,

@@ -197,5 +197,17 @@
     "modified": "修改",
     "unchanged": "未变",
     "clickToExpand": "点击展开"
+  },
+  "terms": {
+    "callMinimap": "Call 概览",
+    "semanticCallChain": "语义调用链",
+    "jsonlEventGraph": "JSONL 事件图",
+    "subAgentEvents": "子 Agent 事件",
+    "toolUseRequests": "工具调用 ({{count}})",
+    "jsonlMetadata": "JSONL 元数据",
+    "proxyRequestBody": "代理请求体",
+    "showInTurn": "在 Turn 中查看",
+    "hide": "▲ 折叠",
+    "show": "▼ 展开"
   }
 }

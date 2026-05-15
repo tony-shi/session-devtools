@@ -30,13 +30,17 @@ export interface HeaderStatRowProps {
   rightSlot?: React.ReactNode;
   /** Optional small label before the first stat (e.g. "Turn 1"). */
   leadingLabel?: { label: string; value: string };
+  /** Drop the bottom divider/padding when used inside a horizontal layout. */
+  noDivider?: boolean;
 }
 
-export function HeaderStatRow({ stats, rightSlot, leadingLabel }: HeaderStatRowProps) {
+export function HeaderStatRow({ stats, rightSlot, leadingLabel, noDivider }: HeaderStatRowProps) {
   return (
     <div style={{
       display: "flex", alignItems: "flex-end", gap: 24,
-      paddingBottom: 10, borderBottom: "1px solid #f3f4f6", flexWrap: "wrap",
+      paddingBottom: noDivider ? 0 : 10,
+      borderBottom: noDivider ? "none" : "1px solid #f3f4f6",
+      flexWrap: "wrap",
     }}>
       {leadingLabel && (
         <div>
@@ -75,9 +79,11 @@ export interface TokenLedgerInlineProps {
   output: number;
   /** Pre-computed cache hit ratio in 0-100 range, or null to omit the chip. */
   cacheRatio?: number | null;
+  /** Drop the top padding when used inside a horizontal layout. */
+  noTopPadding?: boolean;
 }
 
-export function TokenLedgerInline({ freshIn, cacheRead, cacheWrite, output, cacheRatio }: TokenLedgerInlineProps) {
+export function TokenLedgerInline({ freshIn, cacheRead, cacheWrite, output, cacheRatio, noTopPadding }: TokenLedgerInlineProps) {
   const { t } = useTranslation();
   const M = TOKEN_METRICS;
 
@@ -90,7 +96,7 @@ export function TokenLedgerInline({ freshIn, cacheRead, cacheWrite, output, cach
   const total = rows.reduce((s, r) => s + r.value, 0);
 
   return (
-    <div style={{ paddingTop: 10 }}>
+    <div style={{ paddingTop: noTopPadding ? 0 : 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
         <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>
           {t("dashboard.tokenLedger")}

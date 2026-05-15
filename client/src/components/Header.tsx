@@ -24,7 +24,7 @@ function LangToggle() {
       title={`Switch to ${otherLabel}`}
       style={{
         display: "flex", alignItems: "center", gap: 5,
-        height: 28, padding: "0 10px", borderRadius: 7,
+        height: 28, padding: "0 10px", borderRadius: 6,
         border: "1px solid #e5e7eb", background: "#f9fafb",
         color: "#374151", fontSize: 12, fontWeight: 500,
         cursor: "pointer", letterSpacing: "0.01em",
@@ -77,7 +77,7 @@ export function Header() {
           title="Docs"
           style={{
             display: "flex", alignItems: "center", justifyContent: "center",
-            width: 32, height: 32, borderRadius: 7, color: "#6b7280",
+            width: 32, height: 32, borderRadius: 6, color: "#6b7280",
             textDecoration: "none", transition: "background 0.1s",
           }}
           onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}
@@ -97,7 +97,7 @@ export function Header() {
           title="GitHub"
           style={{
             display: "flex", alignItems: "center", justifyContent: "center",
-            width: 32, height: 32, borderRadius: 7, color: "#6b7280",
+            width: 32, height: 32, borderRadius: 6, color: "#6b7280",
             textDecoration: "none", transition: "background 0.1s",
           }}
           onMouseEnter={(e) => (e.currentTarget.style.background = "#f3f4f6")}

@@ -201,5 +201,17 @@
     "modified": "modified",
     "unchanged": "unchanged",
     "clickToExpand": "click to expand"
+  },
+  "terms": {
+    "callMinimap": "Call Minimap",
+    "semanticCallChain": "Semantic Call Chain",
+    "jsonlEventGraph": "JSONL Event Graph",
+    "subAgentEvents": "Sub-agent Events",
+    "toolUseRequests": "Tool Use Requests ({{count}})",
+    "jsonlMetadata": "JSONL Metadata",
+    "proxyRequestBody": "Proxy Request Body",
+    "showInTurn": "Show in Turn",
+    "hide": "▲ hide",
+    "show": "▼ show"
   }
 }

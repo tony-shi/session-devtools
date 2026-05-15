@@ -1,7 +1,7 @@
-import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { SummaryV2 } from "./types";
 import { TOKEN_METRICS } from "./metricRegistry";
+import { HeaderStatRow, TokenLedgerInline } from "./shared/HeaderStats";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -34,159 +34,6 @@ const TOOL_COLORS: Record<string, { bg: string; color: string }> = {
 
 // ─── Stat card ────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, sub, loading }: {
-  label: string; value: string | number; sub?: string; loading: boolean;
-}) {
-  return (
-    <div style={{
-      flex: 1, background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb",
-      padding: "10px 16px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 3,
-    }}>
-      <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>
-        {label}
-      </span>
-      {loading
-        ? <Skeleton h={18} w={40} />
-        : <span style={{ fontSize: 20, fontWeight: 700, color: "#111827", lineHeight: 1 }}>{value}</span>
-      }
-      {sub && !loading && (
-        <span style={{ fontSize: 10, color: "#d1d5db" }}>{sub}</span>
-      )}
-    </div>
-  );
-}
-
-// ─── Right: Token Ledger ──────────────────────────────────────────────────────
-
-const M = TOKEN_METRICS;
-
-function StackedBar({ freshIn, cacheRead, cacheWrite }: {
-  freshIn: number; cacheRead: number; cacheWrite: number;
-}) {
-  const total = freshIn + cacheRead + cacheWrite;
-  if (total === 0) return null;
-  const pFresh = (freshIn   / total) * 100;
-  const pRead  = (cacheRead  / total) * 100;
-  const pWrite = (cacheWrite / total) * 100;
-
-  return (
-    <div style={{ display: "flex", height: 5, borderRadius: 3, overflow: "hidden", gap: 1 }}>
-      {pFresh > 0.2 && (
-        <div title={`Fresh In ${fmtPct(pFresh)}`}
-          style={{ flex: pFresh, background: M.fresh_input.color }} />
-      )}
-      {pRead > 0.2 && (
-        <div title={`Cache Read ${fmtPct(pRead)}`}
-          style={{ flex: pRead, background: M.cache_read.color }} />
-      )}
-      {pWrite > 0.2 && (
-        <div title={`Cache Write ${fmtPct(pWrite)}`}
-          style={{ flex: pWrite, background: M.cache_write.color }} />
-      )}
-    </div>
-  );
-}
-
-function LedgerCol({ metricId, value }: { metricId: string; value: number }) {
-  const m = M[metricId];
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1, minWidth: 0 }}>
-      <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 500, whiteSpace: "nowrap" }} title={m.description}>
-        {m.label}
-      </span>
-      <span style={{ fontSize: 15, fontWeight: 700, color: m.color, lineHeight: 1 }}>
-        {fmt(value)}
-      </span>
-    </div>
-  );
-}
-
-function TokenLedgerCard({ data, loading }: { data: SummaryV2 | null; loading: boolean }) {
-  const { t } = useTranslation();
-  const [showFormula, setShowFormula] = useState(false);
-
-  const cacheRead  = data?.cache_read_tokens     ?? 0;
-  const cacheWrite = data?.cache_creation_tokens ?? 0;
-  // Fresh In = non-cached input + cache_write (both are freshly processed this call)
-  const freshIn    = (data?.input_tokens ?? 0) + cacheWrite;
-  const output     = data?.output_tokens         ?? 0;
-  const inputTotal = freshIn + cacheRead + cacheWrite;
-  const cacheRatio = inputTotal > 0 ? (cacheRead / inputTotal) * 100 : 0;
-
-  return (
-    <div
-      style={{
-        background: "#fff", borderRadius: 10, border: "1px solid #e5e7eb",
-        padding: "10px 16px", flex: 2, minWidth: 0,
-        position: "relative", display: "flex", flexDirection: "column", gap: 6,
-        justifyContent: "center",
-      }}
-      onMouseEnter={() => setShowFormula(true)}
-      onMouseLeave={() => setShowFormula(false)}
-    >
-      {/* header row */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>
-          {t("dashboard.tokenLedger")}
-        </span>
-        {!loading && data && (
-          <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
-            <span style={{ fontSize: 10, color: "#9ca3af" }}>{t("dashboard.cacheRatio")}</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: M.cache_ratio.color }}>
-              {fmtPct(cacheRatio)}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {loading ? (
-        <div style={{ display: "flex", gap: 12 }}>
-          {[1,2,3,4].map((i) => (
-            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-              <Skeleton h={10} />
-              <Skeleton h={18} />
-            </div>
-          ))}
-        </div>
-      ) : !data ? (
-        <span style={{ fontSize: 11, color: "#9ca3af" }}>—</span>
-      ) : (
-        <>
-          {/* stacked bar */}
-          <StackedBar freshIn={freshIn} cacheRead={cacheRead} cacheWrite={cacheWrite} />
-
-          {/* two-row metric grid: label row then value row */}
-          <div style={{ display: "flex", gap: 12 }}>
-            <LedgerCol metricId="fresh_input"  value={freshIn} />
-            <LedgerCol metricId="cache_read"   value={cacheRead} />
-            <LedgerCol metricId="cache_write"  value={cacheWrite} />
-            <LedgerCol metricId="output"       value={output} />
-          </div>
-
-          {/* formula tooltip on hover */}
-          {showFormula && (
-            <div style={{
-              position: "absolute", bottom: "calc(100% + 6px)", right: 0,
-              background: "#1f2937", color: "#e5e7eb",
-              borderRadius: 7, padding: "7px 11px",
-              fontSize: 10, lineHeight: 1.8, fontFamily: "monospace",
-              whiteSpace: "nowrap", zIndex: 20,
-              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-              pointerEvents: "none",
-            }}>
-              Input work = Fresh In + Cache Read + Cache Write
-              <br />
-              Generated = Output
-              <br />
-              Cache Ratio = Cache Read / Input work
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -196,12 +43,55 @@ interface Props {
 
 export function SummaryCardsV2({ data, loading }: Props) {
   const { t } = useTranslation();
+
+  // Treat dashboard hero stats with the same flat header layout used in detail
+  // pages so visual rhythm stays identical when navigating in & out of a session.
+  const cacheRead  = data?.cache_read_tokens     ?? 0;
+  const cacheWrite = data?.cache_creation_tokens ?? 0;
+  const freshIn    = (data?.input_tokens ?? 0) + cacheWrite;
+  const output     = data?.output_tokens         ?? 0;
+  const inputTotal = freshIn + cacheRead + cacheWrite;
+  const cacheRatio = inputTotal > 0 ? (cacheRead / inputTotal) * 100 : null;
+
   return (
-    <div style={{ display: "flex", gap: 12, alignItems: "stretch" }}>
-      <StatCard label={t("dashboard.sessions")}  value={data?.total_sessions ?? "—"}              loading={loading} />
-      <StatCard label={t("dashboard.userTurns")} value={data ? fmt(data.human_input_count) : "—"} loading={loading} />
-      <StatCard label={t("dashboard.llmCalls")}  value={data ? fmt(data.llm_call_count) : "—"}    loading={loading} />
-      <TokenLedgerCard data={data} loading={loading} />
+    <div style={{
+      background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb",
+      padding: "12px 16px",
+    }}>
+      {loading || !data ? (
+        <div style={{ display: "flex", gap: 24 }}>
+          {[1, 2, 3, 4].map(i => <Skeleton key={i} h={28} w={60} />)}
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "stretch", gap: 24 }}>
+          {/* Left: hero counters */}
+          <div style={{ flex: "0 0 auto" }}>
+            <HeaderStatRow
+              noDivider
+              stats={[
+                { label: t("dashboard.sessions"),  value: String(data.total_sessions) },
+                { label: t("dashboard.userTurns"), value: fmt(data.human_input_count) },
+                { label: t("dashboard.llmCalls"),  value: fmt(data.llm_call_count) },
+              ]}
+            />
+          </div>
+
+          {/* Vertical separator */}
+          <div style={{ width: 1, background: "#f3f4f6" }} />
+
+          {/* Right: token ledger occupies remaining space */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <TokenLedgerInline
+              noTopPadding
+              freshIn={freshIn}
+              cacheRead={cacheRead}
+              cacheWrite={cacheWrite}
+              output={output}
+              cacheRatio={cacheRatio}
+            />
+          </div>
+        </div>
+      )}
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
     </div>
   );
