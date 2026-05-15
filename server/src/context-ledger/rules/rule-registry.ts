@@ -29,8 +29,8 @@
 import type {
   Confidence,
   SegmentCategory,
+  RuleMechanism,
 } from "../types";
-import type { ProxySegmentAttribution } from "../types";
 
 // 当前唯一支持的 Claude Code 版本。改这里时必须同步把所有 rule 的 verifiedFor 清零并重新人工校对。
 export const SUPPORTED_CLAUDE_CODE_VERSION = "2.1.126";
@@ -79,7 +79,7 @@ export interface ContextLedgerRule {
   attribution?: {
     pattern: string | null;
     matchMode: RuleMatchMode;
-    mechanism: ProxySegmentAttribution["mechanism"];
+    mechanism: RuleMechanism;
     category: SegmentCategory;
     // matchMode=regex 时，列出 pattern 中命名捕获组的语义说明。
     captureGroups?: Record<string, string>;

@@ -232,33 +232,10 @@ export interface SessionDrilldown {
 }
 
 // ─── Call detail (per-call drilldown) ────────────────────────────────────────
-
-export interface CallSegment {
-  id: string;
-  section: "system" | "tools" | "messages" | "metadata" | "unknown";
-  category: string;
-  label: string;
-  role?: string;
-  charCount: number;
-  rawText: string;
-  cacheHint: "read" | "write" | "none" | "unknown";
-  rawHash: string;
-}
-
-export type DiffOp = "added" | "removed" | "changed" | "unchanged";
-
-export interface SegmentDiff {
-  op: DiffOp;
-  section: "system" | "tools" | "messages" | "metadata" | "unknown";
-  category: string;
-  label: string;
-  role?: string;
-  charCount: number;
-  charDelta: number;
-  rawHash: string;
-  rawText: string;
-  prevRawText?: string;
-}
+//
+// PR8 起 CallDetail 不再携带 segments / diff —— attribution + tree-diff 视角分别
+// 由 AttributionTreeResult（loadAttributionTree）和 DiffTreeResult（loadDiffTree）
+// 通过独立端点提供。这里只保留 raw 请求体和元数据。
 
 export interface CallDetailTokens {
   contextSize: number;
@@ -279,7 +256,5 @@ export interface CallDetail {
   tokens: CallDetailTokens;
 
   // null when no proxy data available
-  segments: CallSegment[] | null;
-  diff: SegmentDiff[] | null;
   rawRequestJson: Record<string, unknown> | null;
 }

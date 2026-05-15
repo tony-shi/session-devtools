@@ -1,46 +1,18 @@
 // call-detail.ts
-// Loads a single LLM call's proxy request body from JSONL, parses it via
-// context-ledger/proxy/snapshot-parser, and produces a structured CallDetail
-// plus a diff against the previous call.
+// Loads a single LLM call's proxy request body from JSONL and returns
+// a lightweight summary the v2 UI consumes.
 //
-// Data sources:
-//   Phase 1 (JSONL only):  top-level call metadata from session-drilldown-parser
-//   Phase 2 (proxy JSONL): segment breakdown + inter-call diff via parseClaudeProxyRequest
+// PR8 起删除了 segment / diff 路径（前端不再消费；segment-level diff 由
+// AttributionTreeDiff/DiffPanel 提供，attribution 视角由 loadAttributionTree 提供）。
+// 现在 call-detail 只承担两件事：
+//   1. 查询 proxy_requests 表里对应这个 call 的行（findProxyRowForCall）
+//   2. 读出原始 reqBody JSON 给前端 raw tab 用
 
 import { createReadStream, existsSync } from "node:fs";
 import { createGunzip } from "node:zlib";
 import type { Database } from "better-sqlite3";
-import { parseClaudeProxyRequest } from "./context-ledger/proxy/snapshot-parser.ts";
-import type { ContextSegment } from "./context-ledger/types.ts";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
-
-export interface CallSegment {
-  id: string;
-  section: "system" | "tools" | "messages" | "metadata" | "unknown";
-  category: string;
-  label: string;
-  role?: string;
-  charCount: number;
-  rawText: string;        // full text — frontend truncates as needed
-  cacheHint: "read" | "write" | "none" | "unknown";
-  rawHash: string;
-}
-
-export type DiffOp = "added" | "removed" | "changed" | "unchanged";
-
-export interface SegmentDiff {
-  op: DiffOp;
-  section: "system" | "tools" | "messages" | "metadata" | "unknown";
-  category: string;
-  label: string;
-  role?: string;
-  charCount: number;
-  charDelta: number;       // positive = grew, negative = shrank, 0 = unchanged/new/removed
-  rawHash: string;
-  rawText: string;
-  prevRawText?: string;    // for "changed" segments: what it was before
-}
 
 export interface CallDetailTokens {
   contextSize: number;
@@ -51,9 +23,9 @@ export interface CallDetailTokens {
 }
 
 export interface CallDetail {
-  callId: number;          // global call id (LlmCall.id)
+  callId: number;
   sessionId: string;
-  proxyRequestId: number | null;   // proxy_requests.id, null if no proxy data
+  proxyRequestId: number | null;
 
   // Phase 1: always available from JSONL
   model: string;
@@ -62,8 +34,6 @@ export interface CallDetail {
   tokens: CallDetailTokens;
 
   // Phase 2: proxy-backed, null if no proxy record
-  segments: CallSegment[] | null;
-  diff: SegmentDiff[] | null;      // vs previous call; null if no proxy or first call
   rawRequestJson: Record<string, unknown> | null;
 }
 
@@ -113,111 +83,6 @@ export async function readProxyRecord(
   } catch {
     return null;
   }
-}
-
-// ─── Segment conversion ───────────────────────────────────────────────────────
-
-function toCallSegment(seg: ContextSegment): CallSegment {
-  return {
-    id: seg.id,
-    section: seg.section as CallSegment["section"],
-    category: seg.category,
-    label: seg.label,
-    role: seg.role,
-    charCount: seg.charCount ?? seg.rawText?.length ?? 0,
-    rawText: seg.rawText ?? "",
-    cacheHint: (seg.cacheHint as CallSegment["cacheHint"]) ?? "unknown",
-    rawHash: seg.rawHash ?? "",
-  };
-}
-
-// ─── Diff computation ─────────────────────────────────────────────────────────
-
-function makeAdded(c: ContextSegment): SegmentDiff {
-  return {
-    op: "added",
-    section: c.section as SegmentDiff["section"],
-    category: c.category,
-    label: c.label,
-    role: c.role,
-    charCount: c.charCount ?? c.rawText?.length ?? 0,
-    charDelta: c.charCount ?? c.rawText?.length ?? 0,
-    rawHash: c.rawHash ?? "",
-    rawText: c.rawText ?? "",
-  };
-}
-
-function makeRemoved(p: ContextSegment): SegmentDiff {
-  return {
-    op: "removed",
-    section: p.section as SegmentDiff["section"],
-    category: p.category,
-    label: p.label,
-    role: p.role,
-    charCount: 0,
-    charDelta: -(p.charCount ?? p.rawText?.length ?? 0),
-    rawHash: p.rawHash ?? "",
-    rawText: p.rawText ?? "",
-  };
-}
-
-function makeCompared(p: ContextSegment, c: ContextSegment): SegmentDiff {
-  const pChars = p.charCount ?? p.rawText?.length ?? 0;
-  const cChars = c.charCount ?? c.rawText?.length ?? 0;
-  if (p.rawHash && c.rawHash && p.rawHash === c.rawHash) {
-    return {
-      op: "unchanged",
-      section: c.section as SegmentDiff["section"],
-      category: c.category, label: c.label, role: c.role,
-      charCount: cChars, charDelta: 0,
-      rawHash: c.rawHash, rawText: c.rawText ?? "",
-    };
-  }
-  return {
-    op: "changed",
-    section: c.section as SegmentDiff["section"],
-    category: c.category, label: c.label, role: c.role,
-    charCount: cChars, charDelta: cChars - pChars,
-    rawHash: c.rawHash ?? "", rawText: c.rawText ?? "",
-    prevRawText: p.rawText ?? "",
-  };
-}
-
-function computeSegmentDiff(
-  prev: ContextSegment[],
-  curr: ContextSegment[],
-): SegmentDiff[] {
-  const result: SegmentDiff[] = [];
-  const sections = ["system", "tools", "messages", "metadata", "unknown"] as const;
-
-  for (const section of sections) {
-    const prevSegs = prev.filter(s => s.section === section);
-    const currSegs = curr.filter(s => s.section === section);
-
-    if (section === "messages") {
-      // Conversation messages only grow — new turns are appended at the end.
-      // Align by common prefix (hash-based), then mark the tail as added.
-      // This avoids false "changed" when new segments shift indices.
-      const commonLen = Math.min(prevSegs.length, currSegs.length);
-      for (let i = 0; i < commonLen; i++) {
-        result.push(makeCompared(prevSegs[i], currSegs[i]));
-      }
-      // Anything beyond common prefix
-      for (let i = commonLen; i < prevSegs.length; i++) result.push(makeRemoved(prevSegs[i]));
-      for (let i = commonLen; i < currSegs.length; i++) result.push(makeAdded(currSegs[i]));
-    } else {
-      // system / tools: align by position (these don't shift on new turns)
-      const maxLen = Math.max(prevSegs.length, currSegs.length);
-      for (let i = 0; i < maxLen; i++) {
-        const p = prevSegs[i], c = currSegs[i];
-        if (!p && c) result.push(makeAdded(c));
-        else if (p && !c) result.push(makeRemoved(p));
-        else if (p && c) result.push(makeCompared(p, c));
-      }
-    }
-  }
-
-  return result;
 }
 
 // ─── Main entry ───────────────────────────────────────────────────────────────
@@ -304,94 +169,26 @@ export async function loadCallDetail(
   callStopReason: string | null,
   db: Database,
   callId: number,
-  prevCallTimestamp?: string,
+  _prevCallTimestamp?: string,
   apiRequestId?: string | null,
-  prevApiRequestId?: string | null,
+  _prevApiRequestId?: string | null,
 ): Promise<CallDetail> {
+  const base = {
+    callId, sessionId,
+    model: callModel, stopReason: callStopReason, timestamp: callTimestamp,
+    tokens: callTokens,
+  };
   const proxyRow = findProxyRowForCall(db, sessionId, apiRequestId, callTimestamp);
-
-  if (!proxyRow) {
-    return {
-      callId, sessionId, proxyRequestId: null,
-      model: callModel, stopReason: callStopReason, timestamp: callTimestamp,
-      tokens: callTokens,
-      segments: null, diff: null, rawRequestJson: null,
-    };
-  }
+  if (!proxyRow) return { ...base, proxyRequestId: null, rawRequestJson: null };
 
   const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
-  if (!rec) {
-    return {
-      callId, sessionId, proxyRequestId: proxyRow.id,
-      model: callModel, stopReason: callStopReason, timestamp: callTimestamp,
-      tokens: callTokens,
-      segments: null, diff: null, rawRequestJson: null,
-    };
-  }
+  if (!rec) return { ...base, proxyRequestId: proxyRow.id, rawRequestJson: null };
 
   const reqBody = rec.reqBody as string | undefined;
-  const reqHeaders = (() => {
-    try { return JSON.parse(proxyRow.req_headers ?? "{}") as Record<string, string>; }
-    catch { return {}; }
-  })();
-
   let rawReqParsed: Record<string, unknown> | null = null;
   if (typeof reqBody === "string") {
     try { rawReqParsed = JSON.parse(reqBody) as Record<string, unknown>; }
     catch { /* not JSON */ }
   }
-
-  if (!rawReqParsed) {
-    return {
-      callId, sessionId, proxyRequestId: proxyRow.id,
-      model: callModel, stopReason: callStopReason, timestamp: callTimestamp,
-      tokens: callTokens,
-      segments: null, diff: null, rawRequestJson: null,
-    };
-  }
-
-  // Parse current call via context-ledger
-  const snapshot = parseClaudeProxyRequest({
-    ts: proxyRow.started_at ?? callTimestamp,
-    reqHeaders,
-    reqBody: rawReqParsed as Parameters<typeof parseClaudeProxyRequest>[0]["reqBody"],
-  }, { proxyFile: proxyRow.jsonl_file });
-
-  const segments = snapshot.segments.map(toCallSegment);
-
-  // Diff: find the previous call's proxy row using the same strategy
-  let diff: SegmentDiff[] | null = null;
-  if (prevCallTimestamp) {
-    const prevRow = findProxyRowForCall(
-      db, sessionId, prevApiRequestId, prevCallTimestamp, proxyRow.id,
-    );
-    if (prevRow) {
-      const prevRec = await readProxyRecord(prevRow.jsonl_file, prevRow.jsonl_byte_offset);
-      const prevReqBody = prevRec?.reqBody as string | undefined;
-      let prevReqParsed: Record<string, unknown> | null = null;
-      if (typeof prevReqBody === "string") {
-        try { prevReqParsed = JSON.parse(prevReqBody) as Record<string, unknown>; }
-        catch { /* ignore */ }
-      }
-      if (prevReqParsed) {
-        const prevReqHeaders = (() => {
-          try { return JSON.parse(prevRow.req_headers ?? "{}") as Record<string, string>; }
-          catch { return {}; }
-        })();
-        const prevSnapshot = parseClaudeProxyRequest({
-          ts: prevRow.started_at ?? prevCallTimestamp,
-          reqHeaders: prevReqHeaders,
-          reqBody: prevReqParsed as Parameters<typeof parseClaudeProxyRequest>[0]["reqBody"],
-        }, { proxyFile: prevRow.jsonl_file });
-        diff = computeSegmentDiff(prevSnapshot.segments, snapshot.segments);
-      }
-    }
-  }
-
-  return {
-    callId, sessionId, proxyRequestId: proxyRow.id,
-    model: callModel, stopReason: callStopReason, timestamp: callTimestamp,
-    tokens: callTokens,
-    segments, diff, rawRequestJson: rawReqParsed,
-  };
+  return { ...base, proxyRequestId: proxyRow.id, rawRequestJson: rawReqParsed };
 }
