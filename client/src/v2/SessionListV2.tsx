@@ -6,7 +6,7 @@ import { getSessionTitle, getSessionSubtitle } from "./session-display";
 import { MiniTokenLedger } from "./SummaryCardsV2";
 
 const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
-  claude: { bg: "#f3e8ff", color: "#7c3aed" },
+  claude: { bg: "#eef2ff", color: "#6366f1" },
   codex:  { bg: "#dbeafe", color: "#1d4ed8" },
   gemini: { bg: "#d1fae5", color: "#065f46" },
 };
@@ -233,9 +233,9 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
             key={p}
             style={{
               ...btnBase,
-              background: p === page ? "#7c3aed" : "#fff",
+              background: p === page ? "#6366f1" : "#fff",
               color: p === page ? "#fff" : "#374151",
-              borderColor: p === page ? "#7c3aed" : "#e5e7eb",
+              borderColor: p === page ? "#6366f1" : "#e5e7eb",
             }}
             onClick={() => p !== page && onChange(p)}
           >{p + 1}</button>
@@ -335,8 +335,8 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
                 paddingLeft: 28, paddingRight: 28, paddingTop: 5, paddingBottom: 5,
                 fontSize: 12, borderRadius: 7, border: "1px solid #e5e7eb",
                 outline: "none", width: 200, color: "#374151",
-                background: search ? "#faf5ff" : "#fff",
-                borderColor: search ? "#a78bfa" : "#e5e7eb",
+                background: search ? "#eef2ff" : "#fff",
+                borderColor: search ? "#6366f1" : "#e5e7eb",
               }}
             />
             {search && (

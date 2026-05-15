@@ -44,8 +44,8 @@ async function batchInsert(records: Array<Record<string, unknown>>): Promise<voi
        jsonl_file, jsonl_byte_offset,
        session_id, cli_tool, model, req_message_count, req_has_tools,
        res_input_tokens, res_output_tokens, res_cache_creation_tokens, res_cache_read_tokens,
-       res_stop_reason, error_class)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       res_stop_reason, error_class, request_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (let i = 0; i < records.length; i += SYNC_BATCH_RECORDS) {
     const batch = records.slice(i, i + SYNC_BATCH_RECORDS);
@@ -63,6 +63,7 @@ async function batchInsert(records: Array<Record<string, unknown>>): Promise<voi
             r.res_input_tokens ?? null, r.res_output_tokens ?? null,
             r.res_cache_creation_tokens ?? null, r.res_cache_read_tokens ?? null,
             r.res_stop_reason ?? null, r.error_class ?? null,
+            r.request_id ?? null,
           );
         }
       })();

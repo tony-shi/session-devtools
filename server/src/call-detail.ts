@@ -230,6 +230,48 @@ interface ProxyRow {
   started_at: string | null;
 }
 
+// Look up the proxy row for a JSONL call. Exact match via API request-id
+// (1:1 link between JSONL `requestId` and proxy_requests.request_id, extracted
+// from response headers). Falls back to "closest proxy started at or before
+// the JSONL timestamp" when request_id is unavailable — used both for legacy
+// rows without request_id and as a safety net.
+export function findProxyRowForCall(
+  db: Database,
+  sessionId: string,
+  apiRequestId: string | null | undefined,
+  fallbackTimestamp: string,
+  excludeProxyId?: number,
+): ProxyRow | null {
+  if (apiRequestId) {
+    const row = db.prepare(`
+      SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
+      FROM proxy_requests
+      WHERE session_id = ? AND request_id = ?
+      ${excludeProxyId !== undefined ? "AND id != ?" : ""}
+      LIMIT 1
+    `).get(
+      ...(excludeProxyId !== undefined
+        ? [sessionId, apiRequestId, excludeProxyId]
+        : [sessionId, apiRequestId])
+    ) as ProxyRow | undefined;
+    if (row) return row;
+  }
+  const fallback = db.prepare(`
+    SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
+    FROM proxy_requests
+    WHERE session_id = ?
+      AND COALESCE(started_at, ts) <= ?
+      ${excludeProxyId !== undefined ? "AND id != ?" : ""}
+    ORDER BY COALESCE(started_at, ts) DESC
+    LIMIT 1
+  `).get(
+    ...(excludeProxyId !== undefined
+      ? [sessionId, fallbackTimestamp, excludeProxyId]
+      : [sessionId, fallbackTimestamp])
+  ) as ProxyRow | undefined;
+  return fallback ?? null;
+}
+
 export async function loadCallDetail(
   sessionId: string,
   callTimestamp: string,
@@ -239,21 +281,10 @@ export async function loadCallDetail(
   db: Database,
   callId: number,
   prevCallTimestamp?: string,
+  apiRequestId?: string | null,
+  prevApiRequestId?: string | null,
 ): Promise<CallDetail> {
-  // Match proxy row: proxy.started_at <= call.timestamp (request sent before response received)
-  // take the closest one before the JSONL timestamp.
-  // This correctly handles the started_at < JSONL_timestamp gap (proxy records request start,
-  // JSONL records response receipt).
-  const proxyRows = db.prepare(`
-    SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
-    FROM proxy_requests
-    WHERE session_id = ?
-      AND COALESCE(started_at, ts) <= ?
-    ORDER BY COALESCE(started_at, ts) DESC
-    LIMIT 1
-  `).all(sessionId, callTimestamp) as ProxyRow[];
-
-  const proxyRow = proxyRows[0] ?? null;
+  const proxyRow = findProxyRowForCall(db, sessionId, apiRequestId, callTimestamp);
 
   if (!proxyRow) {
     return {
@@ -307,17 +338,9 @@ export async function loadCallDetail(
   // Diff: find the previous call's proxy row using the same strategy
   let diff: SegmentDiff[] | null = null;
   if (prevCallTimestamp) {
-    const prevRows = db.prepare(`
-      SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
-      FROM proxy_requests
-      WHERE session_id = ?
-        AND COALESCE(started_at, ts) <= ?
-        AND id != ?
-      ORDER BY COALESCE(started_at, ts) DESC
-      LIMIT 1
-    `).all(sessionId, prevCallTimestamp, proxyRow.id) as ProxyRow[];
-
-    const prevRow = prevRows[0] ?? null;
+    const prevRow = findProxyRowForCall(
+      db, sessionId, prevApiRequestId, prevCallTimestamp, proxyRow.id,
+    );
     if (prevRow) {
       const prevRec = await readProxyRecord(prevRow.jsonl_file, prevRow.jsonl_byte_offset);
       const prevReqBody = prevRec?.reqBody as string | undefined;

@@ -123,14 +123,14 @@ export default function App() {
                   display: "flex", alignItems: "center", gap: navOpen ? 8 : 0,
                   justifyContent: navOpen ? "flex-start" : "center",
                   padding: "6px 8px", borderRadius: 7, border: "none",
-                  background: active ? "#f3e8ff" : "transparent",
-                  color: active ? "#7c3aed" : "#4b5563",
+                  background: active ? "#eef2ff" : "transparent",
+                  color: active ? "#6366f1" : "#4b5563",
                   cursor: "pointer", fontSize: 12, fontWeight: active ? 600 : 400,
                   textAlign: "left", width: "100%", whiteSpace: "nowrap",
                   transition: "background 0.1s",
                 }}
               >
-                <span style={{ color: active ? "#7c3aed" : "#9ca3af", flexShrink: 0 }}>{icon}</span>
+                <span style={{ color: active ? "#6366f1" : "#9ca3af", flexShrink: 0 }}>{icon}</span>
                 {navOpen && label}
               </button>
             );

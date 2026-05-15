@@ -23,10 +23,25 @@ export type Evidence =
   | { kind: "unknown" };
 
 export type SegmentOrigin =
-  | { kind: "rule"; ruleId: string; matchMode: "exact" | "regex" | "prefix"; confidence: Confidence; dynamicFields?: DynamicField[] }
-  | { kind: "jsonl"; eventKind: string; jsonlLineIdx: number; sourceCallId?: number; sourceTurnId?: number; toolUseId?: string; confidence: Confidence }
+  | { kind: "rule"; ruleId: string; matchMode: "exact" | "regex" | "prefix"; confidence: Confidence; fullyCovered: boolean; dynamicFields?: DynamicField[] }
+  | { kind: "jsonl"; eventKind: string; jsonlLineIdx: number; sourceCallId?: number; sourceTurnId?: number; toolUseId?: string; confidence: Confidence; fullyCovered: boolean }
   | { kind: "structural"; slotId: string; reason: "container_node" | "no_rule_matched" }
   | { kind: "unknown"; reason: string };
+
+/**
+ * 叶子节点归因覆盖完整性。与后端 origin.ts 中 CoverageState 同步。
+ *   - "full"    rule/jsonl origin 且 fullyCovered=true
+ *   - "partial" rule/jsonl origin 且 fullyCovered=false（动态注入未覆盖 / 内容近似）
+ *   - "none"    structural 或 unknown origin
+ */
+export type CoverageState = "full" | "partial" | "none";
+
+export function coverageStateOf(origin: SegmentOrigin): CoverageState {
+  if (origin.kind === "rule" || origin.kind === "jsonl") {
+    return origin.fullyCovered ? "full" : "partial";
+  }
+  return "none";
+}
 
 export interface SerializedNode {
   id: string;

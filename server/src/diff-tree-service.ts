@@ -96,15 +96,20 @@ export async function loadDiffTree(
   callId: number,
   _db: Database,
   helpers: {
-    fetchProxyReqBodyAt: (sessionId: string, ts: string, excludeProxyId?: number) => Promise<{
+    fetchProxyReqBodyAt: (
+      sessionId: string,
+      ts: string,
+      excludeProxyId?: number,
+      apiRequestId?: string | null,
+    ) => Promise<{
       reqBody: Record<string, unknown> | null;
       reqHeaders: Record<string, string>;
       proxyRequestId: number | null;
       startedAt: string;
     } | null>;
     resolveCallMeta: (sessionId: string, callId: number) => {
-      call: { id: number; timestamp: string; turnId: number; sourceFile: string };
-      prevCall: { id: number; timestamp: string } | null;
+      call: { id: number; timestamp: string; turnId: number; sourceFile: string; apiRequestId: string | null };
+      prevCall: { id: number; timestamp: string; apiRequestId: string | null } | null;
     } | null;
   },
 ): Promise<DiffTreeResult> {
@@ -118,7 +123,9 @@ export async function loadDiffTree(
     return { callId, sessionId, prevCallId: null, sections: [], summary: emptySummary, error: "call not found" };
   }
 
-  const proxy = await helpers.fetchProxyReqBodyAt(sessionId, meta.call.timestamp);
+  const proxy = await helpers.fetchProxyReqBodyAt(
+    sessionId, meta.call.timestamp, undefined, meta.call.apiRequestId,
+  );
   if (!proxy?.reqBody) {
     return {
       callId, sessionId,
@@ -158,6 +165,7 @@ export async function loadDiffTree(
       sessionId,
       meta.prevCall.timestamp,
       proxy.proxyRequestId ?? undefined,
+      meta.prevCall.apiRequestId,
     );
     if (prevProxy?.reqBody) {
       try {

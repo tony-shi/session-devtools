@@ -321,6 +321,7 @@ function call(id: number, indexInTurn: number, overrides: CallOverrides): LlmCal
     id,
     indexInTurn,
     messageId: null,
+    apiRequestId: null,
     jsonlLineIdx: null,
     jsonlFrameLineIdxs: [],
     model: "claude-opus-4-7",

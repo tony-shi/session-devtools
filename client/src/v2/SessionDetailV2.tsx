@@ -28,6 +28,7 @@ import { AttributionTreePanel } from "./AttributionTreePanel";
 import { ResponseTreePanel } from "./ResponseTreePanel";
 import { DiffPanel } from "./DiffPanel";
 import { TOKEN_METRICS } from "./metricRegistry";
+import { HeaderStatRow, TokenLedgerInline } from "./shared/HeaderStats";
 
 // Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
 type MockDiffEntry = DiffEntry;
@@ -596,78 +597,52 @@ function SessionOverviewPanel({
     return { compactionCount, errorCount, subAgentTurns, subAgentTotal, commandTurns, unknownTurns };
   }, [turns, compactionTurns]);
 
-  // Token ledger bar segments (same proportions as main dashboard)
-  const tokenTotal = totalFreshIn !== null
-    ? (totalFreshIn + totalCacheRead + totalCacheWrite + (totalFreshOut ?? 0))
-    : (totalCacheRead + totalCacheWrite);
-  const ledgerSegments = tokenTotal > 0 ? [
-    { key: "freshIn",    value: totalFreshIn ?? 0,    color: "#3b82f6",  label: "Fresh In" },
-    { key: "cacheRead",  value: totalCacheRead,        color: "#10b981",  label: "Cache Read" },
-    { key: "cacheWrite", value: totalCacheWrite,       color: "#f59e0b",  label: "Cache Write" },
-    { key: "output",     value: totalFreshOut ?? 0,   color: "#8b5cf6",  label: "Output" },
-  ] : [];
-
   const [modelsExpanded, setModelsExpanded] = React.useState(false);
   const multiModel = modelBreakdown && Object.keys(modelBreakdown).length > 1;
   const singleModel = modelBreakdown && Object.keys(modelBreakdown).length === 1
     ? Object.keys(modelBreakdown)[0] : null;
-
-  // Token ledger values from registry colors
-  const M = TOKEN_METRICS;
-  const ledgerRows = [
-    { id: "fresh_input", value: totalFreshIn ?? 0 },
-    { id: "cache_read",  value: totalCacheRead },
-    { id: "cache_write", value: totalCacheWrite },
-    { id: "output",      value: totalFreshOut ?? 0 },
-  ];
 
   return (
     <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
       {/* ── Overview: flat rows, no card border ─────────────────────── */}
       <div style={{ marginBottom: 16 }}>
 
-        {/* Row 1: Activity */}
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 24, paddingBottom: 10, borderBottom: "1px solid #f3f4f6", flexWrap: "wrap" }}>
-          {[
-            { label: t("sessionOverview.activity.userTurns"), value: String(drilldown?.turns.length ?? turns.length), color: undefined as string | undefined },
-            { label: t("sessionOverview.activity.llmCalls"),  value: String(totalCalls), color: undefined },
-            { label: t("sessionOverview.activity.toolCalls"), value: String(totalToolCalls), color: undefined },
-            { label: t("sessionOverview.activity.duration"),  value: durationStr, color: undefined },
-          ].map(({ label, value, color }) => (
-            <div key={label}>
-              <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{label}</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: color ?? "#111827", lineHeight: 1 }}>{value}</div>
-            </div>
-          ))}
-
-          {/* Model chip — single inline, multi as expandable */}
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-            {singleModel && (
-              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <div style={{ width: 7, height: 7, borderRadius: 2, background: modelColor(singleModel), flexShrink: 0 }} />
-                <span style={{ fontSize: 11, color: "#6b7280" }}>{shortModelName(singleModel)}</span>
-              </div>
-            )}
-            {multiModel && (
-              <button
-                onClick={() => setModelsExpanded(v => !v)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 5,
-                  fontSize: 11, padding: "3px 8px", borderRadius: 5,
-                  border: "1px solid #e5e7eb", background: modelsExpanded ? "#f3e8ff" : "#f9fafb",
-                  color: modelsExpanded ? "#7c3aed" : "#6b7280", cursor: "pointer",
-                }}
-              >
-                {t("sessionOverview.activity.models", { n: Object.keys(modelBreakdown!).length })}
-                <svg width="9" height="9" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                  style={{ transform: modelsExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-            )}
-            {isMock && <MockBadge />}
-          </div>
-        </div>
+        <HeaderStatRow
+          stats={[
+            { label: t("sessionOverview.activity.userTurns"), value: String(drilldown?.turns.length ?? turns.length) },
+            { label: t("sessionOverview.activity.llmCalls"),  value: String(totalCalls) },
+            { label: t("sessionOverview.activity.toolCalls"), value: String(totalToolCalls) },
+            { label: t("sessionOverview.activity.duration"),  value: durationStr },
+          ]}
+          rightSlot={
+            <>
+              {singleModel && (
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <div style={{ width: 7, height: 7, borderRadius: 2, background: modelColor(singleModel), flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, color: "#6b7280" }}>{shortModelName(singleModel)}</span>
+                </div>
+              )}
+              {multiModel && (
+                <button
+                  onClick={() => setModelsExpanded(v => !v)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 5,
+                    fontSize: 11, padding: "3px 8px", borderRadius: 5,
+                    border: "1px solid #e5e7eb", background: modelsExpanded ? "#eef2ff" : "#f9fafb",
+                    color: modelsExpanded ? "#6366f1" : "#6b7280", cursor: "pointer",
+                  }}
+                >
+                  {t("sessionOverview.activity.models", { n: Object.keys(modelBreakdown!).length })}
+                  <svg width="9" height="9" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    style={{ transform: modelsExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              )}
+              {isMock && <MockBadge />}
+            </>
+          }
+        />
 
         {/* Models expanded panel */}
         {multiModel && modelsExpanded && (
@@ -676,44 +651,13 @@ function SessionOverviewPanel({
           </div>
         )}
 
-        {/* Row 2: Token Ledger — same compact style as list rows */}
-        <div style={{ paddingTop: 10 }}>
-          {/* label + cache ratio */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-            <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>{t("dashboard.tokenLedger")}</span>
-            {cacheRatio !== null && (
-              <>
-                <div style={{ width: 1, height: 10, background: "#e5e7eb" }} />
-                <span style={{ fontSize: 9, fontWeight: 700, color: M.cache_ratio.color }}>
-                  {t("metrics.cacheRatio.label", M.cache_ratio.label)} {fmtPct(cacheRatio)}
-                </span>
-              </>
-            )}
-          </div>
-          {/* values row — mirrors MiniTokenLedger */}
-          <div style={{ display: "flex", gap: 16, alignItems: "flex-end", marginBottom: 5 }}>
-            {ledgerRows.map(({ id, value }) => {
-              const m = M[id];
-              const hasVal = value > 0;
-              return (
-                <div key={id} title={m.description}>
-                  <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 500, marginBottom: 2, whiteSpace: "nowrap" }}>{m.label}</div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: hasVal ? m.color : "#d1d5db", lineHeight: 1 }}>
-                    {hasVal ? fmtK(value) : "—"}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {/* stacked bar */}
-          {tokenTotal > 0 && (
-            <div style={{ height: 3, borderRadius: 2, overflow: "hidden", display: "flex", background: "#f3f4f6" }}>
-              {ledgerRows.filter(r => r.value > 0).map(({ id, value }) => (
-                <div key={id} style={{ flex: value, background: M[id].color }} />
-              ))}
-            </div>
-          )}
-        </div>
+        <TokenLedgerInline
+          freshIn={totalFreshIn ?? 0}
+          cacheRead={totalCacheRead}
+          cacheWrite={totalCacheWrite}
+          output={totalFreshOut ?? 0}
+          cacheRatio={cacheRatio}
+        />
       </div>
 
       {/* ── Badge strip — below token ledger, compact inline style ── */}

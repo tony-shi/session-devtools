@@ -1,7 +1,4 @@
 export type * from "./types";
-export { buildMockReconciliationReport, MOCK_RECONCILIATION_REPORT } from "./reconciliation/report";
-export { inferClaudeProxyAttributions, buildAttributionBreakdown } from "./proxy/attribution";
-export type { AttributionBreakdown } from "./proxy/attribution";
 export {
   parseQuery,
   attributeSnapshot,
@@ -13,27 +10,6 @@ export type {
   SegmentAttribution,
   AttributionCoverage,
 } from "./parser";
-export { parseClaudeJsonlMutations, pairToolUseAndResult } from "./reconstruction/jsonl-mutation-parser";
-export type {
-  ParseJsonlOptions,
-  JsonlMutationParseResult,
-  UnknownJsonlLine,
-  ToolUsePairingResult,
-} from "./reconstruction/jsonl-mutation-parser";
-export {
-  reconstructExpectedClaudeContext,
-  UNIMPLEMENTED_RULES,
-} from "./reconstruction/expected-context-reconstructor";
-export type {
-  HarnessRuleConfig,
-  QueryBoundary,
-  ReconstructInput,
-  UnimplementedRuleId,
-} from "./reconstruction/expected-context-reconstructor";
-export { reconcileClaudeContext } from "./reconciliation/engine";
-export type { ReconcileInput } from "./reconciliation/engine";
-export { buildTargetRequest, buildTargetRequestWithBody, computeRequestLevelExact } from "./target/request-builder";
-export { canonicalJson, canonicalizeJson, hashCanonicalJson, hashSha256Full } from "./target/canonical";
 export {
   CONTEXT_LEDGER_RULES,
   CONTEXT_LEDGER_RULE_BY_ID,

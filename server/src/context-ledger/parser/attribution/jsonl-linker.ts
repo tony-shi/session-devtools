@@ -162,6 +162,7 @@ function buildJsonlOrigin(params: {
   fallbackTurnId?: number;
   toolUseId?: string;
   confidence: JsonlOrigin["confidence"];
+  fullyCovered: boolean;
 }): JsonlOrigin {
   return {
     kind: "jsonl",
@@ -179,6 +180,7 @@ function buildJsonlOrigin(params: {
         : {}),
     ...(params.toolUseId ? { toolUseId: params.toolUseId } : {}),
     confidence: params.confidence,
+    fullyCovered: params.fullyCovered,
   };
 }
 
@@ -195,6 +197,8 @@ function linkToolUseNode(node: SegmentNode, index: JsonlIndex, ctx: CallContext)
     fallbackTurnId: ctx.turnId,
     toolUseId: id,
     confidence: "definitive",
+    // tool_use 是 wire 原子单元，id 精确匹配即整段被解释。
+    fullyCovered: true,
   });
   return true;
 }
@@ -212,6 +216,8 @@ function linkToolResultNode(node: SegmentNode, index: JsonlIndex, ctx: CallConte
     fallbackTurnId: ctx.turnId,
     toolUseId: id,
     confidence: "definitive",
+    // tool_result 是 wire 原子单元（即便 SmooshContent 切出 SR 子节点，本节点作为 container 仍由 wire 协议完整解释）。
+    fullyCovered: true,
   });
   return true;
 }
@@ -238,6 +244,8 @@ function linkUserInputNode(node: SegmentNode, index: JsonlIndex, ctx: CallContex
         fallbackCallId: ctx.callId,
         fallbackTurnId: ctx.turnId,
         confidence: "definitive",
+        // 内容 normalized 相等 → 完整解释。
+        fullyCovered: true,
       });
       return true;
     }
@@ -252,6 +260,8 @@ function linkUserInputNode(node: SegmentNode, index: JsonlIndex, ctx: CallContex
       fallbackCallId: ctx.callId,
       fallbackTurnId: ctx.turnId,
       confidence: "inferred",
+      // 仅按 turn 范围回退，未做内容核对 → partial。
+      fullyCovered: false,
     });
     return true;
   }
@@ -276,6 +286,8 @@ function linkAssistantTextNode(node: SegmentNode, index: JsonlIndex, ctx: CallCo
       fallbackCallId: ctx.callId,
       fallbackTurnId: ctx.turnId,
       confidence: "definitive",
+      // 内容 normalized 相等 → 完整解释。
+      fullyCovered: true,
     });
     return true;
   }
@@ -291,6 +303,8 @@ function linkAssistantTextNode(node: SegmentNode, index: JsonlIndex, ctx: CallCo
         fallbackCallId: ctx.callId,
         fallbackTurnId: ctx.turnId,
         confidence: "estimated",
+        // 严格 v1：非精确相等一律视为 partial（即使 node 整段是 jsonl 子串，信心已降级）。
+        fullyCovered: false,
       });
       return true;
     }
@@ -401,6 +415,9 @@ function linkSmooshSegmentNode(node: SegmentNode, index: JsonlIndex, ctx: CallCo
       fallbackCallId: ctx.callId,
       fallbackTurnId: ctx.turnId,
       confidence: "definitive",
+      // SR 子段：attachment 指纹仅是 node.rawText 的子串（rule 解释外壳 + jsonl 解释动态片段）。
+      // 严格 v1：jsonl 没有完整覆盖整段 SR → partial。
+      fullyCovered: false,
     });
     return true;
   }
@@ -415,6 +432,7 @@ function linkSmooshSegmentNode(node: SegmentNode, index: JsonlIndex, ctx: CallCo
       fallbackCallId: ctx.callId,
       fallbackTurnId: ctx.turnId,
       confidence: "inferred",
+      fullyCovered: false,
     });
     return true;
   }

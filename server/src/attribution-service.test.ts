@@ -127,8 +127,8 @@ describe("attribution-service — loadAttributionTree 端到端", () => {
           resolveCallMeta: (_sid, cid) => {
             if (cid !== 2) return null;
             return {
-              call: { id: 2, timestamp: "2026-01-01T10:00:03Z", turnId: 1, sourceFile },
-              prevCall: { id: 1, timestamp: "2026-01-01T10:00:01Z" },
+              call: { id: 2, timestamp: "2026-01-01T10:00:03Z", turnId: 1, sourceFile, apiRequestId: null },
+              prevCall: { id: 1, timestamp: "2026-01-01T10:00:01Z", apiRequestId: null },
             };
           },
           fetchProxyReqBodyAt: async (_sid, ts) => {
@@ -198,7 +198,7 @@ describe("attribution-service — loadAttributionTree 端到端", () => {
         {} as any,
         {
           resolveCallMeta: () => ({
-            call: { id: 1, timestamp: "2026-01-01T10:00:01Z", turnId: 1, sourceFile },
+            call: { id: 1, timestamp: "2026-01-01T10:00:01Z", turnId: 1, sourceFile, apiRequestId: null },
             prevCall: null,
           }),
           fetchProxyReqBodyAt: async () =>

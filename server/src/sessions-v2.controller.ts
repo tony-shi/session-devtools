@@ -4,7 +4,7 @@ import { runSyncV2 } from "./sync-v2.ts";
 import { parseJsonField } from "./parser-utils.ts";
 import { buildMockDrilldown } from "./session-drilldown-mock.ts";
 import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
-import { loadCallDetail, readProxyRecord } from "./call-detail.ts";
+import { loadCallDetail, readProxyRecord, findProxyRowForCall } from "./call-detail.ts";
 import { loadAttributionTree } from "./attribution-service.ts";
 import { loadDiffTree } from "./diff-tree-service.ts";
 import { loadResponseTree } from "./response-attribution-service.ts";
@@ -189,6 +189,8 @@ export class SessionsV2Controller {
       db,
       callId,
       prevCall?.timestamp,
+      call.apiRequestId,
+      prevCall?.apiRequestId,
     );
   }
 
@@ -219,25 +221,12 @@ export class SessionsV2Controller {
         const curIdx = allCalls.indexOf(cur);
         const prev = curIdx > 0 ? allCalls[curIdx - 1] : null;
         return {
-          call: { id: cur.call.id, timestamp: cur.call.timestamp, turnId: cur.turnId, sourceFile },
-          prevCall: prev ? { id: prev.call.id, timestamp: prev.call.timestamp } : null,
+          call: { id: cur.call.id, timestamp: cur.call.timestamp, turnId: cur.turnId, sourceFile, apiRequestId: cur.call.apiRequestId },
+          prevCall: prev ? { id: prev.call.id, timestamp: prev.call.timestamp, apiRequestId: prev.call.apiRequestId } : null,
         };
       },
-      fetchProxyReqBodyAt: async (sid, ts, excludeProxyId) => {
-        const sql = excludeProxyId !== undefined
-          ? `SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
-             FROM proxy_requests
-             WHERE session_id = ? AND COALESCE(started_at, ts) <= ? AND id != ?
-             ORDER BY COALESCE(started_at, ts) DESC LIMIT 1`
-          : `SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
-             FROM proxy_requests
-             WHERE session_id = ? AND COALESCE(started_at, ts) <= ?
-             ORDER BY COALESCE(started_at, ts) DESC LIMIT 1`;
-        const params: SqlParam[] = excludeProxyId !== undefined ? [sid, ts, excludeProxyId] : [sid, ts];
-        const proxyRow = db.prepare(sql).get(...params) as {
-          id: number; jsonl_file: string; jsonl_byte_offset: number;
-          req_headers: string | null; started_at: string | null;
-        } | undefined;
+      fetchProxyReqBodyAt: async (sid, ts, excludeProxyId, apiRequestId) => {
+        const proxyRow = findProxyRowForCall(db, sid, apiRequestId, ts, excludeProxyId);
         if (!proxyRow) return null;
 
         const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
@@ -288,25 +277,12 @@ export class SessionsV2Controller {
         const curIdx = allCalls.indexOf(cur);
         const prev = curIdx > 0 ? allCalls[curIdx - 1] : null;
         return {
-          call: { id: cur.call.id, timestamp: cur.call.timestamp, turnId: cur.turnId, sourceFile },
-          prevCall: prev ? { id: prev.call.id, timestamp: prev.call.timestamp } : null,
+          call: { id: cur.call.id, timestamp: cur.call.timestamp, turnId: cur.turnId, sourceFile, apiRequestId: cur.call.apiRequestId },
+          prevCall: prev ? { id: prev.call.id, timestamp: prev.call.timestamp, apiRequestId: prev.call.apiRequestId } : null,
         };
       },
-      fetchProxyReqBodyAt: async (sid, ts, excludeProxyId) => {
-        const sql = excludeProxyId !== undefined
-          ? `SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
-             FROM proxy_requests
-             WHERE session_id = ? AND COALESCE(started_at, ts) <= ? AND id != ?
-             ORDER BY COALESCE(started_at, ts) DESC LIMIT 1`
-          : `SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
-             FROM proxy_requests
-             WHERE session_id = ? AND COALESCE(started_at, ts) <= ?
-             ORDER BY COALESCE(started_at, ts) DESC LIMIT 1`;
-        const params: SqlParam[] = excludeProxyId !== undefined ? [sid, ts, excludeProxyId] : [sid, ts];
-        const proxyRow = db.prepare(sql).get(...params) as {
-          id: number; jsonl_file: string; jsonl_byte_offset: number;
-          req_headers: string | null; started_at: string | null;
-        } | undefined;
+      fetchProxyReqBodyAt: async (sid, ts, excludeProxyId, apiRequestId) => {
+        const proxyRow = findProxyRowForCall(db, sid, apiRequestId, ts, excludeProxyId);
         if (!proxyRow) return null;
 
         const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);

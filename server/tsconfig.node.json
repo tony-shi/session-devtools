@@ -11,5 +11,6 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["main.ts", "src/**/*"]
+  "include": ["main.ts", "src/**/*"],
+  "exclude": ["src/context-ledger/_archive/**"]
 }

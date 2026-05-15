@@ -118,8 +118,13 @@ export async function loadAttributionTree(
   callId: number,
   db: Database,
   helpers: {
-    /** 由 controller 注入：通过 timestamp 取 proxy_requests + 读 reqBody 的复用函数 */
-    fetchProxyReqBodyAt: (sessionId: string, ts: string, excludeProxyId?: number) => Promise<{
+    /** 由 controller 注入：优先用 apiRequestId 精确匹配 proxy_requests, fallback 时间戳 */
+    fetchProxyReqBodyAt: (
+      sessionId: string,
+      ts: string,
+      excludeProxyId?: number,
+      apiRequestId?: string | null,
+    ) => Promise<{
       reqBody: Record<string, unknown> | null;
       reqHeaders: Record<string, string>;
       proxyRequestId: number | null;
@@ -127,8 +132,8 @@ export async function loadAttributionTree(
     } | null>;
     /** 由 controller 注入：从 session drilldown 找出 call + prev call 的元信息 */
     resolveCallMeta: (sessionId: string, callId: number) => {
-      call: { id: number; timestamp: string; turnId: number; sourceFile: string };
-      prevCall: { id: number; timestamp: string } | null;
+      call: { id: number; timestamp: string; turnId: number; sourceFile: string; apiRequestId: string | null };
+      prevCall: { id: number; timestamp: string; apiRequestId: string | null } | null;
     } | null;
   },
 ): Promise<AttributionTreeResult> {
@@ -142,7 +147,9 @@ export async function loadAttributionTree(
     };
   }
 
-  const proxy = await helpers.fetchProxyReqBodyAt(sessionId, meta.call.timestamp);
+  const proxy = await helpers.fetchProxyReqBodyAt(
+    sessionId, meta.call.timestamp, undefined, meta.call.apiRequestId,
+  );
   if (!proxy || !proxy.reqBody) {
     return {
       callId, sessionId, hasProxy: false,
@@ -185,6 +192,7 @@ export async function loadAttributionTree(
       sessionId,
       meta.prevCall.timestamp,
       proxy.proxyRequestId ?? undefined,
+      meta.prevCall.apiRequestId,
     );
     if (prevProxy?.reqBody) {
       try {

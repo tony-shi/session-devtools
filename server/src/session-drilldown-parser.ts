@@ -19,6 +19,7 @@ interface JUserEvent {
 interface JAssistantEvent {
   type: "assistant";
   isSidechain?: boolean;
+  requestId?: string;
   message?: {
     id?: string;
     model?: string;
@@ -170,6 +171,7 @@ interface LogicalAssistantCall {
   firstLineIdx: number;
   frameLineIdxs: number[];
   messageId: string | null;
+  apiRequestId: string | null;
 }
 
 function mergeAssistantFrames(
@@ -185,12 +187,20 @@ function mergeAssistantFrames(
     },
   };
 
+  // requestId can vary across frames; prefer the canonical frame's, fall back
+  // to the first frame that has one.
+  const apiRequestId =
+    canonical.ev.requestId
+    ?? frames.find((f) => typeof f.ev.requestId === "string" && f.ev.requestId)?.ev.requestId
+    ?? null;
+
   return {
     ev: merged,
     lineIdx: canonical.lineIdx,
     firstLineIdx: frames[0]?.lineIdx ?? canonical.lineIdx,
     frameLineIdxs: frames.map(({ lineIdx }) => lineIdx),
     messageId: canonical.ev.message?.id ?? null,
+    apiRequestId,
   };
 }
 
@@ -563,8 +573,8 @@ export function parseSessionDrilldown(
           : true; // no id → always include
         if (isCanonical) {
           const logicalCall = msgId
-            ? logicalCallByCanonicalLine.get(j) ?? { ev: aev, lineIdx: j, firstLineIdx: j, frameLineIdxs: [j], messageId: msgId }
-            : { ev: aev, lineIdx: j, firstLineIdx: j, frameLineIdxs: [j], messageId: null };
+            ? logicalCallByCanonicalLine.get(j) ?? { ev: aev, lineIdx: j, firstLineIdx: j, frameLineIdxs: [j], messageId: msgId, apiRequestId: aev.requestId ?? null }
+            : { ev: aev, lineIdx: j, firstLineIdx: j, frameLineIdxs: [j], messageId: null, apiRequestId: aev.requestId ?? null };
           rawCalls.push(logicalCall);
           const stopReason = logicalCall.ev.message?.stop_reason ?? "";
           if (stopReason && stopReason !== "tool_use") break; // turn ends
@@ -765,6 +775,7 @@ export function parseSessionDrilldown(
         id: globalCallIndex,
         indexInTurn: callIdx + 1,
         messageId: rawCalls[callIdx].messageId,
+        apiRequestId: rawCalls[callIdx].apiRequestId,
         jsonlLineIdx: rawCalls[callIdx].lineIdx,
         jsonlFrameLineIdxs: rawCalls[callIdx].frameLineIdxs,
         contextSize,

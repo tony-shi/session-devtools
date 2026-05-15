@@ -36,6 +36,9 @@ export interface ProxyRequest {
   res_cache_read_tokens: number | null;
   res_stop_reason: string | null;
   error_class: string | null;
+  // Anthropic API request-id (from resHeaders["request-id"]); used as the
+  // exact link key to JSONL assistant events' top-level `requestId` field.
+  request_id: string | null;
 }
 
 // Parse SSE text into a flat list of {eventType, data} for the extractor
@@ -92,6 +95,15 @@ export function parseTrafficLine(line: string): Omit<ProxyRequest, "jsonl_file" 
   const bytesIn = Number(reqHeaders["content-length"] ?? reqHeaders["Content-Length"] ?? 0);
   const status = typeof rec.status === "number" ? rec.status : null;
 
+  // Extract Anthropic request-id from response headers (case-insensitive).
+  let requestId: string | null = null;
+  for (const [k, v] of Object.entries(resHeaders)) {
+    if (k.toLowerCase() === "request-id" && typeof v === "string" && v) {
+      requestId = v;
+      break;
+    }
+  }
+
   // Normalize to lowercase for extractor — JSONL preserves original casing (e.g. "X-Claude-Code-Session-Id")
   const reqHeadersLower: Record<string, string> = {};
   for (const [k, v] of Object.entries(reqHeaders)) reqHeadersLower[k.toLowerCase()] = v;
@@ -135,6 +147,7 @@ export function parseTrafficLine(line: string): Omit<ProxyRequest, "jsonl_file" 
     is_stream: isStream,
     ...proxyMeta,
     req_has_tools: proxyMeta.req_has_tools === null ? null : (proxyMeta.req_has_tools ? 1 : 0),
+    request_id: requestId,
   };
 }
 

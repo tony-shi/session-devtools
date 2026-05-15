@@ -54,6 +54,15 @@ export interface RuleOrigin {
   ruleId: string;
   matchMode: "exact" | "regex" | "prefix";
   confidence: Confidence;
+  /**
+   * 是否完整覆盖叶子节点 rawText。严格 v1：
+   *   - exact / structural 全段匹配 → true
+   *   - regex 命中整段（matchedChars === rawChars） → true
+   *   - 其他（regex 子串命中、prefix 锚点、wire fallback 之外的部分匹配） → false
+   *
+   * Audit 用这个标志区分 "解释充分" vs "解释不足（动态注入未覆盖）"。
+   */
+  fullyCovered: boolean;
   dynamicFields?: DynamicFieldWithEvidence[];
 }
 
@@ -76,6 +85,13 @@ export interface JsonlOrigin {
   sourceTurnId?: number;
   toolUseId?: string;
   confidence: Confidence;
+  /**
+   * 是否完整覆盖叶子节点 rawText。严格 v1：
+   *   - tool_use / tool_result id 精确匹配 → true（wire 原子单元）
+   *   - user_input / assistant_text 内容相等（definitive） → true
+   *   - 其他（inferred turn 回退、substring 命中、SR 子段 fingerprint 部分匹配） → false
+   */
+  fullyCovered: boolean;
 }
 
 export type JsonlEventKind =
@@ -126,4 +142,26 @@ export function originStructural(slotId: string): StructuralOrigin {
 
 export function originUnknown(reason: string): UnknownOrigin {
   return { kind: "unknown", reason };
+}
+
+// ─── Coverage 派生 ───────────────────────────────────────────────────────────
+
+/**
+ * CoverageState：叶子节点的归因覆盖完整性。Audit 三桶的主轴。
+ *
+ *   - "full"    rule 或 jsonl origin，且 fullyCovered=true
+ *   - "partial" rule 或 jsonl origin，但 fullyCovered=false（动态注入未覆盖 / 内容近似）
+ *   - "none"    structural 或 unknown origin（无规则、无 jsonl）
+ */
+export type CoverageState = "full" | "partial" | "none";
+
+export function coverageStateOf(origin: SegmentOrigin): CoverageState {
+  switch (origin.kind) {
+    case "rule":
+    case "jsonl":
+      return origin.fullyCovered ? "full" : "partial";
+    case "structural":
+    case "unknown":
+      return "none";
+  }
 }

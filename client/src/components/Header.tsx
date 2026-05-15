@@ -55,7 +55,7 @@ export function Header() {
       {/* Logo */}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <div style={{
-          width: 24, height: 24, borderRadius: 6, background: "#7c3aed",
+          width: 24, height: 24, borderRadius: 6, background: "#6366f1",
           display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
         }}>
           <svg width="13" height="13" fill="none" stroke="white" viewBox="0 0 24 24">

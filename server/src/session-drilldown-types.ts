@@ -101,6 +101,9 @@ export interface LlmCall {
   // JSONL provenance for the logical assistant message behind this call.
   // Indices are 0-based line offsets in the source JSONL file.
   messageId: string | null;
+  // Anthropic API request-id from JSONL assistant event top-level `requestId`.
+  // Exact 1:1 key to proxy_requests.request_id (extracted from resHeaders).
+  apiRequestId: string | null;
   jsonlLineIdx: number | null;
   jsonlFrameLineIdxs: number[];
   contextSize: number;

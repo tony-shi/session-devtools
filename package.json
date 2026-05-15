@@ -46,6 +46,7 @@
     "reconstruct:command": "server/node_modules/.bin/tsx scripts/reconstruct-parallel.ts command",
     "reconstruct:commands": "server/node_modules/.bin/tsx scripts/reconstruct-parallel.ts commands",
     "migrate:proxy-traffic": "server/node_modules/.bin/tsx scripts/migrate-proxy-traffic.ts",
+    "backfill:proxy-request-id": "server/node_modules/.bin/tsx scripts/backfill-proxy-request-id.ts",
     "jsonl:coverage": "server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json scripts/jsonl-coverage-report.ts"
   },
   "dependencies": {

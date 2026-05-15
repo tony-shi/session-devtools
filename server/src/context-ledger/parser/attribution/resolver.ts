@@ -87,11 +87,16 @@ export function resolveFromEvaluation(
   const confidence = deriveConfidence(rule, evaluation);
 
   // —— 新模型：写入 node.origin —— //
+  // fullyCovered：严格 v1。matchedChars 必须等于 rawChars 才算 full；
+  // regex 子串、prefix 锚点匹配天然 partial。
+  const cov = evaluation.charCoverage;
+  const fullyCovered = cov.rawChars > 0 && cov.matchedChars === cov.rawChars;
   const origin: RuleOrigin = {
     kind: "rule",
     ruleId: rule.ruleId,
     matchMode: evaluation.matchMode,
     confidence,
+    fullyCovered,
     ...(evaluation.dynamicFields ? { dynamicFields: evaluation.dynamicFields as DynamicFieldWithEvidence[] } : {}),
   };
   node.origin = origin;
@@ -123,11 +128,13 @@ function wireAttribution(
   wireRuleId: string,
 ): SegmentAttribution {
   // —— 新模型：写合成 wire rule origin —— //
+  // wire 协议是原子单元（整段 tool_use / tool_result / tools.builtin schema 由协议解释），fullyCovered=true。
   node.origin = {
     kind: "rule",
     ruleId: wireRuleId,
     matchMode: "exact",
     confidence: "definitive",
+    fullyCovered: true,
   };
 
   // —— 旧模型投影 —— //

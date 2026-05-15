@@ -185,7 +185,8 @@ export function initProxySchema(): void {
       sse_event_count INTEGER DEFAULT 0,
       is_stream       INTEGER DEFAULT 0,
       jsonl_file        TEXT NOT NULL DEFAULT '',
-      jsonl_byte_offset INTEGER NOT NULL DEFAULT 0
+      jsonl_byte_offset INTEGER NOT NULL DEFAULT 0,
+      request_id      TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_proxy_started ON proxy_requests(started_at);
@@ -232,9 +233,12 @@ export function initProxySchema(): void {
   if (!colSet.has("res_stop_reason"))           db.exec("ALTER TABLE proxy_requests ADD COLUMN res_stop_reason           TEXT");
   if (!colSet.has("error_class"))               db.exec("ALTER TABLE proxy_requests ADD COLUMN error_class               TEXT");
 
-  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_session ON proxy_requests(session_id)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_cli     ON proxy_requests(cli_tool)");
-  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_model   ON proxy_requests(model)");
+  if (!colSet.has("request_id"))                db.exec("ALTER TABLE proxy_requests ADD COLUMN request_id               TEXT");
+
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_session    ON proxy_requests(session_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_cli        ON proxy_requests(cli_tool)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_model      ON proxy_requests(model)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_proxy_request_id ON proxy_requests(session_id, request_id)");
   // 旧的 body 列（仅存量 DB 可能有，不在新表里 — 留给迁移脚本处理，这里不删）
 }
 

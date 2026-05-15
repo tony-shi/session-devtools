@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { parseQuery, attributeSnapshot } from "../index";
 import { assertAllInvariants } from "./invariants";
+import { coverageStateOf } from "./origin";
+import { linkJsonl, type LinkableJsonlEvent } from "./jsonl-linker";
 
 // 目标：验证 PR 2 — attributeSnapshot 把归因结果原地写到 node.origin，且 SegmentAttribution[]
 // 投影仍然产出（向后兼容）。所有不变量在归因后仍然成立。
@@ -102,6 +104,59 @@ describe("PR 2 — attributeSnapshot 原地写 origin", () => {
     for (const a of attrs) {
       expect(leafIds.has(a.nodeId)).toBe(true);
     }
+  });
+
+  it("wire rule origin fullyCovered=true（tool_use / tool_result / builtin schema 均为原子单元）", () => {
+    const snap = parseQuery({ reqBody: reqBodyWithIdentityAndTools(), proxyFile: "t.json" });
+    attributeSnapshot(snap);
+    for (const slot of ["messages.tool_use", "messages.tool_result"]) {
+      const node = Object.values(snap.index).find((n) => n.slotType === slot);
+      expect(node?.origin.kind).toBe("rule");
+      if (node?.origin.kind === "rule") {
+        expect(node.origin.fullyCovered).toBe(true);
+      }
+    }
+  });
+
+  it("identity 静态文本 rule 命中 → fullyCovered=true 且 coverageState=full", () => {
+    const snap = parseQuery({ reqBody: reqBodyWithIdentityAndTools(), proxyFile: "t.json" });
+    attributeSnapshot(snap);
+    const identity = Object.values(snap.index).find((n) => n.slotType === "system.identity");
+    expect(identity?.origin.kind).toBe("rule");
+    if (identity?.origin.kind === "rule") {
+      // identity 模式应当 exact 或 regex 覆盖整段。
+      expect(identity.origin.fullyCovered).toBe(true);
+      expect(coverageStateOf(identity.origin)).toBe("full");
+    }
+  });
+
+  it("jsonl tool_use id 匹配 → JsonlOrigin.fullyCovered=true（atomic wire 单元）", () => {
+    const snap = parseQuery({ reqBody: reqBodyWithIdentityAndTools(), proxyFile: "t.json" });
+    attributeSnapshot(snap);
+    const events: LinkableJsonlEvent[] = [
+      {
+        lineIdx: 7,
+        type: "assistant",
+        callId: 1,
+        turnId: 0,
+        toolUses: [{ id: "toolu_test123", name: "Read" }],
+      },
+    ];
+    linkJsonl(snap, events, { callId: 1, turnId: 0 });
+    const toolUse = Object.values(snap.index).find((n) => n.slotType === "messages.tool_use");
+    expect(toolUse?.origin.kind).toBe("jsonl");
+    if (toolUse?.origin.kind === "jsonl") {
+      expect(toolUse.origin.fullyCovered).toBe(true);
+      expect(coverageStateOf(toolUse.origin)).toBe("full");
+    }
+  });
+
+  it("coverageStateOf(structural / unknown) === 'none'", () => {
+    const snap = parseQuery({ reqBody: reqBodyWithIdentityAndTools(), proxyFile: "t.json" });
+    attributeSnapshot(snap);
+    const container = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt-block");
+    expect(container).toBeDefined();
+    if (container) expect(coverageStateOf(container.origin)).toBe("none");
   });
 
   it("无 rule 命中的叶子保留 structural/no_rule_matched，投影输出 rule_gap", () => {
