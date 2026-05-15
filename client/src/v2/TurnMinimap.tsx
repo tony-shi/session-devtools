@@ -22,6 +22,8 @@ import {
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import type { LlmCall, UserTurn } from "./drilldown-types";
+import { getToolPalette } from "./shared/toolRegistry";
+import { CHART_COLORS, TOOLTIP_PRESET, brandAreaGradient } from "./shared/chart-theme";
 
 echarts.use([
   LineChart,
@@ -44,9 +46,17 @@ function fmtK(n: number): string {
 const TOOL_ROWS = ["Read", "Write", "Edit", "Bash", "Grep", "Agent", "Web", "Other"] as const;
 type ToolRow = typeof TOOL_ROWS[number];
 
+// Accents come from the shared tool registry so they stay aligned with chip
+// colors elsewhere in the app. "Web" row aliases to WebFetch, "Other" falls back.
 const TOOL_ACCENT: Record<ToolRow, string> = {
-  Read: "#4f46e5", Write: "#d97706", Edit: "#ea580c", Bash: "#16a34a",
-  Grep: "#2563eb", Agent: "#7c3aed", Web: "#0891b2", Other: "#64748b",
+  Read:  getToolPalette("Read").accent,
+  Write: getToolPalette("Write").accent,
+  Edit:  getToolPalette("Edit").accent,
+  Bash:  getToolPalette("Bash").accent,
+  Grep:  getToolPalette("Grep").accent,
+  Agent: getToolPalette("Agent").accent,
+  Web:   getToolPalette("WebFetch").accent,
+  Other: getToolPalette("__unknown__").accent,
 };
 
 function classifyTool(name: string): ToolRow {
@@ -415,67 +425,64 @@ function buildOption(data: MinimapData, tFn: (key: string, fallback?: string) =>
     xAxis: [
       {
         id: "xCtx", gridId: "ctx", gridIndex: 0, type: "category", data: callCats,
-        boundaryGap: true, axisLine: { lineStyle: { color: "#e5e7eb" } },
+        boundaryGap: true, axisLine: { lineStyle: { color: CHART_COLORS.borderLine } },
         axisTick: { show: false }, axisLabel: { show: false },
-        splitLine: { show: true, lineStyle: { color: "#f3f4f6" } },
+        splitLine: { show: true, lineStyle: { color: CHART_COLORS.splitLine } },
       },
       {
         id: "xMatrix", gridId: "matrix", gridIndex: 1, type: "category", data: callCats,
         boundaryGap: true, position: "top",
-        axisLine: { lineStyle: { color: "#e5e7eb" } }, axisTick: { show: false },
-        axisLabel: { interval: xLabelInterval, hideOverlap: true, fontSize: 9, color: "#94a3b8" },
-        splitLine: { show: true, lineStyle: { color: "#f1f5f9" } },
+        axisLine: { lineStyle: { color: CHART_COLORS.borderLine } }, axisTick: { show: false },
+        axisLabel: { interval: xLabelInterval, hideOverlap: true, fontSize: 9, color: CHART_COLORS.axisLabel },
+        splitLine: { show: true, lineStyle: { color: CHART_COLORS.splitLine } },
         splitArea: { show: true, areaStyle: { color: ["#ffffff", "#fafafa"] } },
       },
     ],
     yAxis: [
       {
         id: "yCtx", gridId: "ctx", gridIndex: 0, type: "value", min: 0, max: maxCtx,
-        axisLabel: { fontSize: 8, color: "#cbd5e1", formatter: (v: number) => fmtK(v), width: 54, overflow: "truncate" },
+        axisLabel: { fontSize: 9, color: CHART_COLORS.axisLabel, formatter: (v: number) => fmtK(v), width: 54, overflow: "truncate" },
         axisLine: { show: false }, axisTick: { show: false },
-        splitLine: { show: true, lineStyle: { color: "#f1f5f9" } },
+        splitLine: { show: true, lineStyle: { color: CHART_COLORS.splitLine } },
       },
       {
         id: "yMatrix", gridId: "matrix", gridIndex: 1, type: "category", data: visibleRows,
         inverse: false, axisLine: { show: false }, axisTick: { show: false },
         axisLabel: { fontSize: 10, color: "#374151", fontWeight: 700 },
-        splitLine: { show: true, lineStyle: { color: "#f1f5f9" } },
+        splitLine: { show: true, lineStyle: { color: CHART_COLORS.splitLine } },
         splitArea: { show: true, areaStyle: { color: ["#ffffff", "#fbfdff"] } },
       },
     ],
     tooltip: {
+      ...TOOLTIP_PRESET,
       trigger: "axis", axisPointer: { type: "line" },
-      backgroundColor: "#111827", borderColor: "#374151", borderWidth: 1,
-      textStyle: { color: "#f9fafb", fontSize: 11 },
-      extraCssText: "max-width: 520px; white-space: normal;",
       formatter: tooltipFormatter,
     },
     series: [
       {
         id: "ctx-line", name: "Context", type: "line",
         xAxisIndex: 0, yAxisIndex: 0, data: calls.map(c => c.contextSize),
-        lineStyle: { color: "#6366f1", width: 2.5 },
+        lineStyle: { color: CHART_COLORS.brand, width: 2.5 },
         symbol: "circle", showSymbol: calls.length <= ZOOM_THRESHOLD, symbolSize: 4,
-        itemStyle: { color: "#6366f1" },
-        areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
-          colorStops: [{ offset: 0, color: "#6366f11f" }, { offset: 1, color: "#6366f103" }] } },
+        itemStyle: { color: CHART_COLORS.brand },
+        areaStyle: { color: brandAreaGradient() },
         markPoint: {
           symbol: "diamond", symbolSize: 11,
           data: [
             ...calls.filter(c => c.isCompaction).map(c => ({
               coord: [c.idx, c.contextSize],
-              itemStyle: { color: "#dc2626" }, label: { show: false },
+              itemStyle: { color: CHART_COLORS.compaction }, label: { show: false },
             })),
             ...subAgentEvents.map(ev => {
               const call = calls[ev.triggerIdx];
               return {
                 coord: [ev.triggerIdx, call?.contextSize ?? 0],
                 symbol: "triangle", symbolSize: 12,
-                itemStyle: { color: "#a855f7", borderColor: "#ffffff", borderWidth: 1 },
+                itemStyle: { color: CHART_COLORS.subAgent, borderColor: "#ffffff", borderWidth: 1 },
                 label: { show: true, position: "top" as const,
-                  formatter: `-${fmtK(ev.totalSavings)}`, color: "#7e22ce",
-                  fontSize: 9, fontWeight: 700, backgroundColor: "#faf5ff",
-                  borderColor: "#d8b4fe", borderWidth: 1, borderRadius: 3, padding: [1, 4] },
+                  formatter: `-${fmtK(ev.totalSavings)}`, color: CHART_COLORS.subAgentDark,
+                  fontSize: 9, fontWeight: 700, backgroundColor: CHART_COLORS.subAgentWeakBg,
+                  borderColor: CHART_COLORS.subAgentWeakBd, borderWidth: 1, borderRadius: 3, padding: [1, 4] },
               };
             }),
           ],
@@ -486,8 +493,8 @@ function buildOption(data: MinimapData, tFn: (key: string, fallback?: string) =>
         id: "ctx-counterfactual", name: "If inline (no sub-agent)", type: "line",
         xAxisIndex: 0, yAxisIndex: 0, data: counterfactual,
         connectNulls: false, showSymbol: false, symbol: "none",
-        lineStyle: { color: "#a855f7", width: 1.5, type: "dashed" },
-        itemStyle: { color: "#a855f7" },
+        lineStyle: { color: CHART_COLORS.subAgent, width: 1.5, type: "dashed" },
+        itemStyle: { color: CHART_COLORS.subAgent },
         areaStyle: { color: "#a855f714", origin: "start" },
         emphasis: { focus: "none" }, z: 2, silent: false,
       },

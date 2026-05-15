@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from "react";
 import * as echarts from "echarts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { scaleLinear, scaleSqrt, scaleOrdinal, line as d3line, curveCatmullRom, schemeTableau10 } from "d3";
+import { scaleLinear, scaleSqrt, line as d3line, curveCatmullRom } from "d3";
 import { TurnMinimap } from "./TurnMinimap";
 import type { SessionV2 } from "./types";
 import type { DiffEntry, IntervalEvent, IntervalEventKind, LlmCall, ModelStats, SessionDrilldown, ToolCallSlot, UserTurn, InterTurnBlock, CallDetail, SegmentDiff } from "./drilldown-types";
@@ -29,6 +29,9 @@ import { ResponseTreePanel } from "./ResponseTreePanel";
 import { DiffPanel } from "./DiffPanel";
 import { TOKEN_METRICS } from "./metricRegistry";
 import { HeaderStatRow, TokenLedgerInline } from "./shared/HeaderStats";
+import { SegmentedToggle } from "./shared/SegmentedToggle";
+import { getToolPalette } from "./shared/toolRegistry";
+import { CHART_COLORS, TOOLTIP_PRESET, brandAreaGradient } from "./shared/chart-theme";
 
 // Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
 type MockDiffEntry = DiffEntry;
@@ -707,15 +710,18 @@ function SessionOverviewPanel({
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>{t("sessionOverview.charts.toolUsage")}</div>
             <div>
-              {dist.map(entry => (
-                <div key={entry.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-                  <span style={{ fontSize: 11, color: "#374151", width: 120, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
-                  <div style={{ flex: 1, height: 5, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
-                    <div style={{ width: `${(entry.count / maxCount) * 100}%`, height: "100%", background: "#6366f1", borderRadius: 2 }} />
+              {dist.map(entry => {
+                const accent = getToolPalette(entry.name).accent;
+                return (
+                  <div key={entry.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                    <span style={{ fontSize: 11, color: "#374151", width: 120, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
+                    <div style={{ flex: 1, height: 5, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ width: `${(entry.count / maxCount) * 100}%`, height: "100%", background: accent, borderRadius: 2 }} />
+                    </div>
+                    <span style={{ fontSize: 11, color: "#6b7280", width: 36, textAlign: "right", flexShrink: 0 }}>{entry.count}</span>
                   </div>
-                  <span style={{ fontSize: 11, color: "#6b7280", width: 36, textAlign: "right", flexShrink: 0 }}>{entry.count}</span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );
@@ -959,7 +965,7 @@ function ContextTimelineChart({
   // Build ECharts option based on current mode
   const buildOption = (mode: TimelineXMode): echarts.EChartsOption => {
     const nT = turnPoints.length;
-    const lineColor = "#6366f1";
+    const lineColor = CHART_COLORS.brand;
 
     const labelStyle = {
       fontSize: 9,
@@ -984,7 +990,7 @@ function ContextTimelineChart({
           formatter: `Max\n${fmtK(maxVal)}`,
           position: "top" as const,
           ...labelStyle,
-          color: "#6366f1",
+          color: CHART_COLORS.brand,
           backgroundColor: "#eef2ff",
         },
       });
@@ -1022,7 +1028,7 @@ function ContextTimelineChart({
         if (delta <= 0) return "";
         return `+${fmtK(delta)}`;
       },
-      color: "#6366f1",
+      color: CHART_COLORS.brand,
       backgroundColor: "transparent",
     });
 
@@ -1045,7 +1051,7 @@ function ContextTimelineChart({
         xAxis: {
           type: "category",
           data: xLabels,
-          axisLabel: { fontSize: 10, color: "#9ca3af", interval: 0 },
+          axisLabel: { fontSize: 10, color: CHART_COLORS.axisLabel, interval: 0 },
           axisLine: { show: false },
           axisTick: { show: false },
           splitLine: { show: false },
@@ -1055,11 +1061,11 @@ function ContextTimelineChart({
           min: 0,
           axisLabel: {
             fontSize: 9,
-            color: "#d1d5db",
+            color: CHART_COLORS.axisLabel,
             formatter: (v: number) => fmtK(v),
             inside: false,
           },
-          splitLine: { lineStyle: { color: "#f3f4f6" } },
+          splitLine: { lineStyle: { color: CHART_COLORS.splitLine } },
           axisLine: { show: false },
           axisTick: { show: false },
         },
@@ -1074,7 +1080,7 @@ function ContextTimelineChart({
               compactionIndices.includes((params as { dataIndex: number }).dataIndex) ? 8 : 5,
             symbol: (_, params) =>
               compactionIndices.includes((params as { dataIndex: number }).dataIndex) ? "diamond" : "circle",
-            areaStyle: { color: lineColor, opacity: 0.06 },
+            areaStyle: { color: brandAreaGradient() },
             label: deltaLabel(values),
             labelLayout: { hideOverlap: true },
             markPoint: {
@@ -1082,7 +1088,7 @@ function ContextTimelineChart({
               data: [
                 ...compactionIndices.map(i => ({
                   coord: [xLabels[i], values[i]],
-                  itemStyle: { color: "#ef4444" },
+                  itemStyle: { color: CHART_COLORS.compaction },
                   symbol: "diamond",
                   symbolSize: 8,
                   label: { show: false },
@@ -1093,6 +1099,7 @@ function ContextTimelineChart({
           },
         ],
         tooltip: {
+          ...TOOLTIP_PRESET,
           trigger: "axis",
           formatter: (params: unknown) => {
             const p = (params as Array<{ name: string; value: number }>)[0];
@@ -1101,7 +1108,6 @@ function ContextTimelineChart({
             const compTag = tp?.isCompaction ? " ◆ compaction" : "";
             return `${p.name}: ${fmtK(p.value)}${compTag}`;
           },
-          textStyle: { fontSize: 11 },
         },
       };
     } else {
@@ -1140,7 +1146,7 @@ function ContextTimelineChart({
           max: dataPoints[dataPoints.length - 1]?.value[0] ?? "dataMax",
           axisLabel: {
             fontSize: 9,
-            color: "#9ca3af",
+            color: CHART_COLORS.axisLabel,
             formatter: (v: number) => {
               if (v < 60) return `${v}s`;
               return `${Math.round(v / 60)}m`;
@@ -1155,10 +1161,10 @@ function ContextTimelineChart({
           min: 0,
           axisLabel: {
             fontSize: 9,
-            color: "#d1d5db",
+            color: CHART_COLORS.axisLabel,
             formatter: (v: number) => fmtK(v),
           },
-          splitLine: { lineStyle: { color: "#f3f4f6" } },
+          splitLine: { lineStyle: { color: CHART_COLORS.splitLine } },
           axisLine: { show: false },
           axisTick: { show: false },
         },
@@ -1171,18 +1177,19 @@ function ContextTimelineChart({
             itemStyle: {
               color: (params: unknown) => {
                 const idx = (params as { dataIndex: number }).dataIndex;
-                return dataPoints[idx]?.isCompaction ? "#ef4444" : lineColor;
+                return dataPoints[idx]?.isCompaction ? CHART_COLORS.compaction : lineColor;
               },
             },
             symbolSize: (_, params) => dataPoints[(params as { dataIndex: number }).dataIndex]?.isCompaction ? 8 : 5,
             symbol: (_, params) => dataPoints[(params as { dataIndex: number }).dataIndex]?.isCompaction ? "diamond" : "circle",
-            areaStyle: { color: lineColor, opacity: 0.06 },
+            areaStyle: { color: brandAreaGradient() },
             label: deltaLabel(ctxValues),
             labelLayout: { hideOverlap: true },
             markPoint: { silent: true, data: timeAnnotations },
           },
         ],
         tooltip: {
+          ...TOOLTIP_PRESET,
           trigger: "axis",
           formatter: (params: unknown) => {
             const p = (params as Array<{ dataIndex: number; value: [number, number] }>)[0];
@@ -1191,7 +1198,6 @@ function ContextTimelineChart({
             const compTag = d?.isCompaction ? " ◆" : "";
             return `T${d?.turnId}: ${fmtK(p.value[1])}${compTag}`;
           },
-          textStyle: { fontSize: 11 },
         },
       };
     }
@@ -1224,21 +1230,15 @@ function ContextTimelineChart({
   return (
     <div style={{ overflow: "hidden" }}>
       {/* Mode toggle */}
-      <div style={{ display: "flex", justifyContent: "flex-end", padding: "6px 10px 0", gap: 4 }}>
-        {(["linear", "time"] as TimelineXMode[]).map(mode => (
-          <button
-            key={mode}
-            onClick={() => setXMode(mode)}
-            style={{
-              fontSize: 10, padding: "2px 8px", borderRadius: 4, cursor: "pointer",
-              background: xMode === mode ? "#6366f1" : "transparent",
-              color: xMode === mode ? "#fff" : "#9ca3af",
-              border: `1px solid ${xMode === mode ? "#6366f1" : "#e5e7eb"}`,
-            }}
-          >
-            {mode === "linear" ? t("sessionOverview.charts.xAxisLinear") : t("sessionOverview.charts.xAxisTime")}
-          </button>
-        ))}
+      <div style={{ padding: "6px 10px 0" }}>
+        <SegmentedToggle<TimelineXMode>
+          value={xMode}
+          onChange={setXMode}
+          options={[
+            { id: "linear", label: t("sessionOverview.charts.xAxisLinear") },
+            { id: "time",   label: t("sessionOverview.charts.xAxisTime") },
+          ]}
+        />
       </div>
 
       <div ref={chartRef} style={{ width: "100%", height: 150 }} />
@@ -1809,18 +1809,10 @@ function SectionLabel({ children, mock }: { children: React.ReactNode; mock?: bo
 // ─── Agent Loop Flow (horizontal trace view) ─────────────────────────────────
 
 // ─── Tool chip color helpers ──────────────────────────────────────────────────
-const TOOL_COLOR: Record<string, { fg: string; bg: string; border: string }> = {
-  Read:    { fg: "#3b82f6", bg: "#eff6ff", border: "#bfdbfe" },
-  Bash:    { fg: "#d97706", bg: "#fffbeb", border: "#fde68a" },
-  Write:   { fg: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
-  Edit:    { fg: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
-  Glob:    { fg: "#6366f1", bg: "#eff6ff", border: "#c7d2fe" },
-  Grep:    { fg: "#6366f1", bg: "#eff6ff", border: "#c7d2fe" },
-  WebFetch:{ fg: "#8b5cf6", bg: "#faf5ff", border: "#ddd6fe" },
-  Task:    { fg: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
-};
+// Palettes live in shared/toolRegistry — call `getToolPalette(name)` for either
+// chip ({fg,bg,border}) or accent (solid) use.
 function toolChipStyle(name: string) {
-  return TOOL_COLOR[name] ?? { fg: "#6b7280", bg: "#f9fafb", border: "#e5e7eb" };
+  return getToolPalette(name);
 }
 
 // ─── Hybrid Agent Flow (main Turn view) ──────────────────────────────────────
@@ -1835,14 +1827,9 @@ function toolChipStyle(name: string) {
 
 // ─── D3 scales (module-level, shared) ────────────────────────────────────────
 
-// Tool-name → colour  (reuses Tableau-10 palette, maps tool names deterministically)
-const TOOL_NAMES_ORDERED = ["Read", "Bash", "Write", "Edit", "Glob", "Grep", "WebFetch", "Task", "Other"];
-const toolColorScale = scaleOrdinal<string, string>(schemeTableau10).domain(TOOL_NAMES_ORDERED);
-
-// Override the Tableau colours with our brand palette where defined
+// Tool-name → colour — single source via toolRegistry.
 function d3ToolColor(name: string): string {
-  const override = TOOL_COLOR[name];
-  return override ? override.fg : toolColorScale(name);
+  return getToolPalette(name).accent;
 }
 
 // ─── Hybrid Agent Flow ────────────────────────────────────────────────────────
@@ -2413,15 +2400,12 @@ function TransitionBridge({
           {group.isParallel && <span style={{ fontSize: 9, fontWeight: 800, color: "#7c3aed" }}>∥</span>}
           {Object.entries(toolCounts).map(([toolName, count]) => {
             const tc = toolChipStyle(toolName);
-            // Use D3 ordinal color as accent when brand palette has no entry
-            const accentColor = d3ToolColor(toolName);
             return (
               <span key={toolName} style={{
                 fontSize: 9, fontWeight: 700,
                 color: tc.fg, background: tc.bg, borderRadius: 3,
                 padding: "1px 4px",
                 border: `1px solid ${tc.border}`,
-                outline: tc === (TOOL_COLOR[toolName] ?? null) ? "none" : `1px solid ${accentColor}30`,
               }}>
                 {toolName}{count > 1 ? ` ×${count}` : ""}
               </span>
@@ -2535,18 +2519,8 @@ function TurnViewToggle({ view, onChange }: { view: TurnView; onChange: (v: Turn
 
 // ─── JSONL Call Chain ─────────────────────────────────────────────────────────
 
-const TOOL_CHIP: Record<string, { bg: string; border: string; fg: string }> = {
-  Read:     { bg: "#eff6ff", border: "#bfdbfe", fg: "#2563eb" },
-  Write:    { bg: "#f0fdf4", border: "#bbf7d0", fg: "#16a34a" },
-  Edit:     { bg: "#fff7ed", border: "#fed7aa", fg: "#ea580c" },
-  Bash:     { bg: "#fffbeb", border: "#fde68a", fg: "#d97706" },
-  Grep:     { bg: "#eff6ff", border: "#c7d2fe", fg: "#4f46e5" },
-  Glob:     { bg: "#eff6ff", border: "#c7d2fe", fg: "#4f46e5" },
-  Agent:    { bg: "#faf5ff", border: "#ddd6fe", fg: "#7c3aed" },
-  WebFetch: { bg: "#ecfeff", border: "#a5f3fc", fg: "#0891b2" },
-};
 function toolChip(name: string) {
-  return TOOL_CHIP[name] ?? { bg: "#f9fafb", border: "#e5e7eb", fg: "#6b7280" };
+  return getToolPalette(name);
 }
 
 function fmtBytes(n: number): string {
@@ -3215,15 +3189,6 @@ function UserTurnDetailPanel({
   const cacheInputTotal = turn.cacheRead + turn.cacheWrite + totalFreshIn;
   const cacheRatio = cacheInputTotal > 0 ? turn.cacheRead / cacheInputTotal * 100 : null;
 
-  const M = TOKEN_METRICS;
-  const ledgerRows = [
-    { id: "fresh_input", value: totalFreshIn },
-    { id: "cache_read",  value: turn.cacheRead },
-    { id: "cache_write", value: turn.cacheWrite },
-    { id: "output",      value: totalFreshOut },
-  ];
-  const ledgerTotal = ledgerRows.reduce((s, r) => s + r.value, 0);
-
   const risks: Array<{ type: "compaction" | "unknown-spike" | "large-growth" | "near-limit" | "tool-heavy" }> = [];
   if (turn.hasCompaction)   risks.push({ type: "compaction" });
   if (turn.hasUnknownSpike) risks.push({ type: "unknown-spike" });
@@ -3235,85 +3200,47 @@ function UserTurnDetailPanel({
       {/* ── Summary header — mirrors SessionOverviewPanel layout ──── */}
       <div style={{ marginBottom: 16 }}>
 
-        {/* Row 1: title + activity stats */}
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 24, paddingBottom: 10, borderBottom: "1px solid #f3f4f6", flexWrap: "wrap" }}>
-          {/* Turn label */}
-          <div>
-            <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{t("sessionOverview.turn.label")}</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#111827", lineHeight: 1 }}>{turn.id}</div>
-          </div>
-
-          {[
+        <HeaderStatRow
+          leadingLabel={{ label: t("sessionOverview.turn.label"), value: String(turn.id) }}
+          stats={[
             { label: t("sessionOverview.activity.llmCalls"),  value: String(turn.llmCallCount) },
             { label: t("sessionOverview.activity.toolCalls"), value: String(turn.toolCallCount) },
             ...(turnSubAgents.length > 0
-              ? [{ label: t("sessionOverview.badges.subAgents"), value: String(turnSubAgents.length), color: "#6366f1" as string | undefined }]
+              ? [{ label: t("sessionOverview.badges.subAgents"), value: String(turnSubAgents.length), color: "#a855f7" }]
               : []),
             { label: t("sessionOverview.activity.duration"),  value: dur || "—" },
-          ].map(({ label, value, color }) => (
-            <div key={label}>
-              <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{label}</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: color ?? "#111827", lineHeight: 1 }}>{value}</div>
-            </div>
-          ))}
+          ]}
+          rightSlot={(() => {
+            const hasCommand = turn.calls.some(c => c.intervalEvents.some(e => e.kind === "user:command"));
+            const hasUnknown = turn.calls.some(c => c.intervalEvents.some(e => e.kind === "unknown"));
+            const subAgentCount = turn.calls.reduce((s, c) => s + c.subAgents.length, 0);
+            type TBadge = { icon: React.ReactNode; label: string; color: string; border: string; bg: string };
+            const tbadges: TBadge[] = [
+              turn.hasCompaction ? { icon: BADGE_ICONS.compaction(9, "#ef4444"), label: t("sessionOverview.badges.compaction"), color: "#ef4444", border: "#fecaca", bg: "#fef2f2" } : null,
+              turn.errorCount > 0 ? { icon: BADGE_ICONS.error(9, "#dc2626"), label: `${turn.errorCount}`, color: "#dc2626", border: "#fecaca", bg: "#fef2f2" } : null,
+              subAgentCount > 0 ? { icon: BADGE_ICONS.subAgent(9, "#a855f7"), label: `${subAgentCount}`, color: "#a855f7", border: "#e9d5ff", bg: "#faf5ff" } : null,
+              hasCommand ? { icon: BADGE_ICONS.command(9, "#d97706"), label: t("sessionOverview.badges.commands"), color: "#d97706", border: "#fde68a", bg: "#fffbeb" } : null,
+              hasUnknown ? { icon: BADGE_ICONS.unknown(9, "#9ca3af"), label: t("sessionOverview.badges.unknown"), color: "#9ca3af", border: "#e5e7eb", bg: "#f9fafb" } : null,
+            ].filter(Boolean) as TBadge[];
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                {tbadges.map(b => (
+                  <span key={b.label} style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 600, color: b.color, background: b.bg, border: `1px solid ${b.border}`, borderRadius: 4, padding: "2px 5px" }}>
+                    {b.icon}{b.label}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
+        />
 
-          {/* Right side: event badges */}
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4 }}>
-            {(() => {
-              const hasCommand = turn.calls.some(c => c.intervalEvents.some(e => e.kind === "user:command"));
-              const hasUnknown = turn.calls.some(c => c.intervalEvents.some(e => e.kind === "unknown"));
-              const subAgentCount = turn.calls.reduce((s, c) => s + c.subAgents.length, 0);
-              type TBadge = { icon: React.ReactNode; label: string; color: string; border: string; bg: string };
-              const tbadges: TBadge[] = [
-                turn.hasCompaction ? { icon: BADGE_ICONS.compaction(9, "#ef4444"), label: t("sessionOverview.badges.compaction"), color: "#ef4444", border: "#fecaca", bg: "#fef2f2" } : null,
-                turn.errorCount > 0 ? { icon: BADGE_ICONS.error(9, "#dc2626"), label: `${turn.errorCount}`, color: "#dc2626", border: "#fecaca", bg: "#fef2f2" } : null,
-                subAgentCount > 0 ? { icon: BADGE_ICONS.subAgent(9, "#7c3aed"), label: `${subAgentCount}`, color: "#7c3aed", border: "#e9d5ff", bg: "#faf5ff" } : null,
-                hasCommand ? { icon: BADGE_ICONS.command(9, "#d97706"), label: t("sessionOverview.badges.commands"), color: "#d97706", border: "#fde68a", bg: "#fffbeb" } : null,
-                hasUnknown ? { icon: BADGE_ICONS.unknown(9, "#9ca3af"), label: t("sessionOverview.badges.unknown"), color: "#9ca3af", border: "#e5e7eb", bg: "#f9fafb" } : null,
-              ].filter(Boolean) as TBadge[];
-              return tbadges.map(b => (
-                <span key={b.label} style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 600, color: b.color, background: b.bg, border: `1px solid ${b.border}`, borderRadius: 4, padding: "2px 5px" }}>
-                  {b.icon}{b.label}
-                </span>
-              ));
-            })()}
-          </div>
-        </div>
-
-        {/* Row 2: Token Ledger — identical to Session style */}
-        <div style={{ paddingTop: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-            <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>{t("dashboard.tokenLedger")}</span>
-            {cacheRatio !== null && (
-              <>
-                <div style={{ width: 1, height: 10, background: "#e5e7eb" }} />
-                <span style={{ fontSize: 9, fontWeight: 700, color: M.cache_ratio.color }}>
-                  {t("metrics.cacheRatio.label", M.cache_ratio.label)} {fmtPct(cacheRatio)}
-                </span>
-              </>
-            )}
-          </div>
-          <div style={{ display: "flex", gap: 16, alignItems: "flex-end", marginBottom: 5 }}>
-            {ledgerRows.map(({ id, value }) => {
-              const m = M[id];
-              return (
-                <div key={id} title={m.description}>
-                  <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 500, marginBottom: 2, whiteSpace: "nowrap" }}>{m.label}</div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: value > 0 ? m.color : "#d1d5db", lineHeight: 1 }}>
-                    {value > 0 ? fmtK(value) : "—"}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {ledgerTotal > 0 && (
-            <div style={{ height: 3, borderRadius: 2, overflow: "hidden", display: "flex", background: "#f3f4f6" }}>
-              {ledgerRows.filter(r => r.value > 0).map(({ id, value }) => (
-                <div key={id} style={{ flex: value, background: M[id].color }} />
-              ))}
-            </div>
-          )}
-        </div>
+        <TokenLedgerInline
+          freshIn={totalFreshIn}
+          cacheRead={turn.cacheRead}
+          cacheWrite={turn.cacheWrite}
+          output={totalFreshOut}
+          cacheRatio={cacheRatio}
+        />
       </div>
 
       {/* ── Call Minimap ──────────────────────────────────────────── */}
@@ -5228,24 +5155,18 @@ function AttributionSection({
   return (
     <div>
       {/* Request / Response 子 tab */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
-        {([
-          { id: "request" as const,  label: t("attribution.request") },
-          { id: "response" as const, label: t("attribution.response") },
-        ]).map(({ id, label }) => (
-          <button
-            key={id}
-            onClick={() => setSide(id)}
-            style={{
-              fontSize: 11, padding: "5px 14px",
-              background: side === id ? "#eef2ff" : "transparent",
-              border: `1px solid ${side === id ? "#c7d2fe" : "#e5e7eb"}`,
-              borderRadius: 5, cursor: "pointer",
-              color: side === id ? "#4338ca" : "#6b7280",
-              fontWeight: side === id ? 700 : 500,
-            }}
-          >{label}</button>
-        ))}
+      <div style={{ marginBottom: 10 }}>
+        <SegmentedToggle<AttributionSide>
+          value={side}
+          onChange={setSide}
+          align="start"
+          size="md"
+          variant="soft"
+          options={[
+            { id: "request",  label: t("attribution.request") },
+            { id: "response", label: t("attribution.response") },
+          ]}
+        />
       </div>
 
       {side === "request" ? (
@@ -5328,7 +5249,7 @@ function LlmCallDetailPanel({
           {call.isCompaction && <RiskBadge type="compaction" />}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {onShowTurnContext && (
-              <button onClick={onShowTurnContext} style={{ border: "1px solid #dbeafe", background: "#eff6ff", color: "#2563eb", borderRadius: 5, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+              <button onClick={onShowTurnContext} style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#6366f1", borderRadius: 5, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
                 Show in turn
               </button>
             )}
@@ -5353,66 +5274,29 @@ function LlmCallDetailPanel({
           </div>
         </div>
 
-        {/* Activity row — flat, same style as session overview */}
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 24, paddingBottom: 10, borderBottom: "1px solid #f3f4f6", flexWrap: "wrap" }}>
-          {[
+        <HeaderStatRow
+          stats={[
             { label: "Context",   value: fmtK(call.contextSize),
               color: nearLimit ? "#ea580c" : undefined,
               tooltip: "Total input context" },
             { label: "Δ vs prev", value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`,
               color: call.significantDelta > 10000 ? "#dc2626" : call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : undefined,
               tooltip: "Context size delta vs previous call" },
-            { label: "Tool Calls", value: String(call.toolCalls?.length ?? 0), color: undefined, tooltip: "" },
-          ].map(({ label, value, color, tooltip }) => (
-            <div key={label} title={tooltip}>
-              <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{label}</div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: color ?? "#111827", lineHeight: 1 }}>{value}</div>
-            </div>
-          ))}
-        </div>
+            { label: "Tool Calls", value: String(call.toolCalls?.length ?? 0) },
+          ]}
+        />
 
-        {/* Token Ledger — same compact style as session overview */}
         {(() => {
-          const M = TOKEN_METRICS;
-          const ledger = [
-            { id: "fresh_input", value: freshIn },
-            { id: "cache_read",  value: call.cacheRead },
-            { id: "cache_write", value: call.cacheWrite },
-            { id: "output",      value: call.outputTokens },
-          ];
-          const total = freshIn + call.cacheRead + call.cacheWrite + call.outputTokens;
           const inputTotal = freshIn + call.cacheRead;
           const cacheRatio = inputTotal > 0 ? call.cacheRead / inputTotal * 100 : null;
           return (
-            <div style={{ paddingTop: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-                <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>{t("dashboard.tokenLedger")}</span>
-                {cacheRatio !== null && (
-                  <>
-                    <div style={{ width: 1, height: 10, background: "#e5e7eb" }} />
-                    <span style={{ fontSize: 9, fontWeight: 700, color: M.cache_ratio.color }}>{t("metrics.cacheRatio.label", M.cache_ratio.label)} {fmtPct(cacheRatio)}</span>
-                  </>
-                )}
-              </div>
-              <div style={{ display: "flex", gap: 16, alignItems: "flex-end", marginBottom: 5 }}>
-                {ledger.map(({ id, value }) => {
-                  const m = M[id];
-                  return (
-                    <div key={id} title={m.description}>
-                      <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 500, marginBottom: 2 }}>{m.label}</div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: value > 0 ? m.color : "#d1d5db", lineHeight: 1 }}>{value > 0 ? fmtK(value) : "—"}</div>
-                    </div>
-                  );
-                })}
-              </div>
-              {total > 0 && (
-                <div style={{ height: 3, borderRadius: 2, overflow: "hidden", display: "flex", background: "#f3f4f6" }}>
-                  {ledger.filter(r => r.value > 0).map(({ id, value }) => (
-                    <div key={id} style={{ flex: value, background: M[id].color }} />
-                  ))}
-                </div>
-              )}
-            </div>
+            <TokenLedgerInline
+              freshIn={freshIn}
+              cacheRead={call.cacheRead}
+              cacheWrite={call.cacheWrite}
+              output={call.outputTokens}
+              cacheRatio={cacheRatio}
+            />
           );
         })()}
       </div>

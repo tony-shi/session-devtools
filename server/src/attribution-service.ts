@@ -30,6 +30,8 @@ import {
   type LinkJsonlReport,
   type AttributionTreeDiff,
   type SegmentNode,
+  type ForwardAudit,
+  type ReverseAudit,
 } from "./context-ledger/parser";
 import { parseQuery, attributeSnapshot } from "./context-ledger/parser";
 
@@ -45,6 +47,14 @@ export interface AttributionTreeResult {
   snapshot: SerializedSnapshot | null;
   /** jsonl-linker 命中统计 */
   linkReport: LinkJsonlReport | null;
+  /**
+   * Audit 双视角（PR6 起）：
+   *   - forward：proxy 叶子节点按 coverageState 分三桶（full / partial / none）
+   *   - reverse：jsonl 原子单元（tool_use / tool_result / user_input / assistant_text / attachment）
+   *     是否被 segment 引用，未引用进 missing 列表
+   * 前端 AuditBadge / filter 直接消费此对象。
+   */
+  audit: { forward: ForwardAudit; reverse: ReverseAudit } | null;
   /** tree diff vs previous call；首个 call 或无 previous proxy 时为 null */
   diff: AttributionTreeDiff | null;
   /**
@@ -142,7 +152,7 @@ export async function loadAttributionTree(
     return {
       callId, sessionId, hasProxy: false,
       previousCallId: null,
-      snapshot: null, linkReport: null, diff: null,
+      snapshot: null, linkReport: null, audit: null, diff: null,
       error: "call not found in session drilldown",
     };
   }
@@ -154,7 +164,7 @@ export async function loadAttributionTree(
     return {
       callId, sessionId, hasProxy: false,
       previousCallId: meta.prevCall?.id ?? null,
-      snapshot: null, linkReport: null, diff: null,
+      snapshot: null, linkReport: null, audit: null, diff: null,
       error: "proxy reqBody unavailable for this call",
     };
   }
@@ -162,9 +172,10 @@ export async function loadAttributionTree(
   // —— 读 session JSONL 并适配为 LinkableJsonlEvent —— //
   const jsonlEvents = readSessionEventsForLinker(meta.call.sourceFile);
 
-  // —— 跑归因 + jsonl link —— //
+  // —— 跑归因 + jsonl link + audit —— //
   let snapshot: ParsedQuerySnapshot;
   let linkReport: LinkJsonlReport;
+  let audit: { forward: ForwardAudit; reverse: ReverseAudit };
   try {
     const out = attributeWithJsonl({
       reqBody: proxy.reqBody as Parameters<typeof attributeWithJsonl>[0]["reqBody"],
@@ -176,11 +187,12 @@ export async function loadAttributionTree(
     });
     snapshot = out.snapshot;
     linkReport = out.linkReport;
+    audit = out.audit;
   } catch (err) {
     return {
       callId, sessionId, hasProxy: true,
       previousCallId: meta.prevCall?.id ?? null,
-      snapshot: null, linkReport: null, diff: null,
+      snapshot: null, linkReport: null, audit: null, diff: null,
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -222,6 +234,7 @@ export async function loadAttributionTree(
     previousCallId: meta.prevCall?.id ?? null,
     snapshot: serializeSnapshot(snapshot),
     linkReport,
+    audit,
     diff,
     ...(previousLeaves && { previousLeaves }),
   };

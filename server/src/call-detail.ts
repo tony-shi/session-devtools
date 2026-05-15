@@ -230,11 +230,33 @@ interface ProxyRow {
   started_at: string | null;
 }
 
-// Look up the proxy row for a JSONL call. Exact match via API request-id
-// (1:1 link between JSONL `requestId` and proxy_requests.request_id, extracted
-// from response headers). Falls back to "closest proxy started at or before
-// the JSONL timestamp" when request_id is unavailable — used both for legacy
-// rows without request_id and as a safety net.
+// Look up the proxy row for a JSONL call.
+//
+// Preferred path — exact match by Anthropic `request-id`:
+//   JSONL assistant event 顶层 `requestId` ⇄ proxy_requests.request_id
+//   （从 resHeaders["request-id"] 抽出）。这是 1:1 的确定性匹配，根治
+//   "quota probe / 后台请求被误挂到真实 call 上" 之类的 false-positive。
+//
+// Fallback path — "closest proxy started at or before the JSONL timestamp":
+//   ⚠️ This is a HACK and is NOT robust. It exists only because not every
+//   upstream returns Anthropic's `request-id` header (notably the
+//   `mcli.sankuai.com` gateway behind our local `mcli-proxy.dev`, which
+//   issues its own `M-TraceId` instead). When that happens both sides lose
+//   the exact key and we degrade to:
+//       WHERE session_id = ? AND started_at <= ? ORDER BY ... DESC LIMIT 1
+//
+//   Known failure modes:
+//     - 任何在 JSONL 之前发生、又没有对应 JSONL 记录的 proxy 请求都会"夹塞"
+//       到真实 call 前面（quota probe / haiku 标题探测 / 重试 / 并发其它
+//       会话共用同一 session_id 的请求）。
+//     - 误差随并发度和延迟敏感：upstream 慢响应时 JSONL 时间戳可能晚于
+//       某个无关请求的 started_at，从而被"最近的那个"贪婪地吃掉。
+//     - excludeProxyId 只能避开"上一次刚选过的那一条"，挡不住更早的探测。
+//
+//   不修是因为：上游 `mcli.sankuai.com` 不透传 request-id，本地两层都没法
+//   补出来；走 Anthropic 直连的 session 不受影响，精确路径已 100% 命中。
+//   如果哪天 mcli 路径的误判频率高了，需要从上游网关层根治，而不是在这里
+//   加更复杂的启发式（model / max_tokens / content 黑名单 等只是绕回老路）。
 export function findProxyRowForCall(
   db: Database,
   sessionId: string,
@@ -256,6 +278,8 @@ export function findProxyRowForCall(
     ) as ProxyRow | undefined;
     if (row) return row;
   }
+  // ⚠️ HACK fallback — see block comment above. Not robust; only correct
+  // when the closest preceding proxy request happens to be the right one.
   const fallback = db.prepare(`
     SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
     FROM proxy_requests

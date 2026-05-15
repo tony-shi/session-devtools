@@ -19,7 +19,10 @@ import type {
   AttributionTreeResult,
   SerializedNode,
   SegmentOrigin,
+  AuditEnvelope,
 } from "./attribution-tree-types";
+import { coverageStateOf } from "./attribution-tree-types";
+import { SegmentedToggle } from "./shared/SegmentedToggle";
 
 // ─── 类型与配色 ─────────────────────────────────────────────────────────────
 
@@ -306,29 +309,14 @@ function LeafStrip({
       }}
     >
       {/* 内联布局切换（右对齐） */}
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 2 }}>
-        {([
-          { id: "proportional" as const, label: t("attribution.layoutProportional"), title: t("attribution.layoutProportionalTitle") },
-          { id: "equal" as const,        label: t("attribution.layoutEqual"),        title: t("attribution.layoutEqualTitle") },
-        ]).map((o) => {
-          const isSel = layoutMode === o.id;
-          return (
-            <button
-              key={o.id}
-              title={o.title}
-              onClick={() => setLayoutMode(o.id)}
-              style={{
-                fontSize: 9, padding: "2px 8px",
-                background: isSel ? "#4338ca" : "transparent",
-                color: isSel ? "#fff" : "#6b7280",
-                border: `1px solid ${isSel ? "#4338ca" : "#e5e7eb"}`,
-                borderRadius: 3, cursor: "pointer",
-                fontWeight: isSel ? 600 : 400,
-              }}
-            >{o.label}</button>
-          );
-        })}
-      </div>
+      <SegmentedToggle<"proportional" | "equal">
+        value={layoutMode}
+        onChange={setLayoutMode}
+        options={[
+          { id: "proportional", label: t("attribution.layoutProportional"), title: t("attribution.layoutProportionalTitle") },
+          { id: "equal",        label: t("attribution.layoutEqual"),        title: t("attribution.layoutEqualTitle") },
+        ]}
+      />
 
       {/* Strip — getLabel 返回 shortSlot；模块按段宽决定 inside / 隐藏。
           minCount=5 让 attribution leaves 天然开启鱼眼。 */}
@@ -497,6 +485,77 @@ function SelectedDetail({ leaf }: { leaf: LeafLite }) {
 
 // ─── 顶层 Panel ─────────────────────────────────────────────────────────────
 
+// ─── AuditBadge (PR6) ────────────────────────────────────────────────────────
+//
+// 紧凑徽章，紧贴 SectionBar 之上。展示三桶计数 + jsonl missing 数。
+// 点击 partial / none 切换 filter，把 leaf 列表过滤到对应 segmentId 集合。
+// 点击 missing 暂只显示文本（无 drawer）；后续可扩展为列表视图。
+
+type AuditFilter = "all" | "partial" | "none";
+
+function AuditBadge({
+  audit, filter, onFilter,
+}: {
+  audit: AuditEnvelope;
+  filter: AuditFilter;
+  onFilter: (f: AuditFilter) => void;
+}) {
+  const { full, partial, none } = audit.forward.totals;
+  const missing = audit.reverse.missing.length;
+
+  function Pill({
+    label, value, active, color, onClick, title,
+  }: {
+    label: string; value: number; active: boolean; color: string;
+    onClick?: () => void; title?: string;
+  }) {
+    const clickable = onClick !== undefined;
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title={title}
+        disabled={!clickable}
+        style={{
+          display: "inline-flex", alignItems: "baseline", gap: 6,
+          padding: "3px 8px", borderRadius: 4,
+          border: active ? `1px solid ${color}` : "1px solid transparent",
+          background: active ? `${color}1a` : "transparent",
+          color: "#374151", fontSize: 11,
+          cursor: clickable ? "pointer" : "default",
+          transition: "background 0.1s, border-color 0.1s",
+        }}
+      >
+        <span style={{ width: 6, height: 6, borderRadius: 1, background: color, alignSelf: "center" }} />
+        <span style={{ fontWeight: 600, color: "#1f2937" }}>{value}</span>
+        <span style={{ color: "#6b7280" }}>{label}</span>
+      </button>
+    );
+  }
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8,
+      fontSize: 11, color: "#6b7280",
+      padding: "2px 0",
+    }}>
+      <span style={{ fontWeight: 600, color: "#4b5563", letterSpacing: "0.04em", textTransform: "uppercase", fontSize: 10 }}>
+        Audit
+      </span>
+      <Pill label="full"    value={full}    active={false}                 color="#10b981" title="叶子覆盖完整（rule 或 jsonl）" />
+      <Pill label="partial" value={partial} active={filter === "partial"}  color="#f59e0b"
+            onClick={() => onFilter(filter === "partial" ? "all" : "partial")}
+            title="rule/jsonl 命中但 fullyCovered=false（动态注入未覆盖）" />
+      <Pill label="none"    value={none}    active={filter === "none"}     color="#9ca3af"
+            onClick={() => onFilter(filter === "none" ? "all" : "none")}
+            title="structural（slot 已知但无规则）或 unknown（template 未识别）" />
+      <span style={{ color: "#d1d5db" }}>|</span>
+      <Pill label="missing jsonl" value={missing} active={false} color="#ef4444"
+            title="jsonl 中存在但 proxy 中无对应 segment 的原子单元（tool_use / tool_result / user / assistant / attachment）" />
+    </div>
+  );
+}
+
 export function AttributionTreePanel({
   sessionId, callId,
 }: { sessionId: string; callId: number }) {
@@ -506,6 +565,7 @@ export function AttributionTreePanel({
 
   const [selectedSection, setSelectedSection] = useState<SectionId | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [auditFilter, setAuditFilter] = useState<AuditFilter>("all");
 
   useEffect(() => {
     let cancelled = false;
@@ -517,14 +577,26 @@ export function AttributionTreePanel({
     return () => { cancelled = true; };
   }, [sessionId, callId]);
 
-  const leaves = useMemo(() => result ? flattenLeaves(result) : [], [result]);
-  const stats = useMemo(() => computeSectionStats(leaves), [leaves]);
-  const totalChars = useMemo(() => leaves.reduce((s, l) => s + l.charCount, 0), [leaves]);
+  const allLeaves = useMemo(() => result ? flattenLeaves(result) : [], [result]);
 
-  const selectedStat = useMemo(
-    () => selectedSection ? stats.find((s) => s.id === selectedSection) ?? null : null,
-    [selectedSection, stats],
-  );
+  // 根据 audit filter 过滤叶子（不重算 stats —— 顶部 bar 仍按全集呈现）。
+  const leaves = useMemo(() => {
+    if (auditFilter === "all" || !result?.audit) return allLeaves;
+    return allLeaves.filter((l) => coverageStateOf(l.origin) === auditFilter);
+  }, [allLeaves, auditFilter, result?.audit]);
+
+  const stats = useMemo(() => computeSectionStats(allLeaves), [allLeaves]);
+  const totalChars = useMemo(() => allLeaves.reduce((s, l) => s + l.charCount, 0), [allLeaves]);
+
+  const selectedStat = useMemo(() => {
+    if (!selectedSection) return null;
+    const stat = stats.find((s) => s.id === selectedSection);
+    if (!stat) return null;
+    // 应用 audit filter：drill-in 后只显示符合 filter 的叶子（顶部 bar 仍按全集）。
+    if (auditFilter === "all") return stat;
+    const filteredLeaves = stat.leaves.filter((l) => coverageStateOf(l.origin) === auditFilter);
+    return { ...stat, leaves: filteredLeaves };
+  }, [selectedSection, stats, auditFilter]);
   const selectedLeaf = useMemo(
     () => selectedNodeId ? leaves.find((l) => l.nodeId === selectedNodeId) ?? null : null,
     [selectedNodeId, leaves],
@@ -548,6 +620,11 @@ export function AttributionTreePanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {/* Layer 0: AuditBadge — 紧凑三桶 + missing 数 */}
+      {result.audit && (
+        <AuditBadge audit={result.audit} filter={auditFilter} onFilter={setAuditFilter} />
+      )}
+
       {/* Layer 1: 顶部 stacked bar */}
       <SectionBar
         stats={stats}

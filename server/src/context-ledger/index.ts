@@ -39,9 +39,6 @@ export type {
   RuleMatchMode,
   RuleStability,
   RuleMaterialization,
-  RuleComparePolicy,
-  RuleLocationConstraint,
-  RulePreCondition,
   // 过渡期兼容别名
   AttributionRule,
 } from "./rules/rule-registry";

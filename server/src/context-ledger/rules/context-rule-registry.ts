@@ -120,10 +120,8 @@ function normalizeMatchMode(mode: RuleMatchMode): ContextRuleMatchMode {
 function copyAttributionRule(rule: ContextLedgerRule, slotId: string): ContextRule | null {
   const attr = rule.attribution;
   if (!attr) return null;
-  // P1-1：把旧 rule.reconstruction.materialization 投影到 ContextRule，
-  //       让 AST attribution 能直接读出"该 rule 命中后能给出什么 materialization 证据"。
-  //       legacy 的 "unavailable" 在 ContextRule 里同样表达为 "unavailable"。
-  const materialization = rule.reconstruction?.materialization;
+  // PR4 起 materialization 从 reconstruction 块提升到 ContextLedgerRule 顶层。
+  const materialization = rule.materialization;
   return {
     ruleId: rule.ruleId,
     slotId,

@@ -114,6 +114,7 @@ describe("attribution invariants — PR 1 默认填充与不变量", () => {
       ruleId: "test.fake.v1",
       matchMode: "exact",
       confidence: "definitive",
+      fullyCovered: true,
     };
     expect(() => assertContainerNodesAreStructural(snap)).toThrow(AttributionInvariantError);
   });

@@ -10,6 +10,8 @@ import { attributeSnapshot as _attributeSnapshot } from "./attribution";
 import { linkJsonl as _linkJsonl } from "./attribution/jsonl-linker";
 import type { LinkableJsonlEvent, CallContext, LinkJsonlReport } from "./attribution/jsonl-linker";
 import { assertAllInvariants } from "./attribution/invariants";
+import { computeForwardAudit, type ForwardAudit } from "./audit/forward";
+import { computeReverseAudit, type ReverseAudit } from "./audit/reverse";
 
 export type { ParsedQuerySnapshot, SegmentNode, SlotMatch } from "./types";
 export {
@@ -64,6 +66,16 @@ export type {
   LeafDiffStatus,
   RemovedLeaf,
 } from "./attribution/tree-diff";
+export {
+  coverageStateOf,
+} from "./attribution/origin";
+export type {
+  CoverageState,
+} from "./attribution/origin";
+export { computeForwardAudit } from "./audit/forward";
+export type { ForwardAudit, PartialReason } from "./audit/forward";
+export { computeReverseAudit } from "./audit/reverse";
+export type { ReverseAudit, ReverseAuditBucket, ReverseEventKind, MissingJsonlUnit } from "./audit/reverse";
 
 export interface ParseQueryInput {
   reqBody: MatchSlotsInput["reqBody"];
@@ -95,7 +107,11 @@ export function attributeWithJsonl(input: {
   ts?: string;
   jsonl: LinkableJsonlEvent[];
   call: CallContext;
-}): { snapshot: ParsedQuerySnapshot; linkReport: LinkJsonlReport } {
+}): {
+  snapshot: ParsedQuerySnapshot;
+  linkReport: LinkJsonlReport;
+  audit: { forward: ForwardAudit; reverse: ReverseAudit };
+} {
   const snapshot = parseQuery({
     reqBody: input.reqBody,
     proxyFile: input.proxyFile,
@@ -105,5 +121,9 @@ export function attributeWithJsonl(input: {
   _attributeSnapshot(snapshot);                   // PR 2：写 rule origin
   const linkReport = _linkJsonl(snapshot, input.jsonl, input.call);  // PR 3：写 jsonl origin
   assertAllInvariants(snapshot);
-  return { snapshot, linkReport };
+  const audit = {
+    forward: computeForwardAudit(snapshot),
+    reverse: computeReverseAudit(snapshot, input.jsonl),
+  };
+  return { snapshot, linkReport, audit };
 }

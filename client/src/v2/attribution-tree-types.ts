@@ -123,6 +123,72 @@ export interface LinkJsonlReport {
   totalLeaves: number;
 }
 
+// ─── Audit (PR6) ────────────────────────────────────────────────────────────
+
+export type PartialReason =
+  | "rule.regex.partial_match"
+  | "rule.prefix.anchor_only"
+  | "jsonl.user_input.inferred"
+  | "jsonl.assistant_text.substring"
+  | "jsonl.attachment.fingerprint"
+  | "rule.unknown"
+  | "jsonl.unknown";
+
+export interface ForwardAudit {
+  totals: {
+    leafCount: number;
+    full: number;
+    partial: number;
+    none: number;
+  };
+  full: {
+    segmentIds: string[];
+    byOrigin: { rule: string[]; jsonl: string[] };
+  };
+  partial: {
+    segmentIds: string[];
+    byReason: Record<PartialReason, string[]>;
+  };
+  none: {
+    segmentIds: string[];
+    byKind: { structural_no_rule: string[]; unknown: string[] };
+  };
+}
+
+export type ReverseEventKind =
+  | "user_input"
+  | "assistant_text"
+  | "tool_use"
+  | "tool_result"
+  | "attachment";
+
+export interface ReverseAuditBucket {
+  total: number;
+  linked: number;
+  missing: number;
+}
+
+export interface MissingJsonlUnit {
+  jsonlLineIdx: number;
+  eventKind: ReverseEventKind;
+  callId?: number;
+  turnId?: number;
+  toolUseId?: string;
+  preview?: string;
+  reason: "no_segment_linked" | "no_matching_slot";
+  expectedSlotHint?: string;
+}
+
+export interface ReverseAudit {
+  byKind: Record<ReverseEventKind, ReverseAuditBucket>;
+  missing: MissingJsonlUnit[];
+}
+
+export interface AuditEnvelope {
+  forward: ForwardAudit;
+  reverse: ReverseAudit;
+}
+
 export interface AttributionTreeResult {
   callId: number;
   sessionId: string;
@@ -130,6 +196,8 @@ export interface AttributionTreeResult {
   previousCallId: number | null;
   snapshot: SerializedSnapshot | null;
   linkReport: LinkJsonlReport | null;
+  /** Audit 双视角（PR6 起）：前向覆盖度 + 反向 jsonl missing。 */
+  audit: AuditEnvelope | null;
   diff: AttributionTreeDiff | null;
   /** previous snapshot 的叶子（用于双行 strip 上一行）；首个 call 时不存在 */
   previousLeaves?: PreviousLeafLite[];
