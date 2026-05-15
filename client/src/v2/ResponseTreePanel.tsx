@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import { apiV2 } from "./api";
 import { FisheyeStrip } from "./fisheye-strip";
+import { CodeBlock } from "./shared/CodeBlock";
 import type {
   ResponseTreeResult,
   ResponseNode,
@@ -206,15 +207,9 @@ function NodeDetail({
         <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.05em", marginBottom: 4 }}>
           {isToolUse ? "INPUT" : "CONTENT"}
         </div>
-        <pre style={{
-          margin: 0, fontSize: 11, color: "#374151", lineHeight: 1.55,
-          whiteSpace: "pre-wrap", wordBreak: "break-word",
-          maxHeight: 280, overflowY: "auto",
-          background: "#f9fafb", padding: "6px 10px", borderRadius: 4,
-          fontFamily: isToolUse ? "ui-monospace, SFMono-Regular, monospace" : "inherit",
-        }}>
+        <CodeBlock variant="preview" mono={isToolUse} maxHeight={280} style={{ background: "#f9fafb", padding: "6px 10px" }}>
           {node.rawText ?? node.preview}
-        </pre>
+        </CodeBlock>
       </div>
 
       {/* Linked tool result forwarding */}

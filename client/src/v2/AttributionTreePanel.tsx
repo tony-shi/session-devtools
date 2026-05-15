@@ -23,6 +23,7 @@ import type {
 } from "./attribution-tree-types";
 import { coverageStateOf } from "./attribution-tree-types";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
+import { CodeBlock } from "./shared/CodeBlock";
 
 // ─── 类型与配色 ─────────────────────────────────────────────────────────────
 
@@ -473,12 +474,7 @@ function SelectedDetail({ leaf }: { leaf: LeafLite }) {
           </div>
         </details>
       )}
-      <pre style={{
-        margin: 0, fontSize: 11, color: "#374151", lineHeight: 1.5,
-        whiteSpace: "pre-wrap", wordBreak: "break-word",
-        background: "#fafafa", padding: "8px 10px", borderRadius: 4,
-        maxHeight: 240, overflow: "auto",
-      }}>{leaf.rawText ?? leaf.preview}</pre>
+      <CodeBlock variant="preview" maxHeight={240}>{leaf.rawText ?? leaf.preview}</CodeBlock>
     </div>
   );
 }

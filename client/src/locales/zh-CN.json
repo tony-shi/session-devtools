@@ -177,6 +177,12 @@
     "diff": "与前次的差异",
     "raw": "原始数据"
   },
+  "rawTab": {
+    "noProxyTitle": "未捕获到代理数据",
+    "noProxyBody": "本次 call 没有匹配到代理请求体。Attribution / Diff 视角依赖本地代理同步抓取请求。",
+    "noProxyGuide": "请到「{{tab}}」标签页安装并启用代理，之后产生的 call 才会带完整请求体。",
+    "noProxyCaveat": "已存在的 call 无法补抓 —— 代理只能记录开启之后的流量。"
+  },
   "diff": {
     "loading": "加载 diff…",
     "loadFailed": "加载失败：{{error}}",

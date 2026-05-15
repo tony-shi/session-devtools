@@ -8,6 +8,7 @@ import { TurnMinimap } from "./TurnMinimap";
 import type { SessionV2 } from "./types";
 import type { DiffEntry, IntervalEvent, IntervalEventKind, LlmCall, ModelStats, SessionDrilldown, ToolCallSlot, UserTurn, InterTurnBlock, CallDetail } from "./drilldown-types";
 import { apiV2 } from "./api";
+import proxyMissingUrl from "../assets/proxy-missing.png";
 import {
   buildMockAttributedDiff,
   buildMockPayloadSegments,
@@ -32,6 +33,8 @@ import { HeaderStatRow, TokenLedgerInline } from "./shared/HeaderStats";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { getToolPalette } from "./shared/toolRegistry";
 import { CHART_COLORS, TOOLTIP_PRESET, brandAreaGradient } from "./shared/chart-theme";
+import { CodeBlock } from "./shared/CodeBlock";
+import { EVENT_PALETTES } from "./shared/eventPalette";
 
 // Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
 type MockDiffEntry = DiffEntry;
@@ -2558,24 +2561,7 @@ const KIND_LABEL: Record<IntervalEventKind, string> = {
   "unknown":                  "Unknown",
 };
 
-const KIND_COLOR: Record<IntervalEventKind, { bg: string; border: string; fg: string }> = {
-  "user:human":               { bg: "#f5f3ff", border: "#c4b5fd", fg: "#7c3aed" },
-  "user:tool_result":         { bg: "#f0fdf4", border: "#86efac", fg: "#16a34a" },
-  "user:command":             { bg: "#f8fafc", border: "#cbd5e1", fg: "#475569" },
-  "system:api_error":         { bg: "#fef2f2", border: "#fca5a5", fg: "#dc2626" },
-  "system:local_command":     { bg: "#f8fafc", border: "#e2e8f0", fg: "#64748b" },
-  "system:turn_duration":     { bg: "#f8fafc", border: "#e2e8f0", fg: "#64748b" },
-  "system:stop_hook_summary": { bg: "#f8fafc", border: "#e2e8f0", fg: "#64748b" },
-  "system:away_summary":      { bg: "#fefce8", border: "#fde68a", fg: "#92400e" },
-  "attachment:skill_listing": { bg: "#f8fafc", border: "#e2e8f0", fg: "#475569" },
-  "attachment:task_reminder": { bg: "#fffbeb", border: "#fde68a", fg: "#92400e" },
-  "attachment:queued_command": { bg: "#fff7ed", border: "#fed7aa", fg: "#c2410c" },
-  "attachment:edited_text_file": { bg: "#ecfeff", border: "#a5f3fc", fg: "#0e7490" },
-  "attachment:file":          { bg: "#f0f9ff", border: "#bae6fd", fg: "#0369a1" },
-  "file-history-snapshot":    { bg: "#f8fafc", border: "#e2e8f0", fg: "#94a3b8" },
-  "last-prompt":              { bg: "#f8fafc", border: "#e2e8f0", fg: "#64748b" },
-  "unknown":                  { bg: "#f8fafc", border: "#e2e8f0", fg: "#94a3b8" },
-};
+const KIND_COLOR = EVENT_PALETTES;
 
 // ── callDescription: one-line semantic summary of what a call did ─────────────
 function callDescription(call: MockLlmCall): string {
@@ -4124,7 +4110,7 @@ function RequestTab({
 
       {/* Raw JSONL metadata as fallback */}
       <div style={{ fontSize: 10, color: "#6b7280", fontWeight: 600, marginBottom: 6 }}>JSONL Metadata</div>
-      <pre style={{ fontSize: 10, fontFamily: "monospace", color: "#374151", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5, marginBottom: 14 }}>
+      <CodeBlock variant="json" style={{ marginBottom: 14 }}>
         {JSON.stringify({
           call_id: call.id, index_in_turn: call.indexInTurn,
           model: call.model, timestamp: call.timestamp,
@@ -4132,7 +4118,7 @@ function RequestTab({
           stop_reason: call.stopReason,
           ...(call.proxy ? { proxy_request_id: call.proxy.requestId, duration_ms: call.proxy.durationMs } : {}),
         }, null, 2)}
-      </pre>
+      </CodeBlock>
     </div>
   );
 }
@@ -4251,6 +4237,42 @@ function AttributionSection({
           onLinkCall={onLinkCall}
         />
       )}
+    </div>
+  );
+}
+
+// ─── 无 proxy 数据时的空状态 ──────────────────────────────────────────────────
+// raw tab 在 callDetail.proxyRequestId == null 时整页渲染本组件。
+// 配图位置：client/src/assets/proxy-missing.png（占位文件可为空 0 字节；
+// onError 会自动隐藏 <img>，不会出现破图标）。
+function ProxyMissingEmptyState() {
+  const { t } = useTranslation();
+  const [imgOk, setImgOk] = useState(true);
+  return (
+    <div style={{
+      display: "flex", flexDirection: "column", alignItems: "center",
+      textAlign: "center", padding: "32px 24px", gap: 14,
+    }}>
+      {imgOk && (
+        <img
+          src={proxyMissingUrl}
+          alt=""
+          onError={() => setImgOk(false)}
+          style={{ maxWidth: 240, width: "100%", height: "auto", opacity: 0.95 }}
+        />
+      )}
+      <div style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>
+        {t("rawTab.noProxyTitle")}
+      </div>
+      <div style={{ fontSize: 12, lineHeight: 1.6, color: "#4b5563", maxWidth: 420 }}>
+        {t("rawTab.noProxyBody")}
+      </div>
+      <div style={{ fontSize: 12, lineHeight: 1.6, color: "#4b5563", maxWidth: 420 }}>
+        {t("rawTab.noProxyGuide", { tab: t("nav.proxy") })}
+      </div>
+      <div style={{ fontSize: 11, color: "#9ca3af", maxWidth: 420 }}>
+        {t("rawTab.noProxyCaveat")}
+      </div>
     </div>
   );
 }
@@ -4408,21 +4430,26 @@ function LlmCallDetailPanel({
           {callDetailLoading && <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>}
           {!callDetailLoading && (() => {
             const hp = !!callDetail?.proxyRequestId;
+            // 无 proxy 数据时：整页只渲染 ProxyMissingEmptyState，不再附带
+            // JSONL Metadata —— 让"去启用代理"的指引保持单一焦点。
+            if (!hp) {
+              return <ProxyMissingEmptyState />;
+            }
             return (
               <>
-                <div style={{ fontSize: 10, background: hp ? "#f0fdf4" : "#fffbeb", border: `1px solid ${hp ? "#bbf7d0" : "#fde68a"}`, borderRadius: 5, padding: "5px 10px", marginBottom: 12, color: "#374151" }}>
-                  {hp ? "Proxy — full request body available." : "JSONL only — no request payload."}
+                <div style={{ fontSize: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 5, padding: "5px 10px", marginBottom: 12, color: "#374151" }}>
+                  Proxy — full request body available.
                 </div>
                 <SectionLabel>JSONL Metadata</SectionLabel>
-                <pre style={{ fontSize: 10, fontFamily: "monospace", color: "#374151", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5, marginBottom: 14 }}>
+                <CodeBlock variant="json" style={{ marginBottom: 14 }}>
                   {JSON.stringify({ call_id: call.id, index_in_turn: call.indexInTurn, model: call.model, timestamp: call.timestamp, usage: { context_size: call.contextSize, fresh_in: freshIn, cache_read: call.cacheRead, cache_write: call.cacheWrite, output_tokens: call.outputTokens }, stop_reason: call.stopReason, ...(call.proxy ? { proxy_request_id: call.proxy.requestId, duration_ms: call.proxy.durationMs } : {}) }, null, 2)}
-                </pre>
-                {hp && callDetail?.rawRequestJson && (
+                </CodeBlock>
+                {callDetail?.rawRequestJson && (
                   <>
                     <SectionLabel>Proxy Request Body</SectionLabel>
-                    <pre style={{ fontSize: 10, fontFamily: "monospace", color: "#374151", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5 }}>
+                    <CodeBlock variant="json">
                       {JSON.stringify(callDetail.rawRequestJson, null, 2)}
-                    </pre>
+                    </CodeBlock>
                   </>
                 )}
               </>

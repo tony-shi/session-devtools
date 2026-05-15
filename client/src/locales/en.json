@@ -181,6 +181,12 @@
     "diff": "Diff vs Previous",
     "raw": "Raw / Evidence"
   },
+  "rawTab": {
+    "noProxyTitle": "No proxy data captured",
+    "noProxyBody": "This call has no matching proxy request body. Attribution / Diff views rely on the local proxy capturing requests as they happen.",
+    "noProxyGuide": "Install and enable the proxy from the «{{tab}}» tab. Calls made afterwards will carry full request bodies.",
+    "noProxyCaveat": "Existing calls can't be backfilled — the proxy only records traffic while it's running."
+  },
   "diff": {
     "loading": "Loading diff…",
     "loadFailed": "Failed to load diff: {{error}}",

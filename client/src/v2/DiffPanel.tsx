@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
 import { FisheyeStrip } from "./fisheye-strip";
+import { CodeBlock } from "./shared/CodeBlock";
 import type {
   DiffKind, DiffLeaf, DiffSection, DiffSectionId, DiffTreeResult,
 } from "./diff-tree-types";
@@ -580,14 +581,7 @@ function DetailBlock({ title, content, muted }: { title: string; content: string
   return (
     <div>
       <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.05em", marginBottom: 3 }}>{title}</div>
-      <pre style={{
-        margin: 0, fontSize: 11, color: muted ? "#6b7280" : "#374151",
-        lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word",
-        background: muted ? "#f9fafb" : "#fafafa",
-        padding: "8px 10px", maxHeight: 240, overflowY: "auto",
-        borderRadius: 4,
-        fontFamily: "ui-monospace, SFMono-Regular, monospace",
-      }}>{content}</pre>
+      <CodeBlock variant="preview" mono muted={muted} maxHeight={240}>{content}</CodeBlock>
     </div>
   );
 }
