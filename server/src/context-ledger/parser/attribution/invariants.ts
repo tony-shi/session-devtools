@@ -7,8 +7,17 @@
 //    每个节点都必须有 origin（discriminated union 的 4 个变体之一）。
 //
 // 2. assertContainerNodesAreStructural
-//    有 children 的节点必须 origin.kind === "structural" 且 reason === "container_node"。
+//    有 children 的节点默认必须 origin.kind === "structural" 且 reason === "container_node"。
 //    内容由叶子解释；container 自身只保留结构身份。
+//
+//    例外（wire-schema 协议槽白名单）：
+//      slotType ∈ { messages.tool_use, messages.tool_result, tools.builtin.* }
+//      的 container 允许持有协议级 origin：
+//        - kind === "rule" && ruleId.startsWith("wire.")     ← wire fallback 合成
+//        - kind === "jsonl" && eventKind ∈ { tool_use, tool_result }  ← jsonl-linker 升级
+//      理由：SmooshContent v2 把 tool_result 尾部 SR 段切为 children 后，父节点仍
+//      代表"这是 tool_result 协议槽 + 对应 jsonl record"这一独立事实，与 children 的
+//      内容归因正交。双重判定（slotType + origin 形态）避免任意 origin 走 wire-slot 捷径。
 //
 // 3. assertLeafConcatEqualsWire
 //    in-order 遍历所有叶子取 rawText 顺序拼接，必须 byte-equal 原始 wire 的对应字段
@@ -46,15 +55,40 @@ export function assertEveryNodeHasOrigin(snapshot: ParsedQuerySnapshot): void {
 
 // ─── Invariant 2: container 节点必须是 structural/container_node ────────────
 
+/** wire-schema 协议槽 slotType 白名单（允许 container 持有协议级 origin）。 */
+function isWireSchemaContainerSlot(slotType: string): boolean {
+  if (slotType === "messages.tool_use") return true;
+  if (slotType === "messages.tool_result") return true;
+  if (slotType.startsWith("tools.builtin.")) return true;
+  return false;
+}
+
+/** 协议级 origin 形态白名单（与 slot 白名单组合使用）。 */
+function isProtocolLevelOrigin(origin: SegmentNode["origin"]): boolean {
+  if (origin.kind === "rule" && origin.ruleId.startsWith("wire.")) return true;
+  if (origin.kind === "jsonl" && (origin.eventKind === "tool_use" || origin.eventKind === "tool_result")) {
+    return true;
+  }
+  return false;
+}
+
 export function assertContainerNodesAreStructural(snapshot: ParsedQuerySnapshot): void {
   for (const node of Object.values(snapshot.index)) {
     if (node.children.length === 0) continue;
-    if (node.origin.kind !== "structural" || node.origin.reason !== "container_node") {
-      throw new AttributionInvariantError(
-        "container-not-structural",
-        `node "${node.id}" has ${node.children.length} children but origin=${JSON.stringify(node.origin)} (expected structural/container_node)`,
-      );
-    }
+    const origin = node.origin;
+
+    // 默认契约：container 必须是 structural/container_node。
+    if (origin.kind === "structural" && origin.reason === "container_node") continue;
+
+    // 例外：wire-schema 协议槽 + 协议级 origin 形态（slotType + origin 双重判定）。
+    // SmooshContent v2 切分 tool_result 尾部 SR 段后，tool_result 节点同时是
+    // container（有 SR 子段）和协议槽身份载体（wire/jsonl link）。
+    if (isWireSchemaContainerSlot(node.slotType) && isProtocolLevelOrigin(origin)) continue;
+
+    throw new AttributionInvariantError(
+      "container-not-structural",
+      `node "${node.id}" (slot=${node.slotType}) has ${node.children.length} children but origin=${JSON.stringify(origin)} (expected structural/container_node, or wire-schema slot with protocol-level origin)`,
+    );
   }
 }
 

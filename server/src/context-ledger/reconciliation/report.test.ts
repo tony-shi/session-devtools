@@ -112,8 +112,8 @@ describe("rule registry contract", () => {
 
   // ── registry 基础契约 ────────────────────────────────────────────────────
 
-  test("registry 当前包含 rule（P3-5 删除 embedded 变体后）", () => {
-    expect(CONTEXT_LEDGER_RULES).toHaveLength(62);
+  test("registry 当前包含 rule（P3-5 删除 embedded 变体后；阶段 2.1 +6 SmoothContent v2 rule）", () => {
+    expect(CONTEXT_LEDGER_RULES).toHaveLength(68);
   });
 
   test("ruleId 在 registry 中唯一", () => {
