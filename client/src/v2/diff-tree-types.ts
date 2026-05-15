@@ -44,6 +44,8 @@ export interface DiffTreeResult {
     modifiedCount: number;
     keptCount: number;
     netCharDelta: number;
+    insertedChars: number;
+    deletedChars: number;
   };
   error?: string;
 }

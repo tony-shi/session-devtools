@@ -26,11 +26,12 @@ interface SectionMeta {
   textColor: string;
 }
 
+// 与 AttributionTreePanel 同色（淡蓝 / 蓝 / 紫）
 const SECTION_META: Record<DiffSectionId, SectionMeta> = {
-  system:   { label: "System",   barBg: "#818cf8", barText: "#fff", marker: "#6366f1", textColor: "#3730a3" },
-  tools:    { label: "Tools",    barBg: "#9ca3af", barText: "#fff", marker: "#6b7280", textColor: "#374151" },
-  messages: { label: "Messages", barBg: "#7c8df6", barText: "#fff", marker: "#6366f1", textColor: "#1e40af" },
-  other:    { label: "Other",    barBg: "#d1d5db", barText: "#fff", marker: "#9ca3af", textColor: "#374151" },
+  system:   { label: "System",   barBg: "#bfdbfe", barText: "#1e3a8a", marker: "#3b82f6", textColor: "#1e40af" },
+  tools:    { label: "Tools",    barBg: "#3b82f6", barText: "#fff",    marker: "#2563eb", textColor: "#1e40af" },
+  messages: { label: "Messages", barBg: "#a78bfa", barText: "#fff",    marker: "#8b5cf6", textColor: "#5b21b6" },
+  other:    { label: "Other",    barBg: "#d1d5db", barText: "#374151", marker: "#9ca3af", textColor: "#374151" },
 };
 
 // Diff 三色 — 增/删/改
@@ -111,12 +112,15 @@ export function DiffPanel({ sessionId, callId, prevCallId }: Props) {
   }
 
   const effectivePrevId = data.prevCallId ?? prevCallId ?? null;
+  const sum = data.summary;
+  const changedSegments = sum ? sum.addedCount + sum.removedCount + sum.modifiedCount : 0;
+  const hasAnyChange = changedSegments > 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {/* 顶部 meta 行：仅 prev call 引用 + summary chips */}
+      {/* 顶部 meta 行：紧凑 git 风格 — 无变化压缩成一句 */}
       <div style={{
-        display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+        display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
         fontSize: 11, color: "#6b7280",
         padding: "2px 2px",
       }}>
@@ -126,28 +130,35 @@ export function DiffPanel({ sessionId, callId, prevCallId }: Props) {
             {effectivePrevId != null ? `#${effectivePrevId}` : "—"}
           </strong>
         </span>
-        {data.summary && (
-          <>
-            {data.summary.addedCount > 0 && (
-              <span style={{ color: DIFF_TEXT_COLOR.added }}>+{data.summary.addedCount}</span>
-            )}
-            {data.summary.removedCount > 0 && (
-              <span style={{ color: DIFF_TEXT_COLOR.removed }}>−{data.summary.removedCount}</span>
-            )}
-            {data.summary.modifiedCount > 0 && (
-              <span style={{ color: DIFF_TEXT_COLOR.modified }}>~{data.summary.modifiedCount}</span>
-            )}
-            <span style={{ color: "#9ca3af" }}>· {data.summary.keptCount} {t("diff.unchanged")}</span>
-            <span style={{
-              marginLeft: "auto",
-              fontFamily: "ui-monospace, SFMono-Regular, monospace",
-              fontWeight: 700,
-              color: data.summary.netCharDelta > 0 ? DIFF_TEXT_COLOR.added
-                   : data.summary.netCharDelta < 0 ? DIFF_TEXT_COLOR.removed : "#6b7280",
-            }}>
-              {fmtDelta(data.summary.netCharDelta)}
-            </span>
-          </>
+        {sum && (
+          hasAnyChange ? (
+            <>
+              <span style={{ color: "#9ca3af" }}>·</span>
+              <span style={{ color: "#374151", fontWeight: 600 }}>
+                {t("diff.segmentsChanged", { count: changedSegments })}
+              </span>
+              {sum.insertedChars > 0 && (
+                <span style={{
+                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                  color: DIFF_TEXT_COLOR.added, fontWeight: 700,
+                }}>+{fmtK(sum.insertedChars)}</span>
+              )}
+              {sum.deletedChars > 0 && (
+                <span style={{
+                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                  color: DIFF_TEXT_COLOR.removed, fontWeight: 700,
+                }}>−{fmtK(sum.deletedChars)}</span>
+              )}
+              <span style={{ color: "#9ca3af" }}>{t("diff.charsLabel")}</span>
+            </>
+          ) : (
+            <>
+              <span style={{ color: "#9ca3af" }}>·</span>
+              <span style={{ color: DIFF_TEXT_COLOR.added, fontWeight: 600 }}>
+                ✓ {t("diff.noChangesShort")}
+              </span>
+            </>
+          )
         )}
       </div>
 
@@ -236,40 +247,67 @@ function SectionDiffBar({
   selectedSection: DiffSectionId | null;
   onSelect: (s: DiffSectionId) => void;
 }) {
+  const [hoveredId, setHoveredId] = useState<DiffSectionId | null>(null);
   if (grandTotal === 0) return null;
+  const hasSelection = selectedSection !== null;
   return (
-    <div style={{ display: "flex", gap: 4, height: 44 }}>
+    <div
+      style={{ display: "flex", gap: 4, height: 44 }}
+      onMouseLeave={() => setHoveredId(null)}
+    >
       {sections.map((s) => {
         const meta = SECTION_META[s.id];
         const pct = s.newTotal / grandTotal;
         const isSel = selectedSection === s.id;
-        const dimmed = selectedSection !== null && !isSel;
+        const isHov = hoveredId === s.id;
+        // 三档强度（与 attribution 同规则）
+        let intensity: 0 | 1 | 2 | 3 = 1;
+        if (hasSelection) {
+          if (isSel) intensity = 3;
+          else if (isHov) intensity = 2;
+          else intensity = 0;
+        } else if (hoveredId !== null) {
+          intensity = isHov ? 2 : 1;
+        }
+        const opacity = intensity === 0 ? 0.18 : 1;
+        const fontWeight = intensity >= 2 ? 800 : 700;
+        const outline = isSel ? "2px solid #1f2937" : (intensity === 2 ? "2px solid rgba(31,41,55,0.45)" : "none");
         const hasChange = s.delta !== 0 || s.counts.added + s.counts.removed + s.counts.modified > 0;
         return (
           <button
             key={s.id}
             onClick={() => onSelect(s.id)}
-            title={`${meta.label}: ${fmtK(s.newTotal)} chars · Δ ${fmtDelta(s.delta)}`}
+            onMouseEnter={() => setHoveredId(s.id)}
+            title={`${meta.label} · ${fmtK(s.newTotal)} chars${hasChange ? ` · Δ ${fmtDelta(s.delta)}` : ""}`}
             style={{
               flex: Math.max(pct, 0.05), minWidth: 64,
               background: meta.barBg,
-              opacity: dimmed ? 0.32 : 1,
+              opacity,
               border: "none",
+              outline, outlineOffset: -2,
               borderRadius: 6,
-              padding: "6px 12px",
+              padding: "8px 14px",
               cursor: "pointer",
               textAlign: "left",
               color: meta.barText,
-              display: "flex", flexDirection: "column", justifyContent: "center",
+              display: "flex", alignItems: "center", gap: 8,
               overflow: "hidden",
-              transition: "opacity 0.15s",
+              transition: "opacity 0.15s, outline-color 0.15s",
             }}
           >
-            <div style={{ fontSize: 12, fontWeight: 700, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{meta.label}</div>
-            <div style={{ fontSize: 10, fontWeight: 500, opacity: 0.95, lineHeight: 1.2, display: "flex", gap: 6, alignItems: "center" }}>
-              <span>~{fmtK(s.newTotal)}</span>
-              {hasChange && <DeltaPill delta={s.delta} small inverse />}
+            <div style={{ fontSize: 13, fontWeight, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
+              {meta.label}
             </div>
+            {hasChange && s.delta !== 0 && (
+              <span style={{
+                fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                fontSize: 11, fontWeight: 700,
+                padding: "1px 6px", borderRadius: 3,
+                background: "rgba(255,255,255,0.28)",
+                color: meta.barText,
+                flexShrink: 0,
+              }}>{fmtDelta(s.delta)}</span>
+            )}
           </button>
         );
       })}
@@ -286,12 +324,14 @@ function SectionDiffTable({
   grandTotal: number;
   onSelect: (id: DiffSectionId) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {sections.map((s) => {
         const meta = SECTION_META[s.id];
         const pct = grandTotal > 0 ? (s.newTotal / grandTotal) * 100 : 0;
         const changeTotal = s.counts.added + s.counts.removed + s.counts.modified;
+        const sectionChanged = changeTotal > 0 || s.delta !== 0;
         return (
           <button
             key={s.id}
@@ -309,18 +349,22 @@ function SectionDiffTable({
           >
             <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.marker, flexShrink: 0 }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 90 }}>{meta.label}</span>
-            <span style={{ fontSize: 11, color: "#374151", minWidth: 60 }}>~{fmtK(s.newTotal)}</span>
+            <span style={{ fontSize: 11, color: "#374151", minWidth: 60 }}>{fmtK(s.newTotal)}</span>
             <span style={{ fontSize: 11, color: "#9ca3af", minWidth: 44 }}>{pct.toFixed(1)}%</span>
-            {s.delta !== 0
-              ? <DeltaPill delta={s.delta} />
-              : changeTotal === 0
-                ? <span style={{ fontSize: 10, color: "#9ca3af", fontStyle: "italic" }}>±0</span>
-                : <DeltaPill delta={0} label="±0" />}
-            <span style={{ flex: 1, display: "flex", gap: 8, fontSize: 10 }}>
-              {s.counts.added > 0 && <CountChip count={s.counts.added} kind="added" />}
-              {s.counts.removed > 0 && <CountChip count={s.counts.removed} kind="removed" />}
-              {s.counts.modified > 0 && <CountChip count={s.counts.modified} kind="modified" />}
-            </span>
+            {sectionChanged ? (
+              <>
+                {s.delta !== 0 && <DeltaPill delta={s.delta} />}
+                <span style={{ flex: 1, display: "flex", gap: 8, fontSize: 10 }}>
+                  {s.counts.added > 0 && <CountChip count={s.counts.added} kind="added" />}
+                  {s.counts.removed > 0 && <CountChip count={s.counts.removed} kind="removed" />}
+                  {s.counts.modified > 0 && <CountChip count={s.counts.modified} kind="modified" />}
+                </span>
+              </>
+            ) : (
+              <span style={{ flex: 1, fontSize: 10, color: "#9ca3af", fontStyle: "italic" }}>
+                {t("diff.noChangesShort")}
+              </span>
+            )}
           </button>
         );
       })}
@@ -418,7 +462,6 @@ function SectionDrillIn({
   const { t } = useTranslation();
   const merged = useMemo(() => mergeBins(section.leaves), [section.leaves]);
   const items = useMemo(() => toStripItems(merged, expandedBins), [merged, expandedBins]);
-  const [hoveredItem, setHoveredItem] = useState<DiffStripItem | null>(null);
 
   const handleStripSelect = (it: DiffStripItem) => {
     if (it.merged.kind === "bin") {
@@ -445,18 +488,7 @@ function SectionDrillIn({
 
   return (
     <>
-      {/* Hover readout — 顶部固定行 */}
-      <div style={{
-        height: 20, display: "flex", alignItems: "center", gap: 8,
-        padding: "0 2px", fontSize: 10,
-        whiteSpace: "nowrap", overflow: "hidden",
-        color: hoveredItem ? "#111827" : "#9ca3af",
-        transition: "color 0.15s",
-      }}>
-        <HoverReadout item={hoveredItem} idleText={t("diff.hoverHint")} />
-      </div>
-
-      {/* LeafStrip */}
+      {/* LeafStrip — hover/select 反馈完全交给 FisheyeStrip 内部三档强度 */}
       <div style={{ minWidth: 0, maxWidth: "100%", overflowX: "hidden" }}>
         <FisheyeStrip<DiffStripItem>
           items={items}
@@ -465,7 +497,7 @@ function SectionDrillIn({
             return DIFF_COLOR[it.merged.leaf.kind];
           }}
           getLabel={(it) => {
-            // 段内 label：只显示前缀 + slot，不带 delta 数字（数字在 hover readout / detail 中显示）
+            // 段内 label：只显示前缀 + slot，不带 delta 数字（数字在 detail 中显示）
             if (it.merged.kind === "bin") {
               return `${it.merged.leaves.length} ${t("diff.unchanged")}`;
             }
@@ -488,49 +520,11 @@ function SectionDrillIn({
           autoConfig={{ minCount: 8, clickableThresholdPx: 16 }}
           selectedId={selectedLeafId}
           onSelect={handleStripSelect}
-          onHover={(it) => setHoveredItem(it ?? null)}
         />
       </div>
 
       {/* SelectedDetail — 扁平展示，无 card 外框 */}
       {selectedLeaf && <SelectedDiffDetail leaf={selectedLeaf} />}
-    </>
-  );
-}
-
-function HoverReadout({ item, idleText }: { item: DiffStripItem | null; idleText: string }) {
-  const { t } = useTranslation();
-  if (!item) {
-    return <span style={{ fontStyle: "italic", letterSpacing: "0.02em" }}>{idleText}</span>;
-  }
-  if (item.merged.kind === "bin") {
-    const b = item.merged;
-    return (
-      <>
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: BIN_COLOR, border: "1px solid #d1d5db", flexShrink: 0 }} />
-        <span style={{ fontWeight: 600, color: "#374151" }}>{t("diff.binDescription", { count: b.leaves.length })}</span>
-        <span style={{ color: "#6b7280" }}>{t("diff.totalChars", { count: fmtK(b.totalSize) })}</span>
-        <span style={{ color: "#9ca3af" }}>· {t("diff.clickToExpand")}</span>
-      </>
-    );
-  }
-  const l = item.merged.leaf;
-  const color = DIFF_TEXT_COLOR[l.kind];
-  const fill = DIFF_COLOR[l.kind];
-  const kindLabel = t(`diff.${l.kind}` as const);
-  return (
-    <>
-      <span style={{ width: 8, height: 8, borderRadius: 2, background: fill, flexShrink: 0 }} />
-      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", fontWeight: 600, color: "#111827" }}>{shortSlot(l.slotType)}</span>
-      <span style={{ fontSize: 10, fontWeight: 700, color, letterSpacing: "0.04em", textTransform: "uppercase" }}>{kindLabel}</span>
-      {l.kind === "modified" && (
-        <span style={{ color: "#6b7280" }}>
-          {fmtK(l.oldCharCount ?? 0)} → {fmtK(l.newCharCount)}{" "}
-          <strong style={{ color, fontFamily: "ui-monospace, monospace" }}>({fmtDelta(l.newCharCount - (l.oldCharCount ?? 0))})</strong>
-        </span>
-      )}
-      {l.kind === "added" && <strong style={{ color, fontFamily: "ui-monospace, monospace" }}>+{fmtK(l.newCharCount)}</strong>}
-      {l.kind === "removed" && <strong style={{ color, fontFamily: "ui-monospace, monospace" }}>−{fmtK(l.oldCharCount ?? 0)}</strong>}
     </>
   );
 }

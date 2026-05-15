@@ -169,13 +169,10 @@
     }
   },
   "attribution": {
-    "hoverHint": "Hover a segment to see details · click to select",
     "layoutProportional": "Proportional",
     "layoutEqual": "Equal",
     "layoutProportionalTitle": "Sized by char count",
     "layoutEqualTitle": "All segments equal width",
-    "overloadBanner": "{{count}} segments — too many to comfortably target one by one. The bar still shows distribution; use the list below for precise drill-in.",
-    "overloadHint": "Too dense — use the list below",
     "request": "Request",
     "response": "Response"
   },
@@ -189,14 +186,14 @@
     "loadFailed": "Failed to load diff: {{error}}",
     "noData": "No diff data available.",
     "noChanges": "✓ No changes vs previous call · all sections identical",
+    "noChangesShort": "no changes",
     "vsCall": "DIFF vs CALL",
+    "segmentsChanged": "{{count}} segments changed",
+    "charsLabel": "chars",
     "added": "added",
     "removed": "removed",
     "modified": "modified",
     "unchanged": "unchanged",
-    "hoverHint": "Hover a segment · click unchanged bin to expand · click changed segment for before/after",
-    "binDescription": "{{count}} unchanged segments",
-    "totalChars": "{{count}} chars total",
     "clickToExpand": "click to expand"
   }
 }

@@ -13,8 +13,9 @@
 //   computeTreeDiff(curSnapshot, prevSnapshot) → diff（leafStatus / previousLeafStatus / ...）
 //   buildSections(curLeaves, prevLeaves, diff) → DiffSection[]
 //
-// modified 标识：v1 不做（rawHash 不等的同 slot 段会被识别为 added + removed）。
-// 后续如需 modified 配对，可在 buildSections 中按 slotType + 位置邻近度做后处理。
+// modified 标识（v2）：在 buildSections 中按 (slotType, jsonPath) 在 prev-removed × cur-added
+// 之间做一次配对 —— 同槽位 + 同路径但 hash 不同的段，视为同一段被改写过，emit 一条 modified。
+// 没匹配到的就退化为 added / removed 各自呈现（保留 v1 的诚实表达）。
 
 import type { Database } from "better-sqlite3";
 
@@ -79,6 +80,10 @@ export interface DiffTreeResult {
     modifiedCount: number;
     keptCount: number;
     netCharDelta: number;
+    /** git 风格：插入字符总数（added 全量 + modified 中 newCharCount） */
+    insertedChars: number;
+    /** git 风格：删除字符总数（removed 全量 + modified 中 oldCharCount） */
+    deletedChars: number;
   };
   /** 错误信息（reqBody 缺失 / 解析失败等） */
   error?: string;
@@ -103,7 +108,10 @@ export async function loadDiffTree(
     } | null;
   },
 ): Promise<DiffTreeResult> {
-  const emptySummary = { addedCount: 0, removedCount: 0, modifiedCount: 0, keptCount: 0, netCharDelta: 0 };
+  const emptySummary = {
+    addedCount: 0, removedCount: 0, modifiedCount: 0, keptCount: 0,
+    netCharDelta: 0, insertedChars: 0, deletedChars: 0,
+  };
 
   const meta = helpers.resolveCallMeta(sessionId, callId);
   if (!meta) {
@@ -178,6 +186,16 @@ export async function loadDiffTree(
     summary.modifiedCount += s.counts.modified;
     summary.keptCount     += s.counts.kept;
     summary.netCharDelta  += s.delta;
+    for (const l of s.leaves) {
+      if (l.kind === "added") {
+        summary.insertedChars += l.newCharCount;
+      } else if (l.kind === "removed") {
+        summary.deletedChars += l.oldCharCount ?? 0;
+      } else if (l.kind === "modified") {
+        summary.insertedChars += l.newCharCount;
+        summary.deletedChars  += l.oldCharCount ?? 0;
+      }
+    }
   }
 
   return {
@@ -200,9 +218,35 @@ function buildSections(
   const prevLeaves = prevSnap ? collectLeaves(prevSnap.roots) : [];
   const prevStatus = diff.previousLeafStatus ?? {};
 
+  // —— 方案 A：modified 配对 —— //
+  // 把所有 prev-removed 按 (slotType, jsonPath) 分桶。同 cur-added 命中桶时取队首
+  // 配对成 modified；prev 端再遇到该 leaf 时跳过（已被消费）。
+  const removedByKey = new Map<string, SegmentNode[]>();
+  for (const p of prevLeaves) {
+    if (prevStatus[p.id] !== "removed") continue;
+    const key = `${p.slotType}\x00${p.jsonPath}`;
+    const list = removedByKey.get(key) ?? [];
+    list.push(p);
+    removedByKey.set(key, list);
+  }
+  /** curLeaf.id → 配对的 prev SegmentNode（说明这条 cur 应作为 modified emit） */
+  const modifiedPair = new Map<string, SegmentNode>();
+  /** prev leaf id 集合 — 已被吃成 modified，不再 emit removed */
+  const consumedPrevIds = new Set<string>();
+  for (const c of curLeaves) {
+    if (diff.leafStatus[c.id] !== "added") continue;
+    const key = `${c.slotType}\x00${c.jsonPath}`;
+    const queue = removedByKey.get(key);
+    if (!queue || queue.length === 0) continue;
+    const matched = queue.shift()!;
+    modifiedPair.set(c.id, matched);
+    consumedPrevIds.add(matched.id);
+  }
+
   // 指针配对算法（详见文件头注释）：
-  //   - prev 端遇到 removed → 输出 removed
-  //   - cur 端遇到 added → 输出 added
+  //   - prev 端遇到 removed（未被 modified 吃掉）→ 输出 removed
+  //   - cur 端遇到 added（无 modified 配对）→ 输出 added
+  //   - cur 端遇到 added 且 modifiedPair 命中 → 输出 modified（位置随 cur）
   //   - 两端都到 unchanged → 配对成 kept，同时前进
   const merged: DiffLeaf[] = [];
   let ip = 0;
@@ -212,11 +256,19 @@ function buildSections(
     const prevL = ip < prevLeaves.length ? prevLeaves[ip] : null;
     const curL  = ic < curLeaves.length  ? curLeaves[ic]  : null;
     const prevIsRemoved = !!prevL && prevStatus[prevL.id] === "removed";
+    const prevConsumedAsModified = !!prevL && consumedPrevIds.has(prevL.id);
     const curIsAdded    = !!curL  && diff.leafStatus[curL.id] === "added";
+    const curHasModifiedPair = !!curL && modifiedPair.has(curL.id);
 
-    if (prevIsRemoved && prevL) {
+    if (prevConsumedAsModified) {
+      // prev 端的这条已被 modified 吃掉，不输出，仅前进
+      ip += 1;
+    } else if (prevIsRemoved && prevL) {
       merged.push(toRemovedLeaf(prevL, prevSnap!));
       ip += 1;
+    } else if (curHasModifiedPair && curL) {
+      merged.push(toModifiedLeaf(curL, modifiedPair.get(curL.id)!, curSnap));
+      ic += 1;
     } else if (curIsAdded && curL) {
       merged.push(toAddedLeaf(curL, curSnap));
       ic += 1;
@@ -308,6 +360,22 @@ function toAddedLeaf(leaf: SegmentNode, snap: ParsedQuerySnapshot): DiffLeaf {
     rawText: leaf.rawText,
     origin: leaf.origin,
     ...(leaf.wireMeta && { wireMeta: leaf.wireMeta }),
+  };
+}
+
+function toModifiedLeaf(curLeaf: SegmentNode, prevLeaf: SegmentNode, snap: ParsedQuerySnapshot): DiffLeaf {
+  return {
+    id: curLeaf.id,
+    slotType: curLeaf.slotType,
+    rootSlotType: rootSlotOf(curLeaf, snap),
+    kind: "modified",
+    newCharCount: curLeaf.charCount,
+    oldCharCount: prevLeaf.charCount,
+    preview: previewOf(curLeaf.rawText),
+    rawText: curLeaf.rawText,
+    oldRawText: prevLeaf.rawText,
+    origin: curLeaf.origin,
+    ...(curLeaf.wireMeta && { wireMeta: curLeaf.wireMeta }),
   };
 }
 
