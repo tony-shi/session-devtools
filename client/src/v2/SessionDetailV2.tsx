@@ -29,7 +29,15 @@ import { AttributionTreePanel } from "./AttributionTreePanel";
 import { ResponseTreePanel } from "./ResponseTreePanel";
 import { DiffPanel } from "./DiffPanel";
 import { TOKEN_METRICS } from "./metricRegistry";
-import { HeaderStatRow, TokenLedgerInline } from "./shared/HeaderStats";
+import {
+  HeaderStatRow,
+  TokenLedgerInline,
+  UnifiedHeader,
+  StatusBadgeStrip,
+  type StatusBadge,
+  type StatusBadgeKind,
+} from "./shared/HeaderStats";
+import { MiniTokenLedger } from "./SummaryCardsV2";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { getToolPalette } from "./shared/toolRegistry";
 import { CHART_COLORS, TOOLTIP_PRESET, brandAreaGradient } from "./shared/chart-theme";
@@ -41,7 +49,7 @@ type MockDiffEntry = DiffEntry;
 // LlmCall fields added in drilldown-types are optional in the raw fallback
 // data below; normalizeTurns() fills them in.
 type RawMockCall = Omit<LlmCall,
-  "indexInTurn" | "messageId" | "jsonlLineIdx" | "jsonlFrameLineIdxs" |
+  "indexInTurn" | "messageId" | "apiRequestId" | "jsonlLineIdx" | "jsonlFrameLineIdxs" |
   "model" | "stopReason" | "proxy" | "subAgents" |
   "isCompaction" | "isUnknownHeavy" | "isSignificant" | "significantDelta" | "freshIn" |
   "toolNames" | "toolCalls" | "assistantText" | "intervalEvents"
@@ -70,6 +78,7 @@ function normalizeTurns(raw: RawMockTurn[]): UserTurn[] {
       ...c,
       indexInTurn: ci + 1,
       messageId: null,
+      apiRequestId: null,
       jsonlLineIdx: null,
       jsonlFrameLineIdxs: [],
       model: "claude-opus-4-7",
@@ -355,6 +364,18 @@ function MockBadge() {
   );
 }
 
+// Bridge between StatusBadgeStrip (which takes a renderIcon callback so the
+// shared module doesn't depend on SessionDetailV2) and BADGE_ICONS above.
+function renderStatusIcon(kind: StatusBadgeKind, px: number, color: string): React.ReactNode {
+  switch (kind) {
+    case "compaction": return BADGE_ICONS.compaction(px, color);
+    case "error":      return BADGE_ICONS.error(px, color);
+    case "subAgent":   return BADGE_ICONS.subAgent(px, color);
+    case "command":    return BADGE_ICONS.command(px, color);
+    case "unknown":    return BADGE_ICONS.unknown(px, color);
+  }
+}
+
 function RiskBadge({ type }: { type: "compaction" | "unknown-spike" | "large-growth" | "tool-heavy" | "near-limit" }) {
   const configs = {
     "compaction": { label: "Compaction", bg: "#fef2f2", color: "#dc2626", border: "#fecaca" },
@@ -576,11 +597,31 @@ function SessionOverviewPanel({
   const peakContext      = sm?.peakContext      ?? (turns.length ? Math.max(...turns.map(t => t.peakContext)) : 0);
   const totalCacheRead   = sm?.totalCacheRead   ?? turns.reduce((s, t) => s + t.cacheRead, 0);
   const totalCacheWrite  = sm?.totalCacheWrite  ?? turns.reduce((s, t) => s + t.cacheWrite, 0);
-  const totalFreshIn     = sm?.totalFreshIn     ?? null;
+  // totalFreshIn — sum of per-call API uncached input_tokens. We compute it
+  // directly from each call's (ctx − cacheRead − cacheWrite) instead of
+  // trusting `sm.totalFreshIn`. The server-side aggregate sums
+  // `call.freshIn` (which is "context growth since previous call", not API
+  // input_tokens), so for long sessions that number balloons to millions —
+  // the same context (~100k+) gets credited every call. Recomputing here
+  // gives a value that's consistent with each Turn header and Call header
+  // (the formula matches `Math.max(0, ctx − cacheRead − cacheWrite)`).
+  const totalFreshIn = turns.reduce(
+    (s, t) => s + t.calls.reduce(
+      (cs, c) => cs + Math.max(0, c.contextSize - c.cacheRead - c.cacheWrite),
+      0,
+    ),
+    0,
+  );
   const totalFreshOut    = sm?.totalFreshOut    ?? null;
   const systemErrors     = sm?.systemErrorCount ?? null;
   const durationStr      = sm?.durationStr      ?? "—";
-  const cacheRatio       = sm?.cacheRatio       ?? null;
+  // Re-derive cache ratio from the locally-computed totals so denominator
+  // matches what we render (input + cacheRead + cacheWrite). Falls back to
+  // the server's cacheRatio when no calls are available.
+  const cacheInputTotal  = totalFreshIn + totalCacheRead + totalCacheWrite;
+  const cacheRatio       = cacheInputTotal > 0
+    ? (totalCacheRead / cacheInputTotal) * 100
+    : sm?.cacheRatio ?? null;
   const modelBreakdown   = drilldown?.modelBreakdown ?? null;
 
   // Hotspots from real data
@@ -608,92 +649,73 @@ function SessionOverviewPanel({
   const singleModel = modelBreakdown && Object.keys(modelBreakdown).length === 1
     ? Object.keys(modelBreakdown)[0] : null;
 
+  // Build status badges (icon + count, unified across Session/Turn/Call/nav)
+  const sessionStatusBadges: StatusBadge[] = (() => {
+    if (isMock) return [];
+    const { compactionCount, errorCount, subAgentTotal, commandTurns, unknownTurns } = badgeSummary;
+    const items: StatusBadge[] = [];
+    if (compactionCount > 0) items.push({ kind: "compaction", count: compactionCount, tooltip: t("sessionOverview.badges.compaction") });
+    if (errorCount > 0)      items.push({ kind: "error",      count: errorCount,      tooltip: t("sessionOverview.badges.errors") });
+    if (subAgentTotal > 0)   items.push({ kind: "subAgent",   count: subAgentTotal,   tooltip: t("sessionOverview.badges.subAgents") });
+    if (commandTurns > 0)    items.push({ kind: "command",    count: commandTurns,    tooltip: t("sessionOverview.badges.commands") });
+    if (unknownTurns > 0)    items.push({ kind: "unknown",    count: unknownTurns,    tooltip: t("sessionOverview.badges.unknown") });
+    return items;
+  })();
+
   return (
     <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
-      {/* ── Overview: flat rows, no card border ─────────────────────── */}
-      <div style={{ marginBottom: 16 }}>
-
-        <HeaderStatRow
-          stats={[
-            { label: t("sessionOverview.activity.userTurns"), value: String(drilldown?.turns.length ?? turns.length) },
-            { label: t("sessionOverview.activity.llmCalls"),  value: String(totalCalls) },
-            { label: t("sessionOverview.activity.toolCalls"), value: String(totalToolCalls) },
-            { label: t("sessionOverview.activity.duration"),  value: durationStr },
-          ]}
-          rightSlot={
-            <>
-              {singleModel && (
-                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <div style={{ width: 7, height: 7, borderRadius: 2, background: modelColor(singleModel), flexShrink: 0 }} />
-                  <span style={{ fontSize: 11, color: "#6b7280" }}>{shortModelName(singleModel)}</span>
-                </div>
-              )}
-              {multiModel && (
-                <button
-                  onClick={() => setModelsExpanded(v => !v)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 5,
-                    fontSize: 11, padding: "3px 8px", borderRadius: 6,
-                    border: "1px solid #e5e7eb", background: modelsExpanded ? "#eef2ff" : "#f9fafb",
-                    color: modelsExpanded ? "#6366f1" : "#6b7280", cursor: "pointer",
-                  }}
-                >
-                  {t("sessionOverview.activity.models", { n: Object.keys(modelBreakdown!).length })}
-                  <svg width="9" height="9" fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                    style={{ transform: modelsExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-              )}
-              {isMock && <MockBadge />}
-            </>
-          }
-        />
-
-        {/* Models expanded panel */}
-        {multiModel && modelsExpanded && (
-          <div style={{ marginTop: 8, marginBottom: 4 }}>
-            <ModelBreakdownBlock breakdown={modelBreakdown!} />
-          </div>
-        )}
-
-        <TokenLedgerInline
-          freshIn={totalFreshIn ?? 0}
-          cacheRead={totalCacheRead}
-          cacheWrite={totalCacheWrite}
-          output={totalFreshOut ?? 0}
-          cacheRatio={cacheRatio}
-        />
-      </div>
-
-      {/* ── Badge strip — below token ledger, compact inline style ── */}
-      {!isMock && (() => {
-        const { compactionCount, errorCount, subAgentTurns, subAgentTotal, commandTurns, unknownTurns } = badgeSummary;
-        type BS = { key: string; icon: React.ReactNode; label: string; detail: string; color: string };
-        const items: BS[] = [
-          compactionCount > 0 ? { key: "C", icon: BADGE_ICONS.compaction(10, "#ef4444"), label: t("sessionOverview.badges.compaction"), detail: `${compactionCount}t`, color: "#ef4444" } : null,
-          errorCount > 0      ? { key: "E", icon: BADGE_ICONS.error(10, "#dc2626"),      label: t("sessionOverview.badges.errors"),      detail: `${errorCount}`,    color: "#dc2626" } : null,
-          subAgentTotal > 0   ? { key: "A", icon: BADGE_ICONS.subAgent(10, "#7c3aed"),   label: t("sessionOverview.badges.subAgents"),   detail: `${subAgentTotal} · ${subAgentTurns}t`, color: "#7c3aed" } : null,
-          commandTurns > 0    ? { key: "/", icon: BADGE_ICONS.command(10, "#d97706"),    label: t("sessionOverview.badges.commands"),    detail: `${commandTurns}t`, color: "#d97706" } : null,
-          unknownTurns > 0    ? { key: "?", icon: BADGE_ICONS.unknown(10, "#9ca3af"),    label: t("sessionOverview.badges.unknown"),     detail: `${unknownTurns}t`, color: "#9ca3af" } : null,
-        ].filter(Boolean) as BS[];
-        if (items.length === 0) return null;
-        return (
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16, paddingTop: 2 }}>
-            {items.map(b => (
-              <div key={b.key} style={{
-                display: "inline-flex", alignItems: "center", gap: 4,
-                padding: "2px 7px", borderRadius: 6,
-                border: `1px solid ${b.color}28`, background: `${b.color}08`,
-              }}>
-                <span style={{ display: "inline-flex", alignItems: "center" }}>{b.icon}</span>
-                <span style={{ fontSize: 10, color: b.color, fontWeight: 600 }}>{b.label}</span>
-                <span style={{ fontSize: 10, color: b.color, opacity: 0.6 }}>{b.detail}</span>
+      {/* ── Overview: stats · ledger · badges in one flex row ─────── */}
+      <UnifiedHeader
+        stats={[
+          { label: t("sessionOverview.activity.userTurns"), value: String(drilldown?.turns.length ?? turns.length) },
+          { label: t("sessionOverview.activity.llmCalls"),  value: String(totalCalls) },
+          { label: t("sessionOverview.activity.toolCalls"), value: String(totalToolCalls) },
+          { label: t("sessionOverview.activity.duration"),  value: durationStr },
+        ]}
+        ledger={{
+          freshIn: totalFreshIn ?? 0,
+          cacheRead: totalCacheRead,
+          cacheWrite: totalCacheWrite,
+          output: totalFreshOut ?? 0,
+          cacheRatio,
+        }}
+        rightSlot={
+          <>
+            <StatusBadgeStrip badges={sessionStatusBadges} renderIcon={renderStatusIcon} />
+            {singleModel && (
+              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <div style={{ width: 7, height: 7, borderRadius: 2, background: modelColor(singleModel), flexShrink: 0 }} />
+                <span style={{ fontSize: 11, color: "#6b7280" }}>{shortModelName(singleModel)}</span>
               </div>
-            ))}
-          </div>
-        );
-      })()}
+            )}
+            {multiModel && (
+              <button
+                onClick={() => setModelsExpanded(v => !v)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 5,
+                  fontSize: 11, padding: "3px 8px", borderRadius: 6,
+                  border: "1px solid #e5e7eb", background: modelsExpanded ? "#eef2ff" : "#f9fafb",
+                  color: modelsExpanded ? "#6366f1" : "#6b7280", cursor: "pointer",
+                }}
+              >
+                {t("sessionOverview.activity.models", { n: Object.keys(modelBreakdown!).length })}
+                <svg width="9" height="9" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  style={{ transform: modelsExpanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            )}
+            {isMock && <MockBadge />}
+          </>
+        }
+      />
+
+      {/* Models expanded panel — kept outside UnifiedHeader since it spans full width */}
+      {multiModel && modelsExpanded && (
+        <div style={{ marginTop: -8, marginBottom: 12 }}>
+          <ModelBreakdownBlock breakdown={modelBreakdown!} />
+        </div>
+      )}
 
       {/* Context Overview Timeline */}
       <div style={{ marginBottom: 20 }}>
@@ -730,36 +752,38 @@ function SessionOverviewPanel({
         );
       })()}
 
-      {/* User Turn List */}
+      {/* User Turn List — timeline + bordered card (mirrors Turn detail's
+          Call list). The old USER/AGENT side rails are gone; the dialog feel
+          lives inside each card via the blue/green bubbles. */}
       <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 10 }}>{t("sessionOverview.charts.userTurns")}</div>
-      <div style={{ display: "flex", gap: 0 }}>
-        {/* Left USER rail */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 26, flexShrink: 0 }}>
-          <span style={{ fontSize: 9, fontWeight: 600, color: "#93c5fd", letterSpacing: "0.05em", marginBottom: 4 }}>{t("sessionOverview.turn.roleUser")}</span>
-          <div style={{ flex: 1, width: 1, background: "#dbeafe" }} />
-        </div>
-        {/* Center content */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {turns.map((turn, idx) => (
-            <React.Fragment key={turn.id}>
-              {/* Turn divider */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, margin: idx === 0 ? "0 0 8px" : "20px 0 8px" }}>
-                <div style={{ flex: 1, height: 1, background: "#f3f4f6" }} />
-                <span style={{ fontSize: 10, whiteSpace: "nowrap", flexShrink: 0 }}>
-                  <strong style={{ color: "#6366f1", fontWeight: 600 }}>{t("sessionOverview.turn.label")} {turn.id}</strong>
-                  {turn.startedAt ? <span style={{ color: "#d1d5db" }}>{`  ·  ${new Date(turn.startedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}`}</span> : null}
-                </span>
-                <div style={{ flex: 1, height: 1, background: "#f3f4f6" }} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 0, position: "relative" }}>
+        {/* Vertical spine — same geometry as the Call list spine, so the
+            two views read as one design system. */}
+        <div style={{ position: "absolute", left: 11, top: 8, bottom: 8, width: 2, background: "#e5e7eb", zIndex: 0 }} />
+
+        {turns.map((turn) => {
+          // Spine dot color: red on hard problems, indigo otherwise.
+          const dotColor = (turn.hasCompaction || turn.errorCount > 0) ? "#ef4444" : "#6366f1";
+          return (
+            <div key={turn.id} style={{ position: "relative", zIndex: 1, marginBottom: 12 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                {/* Spine dot — anchors this turn to the timeline */}
+                <div style={{ flexShrink: 0, marginTop: 10, width: 24, display: "flex", justifyContent: "center" }}>
+                  <div style={{
+                    width: 14, height: 14, borderRadius: "50%",
+                    border: "2px solid #fff",
+                    background: dotColor,
+                    boxShadow: `0 0 0 2px ${dotColor}40`,
+                  }} />
+                </div>
+                {/* Card body */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <TurnCard turn={turn} onClick={() => onSelectTurn(turn)} />
+                </div>
               </div>
-              <TurnCard turn={turn} onClick={() => onSelectTurn(turn)} />
-            </React.Fragment>
-          ))}
-        </div>
-        {/* Right AI rail */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 26, flexShrink: 0 }}>
-          <span style={{ fontSize: 9, fontWeight: 600, color: "#86efac", letterSpacing: "0.05em", marginBottom: 4 }}>{t("sessionOverview.turn.roleAgent")}</span>
-          <div style={{ flex: 1, width: 1, background: "#dcfce7" }} />
-        </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -983,9 +1007,10 @@ function ContextTimelineChart({
       finalIdx: number, finalVal: number, finalX: number | string,
     ) => {
       const isSame = maxIdx === finalIdx;
-      const pts: object[] = [];
+      const pts: { name: string; coord: (number | string)[]; symbol: string; label: object }[] = [];
       // max point
       pts.push({
+        name: "max",
         coord: [maxX, maxVal],
         symbol: "none",
         label: {
@@ -1000,6 +1025,7 @@ function ContextTimelineChart({
       // final point (skip if same as max)
       if (!isSame) {
         pts.push({
+          name: "final",
           coord: [finalX, finalVal],
           symbol: "none",
           label: {
@@ -1090,6 +1116,7 @@ function ContextTimelineChart({
               silent: true,
               data: [
                 ...compactionIndices.map(i => ({
+                  name: `compaction-${i}`,
                   coord: [xLabels[i], values[i]],
                   itemStyle: { color: CHART_COLORS.compaction },
                   symbol: "diamond",
@@ -1270,6 +1297,7 @@ function fmtDuration(ms: number): string {
 }
 
 function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }) {
+  const { t } = useTranslation();
   const [inputExpanded, setInputExpanded] = useState(false);
   const [outputExpanded, setOutputExpanded] = useState(false);
   const [mdMode, setMdMode] = useState(true);
@@ -1288,133 +1316,184 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
       : outputFull
     : null;
 
+  // Status badges — same source-of-truth + same icon+count format as the
+  // call card in UserTurnDetailPanel and the nav row.
   const saCount = turn.calls.reduce((s, c) => s + c.subAgents.length, 0);
+  const commandCount = turn.calls.reduce(
+    (s, c) => s + c.intervalEvents.filter(e => e.kind === "user:command").length, 0);
+  const unknownCount = turn.calls.reduce(
+    (s, c) => s + c.intervalEvents.filter(e => e.kind === "unknown").length, 0);
+  const turnCardBadges: StatusBadge[] = [];
+  if (turn.hasCompaction)  turnCardBadges.push({ kind: "compaction", count: 1,               tooltip: t("sessionOverview.badges.compaction") });
+  if (turn.errorCount > 0) turnCardBadges.push({ kind: "error",      count: turn.errorCount, tooltip: t("sessionOverview.badges.errors") });
+  if (saCount > 0)         turnCardBadges.push({ kind: "subAgent",   count: saCount,         tooltip: t("sessionOverview.badges.subAgents") });
+  if (commandCount > 0)    turnCardBadges.push({ kind: "command",    count: commandCount,    tooltip: t("sessionOverview.badges.commands") });
+  if (unknownCount > 0)    turnCardBadges.push({ kind: "unknown",    count: unknownCount,    tooltip: t("sessionOverview.badges.unknown") });
 
+  const netDelta = turn.netContextDelta;
+  const deltaTxt = netDelta !== 0 ? `${netDelta > 0 ? "+" : ""}${fmtK(netDelta)}` : "";
+  const startedAtShort = turn.startedAt
+    ? new Date(turn.startedAt).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : null;
+
+  // One bordered card — header + dialog body — mirroring the LLM Call card
+  // structure inside the Turn detail. The header strip is the click target
+  // (drill into the turn); the body keeps the user/agent dialog feel via
+  // blue/green bubbles so it still reads as a conversation.
   return (
-    <div style={{ marginBottom: 4 }}>
-      {/* ── Turn header ── */}
+    <div
+      style={{
+        border: "1px solid #e5e7eb", borderRadius: 8,
+        background: "#fff", overflow: "hidden",
+      }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = "#6366f1"; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e7eb"; }}
+    >
+      {/* ── Header — same layout as Call card header ── */}
       <div
         onClick={onClick}
-        style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, cursor: "pointer" }}
+        style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "7px 12px", borderBottom: "1px solid #f3f4f6",
+          cursor: "pointer",
+        }}
       >
-        <span style={{ flex: 1 }} />
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          {saCount > 0 && (
-            <span title={`${saCount} sub agent${saCount > 1 ? "s" : ""}`} style={{
-              display: "inline-flex", alignItems: "center", gap: 2,
-              fontSize: 9, fontWeight: 700, color: "#4338ca",
-              background: "#eef2ff", border: "1px dashed #a5b4fc",
-              borderRadius: 4, padding: "1px 4px",
-            }}><ForkIcon size={9} color="#4338ca" /> {saCount}</span>
-          )}
-          {turn.hasCompaction && <RiskBadge type="compaction" />}
-          {turn.errorCount > 0 && (
-            <span style={{ fontSize: 9, fontWeight: 700, color: "#fff", background: "#dc2626", borderRadius: 3, padding: "1px 4px" }}>
-              {turn.errorCount}E
-            </span>
-          )}
-          <span style={{ fontSize: 10, color: "#9ca3af" }}>›</span>
+        {/* Left: Turn label + timestamp (replaces the dropped horizontal divider) */}
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>
+          {t("sessionOverview.turn.label")} {turn.id}
+        </span>
+        {startedAtShort && (
+          <span style={{ fontSize: 10, color: "#9ca3af" }}>{startedAtShort}</span>
+        )}
+        {deltaTxt && (
+          <span style={{
+            fontSize: 10, fontWeight: 700,
+            padding: "1px 5px", borderRadius: 4,
+            color: netDelta > 0 ? "#d97706" : "#16a34a",
+            background: netDelta > 0 ? "#fffbeb" : "#f0fdf4",
+          }}>
+            {deltaTxt}
+          </span>
+        )}
+        <span style={{ fontSize: 11, color: "#9ca3af" }}>
+          {turn.llmCallCount} {t("terms.callsSuffix")}
+        </span>
+        {turn.toolCallCount > 0 && (
+          <span style={{ fontSize: 11, color: "#9ca3af" }}>
+            · {turn.toolCallCount} {t("terms.toolsSuffix")}
+          </span>
+        )}
+        {turn.durationMs > 0 && (
+          <span style={{ fontSize: 11, color: "#9ca3af" }}>
+            · {fmtDuration(turn.durationMs)}
+          </span>
+        )}
+        {/* Right: badges + chevron */}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+          <StatusBadgeStrip badges={turnCardBadges} renderIcon={renderStatusIcon} />
+          <span style={{ fontSize: 10, color: "#d1d5db" }}>›</span>
         </div>
       </div>
 
-      {/* ── User bubble ── */}
-      <div style={{ marginBottom: 6 }}>
-        <div style={{ position: "relative" }}>
-          {/* left soft arrow */}
-          <svg style={{ position: "absolute", left: -8, top: 8 }} width="9" height="14" viewBox="0 0 9 14" fill="none">
-            <path d="M9 2 Q9 0 7 1 L1 7 L7 13 Q9 14 9 12 Z" fill="#eff6ff" stroke="#bfdbfe" strokeWidth="1" strokeLinejoin="round"/>
-          </svg>
-          <div style={{
-            fontSize: 12, color: "#1e3a5f", lineHeight: 1.55,
-            background: "#eff6ff", border: "1px solid #bfdbfe",
-            borderRadius: "12px",
-            padding: "8px 12px",
-            whiteSpace: "pre-wrap", wordBreak: "break-word",
-          }}>
-            {inputShown}
+      {/* ── Dialog body — bubbles preserve the conversation feel even though
+            the USER / AGENT side rails are gone. User left-aligned, agent
+            right-aligned. Max-width capped well under 100% on both sides so
+            the two parties don't visually pull to opposite edges of the
+            card — keeps the conversation feeling close. ── */}
+      <div style={{ padding: "10px 12px" }}>
+        {/* User bubble — left aligned, blue */}
+        <div style={{ display: "flex", marginBottom: 6 }}>
+          <div style={{ maxWidth: "78%" }}>
+            <div style={{
+              fontSize: 12, color: "#1e3a5f", lineHeight: 1.55,
+              background: "#eff6ff", border: "1px solid #bfdbfe",
+              borderRadius: "12px 12px 12px 4px",
+              padding: "8px 12px",
+              whiteSpace: "pre-wrap", wordBreak: "break-word",
+            }}>
+              {inputShown}
+            </div>
+            {inputNeedsExpand && (
+              <button
+                onClick={e => { e.stopPropagation(); setInputExpanded(v => !v); }}
+                style={{ marginTop: 4, fontSize: 11, color: "#3b82f6", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+              >
+                {inputExpanded ? "Show less ↑" : "Show more ↓"}
+              </button>
+            )}
           </div>
         </div>
-        {inputNeedsExpand && (
-          <button
-            onClick={e => { e.stopPropagation(); setInputExpanded(v => !v); }}
-            style={{ marginTop: 4, fontSize: 11, color: "#3b82f6", background: "none", border: "none", cursor: "pointer", padding: 0 }}
-          >
-            {inputExpanded ? "Show less ↑" : "Show more ↓"}
-          </button>
+
+        {/* Mid-turn injections — yellow, left aligned just like user */}
+        {turn.midTurnInjections?.map((inj, idx) => (
+          <div key={idx} style={{ display: "flex", marginBottom: 6 }}>
+            <div style={{ maxWidth: "78%" }}>
+              <div style={{ fontSize: 9, fontWeight: 700, color: "#d97706", marginBottom: 3, letterSpacing: "0.05em" }}>
+                ↩ INTERRUPT · after call {inj.afterCallIndex}
+              </div>
+              <div style={{
+                fontSize: 12, color: "#78350f", lineHeight: 1.5,
+                background: "#fffbeb", border: "1px solid #fcd34d",
+                borderRadius: "12px 12px 12px 4px",
+                padding: "7px 11px",
+                whiteSpace: "pre-wrap", wordBreak: "break-word",
+              }}>
+                {inj.text}
+                {inj.timestamp && (
+                  <span style={{ display: "block", fontSize: 10, color: "#d97706", marginTop: 3 }}>
+                    {inj.timestamp.length >= 19 ? inj.timestamp.slice(11, 19) : inj.timestamp}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {/* AI bubble — right aligned, green */}
+        {outputFull && (
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ maxWidth: "78%" }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                <button
+                  onClick={e => { e.stopPropagation(); setMdMode(v => !v); }}
+                  style={{
+                    fontSize: 9, color: mdMode ? "#16a34a" : "#9ca3af",
+                    background: mdMode ? "#f0fdf4" : "#f3f4f6",
+                    border: "none", borderRadius: 3, padding: "1px 5px",
+                    cursor: "pointer", fontWeight: 600,
+                  }}
+                >
+                  {mdMode ? "MD" : "TXT"}
+                </button>
+              </div>
+              <div style={{
+                fontSize: 12, color: "#14532d", lineHeight: 1.6,
+                background: "#f0fdf4", border: "1px solid #bbf7d0",
+                borderRadius: "12px 12px 4px 12px",
+                padding: "8px 12px",
+              }}>
+                {mdMode ? (
+                  <div className="md-prose" style={{ fontSize: 12, lineHeight: 1.6 }}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{outputShown ?? ""}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{outputShown}</div>
+                )}
+              </div>
+              {outputNeedsExpand && (
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    onClick={e => { e.stopPropagation(); setOutputExpanded(v => !v); }}
+                    style={{ marginTop: 4, fontSize: 11, color: "#16a34a", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                  >
+                    {outputExpanded ? "Show less ↑" : "Show more ↓"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
-
-      {/* ── Mid-turn injections (yellow) ── */}
-      {turn.midTurnInjections?.map((inj, idx) => (
-        <div key={idx} style={{ marginBottom: 6, paddingLeft: 8 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, color: "#d97706", marginBottom: 3, letterSpacing: "0.05em" }}>
-            ↩ INTERRUPT · after call {inj.afterCallIndex}
-          </div>
-          <div style={{
-            fontSize: 12, color: "#78350f", lineHeight: 1.5,
-            background: "#fffbeb", border: "1px solid #fcd34d",
-            borderRadius: "2px 12px 12px 12px",
-            padding: "7px 11px",
-            whiteSpace: "pre-wrap", wordBreak: "break-word",
-          }}>
-            {inj.text}
-            {inj.timestamp && (
-              <span style={{ display: "block", fontSize: 10, color: "#d97706", marginTop: 3 }}>
-                {inj.timestamp.length >= 19 ? inj.timestamp.slice(11, 19) : inj.timestamp}
-              </span>
-            )}
-          </div>
-        </div>
-      ))}
-
-      {/* ── AI bubble ── */}
-      {outputFull && (
-        <div style={{ marginBottom: 6 }}>
-          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginBottom: 3 }}>
-            <button
-              onClick={e => { e.stopPropagation(); setMdMode(v => !v); }}
-              style={{
-                fontSize: 9, color: mdMode ? "#16a34a" : "#9ca3af",
-                background: mdMode ? "#f0fdf4" : "#f3f4f6",
-                border: "none", borderRadius: 3, padding: "1px 5px",
-                cursor: "pointer", fontWeight: 600,
-              }}
-            >
-              {mdMode ? "MD" : "TXT"}
-            </button>
-          </div>
-          <div style={{ position: "relative" }}>
-            {/* right soft arrow */}
-            <svg style={{ position: "absolute", right: -8, top: 8 }} width="9" height="14" viewBox="0 0 9 14" fill="none">
-              <path d="M0 2 Q0 0 2 1 L8 7 L2 13 Q0 14 0 12 Z" fill="#f0fdf4" stroke="#bbf7d0" strokeWidth="1" strokeLinejoin="round"/>
-            </svg>
-          <div style={{
-            fontSize: 12, color: "#14532d", lineHeight: 1.6,
-            background: "#f0fdf4", border: "1px solid #bbf7d0",
-            borderRadius: "12px",
-            padding: "8px 12px",
-          }}>
-            {mdMode ? (
-              <div className="md-prose" style={{ fontSize: 12, lineHeight: 1.6 }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{outputShown ?? ""}</ReactMarkdown>
-              </div>
-            ) : (
-              <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{outputShown}</div>
-            )}
-          </div>
-          </div>
-          {outputNeedsExpand && (
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button
-                onClick={e => { e.stopPropagation(); setOutputExpanded(v => !v); }}
-                style={{ marginTop: 4, fontSize: 11, color: "#16a34a", background: "none", border: "none", cursor: "pointer", padding: 0 }}
-              >
-                {outputExpanded ? "Show less ↑" : "Show more ↓"}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -1468,6 +1547,7 @@ const TIMELINE_OUTPUT_PREVIEW = 200;
 function AgentLoopTimeline({
   turn, agentLoop, onSelectCall, onSubAgentClick,
 }: { turn: MockUserTurn; agentLoop: MockAgentLoopData; onSelectCall: (c: MockLlmCall) => void; onSubAgentClick?: (sa: SubAgentSummary) => void }) {
+  const { t } = useTranslation();
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   const [inputExpanded, setInputExpanded] = useState(false);
   const [outputExpanded, setOutputExpanded] = useState(false);
@@ -1495,7 +1575,7 @@ function AgentLoopTimeline({
       <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
         {/* User Input node */}
         <AgentLoopNode
-          icon="👤" color="#6366f1" label="User Input"
+          icon="👤" color="#6366f1" label={t("terms.userInput")}
           secondary={fmtDuration(turn.durationMs) || undefined}
           expandable={inputNeedsExpand}
           expanded={inputExpanded}
@@ -2677,8 +2757,43 @@ function ToolCallRow({
   active: boolean;
   onHoverToolUse: (id: string | null) => void;
 }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
+  const [showFullInput, setShowFullInput] = useState(false);
   const chip = toolChip(tc.name);
+
+  // Row preview: prefer the human-readable "description" field when the tool
+  // emits one (e.g. Bash always carries a one-line description of intent —
+  // "List repo files" reads better than the raw `ls` command). Fall back to
+  // command/file_path/pattern/etc., and finally to the truncated preview.
+  const rowPreview = (() => {
+    const raw = tc.inputPreview ?? "";
+    if (!raw) return "";
+    try {
+      const obj = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof obj.description === "string" && obj.description.trim()) {
+        return obj.description.trim().slice(0, 100);
+      }
+      for (const key of ["command", "file_path", "pattern", "query", "prompt", "url"]) {
+        const v = obj[key];
+        if (typeof v === "string" && v.trim()) return v.trim().slice(0, 100);
+      }
+    } catch {
+      // inputPreview may be a truncated/non-JSON snippet — fall through.
+    }
+    // Legacy regex fallback (matches the previous behavior for fragments
+    // that don't parse cleanly as JSON).
+    return raw
+      .replace(/^\{?\s*"(?:command|file_path|pattern|query|prompt|url|description)"\s*:\s*"/, "")
+      .replace(/",?\s*.*$/, "")
+      .slice(0, 100);
+  })();
+
+  const INPUT_LIMIT = 600;
+  const inputTooLong = (tc.inputPreview?.length ?? 0) > INPUT_LIMIT;
+  const inputShown = !inputTooLong || showFullInput
+    ? tc.inputPreview
+    : tc.inputPreview.slice(0, INPUT_LIMIT);
 
   return (
     <div style={{ marginBottom: 3 }}>
@@ -2700,26 +2815,42 @@ function ToolCallRow({
         <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: chip.bg, border: `1px solid ${chip.border}`, color: chip.fg, flexShrink: 0 }}>
           {tc.name}
         </span>
-        {/* Input preview — most important identifier */}
+        {/* Input preview — description-first, falls back to first arg */}
         <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-          {tc.inputPreview.replace(/^\{?\s*"(?:command|file_path|pattern|query|prompt|url|description)"\s*:\s*"/, "").replace(/",?\s*.*$/, "").slice(0, 100)}
+          {rowPreview}
         </span>
-        {/* Size badges */}
+        {/* Size badges — toolUseId stays out of the visible row (the user
+            can see it in the raw request body); the hover-link still works
+            because the parent passes toolUseId through onHoverToolUse. */}
         <div style={{ display: "flex", gap: 5, flexShrink: 0, alignItems: "center" }}>
           {tc.inputSize > 0 && <span style={{ fontSize: 9, color: "#9ca3af" }}>in {fmtBytes(tc.inputSize)}</span>}
-          <span style={{ fontSize: 9, color: "#c4c9d4" }}>{shortToolUseId(tc.toolUseId)}</span>
           <span style={{ fontSize: 9, color: "#d1d5db" }}>{expanded ? "▲" : "▼"}</span>
         </div>
       </div>
 
       {expanded && (
         <div style={{ marginLeft: 12, marginTop: 2, display: "flex", flexDirection: "column", gap: 3 }}>
-          {/* INPUT — what was dispatched */}
+          {/* INPUT — what was dispatched. Long inputs cut at INPUT_LIMIT
+              with a Show-more toggle so the row doesn't dominate the view. */}
           {tc.inputPreview && (
             <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderLeft: "3px solid #94a3b8", borderRadius: "0 5px 5px 0", padding: "5px 8px" }}>
               <span style={{ fontSize: 9, fontWeight: 700, color: "#64748b", letterSpacing: "0.05em" }}>INPUT &nbsp;</span>
               <span style={{ fontSize: 9, color: "#94a3b8" }}>{fmtBytes(tc.inputSize)}</span>
-              <pre style={{ margin: "3px 0 0", fontSize: 11, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 100, overflow: "auto" }}>{tc.inputPreview}</pre>
+              <pre style={{ margin: "3px 0 0", fontSize: 11, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: showFullInput ? 480 : 160, overflow: "auto" }}>{inputShown}</pre>
+              {inputTooLong && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowFullInput(v => !v); }}
+                  style={{
+                    marginTop: 4, fontSize: 10, color: "#6366f1",
+                    background: "none", border: "none", cursor: "pointer", padding: 0,
+                    fontWeight: 600,
+                  }}
+                >
+                  {showFullInput
+                    ? t("terms.showLess")
+                    : t("terms.showMore", { n: tc.inputPreview.length - INPUT_LIMIT })}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -2736,11 +2867,29 @@ function IntervalEventRow({
   activeToolUseId: string | null;
   onHoverToolUse: (id: string | null) => void;
 }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
+  const [showFullJson, setShowFullJson] = useState(false);
   const col = KIND_COLOR[ev.kind];
   const linkedToolUseIds = toolUseIdsFromIntervalEvent(ev);
   const linked = activeToolUseId != null && linkedToolUseIds.includes(activeToolUseId);
   const hoverLinkedId = linkedToolUseIds[0] ?? null;
+  // tool_result events get the i18n-aware Agent-execution-result label;
+  // other kinds keep their static KIND_LABEL string.
+  const kindLabel = ev.kind === "user:tool_result"
+    ? t("terms.toolResultLabel")
+    : KIND_LABEL[ev.kind];
+  // Size badge: tool_result is the *output* fed back to the LLM, so prefix
+  // with "out" to mirror ToolCallRow's "in {bytes}" badge above. Other event
+  // kinds (user input, attachments, system events) don't fit cleanly into an
+  // input/output framing — keep them as bare bytes.
+  const sizePrefix = ev.kind === "user:tool_result" ? "out " : "";
+
+  const RAW_LIMIT = 1000;
+  const rawTooLong = ev.rawJson.length > RAW_LIMIT;
+  const rawShown = !rawTooLong || showFullJson
+    ? ev.rawJson
+    : ev.rawJson.slice(0, RAW_LIMIT);
 
   return (
     <div style={{ marginBottom: 2 }}>
@@ -2757,17 +2906,20 @@ function IntervalEventRow({
         }}
       >
         <span style={{ fontSize: 9, fontWeight: 700, color: col.fg, flexShrink: 0, minWidth: 90 }}>
-          {KIND_LABEL[ev.kind]}
+          {kindLabel}
         </span>
-        {linkedToolUseIds.length > 0 && (
-          <span style={{ fontSize: 9, color: linked ? "#d97706" : "#94a3b8", flexShrink: 0 }}>
-            from {shortToolUseId(linkedToolUseIds[0])}
-          </span>
-        )}
+        {/* `from toolu_…` chip removed — the hover-link highlight already
+            tells the user which tool_use this event belongs to (matched row
+            in the call's tool list lights up amber). The raw id can still be
+            inspected by expanding the event below. */}
         <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
           {ev.contentPreview.slice(0, 120)}
         </span>
-        {ev.contentSize > 0 && <span style={{ fontSize: 9, color: "#94a3b8", flexShrink: 0 }}>{fmtBytes(ev.contentSize)}</span>}
+        {ev.contentSize > 0 && (
+          <span style={{ fontSize: 9, color: "#94a3b8", flexShrink: 0 }}>
+            {sizePrefix}{fmtBytes(ev.contentSize)}
+          </span>
+        )}
         <span style={{ fontSize: 9, color: "#d1d5db", flexShrink: 0 }}>{expanded ? "▲" : "▼"}</span>
       </div>
 
@@ -2778,9 +2930,23 @@ function IntervalEventRow({
             <span style={{ fontSize: 9, color: "#64748b" }}>line: {ev.lineIdx + 1}</span>
             {ev.timestamp && <span style={{ fontSize: 9, color: "#64748b" }}>{ev.timestamp.slice(11, 19)}</span>}
           </div>
-          <pre style={{ margin: 0, fontSize: 10, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 160, overflow: "auto" }}>
-            {ev.rawJson.length > 1000 ? ev.rawJson.slice(0, 1000) + "\n…" : ev.rawJson}
+          <pre style={{ margin: 0, fontSize: 10, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: showFullJson ? 480 : 160, overflow: "auto" }}>
+            {rawShown}
           </pre>
+          {rawTooLong && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowFullJson(v => !v); }}
+              style={{
+                marginTop: 4, fontSize: 10, color: "#6366f1",
+                background: "none", border: "none", cursor: "pointer", padding: 0,
+                fontWeight: 600,
+              }}
+            >
+              {showFullJson
+                ? t("terms.showLess")
+                : t("terms.showMore", { n: ev.rawJson.length - RAW_LIMIT })}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -2804,7 +2970,20 @@ function JsonlCallChain({
 
   if (!turn.calls.length) return null;
 
-  const maxCtx = Math.max(...turn.calls.map(c => c.contextSize), 1);
+  // Bar length scale for the per-call MiniTokenLedger — bar width = this
+  // call's total billable tokens / max total across the Turn, so adjacent
+  // rows are visually comparable. Use the same non-overlapping bucket
+  // breakdown that MiniTokenLedger renders: API input_tokens (= ctx − read
+  // − write) + cache_read + cache_write + output. Avoids the previous bug
+  // where `c.freshIn` (parser's "context growth") double-counted cached
+  // content and produced inflated bar widths.
+  const maxCallTotal = Math.max(
+    ...turn.calls.map(c => {
+      const apiInputTokens = Math.max(0, c.contextSize - c.cacheRead - c.cacheWrite);
+      return apiInputTokens + c.cacheRead + c.cacheWrite + c.outputTokens;
+    }),
+    1,
+  );
   const subAgentByToolUseId = new Map<string, SubAgentSummary>();
   for (const call of turn.calls) {
     for (const sa of call.subAgents) {
@@ -2841,22 +3020,27 @@ function JsonlCallChain({
             color: filterOpen ? "#fff" : "#6b7280", fontWeight: 600,
           }}
         >
-          Filter event graph {hiddenKinds.size > 0 && `(${hiddenKinds.size} hidden)`}
+          {t("terms.filterEventGraph")} {hiddenKinds.size > 0 && t("terms.hiddenCount", { n: hiddenKinds.size })}
         </button>
         {hiddenKinds.size > 0 && (
           <button onClick={() => setHiddenKinds(new Set())} style={{ fontSize: 10, color: "#6366f1", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-            show all
+            {t("terms.showAll")}
           </button>
         )}
         <span style={{ fontSize: 9, color: "#d1d5db", marginLeft: "auto" }}>
-          {turn.calls.length} calls · {turn.calls.reduce((s, c) => s + c.intervalEvents.length, 0)} JSONL events
+          {t("terms.jsonlEventCount", {
+            calls: turn.calls.length,
+            events: turn.calls.reduce((s, c) => s + c.intervalEvents.length, 0),
+          })}
         </span>
         {foldedSubAgentResultCount > 0 && (
           <button
             onClick={() => setShowFoldedSubAgentResults(v => !v)}
             style={{ fontSize: 10, color: "#4f46e5", background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 6, cursor: "pointer", padding: "3px 8px", fontWeight: 700 }}
           >
-            {showFoldedSubAgentResults ? "Fold sub-agent results" : `Show ${foldedSubAgentResultCount} folded sub-agent results`}
+            {showFoldedSubAgentResults
+              ? t("terms.foldSubAgentResults")
+              : t("terms.showFoldedSubAgentResults", { n: foldedSubAgentResultCount })}
           </button>
         )}
       </div>
@@ -2894,7 +3078,7 @@ function JsonlCallChain({
 
         <ChainNarrativeNode
           kind="user"
-          label="User input"
+          label={t("terms.userInput")}
           text={turn.userInput}
           meta={turn.startedAt ? turn.startedAt.slice(11, 19) : undefined}
         />
@@ -2912,15 +3096,10 @@ function JsonlCallChain({
 
         {turn.calls.map((call) => {
           const delta    = call.significantDelta;
-          // Context bar: absolute width proportional to contextSize / maxCtx
-          const ctxWidthPct = Math.round(call.contextSize / maxCtx * 100);
-          // Segment percentages within the bar
-          const readFrac  = call.contextSize > 0 ? call.cacheRead  / call.contextSize : 0;
-          const writeFrac = call.contextSize > 0 ? call.cacheWrite / call.contextSize : 0;
-          const freshFrac = call.contextSize > 0 ? call.freshIn    / call.contextSize : 0;
-
+          // jsonlLines is shown only in the #id tooltip now; the proportional
+          // context bar was replaced by the shared MiniTokenLedger (rendered
+          // below with maxCallTotal as its scale).
           const jsonlLines = formatJsonlLines(call);
-          const frameCount = call.jsonlFrameLineIdxs?.length ?? 0;
           const matchedSubAgentIds = new Set(call.toolCalls.map(tc => tc.toolUseId).filter(id => subAgentByToolUseId.has(id)));
           const isFoldedSubAgentResult = (ev: IntervalEvent) =>
             ev.kind === "user:tool_result"
@@ -2953,66 +3132,59 @@ function JsonlCallChain({
                   onMouseEnter={e => { e.currentTarget.style.borderColor = "#6366f1"; }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e7eb"; }}
                 >
-                  {/* Header */}
+                  {/* Header — kept lean: index-in-turn (bold) + #global-id
+                      (muted) + ctx · Δ. Frame lines / messageId / stop_reason
+                      are JSON-level details — they live in the Raw tab. */}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderBottom: "1px solid #f3f4f6" }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>
-                      C{call.indexInTurn}
+                      {t("terms.callLabel")} {call.indexInTurn}
                       {call.isCompaction && <span style={{ marginLeft: 5, fontSize: 10, color: "#ef4444" }}>◆</span>}
                     </span>
-                    <span style={{ fontSize: 10, color: "#9ca3af", fontFamily: "monospace" }}>#{call.id}</span>
-                    {jsonlLines && (
-                      <span style={{ fontSize: 10, color: frameCount > 1 ? "#4f46e5" : "#94a3b8", background: frameCount > 1 ? "#eef2ff" : "#f9fafb", border: `1px solid ${frameCount > 1 ? "#c7d2fe" : "#e5e7eb"}`, borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>
-                        {frameCount > 1 ? `${frameCount} frames ${jsonlLines}` : jsonlLines}
-                      </span>
-                    )}
-                    {call.messageId && (
-                      <span style={{ fontSize: 10, color: "#9ca3af", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        msg {shortMessageId(call.messageId)}
-                      </span>
-                    )}
+                    <span
+                      style={{ fontSize: 10, color: "#9ca3af", fontFamily: "monospace" }}
+                      title={
+                        call.messageId
+                          ? `global id: ${call.id} · message: ${call.messageId}${jsonlLines ? ` · jsonl ${jsonlLines}` : ""}`
+                          : `global id: ${call.id}${jsonlLines ? ` · jsonl ${jsonlLines}` : ""}`
+                      }
+                    >
+                      #{call.id}
+                    </span>
                     <span style={{ fontSize: 11, color: "#9ca3af" }}>{fmtK(call.contextSize)}</span>
                     {delta !== 0 && (
                       <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 4, color: delta > 0 ? "#d97706" : "#16a34a", background: delta > 0 ? "#fffbeb" : "#f0fdf4" }}>
                         {delta > 0 ? "+" : ""}{fmtK(delta)}
                       </span>
                     )}
-                    <span style={{ marginLeft: "auto", fontSize: 10, color: call.stopReason === "end_turn" ? "#16a34a" : "#9ca3af", fontWeight: 600 }}>
-                      {call.stopReason === "end_turn" ? "✓ end_turn" : call.stopReason === "tool_use" ? "⚙ tool_use" : (call.stopReason ?? "")}
-                    </span>
-                    <span style={{ fontSize: 10, color: "#d1d5db" }}>›</span>
+                    <span style={{ marginLeft: "auto", fontSize: 10, color: "#d1d5db" }}>›</span>
                   </div>
 
-                  {/* Context bar — ABSOLUTE width shows context size visually */}
-                  <div style={{ padding: "6px 12px 7px" }}>
-                    {/* Outer track = full Turn max context */}
-                    <div style={{ height: 8, background: "#f3f4f6", borderRadius: 4, overflow: "hidden" }}>
-                      {/* Inner fill = this call's contextSize / maxCtx */}
-                      <div style={{ width: `${ctxWidthPct}%`, height: "100%", display: "flex", borderRadius: 4, overflow: "hidden" }}>
-                        <div style={{ flex: readFrac,  background: "#a5b4fc" }} title={`cache_read ${fmtK(call.cacheRead)}`} />
-                        <div style={{ flex: writeFrac, background: "#6366f1" }} title={`cache_write ${fmtK(call.cacheWrite)}`} />
-                        <div style={{ flex: freshFrac, background: "#f97316" }} title={`fresh ${fmtK(call.freshIn)}`} />
-                      </div>
-                    </div>
-                    {/* Legend */}
-                    <div style={{ display: "flex", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
-                      {[
-                        { color: "#a5b4fc", label: "read",  val: call.cacheRead,  pct: Math.round(readFrac * 100) },
-                        { color: "#6366f1", label: "write", val: call.cacheWrite, pct: Math.round(writeFrac * 100) },
-                        { color: "#f97316", label: "fresh", val: call.freshIn,    pct: Math.round(freshFrac * 100) },
-                      ].map(({ color, label, val, pct }) => val > 0 ? (
-                        <span key={label} style={{ fontSize: 9, color: "#6b7280", display: "flex", alignItems: "center", gap: 3 }}>
-                          <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 1, background: color }} />
-                          {label} {fmtK(val)} ({pct}%)
-                        </span>
-                      ) : null)}
-                      <span style={{ fontSize: 9, color: "#9ca3af", marginLeft: "auto" }}>out {fmtK(call.outputTokens)}</span>
-                    </div>
+                  {/* Token ledger — reuses the same MiniTokenLedger component
+                      Session List uses, so columns/colors line up across the
+                      whole app. Bar width is scaled to the Turn's largest
+                      call total, making adjacent rows visually comparable.
+                      `input_tokens` here is the *API-reported* uncached fresh
+                      input (= ctx − cacheRead − cacheWrite). The parser's
+                      `call.freshIn` field is actually "context growth since
+                      the previous call" — a different concept that conflates
+                      cache-loaded content with truly new tokens, so it would
+                      mismatch the Turn / Call header's "Fresh In" value. */}
+                  <div style={{ padding: "8px 12px 9px" }}>
+                    <MiniTokenLedger
+                      session={{
+                        input_tokens: Math.max(0, call.contextSize - call.cacheRead - call.cacheWrite),
+                        cache_read_tokens: call.cacheRead,
+                        cache_creation_tokens: call.cacheWrite,
+                        output_tokens: call.outputTokens,
+                      }}
+                      maxTotal={maxCallTotal}
+                    />
                   </div>
 
                   {/* Assistant text */}
 	                  {call.assistantText && !hideAssistantTextAsFinal && (
 	                    <div style={{ padding: "0 12px 7px" }}>
-	                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", marginBottom: 2, letterSpacing: "0.04em" }}>ASSISTANT TEXT</div>
+	                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", marginBottom: 2, letterSpacing: "0.04em" }}>{t("terms.assistantResponseText").toUpperCase()}</div>
 	                      <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, background: "#f9fafb", borderRadius: 6, padding: "5px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
 	                        {call.assistantText}
 	                      </div>
@@ -3181,54 +3353,46 @@ function UserTurnDetailPanel({
   if (turn.hasUnknownSpike) risks.push({ type: "unknown-spike" });
   const minimapAnchorId = `turn-${turn.id}-call-minimap`;
 
+  // Status badges (icon + count, unified format across the app)
+  const turnStatusBadges: StatusBadge[] = (() => {
+    const subAgentCount = turn.calls.reduce((s, c) => s + c.subAgents.length, 0);
+    const commandCount = turn.calls.reduce(
+      (s, c) => s + c.intervalEvents.filter(e => e.kind === "user:command").length, 0);
+    const unknownCount = turn.calls.reduce(
+      (s, c) => s + c.intervalEvents.filter(e => e.kind === "unknown").length, 0);
+    const items: StatusBadge[] = [];
+    if (turn.hasCompaction)   items.push({ kind: "compaction", count: 1,              tooltip: t("sessionOverview.badges.compaction") });
+    if (turn.errorCount > 0)  items.push({ kind: "error",      count: turn.errorCount,tooltip: t("sessionOverview.badges.errors") });
+    if (subAgentCount > 0)    items.push({ kind: "subAgent",   count: subAgentCount,  tooltip: t("sessionOverview.badges.subAgents") });
+    if (commandCount > 0)     items.push({ kind: "command",    count: commandCount,   tooltip: t("sessionOverview.badges.commands") });
+    if (unknownCount > 0)     items.push({ kind: "unknown",    count: unknownCount,   tooltip: t("sessionOverview.badges.unknown") });
+    return items;
+  })();
+
   return (
     <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
-
-      {/* ── Summary header — mirrors SessionOverviewPanel layout ──── */}
-      <div style={{ marginBottom: 16 }}>
-
-        <HeaderStatRow
-          leadingLabel={{ label: t("sessionOverview.turn.label"), value: String(turn.id) }}
-          stats={[
-            { label: t("sessionOverview.activity.llmCalls"),  value: String(turn.llmCallCount) },
-            { label: t("sessionOverview.activity.toolCalls"), value: String(turn.toolCallCount) },
-            ...(turnSubAgents.length > 0
-              ? [{ label: t("sessionOverview.badges.subAgents"), value: String(turnSubAgents.length), color: "#a855f7" }]
-              : []),
-            { label: t("sessionOverview.activity.duration"),  value: dur || "—" },
-          ]}
-          rightSlot={(() => {
-            const hasCommand = turn.calls.some(c => c.intervalEvents.some(e => e.kind === "user:command"));
-            const hasUnknown = turn.calls.some(c => c.intervalEvents.some(e => e.kind === "unknown"));
-            const subAgentCount = turn.calls.reduce((s, c) => s + c.subAgents.length, 0);
-            type TBadge = { icon: React.ReactNode; label: string; color: string; border: string; bg: string };
-            const tbadges: TBadge[] = [
-              turn.hasCompaction ? { icon: BADGE_ICONS.compaction(9, "#ef4444"), label: t("sessionOverview.badges.compaction"), color: "#ef4444", border: "#fecaca", bg: "#fef2f2" } : null,
-              turn.errorCount > 0 ? { icon: BADGE_ICONS.error(9, "#dc2626"), label: `${turn.errorCount}`, color: "#dc2626", border: "#fecaca", bg: "#fef2f2" } : null,
-              subAgentCount > 0 ? { icon: BADGE_ICONS.subAgent(9, "#a855f7"), label: `${subAgentCount}`, color: "#a855f7", border: "#e9d5ff", bg: "#faf5ff" } : null,
-              hasCommand ? { icon: BADGE_ICONS.command(9, "#d97706"), label: t("sessionOverview.badges.commands"), color: "#d97706", border: "#fde68a", bg: "#fffbeb" } : null,
-              hasUnknown ? { icon: BADGE_ICONS.unknown(9, "#9ca3af"), label: t("sessionOverview.badges.unknown"), color: "#9ca3af", border: "#e5e7eb", bg: "#f9fafb" } : null,
-            ].filter(Boolean) as TBadge[];
-            return (
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                {tbadges.map(b => (
-                  <span key={b.label} style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 600, color: b.color, background: b.bg, border: `1px solid ${b.border}`, borderRadius: 4, padding: "2px 5px" }}>
-                    {b.icon}{b.label}
-                  </span>
-                ))}
-              </div>
-            );
-          })()}
-        />
-
-        <TokenLedgerInline
-          freshIn={totalFreshIn}
-          cacheRead={turn.cacheRead}
-          cacheWrite={turn.cacheWrite}
-          output={totalFreshOut}
-          cacheRatio={cacheRatio}
-        />
-      </div>
+      {/* ── Summary header — stats · ledger · badges, single row ──── */}
+      <UnifiedHeader
+        leadingLabel={{ label: t("sessionOverview.turn.label"), value: String(turn.id) }}
+        stats={[
+          { label: t("sessionOverview.activity.llmCalls"),  value: String(turn.llmCallCount) },
+          { label: t("sessionOverview.activity.toolCalls"), value: String(turn.toolCallCount) },
+          ...(turnSubAgents.length > 0
+            ? [{ label: t("sessionOverview.badges.subAgents"), value: String(turnSubAgents.length), color: "#a855f7" }]
+            : []),
+          { label: t("sessionOverview.activity.duration"),  value: dur || "—" },
+        ]}
+        ledger={{
+          freshIn: totalFreshIn,
+          cacheRead: turn.cacheRead,
+          cacheWrite: turn.cacheWrite,
+          output: totalFreshOut,
+          cacheRatio,
+        }}
+        rightSlot={
+          <StatusBadgeStrip badges={turnStatusBadges} renderIcon={renderStatusIcon} />
+        }
+      />
 
       {/* ── Call Minimap ──────────────────────────────────────────── */}
       <div id={minimapAnchorId} style={{ marginBottom: 20, scrollMarginTop: 16 }}>
@@ -4040,6 +4204,7 @@ function RequestTab({
   callDetail: CallDetail | null;
   callDetailLoading: boolean;
 }) {
+  const { t } = useTranslation();
   const hasProxy = !!callDetail?.proxyRequestId;
   const observedSource = hasProxy ? "Proxy + JSONL" : "JSONL only";
   const reconstruction = hasProxy ? "exact" : "estimated";
@@ -4203,11 +4368,12 @@ const SECTION_ORDER = ["system", "tools", "messages", "metadata", "unknown"];
 type AttributionSide = "request" | "response";
 
 function AttributionSection({
-  call, sessionId, onLinkCall,
+  call, sessionId, onLinkCall, onLinkSource,
 }: {
   call: MockLlmCall;
   sessionId: string;
   onLinkCall?: (callId: number) => void;
+  onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
 }) {
   const { t } = useTranslation();
   const [side, setSide] = useState<AttributionSide>("request");
@@ -4230,7 +4396,7 @@ function AttributionSection({
       </div>
 
       {side === "request" ? (
-        <AttributionTreePanel sessionId={sessionId} callId={call.id} />
+        <AttributionTreePanel sessionId={sessionId} callId={call.id} onLinkSource={onLinkSource} />
       ) : (
         <ResponseTreePanel
           sessionId={sessionId}
@@ -4279,7 +4445,7 @@ function ProxyMissingEmptyState() {
 }
 
 function LlmCallDetailPanel({
-  call, sessionId, mode = "main", onShowTurnContext, onLinkCall,
+  call, sessionId, mode = "main", onShowTurnContext, onLinkCall, onLinkSource,
 }: {
   call: MockLlmCall;
   onSelectEntry: (e: MockDiffEntry) => void;
@@ -4288,6 +4454,10 @@ function LlmCallDetailPanel({
   onShowTurnContext?: () => void;
   /** 双向 link 回调：点击 Response 中的 forwarding link 时触发，传入下游 call id */
   onLinkCall?: (callId: number) => void;
+  /** 反向 link 回调：点击 Request 中某个 leaf（jsonl 来源带 sourceCallId）时触发，
+   *  跳到产生这个 tool_use/tool_result 的源 call。仅在 main 模式提供——
+   *  panel 模式下省略以避免链接面板再派生面板（无限嵌套）。*/
+  onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
 }) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<CallTab>("attribution");
@@ -4333,11 +4503,15 @@ function LlmCallDetailPanel({
     <div style={{ flex: 1, overflowY: "auto", padding: mode === "panel" ? "12px 14px" : "16px 22px", minWidth: 0 }}>
 
       {/* ── Header ──────────────────────────────── */}
-      <div style={{ marginBottom: 14, paddingBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
+      {/* No outer paddingBottom/border here — UnifiedHeader below provides
+          the divider line, so we don't stack two borders. */}
+      <div>
 
         {/* Title row */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: "#111827" }}>C{call.indexInTurn}</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: "#111827" }}>
+            {t("terms.callLabel")} {call.indexInTurn}
+          </span>
           <span style={{ fontSize: 10, color: "#9ca3af" }}>#{call.id}</span>
           {call.isCompaction && <RiskBadge type="compaction" />}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
@@ -4367,96 +4541,117 @@ function LlmCallDetailPanel({
           </div>
         </div>
 
-        <HeaderStatRow
-          stats={[
-            { label: "Context",   value: fmtK(call.contextSize),
-              color: nearLimit ? "#ea580c" : undefined,
-              tooltip: "Total input context" },
-            { label: "Δ vs prev", value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`,
-              color: call.significantDelta > 10000 ? "#dc2626" : call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : undefined,
-              tooltip: "Context size delta vs previous call" },
-            { label: "Tool Calls", value: String(call.toolCalls?.length ?? 0) },
-          ]}
-        />
-
         {(() => {
-          const inputTotal = freshIn + call.cacheRead;
+          // Cache hit ratio — denominator includes cache_write so the value
+          // matches the Turn / Session header and the MiniTokenLedger inside
+          // the call card. Previously this used (fresh + cacheRead) only,
+          // which dropped cache_write from the denominator and produced a
+          // different number than the Turn-level view of the same call.
+          const inputTotal = freshIn + call.cacheRead + call.cacheWrite;
           const cacheRatio = inputTotal > 0 ? call.cacheRead / inputTotal * 100 : null;
+          // Call-level status badges — currently only "compaction" is meaningful
+          // at this granularity. Kept here so Call shares the same right-slot
+          // shape as Session/Turn (even when empty the slot stays consistent).
+          const callBadges: StatusBadge[] = call.isCompaction
+            ? [{ kind: "compaction", count: 1, tooltip: t("sessionOverview.badges.compaction") }]
+            : [];
           return (
-            <TokenLedgerInline
-              freshIn={freshIn}
-              cacheRead={call.cacheRead}
-              cacheWrite={call.cacheWrite}
-              output={call.outputTokens}
-              cacheRatio={cacheRatio}
+            <UnifiedHeader
+              stats={[
+                { label: "Context",   value: fmtK(call.contextSize),
+                  color: nearLimit ? "#ea580c" : undefined,
+                  tooltip: "Total input context (fresh + cache_read + cache_write)" },
+                { label: "Δ vs prev", value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`,
+                  color: call.significantDelta > 10000 ? "#dc2626" : call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : undefined,
+                  // The Δ reflects *total context size* change, including
+                  // content loaded from cache. So a first-after-compaction
+                  // call can show a huge Δ (e.g. +130k) even when "Fresh In"
+                  // is tiny (e.g. 6) — the bulk came from cache_read, not
+                  // fresh tokens. This tooltip surfaces that distinction.
+                  tooltip: "Context size delta vs previous call. Includes cache_read + cache_write, so it can be much larger than Fresh In when most context is served from cache (e.g. first call after a compaction)." },
+                { label: "Tool Calls", value: String(call.toolCalls?.length ?? 0) },
+              ]}
+              ledger={{
+                freshIn,
+                cacheRead: call.cacheRead,
+                cacheWrite: call.cacheWrite,
+                output: call.outputTokens,
+                cacheRatio,
+              }}
+              rightSlot={callBadges.length > 0
+                ? <StatusBadgeStrip badges={callBadges} renderIcon={renderStatusIcon} />
+                : undefined}
             />
           );
         })()}
       </div>
 
-      {/* ── Tabs ──────────────────────────────────── */}
-      <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", marginBottom: 14, gap: 0 }}>
-        {TAB_DEFS.map(({ id, label }) => (
-          <button key={id} onClick={() => setTab(id)} style={{
-            padding: "6px 12px", fontSize: 11, fontWeight: tab === id ? 700 : 400,
-            color: tab === id ? "#6366f1" : "#6b7280",
-            background: "none", border: "none",
-            borderBottom: tab === id ? "2px solid #6366f1" : "2px solid transparent",
-            cursor: "pointer", marginBottom: -1, whiteSpace: "nowrap",
-          }}>{label}</button>
-        ))}
-      </div>
+      {/* No proxy — all three tabs collapse to the same prompt because
+          Attribution / Diff / Raw all rely on the captured request body.
+          Show the prompt once instead of repeating it under three tab labels. */}
+      {!callDetailLoading && !hasProxy ? (
+        <ProxyMissingEmptyState />
+      ) : (
+        <>
+          {/* ── Tabs ──────────────────────────────────── */}
+          <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", marginBottom: 14, gap: 0 }}>
+            {TAB_DEFS.map(({ id, label }) => (
+              <button key={id} onClick={() => setTab(id)} style={{
+                padding: "6px 12px", fontSize: 11, fontWeight: tab === id ? 700 : 400,
+                color: tab === id ? "#6366f1" : "#6b7280",
+                background: "none", border: "none",
+                borderBottom: tab === id ? "2px solid #6366f1" : "2px solid transparent",
+                cursor: "pointer", marginBottom: -1, whiteSpace: "nowrap",
+              }}>{label}</button>
+            ))}
+          </div>
 
-      {/* ══ Attribution (Request / Response) ═════════ */}
-      {tab === "attribution" && (
-        <AttributionSection
-          call={call}
-          sessionId={sessionId}
-          onLinkCall={onLinkCall}
-        />
-      )}
+          {/* ══ Attribution (Request / Response) ═════════ */}
+          {tab === "attribution" && (
+            <AttributionSection
+              call={call}
+              sessionId={sessionId}
+              onLinkCall={onLinkCall}
+              onLinkSource={onLinkSource}
+            />
+          )}
 
-      {/* ══ Diff vs Previous ══════════════════════════ */}
-      {tab === "diff" && (
-        <DiffPanel
-          sessionId={sessionId}
-          callId={call.id}
-          prevCallId={prevCallId}
-        />
-      )}
+          {/* ══ Diff vs Previous ══════════════════════════ */}
+          {tab === "diff" && (
+            <DiffPanel
+              sessionId={sessionId}
+              callId={call.id}
+              prevCallId={prevCallId}
+            />
+          )}
 
-      {/* ══ Raw / Evidence ═══════════════════════════ */}
-      {tab === "raw" && (
-        <div>
-          {callDetailLoading && <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>}
-          {!callDetailLoading && (() => {
-            const hp = !!callDetail?.proxyRequestId;
-            // 无 proxy 数据时：整页只渲染 ProxyMissingEmptyState，不再附带
-            // JSONL Metadata —— 让"去启用代理"的指引保持单一焦点。
-            if (!hp) {
-              return <ProxyMissingEmptyState />;
-            }
-            return (
-              <>
-                <div style={{ fontSize: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 6, padding: "5px 10px", marginBottom: 12, color: "#374151" }}>
-                  Proxy — full request body available.
-                </div>
-                <SectionLabel>{t("terms.jsonlMetadata")}</SectionLabel>
-                <CodeBlock variant="json" style={{ marginBottom: 14 }}>
-                  {JSON.stringify({ call_id: call.id, index_in_turn: call.indexInTurn, model: call.model, timestamp: call.timestamp, usage: { context_size: call.contextSize, fresh_in: freshIn, cache_read: call.cacheRead, cache_write: call.cacheWrite, output_tokens: call.outputTokens }, stop_reason: call.stopReason, ...(call.proxy ? { proxy_request_id: call.proxy.requestId, duration_ms: call.proxy.durationMs } : {}) }, null, 2)}
-                </CodeBlock>
-                {callDetail?.rawRequestJson && (
-                  <>
-                    <SectionLabel>{t("terms.proxyRequestBody")}</SectionLabel>
-                    <CodeBlock variant="json">
-                      {JSON.stringify(callDetail.rawRequestJson, null, 2)}
-                    </CodeBlock>
-                  </>
-                )}
-              </>
-            );
-          })()}
-        </div>
+          {/* ══ Raw / Evidence ═══════════════════════════ */}
+          {tab === "raw" && (
+            <div>
+              {callDetailLoading ? (
+                <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>
+              ) : (
+                <>
+                  <div style={{ fontSize: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 6, padding: "5px 10px", marginBottom: 12, color: "#374151" }}>
+                    Proxy — full request body available.
+                  </div>
+                  <SectionLabel>{t("terms.jsonlMetadata")}</SectionLabel>
+                  <CodeBlock variant="json" style={{ marginBottom: 14 }}>
+                    {JSON.stringify({ call_id: call.id, index_in_turn: call.indexInTurn, model: call.model, timestamp: call.timestamp, usage: { context_size: call.contextSize, fresh_in: freshIn, cache_read: call.cacheRead, cache_write: call.cacheWrite, output_tokens: call.outputTokens }, stop_reason: call.stopReason, ...(call.proxy ? { proxy_request_id: call.proxy.requestId, duration_ms: call.proxy.durationMs } : {}) }, null, 2)}
+                  </CodeBlock>
+                  {callDetail?.rawRequestJson && (
+                    <>
+                      <SectionLabel>{t("terms.proxyRequestBody")}</SectionLabel>
+                      <CodeBlock variant="json">
+                        {JSON.stringify(callDetail.rawRequestJson, null, 2)}
+                      </CodeBlock>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </>
       )}
 
     </div>
@@ -4829,48 +5024,86 @@ export function SessionDetailV2({ session, onClose }: Props) {
 
             <div style={{ padding: "10px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>{t("sessionOverview.nav.userTurns")}</div>
             {(() => {
+              const turnPrefix = t("sessionOverview.turn.label");
+              const callPrefix = t("terms.callLabel");
               return turns.map(turn => {
                 const isThisTurnSelected = selectedTurn?.id === turn.id;
                 const turnInput = turn.userInput.trim();
-                const turnLabel = `T${turn.id} ${turnInput.slice(0, 18).trimEnd()}${turnInput.length > 18 ? "…" : ""}`;
-                // sub-agent forks in this turn
-                const subAgentCount = turn.calls.reduce((s, c) => s + (c.subAgents?.length ?? 0), 0);
-                const hasCommand = turn.calls.some(c => c.intervalEvents.some(e => e.kind === "user:command"));
-                const hasUnknown = turn.calls.some(c => c.intervalEvents.some(e => e.kind === "unknown"));
-                const turnBadges = (
+                const preview = turnInput.slice(0, 16).trimEnd() + (turnInput.length > 16 ? "…" : "");
+                // Two inline spans (no flex container) so the outer NavItem
+                // ellipsis still kicks in. The prefix is bold + foreground;
+                // the user-input preview is lighter weight + muted grey.
+                const turnLabel = (
                   <>
-                    {turn.hasCompaction && BADGE_ICONS.compaction(10, "#ef4444")}
-                    {turn.errorCount > 0 && BADGE_ICONS.error(10, "#dc2626")}
-                    {subAgentCount > 0 && BADGE_ICONS.subAgent(10, "#7c3aed")}
-                    {hasCommand && BADGE_ICONS.command(10, "#d97706")}
-                    {hasUnknown && BADGE_ICONS.unknown(10, "#9ca3af")}
+                    <strong style={{ fontWeight: 700, color: isThisTurnSelected ? "#4338ca" : "#111827" }}>
+                      {turnPrefix} {turn.id}
+                    </strong>
+                    {preview && (
+                      <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 6 }}>
+                        {preview}
+                      </span>
+                    )}
                   </>
+                );
+                // Status badges — same source-of-truth + same icon+count format
+                // as the right-slot pills in UserTurnDetailPanel.
+                const subAgentCount = turn.calls.reduce((s, c) => s + (c.subAgents?.length ?? 0), 0);
+                const commandCount = turn.calls.reduce(
+                  (s, c) => s + c.intervalEvents.filter(e => e.kind === "user:command").length, 0);
+                const unknownCount = turn.calls.reduce(
+                  (s, c) => s + c.intervalEvents.filter(e => e.kind === "unknown").length, 0);
+                const navBadgeItems: StatusBadge[] = [];
+                if (turn.hasCompaction)   navBadgeItems.push({ kind: "compaction", count: 1,              tooltip: t("sessionOverview.badges.compaction") });
+                if (turn.errorCount > 0)  navBadgeItems.push({ kind: "error",      count: turn.errorCount,tooltip: t("sessionOverview.badges.errors") });
+                if (subAgentCount > 0)    navBadgeItems.push({ kind: "subAgent",   count: subAgentCount,  tooltip: t("sessionOverview.badges.subAgents") });
+                if (commandCount > 0)     navBadgeItems.push({ kind: "command",    count: commandCount,   tooltip: t("sessionOverview.badges.commands") });
+                if (unknownCount > 0)     navBadgeItems.push({ kind: "unknown",    count: unknownCount,   tooltip: t("sessionOverview.badges.unknown") });
+                const turnBadges = (
+                  <StatusBadgeStrip badges={navBadgeItems} size="compact" renderIcon={renderStatusIcon} />
                 );
                 return (
                   <React.Fragment key={`turn-${turn.id}`}>
                     <NavItem
                       label={turnLabel}
-                      sublabel={`${turn.netContextDelta > 0 ? "+" : ""}${fmtK(turn.netContextDelta)} · ${turn.llmCallCount} calls${turn.toolCallCount > 0 ? ` · ${turn.toolCallCount} tools` : ""}`}
+                      sublabel={`${turn.netContextDelta > 0 ? "+" : ""}${fmtK(turn.netContextDelta)} · ${turn.llmCallCount} ${t("terms.callsSuffix")}${turn.toolCallCount > 0 ? ` · ${turn.toolCallCount} ${t("terms.toolsSuffix")}` : ""}`}
                       active={navLevel === "turn" && isThisTurnSelected && !selectedCall}
                       badges={turnBadges}
                       onClick={() => handleSelectTurn(turn)}
                     />
-                    {isThisTurnSelected && allCallsForNav.length > 0 && allCallsForNav.map(call => (
-                      <NavItem
-                        key={call.id}
-                        indent
-                        label={call.isCompaction ? `C${call.indexInTurn} ◆` : `C${call.indexInTurn}`}
-                        sublabel={`#${call.id} · ${call.isSignificant ? `+${fmtK(call.significantDelta ?? 0)}` : fmtK(call.contextSize)}`}
-                        active={
-                          selectedCall?.id === call.id
-                          || (linkedPanel?.type === "call" && linkedPanel.call.id === call.id)
-                          || (linkedPanel?.type === "turn-excerpt" && linkedPanel.focusCall?.id === call.id)
-                        }
-                        badge={call.isCompaction ? undefined : undefined}
-                        badgeColor="#ef4444"
-                        onClick={() => handleSelectCall(call)}
-                      />
-                    ))}
+                    {isThisTurnSelected && allCallsForNav.length > 0 && allCallsForNav.map(call => {
+                      // Call-level nav: keep info density parity with Turn rows.
+                      // Show #id · ctx · Δ · toolCount, plus compaction badge if any.
+                      const callLabel = call.isCompaction
+                        ? `${callPrefix} ${call.indexInTurn} ◆`
+                        : `${callPrefix} ${call.indexInTurn}`;
+                      const toolCount = call.toolCalls?.length ?? 0;
+                      const deltaTxt = call.isSignificant && call.significantDelta !== 0
+                        ? ` · ${call.significantDelta > 0 ? "+" : ""}${fmtK(call.significantDelta)}`
+                        : "";
+                      const toolsTxt = toolCount > 0
+                        ? ` · ${toolCount} ${t("terms.toolsSuffix")}`
+                        : "";
+                      const callNavBadges: StatusBadge[] = call.isCompaction
+                        ? [{ kind: "compaction", count: 1, tooltip: t("sessionOverview.badges.compaction") }]
+                        : [];
+                      return (
+                        <NavItem
+                          key={call.id}
+                          indent
+                          label={callLabel}
+                          sublabel={`#${call.id} · ${fmtK(call.contextSize)}${deltaTxt}${toolsTxt}`}
+                          active={
+                            selectedCall?.id === call.id
+                            || (linkedPanel?.type === "call" && linkedPanel.call.id === call.id)
+                            || (linkedPanel?.type === "turn-excerpt" && linkedPanel.focusCall?.id === call.id)
+                          }
+                          badges={callNavBadges.length > 0
+                            ? <StatusBadgeStrip badges={callNavBadges} size="compact" renderIcon={renderStatusIcon} />
+                            : undefined}
+                          onClick={() => handleSelectCall(call)}
+                        />
+                      );
+                    })}
                   </React.Fragment>
                 );
               });
@@ -4905,6 +5138,22 @@ export function SessionDetailV2({ session, onClose }: Props) {
                   const targetTurn = target ? turns.find(t => t.calls.some(c => c.id === cid)) : null;
                   if (target && targetTurn) openLinkedTurnExcerpt(targetTurn, target);
                 }}
+                onLinkSource={(srcCallId, srcTurnId) => {
+                  // Reverse link from a Request leaf → the call that emitted
+                  // this tool_use/tool_result. Open the *source turn's* full
+                  // call event list on the right with that call scrolled into
+                  // focus — reading the source call in its conversational
+                  // context (sibling calls + assistant text + tool flow) is
+                  // far more useful than opening just the call's attribution
+                  // detail again. The user can still pin/open-as-main from
+                  // the Turn excerpt to drill deeper.
+                  const srcCall = turns.flatMap(t => t.calls).find(c => c.id === srcCallId);
+                  const srcTurn = srcTurnId != null
+                    ? turns.find(t => t.id === srcTurnId) ?? null
+                    : srcCall ? turns.find(t => t.calls.some(c => c.id === srcCallId)) ?? null : null;
+                  if (!srcTurn) return;
+                  openLinkedTurnExcerpt(srcTurn, srcCall ?? null);
+                }}
               />
             )}
             {navLevel === "subagent" && (
@@ -4924,14 +5173,8 @@ export function SessionDetailV2({ session, onClose }: Props) {
             onClose={closeLinkedPanel}
             onTogglePin={() => setLinkedPanelPinned(v => !v)}
             onOpenAsMain={openLinkedPanelAsMain}
-            onSelectCall={(call, turn) => openLinkedCall(call, turn)}
             onShowTurnContext={(turn, focusCall) => openLinkedTurnExcerpt(turn, focusCall)}
             onSelectEntry={handleSelectEntry}
-            onLinkCall={(cid) => {
-              const target = turns.flatMap(t => t.calls).find(c => c.id === cid);
-              const targetTurn = target ? turns.find(t => t.calls.some(c => c.id === cid)) : null;
-              if (target && targetTurn) openLinkedTurnExcerpt(targetTurn, target);
-            }}
           />
 
         </div>
@@ -4947,10 +5190,8 @@ function LinkedContextPanel({
   onClose,
   onTogglePin,
   onOpenAsMain,
-  onSelectCall,
   onShowTurnContext,
   onSelectEntry,
-  onLinkCall,
 }: {
   panel: LinkedPanelState | null;
   pinned: boolean;
@@ -4958,10 +5199,12 @@ function LinkedContextPanel({
   onClose: () => void;
   onTogglePin: () => void;
   onOpenAsMain: () => void;
-  onSelectCall: (call: MockLlmCall, turn: MockUserTurn) => void;
+  /** Used only when the panel-mode Call needs to mount its own Turn excerpt
+   *  (e.g. "Show in Turn" affordance). Panel children themselves cannot
+   *  initiate further spawns — that's enforced below by passing undefined to
+   *  the nested onLinkCall/onLinkSource/onSelectCall props. */
   onShowTurnContext: (turn: MockUserTurn, focusCall: MockLlmCall | null) => void;
   onSelectEntry: (entry: MockDiffEntry) => void;
-  onLinkCall?: (callId: number) => void;
 }) {
   const open = panel !== null;
   const title = !panel
@@ -5055,13 +5298,20 @@ function LinkedContextPanel({
                 sessionId={sessionId}
                 mode="panel"
                 onShowTurnContext={() => onShowTurnContext(panel.turn, panel.call)}
-                onLinkCall={onLinkCall}
+                /* panel-mode Call must not spawn another linked panel — that
+                   would create a Turn→Call→Turn… stack. To follow a link from
+                   here, the user pins/opens-as-main and drills again. */
+                onLinkCall={undefined}
+                onLinkSource={undefined}
               />
             ) : (
               <LinkedTurnExcerptPanel
                 turn={panel.turn}
                 focusCall={panel.focusCall}
-                onSelectCall={onSelectCall}
+                /* Same anti-recursion rule for Turn excerpts: clicking a Call
+                   inside should not open yet another panel. Silenced here;
+                   "Open as main" promotes the excerpt into the main canvas. */
+                onSelectCall={undefined}
               />
             )}
           </div>
@@ -5093,7 +5343,9 @@ function LinkedTurnExcerptPanel({
 }: {
   turn: MockUserTurn;
   focusCall: MockLlmCall | null;
-  onSelectCall: (call: MockLlmCall, turn: MockUserTurn) => void;
+  /** Optional: when omitted (panel-mode anti-recursion), call clicks are inert.
+   *  Users can "Open as main" to drill further. */
+  onSelectCall?: (call: MockLlmCall, turn: MockUserTurn) => void;
 }) {
   // After mount, scroll the focused call into view if provided.
   // UserTurnDetailPanel renders each call with an anchor `turn-${id}-call-${cid}`.
@@ -5111,16 +5363,24 @@ function LinkedTurnExcerptPanel({
     <div style={{ flex: 1, overflowY: "auto", background: "#fff" }}>
       <UserTurnDetailPanel
         turn={turn}
-        onSelectCall={(c) => onSelectCall(c, turn)}
+        onSelectCall={onSelectCall ? (c) => onSelectCall(c, turn) : NOOP_SELECT_CALL}
       />
     </div>
   );
 }
 
+// Shared no-op so the inert panel-mode click handler keeps a stable identity
+// across renders (avoids tripping UserTurnDetailPanel's memoization).
+const NOOP_SELECT_CALL = () => { /* panel-mode: clicks are inert */ };
+
 function NavItem({
   label, sublabel, active, badge, badgeColor, badges, onClick, indent,
 }: {
-  label: string; sublabel?: string; active: boolean;
+  /** ReactNode so callers can split the label into a bold prefix + a lighter
+   *  preview (e.g. `<strong>轮次 1</strong> 考虑现在的…`). Plain strings still
+   *  work for the simpler "Overview" entries. */
+  label: React.ReactNode;
+  sublabel?: string; active: boolean;
   badge?: string; badgeColor?: string;
   badges?: React.ReactNode;  // multi-badge slot replaces single badge when provided
   onClick: () => void;
@@ -5147,10 +5407,23 @@ function NavItem({
           fontWeight: active ? 600 : 400,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>{label}</div>
-        {sublabel && <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 1 }}>{sublabel}</div>}
+        {sublabel && (
+          <div style={{
+            fontSize: 10, color: "#9ca3af", marginTop: 1,
+            // Nav is fixed at 200px — long stat strings would otherwise wrap to
+            // a second line and break the row rhythm. Truncate instead.
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>{sublabel}</div>
+        )}
       </div>
       {badges
-        ? <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>{badges}</div>
+        ? <div style={{
+            display: "flex", alignItems: "center", gap: 3,
+            flexShrink: 0,
+            // The badge strip itself wraps internally; keep the container on
+            // one line so the NavItem height stays uniform.
+            maxWidth: 80, overflow: "hidden",
+          }}>{badges}</div>
         : badge && <span style={{ fontSize: 10, color: badgeColor, fontWeight: 700, flexShrink: 0 }}>{badge}</span>
       }
     </div>

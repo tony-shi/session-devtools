@@ -52,6 +52,8 @@ export {
 } from "./attribution/invariants";
 export {
   linkJsonl,
+  isCommandLikeText,
+  COMMAND_TEXT_PREFIX_RE,
 } from "./attribution/jsonl-linker";
 export type {
   LinkableJsonlEvent,
@@ -121,9 +123,16 @@ export function attributeWithJsonl(input: {
   _attributeSnapshot(snapshot);                   // PR 2：写 rule origin
   const linkReport = _linkJsonl(snapshot, input.jsonl, input.call);  // PR 3：写 jsonl origin
   assertAllInvariants(snapshot);
+  // Reverse audit 只看"此 call 时刻已写入 jsonl 的事件"。未做截断时，未来 turn 的
+  // events 会被全部记为 missing（伪 missing），让 call 视图的"missing jsonl=N"数字
+  // 严重失真（早期 call 越靠前越夸张）。截断依据：ev.ts <= proxy.startedAt。
+  // ts 缺失的 event 保守保留 —— 它可能是 metadata，少报比误漏更安全。
+  const reverseEvents = input.ts
+    ? input.jsonl.filter((ev) => !ev.ts || ev.ts <= input.ts!)
+    : input.jsonl;
   const audit = {
     forward: computeForwardAudit(snapshot),
-    reverse: computeReverseAudit(snapshot, input.jsonl),
+    reverse: computeReverseAudit(snapshot, reverseEvents),
   };
   return { snapshot, linkReport, audit };
 }

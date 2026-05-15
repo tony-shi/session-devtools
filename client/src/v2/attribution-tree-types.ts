@@ -128,7 +128,6 @@ export interface LinkJsonlReport {
 export type PartialReason =
   | "rule.regex.partial_match"
   | "rule.prefix.anchor_only"
-  | "jsonl.user_input.inferred"
   | "jsonl.assistant_text.substring"
   | "jsonl.attachment.fingerprint"
   | "rule.unknown"
@@ -157,6 +156,7 @@ export interface ForwardAudit {
 
 export type ReverseEventKind =
   | "user_input"
+  | "command_text"
   | "assistant_text"
   | "tool_use"
   | "tool_result"

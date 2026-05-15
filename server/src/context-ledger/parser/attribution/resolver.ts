@@ -160,6 +160,13 @@ export function wireFallback(node: SegmentNode): SegmentAttribution | null {
     return wireAttribution(node, "tool_result", "wire.messages.tool_result");
   }
 
+  if (node.slotType === "messages.thinking") {
+    // thinking / redacted_thinking 块：wire 协议本身就把 signature 当作原子单元 —— 整段
+    // 内容（可能空字符串）由协议唯一定义，等同 tool_use / tool_result 的处理。
+    // jsonl-linker 之后可能用 signature 把此 origin 升级为 JsonlOrigin（同样 definitive）。
+    return wireAttribution(node, "thinking", "wire.messages.thinking");
+  }
+
   if (node.slotType.startsWith("tools.builtin.")) {
     return wireAttribution(node, "tools_schema", "wire.tools.builtin");
   }

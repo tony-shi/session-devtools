@@ -66,7 +66,7 @@ function isWireSchemaContainerSlot(slotType: string): boolean {
 /** 协议级 origin 形态白名单（与 slot 白名单组合使用）。 */
 function isProtocolLevelOrigin(origin: SegmentNode["origin"]): boolean {
   if (origin.kind === "rule" && origin.ruleId.startsWith("wire.")) return true;
-  if (origin.kind === "jsonl" && (origin.eventKind === "tool_use" || origin.eventKind === "tool_result")) {
+  if (origin.kind === "jsonl" && (origin.eventKind.source === "tool_use" || origin.eventKind.source === "tool_result")) {
     return true;
   }
   return false;

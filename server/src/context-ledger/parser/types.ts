@@ -58,6 +58,13 @@ export interface WireMeta {
   messageRole?: "user" | "assistant" | "system";
   /** message 在 messages[] 数组中的索引（0-based）。 */
   messageIdx?: number;
+  /**
+   * thinking / redacted_thinking 块的唯一标识：
+   *   - type="thinking"          → block.signature (Anthropic 服务端 hash)
+   *   - type="redacted_thinking" → block.data (encrypted payload，本身即唯一)
+   * jsonl-linker 用它在 assistant event 的 thinkingBlocks 上 O(1) deterministic 匹配。
+   */
+  thinkingSignature?: string;
 }
 
 /** AST 节点：一个 segment 在树里的表示 */

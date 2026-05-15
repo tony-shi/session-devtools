@@ -27,6 +27,7 @@
 //   - 全部为 O(events + nodes)，预建 index 一次性消费。
 //   - 不依赖 session-drilldown-parser 的具体事件类型 — 通过 LinkableJsonlEvent 接口解耦。
 
+import { createHash } from "crypto";
 import type { ParsedQuerySnapshot, SegmentNode } from "../types";
 import type { JsonlOrigin, JsonlEventKind } from "./origin";
 
@@ -55,8 +56,26 @@ export interface LinkableJsonlEvent {
   toolResults?: Array<{ toolUseId: string; contentText: string }>;
   /** user 事件的人类输入文本（isHumanInput=true 时填写，用于 #3 匹配）。 */
   userText?: string;
+  /**
+   * user 事件里 claude-code 注入的"本地命令/外壳"文本（slash command 调用、
+   * <local-command-stdout> / <local-command-stderr> / <local-command-caveat>、
+   * <bash-input> / <bash-stdout> / <bash-stderr> 等），由 isCommandLikeText 识别。
+   * 拆成独立维度而非走 userText，是因为这类内容不是"人类自由输入"，
+   * 在 audit / 前端展示上需要和真实人类输入区分。
+   */
+  commandText?: string;
   /** assistant 事件的纯文本输出（content 中 type=text 的拼接，用于 #4 匹配）。 */
   assistantText?: string;
+  /**
+   * assistant 事件携带的 extended thinking 块（type="thinking" / "redacted_thinking"），
+   * 用于 thinking 节点按 signature deterministic 匹配。
+   *   thinking          → signature: block.signature, content: block.thinking
+   *   redacted_thinking → signature: block.data,     content: block.data
+   */
+  thinkingBlocks?: Array<{ signature: string; content: string }>;
+  /** user 事件携带的 image content blocks（用于 #6 image link）。
+   *  digest = sha256(source.data) 前 16 位（base64 形态）或 sha256(source.url) 前 16 位（url 形态）。 */
+  userImages?: Array<{ digest: string; mediaType?: string; sourceType: "base64" | "url" }>;
   /** attachment 事件（type === "attachment"）携带的内容，用于 #5 SmooshContent 子段 link。 */
   attachment?: {
     /** "task_reminder" | "queued_command" | "edited_text_file" | 其他自定义。 */
@@ -96,21 +115,36 @@ interface JsonlIndex {
   toolResultEventById: Map<string, { event: LinkableJsonlEvent; contentText: string }>;
   /** 按 lineIdx 升序的所有 user (isHumanInput) 事件。 */
   userInputEvents: LinkableJsonlEvent[];
+  /** userText (normalized) → 事件，便于 O(1) 内容匹配。与 assistantTextIndex 同构。 */
+  userInputTextIndex: Map<string, LinkableJsonlEvent>;
+  /** 按 lineIdx 升序的所有 commandText 事件（slash command / local command / bash 外壳）。 */
+  commandTextEvents: LinkableJsonlEvent[];
+  /** commandText (normalized) → 事件，O(1) 内容匹配，与 userInputTextIndex 同构。 */
+  commandTextIndex: Map<string, LinkableJsonlEvent>;
   /** 按 lineIdx 升序的所有 assistant 事件（按 assistantText 文本可定位）。 */
   assistantEvents: LinkableJsonlEvent[];
   /** assistantText (修剪后) → 事件，便于 O(1) 内容匹配。 */
   assistantTextIndex: Map<string, LinkableJsonlEvent>;
   /** attachment.type → 该类型的所有 attachment 事件（用于 #5 SmooshContent link）。 */
   attachmentEventsByType: Map<string, LinkableJsonlEvent[]>;
+  /** thinking signature → 含该 thinking 块的 assistant 事件（用于 #7 thinking link）。 */
+  thinkingEventBySignature: Map<string, LinkableJsonlEvent>;
+  /** image digest → 含该 image 的 user 事件（用于 #6 image link）。 */
+  userImageEventByDigest: Map<string, { event: LinkableJsonlEvent; mediaType?: string }>;
 }
 
 function buildIndex(events: LinkableJsonlEvent[]): JsonlIndex {
   const toolUseEventById = new Map<string, LinkableJsonlEvent>();
   const toolResultEventById = new Map<string, { event: LinkableJsonlEvent; contentText: string }>();
   const userInputEvents: LinkableJsonlEvent[] = [];
+  const userInputTextIndex = new Map<string, LinkableJsonlEvent>();
+  const commandTextEvents: LinkableJsonlEvent[] = [];
+  const commandTextIndex = new Map<string, LinkableJsonlEvent>();
   const assistantEvents: LinkableJsonlEvent[] = [];
   const assistantTextIndex = new Map<string, LinkableJsonlEvent>();
   const attachmentEventsByType = new Map<string, LinkableJsonlEvent[]>();
+  const userImageEventByDigest = new Map<string, { event: LinkableJsonlEvent; mediaType?: string }>();
+  const thinkingEventBySignature = new Map<string, LinkableJsonlEvent>();
 
   for (const ev of events) {
     if (ev.toolUses) {
@@ -127,6 +161,17 @@ function buildIndex(events: LinkableJsonlEvent[]): JsonlIndex {
     }
     if (ev.userText !== undefined) {
       userInputEvents.push(ev);
+      const key = normalizeTextKey(ev.userText);
+      if (key.length > 0 && !userInputTextIndex.has(key)) {
+        userInputTextIndex.set(key, ev);
+      }
+    }
+    if (ev.commandText !== undefined) {
+      commandTextEvents.push(ev);
+      const key = normalizeTextKey(ev.commandText);
+      if (key.length > 0 && !commandTextIndex.has(key)) {
+        commandTextIndex.set(key, ev);
+      }
     }
     if (ev.assistantText !== undefined) {
       assistantEvents.push(ev);
@@ -140,11 +185,28 @@ function buildIndex(events: LinkableJsonlEvent[]): JsonlIndex {
       bucket.push(ev);
       attachmentEventsByType.set(ev.attachment.type, bucket);
     }
+    if (ev.userImages) {
+      for (const img of ev.userImages) {
+        if (!userImageEventByDigest.has(img.digest)) {
+          userImageEventByDigest.set(img.digest, { event: ev, mediaType: img.mediaType });
+        }
+      }
+    }
+    if (ev.thinkingBlocks) {
+      for (const tb of ev.thinkingBlocks) {
+        // signature 全局唯一 —— Anthropic 服务端按 thinking 内容 hash 出的 token，
+        // 撞 key 几乎不可能；保守起见仍只保留首次，与 toolUse / image 同样语义。
+        if (!thinkingEventBySignature.has(tb.signature)) {
+          thinkingEventBySignature.set(tb.signature, ev);
+        }
+      }
+    }
   }
   userInputEvents.sort((a, b) => a.lineIdx - b.lineIdx);
+  commandTextEvents.sort((a, b) => a.lineIdx - b.lineIdx);
   assistantEvents.sort((a, b) => a.lineIdx - b.lineIdx);
 
-  return { toolUseEventById, toolResultEventById, userInputEvents, assistantEvents, assistantTextIndex, attachmentEventsByType };
+  return { toolUseEventById, toolResultEventById, userInputEvents, userInputTextIndex, commandTextEvents, commandTextIndex, assistantEvents, assistantTextIndex, attachmentEventsByType, userImageEventByDigest, thinkingEventBySignature };
 }
 
 // 文本匹配时统一规范化（trim + 折叠连续空白）。
@@ -153,31 +215,61 @@ function normalizeTextKey(text: string): string {
   return text.trim().replace(/\s+/g, " ");
 }
 
+/**
+ * Claude Code 在 user 消息里注入的本地命令/外壳 tag 列表。
+ *
+ * 这些 tag 永远在文本起始位置，由 claude-code CLI deterministic 生成，
+ * 形态固定 —— 不是人类自由输入。把它们从 userText 拆出独立维度 (commandText)，
+ * audit 才能区分"人类真正打字"和"CLI 注入的命令外壳/输出"。
+ *
+ * 维护提示：claude-code 新增 tag 时只需扩这一个正则。adapter / linker 都从
+ * 同一个 isCommandLikeText 出发，源头唯一。
+ */
+export const COMMAND_TEXT_PREFIX_RE =
+  /^<(?:command-name|local-command-(?:stdout|stderr|caveat)|bash-(?:input|stdout|stderr))>/;
+
+/** 判断一段文本是否为 claude-code 注入的本地命令/外壳块。trim 后按起始 tag 锚定。 */
+export function isCommandLikeText(text: string): boolean {
+  return COMMAND_TEXT_PREFIX_RE.test(text.trimStart());
+}
+
 // ─── 单节点处理 ─────────────────────────────────────────────────────────────
 
 function buildJsonlOrigin(params: {
   eventKind: JsonlEventKind;
+  /** Event whose `lineIdx` will be used as the evidence pointer (`@Lnn`). */
   event: LinkableJsonlEvent;
   fallbackCallId?: number;
   fallbackTurnId?: number;
   toolUseId?: string;
   confidence: JsonlOrigin["confidence"];
   fullyCovered: boolean;
+  /** Optional explicit override for the `sourceCallId` field. When set, this
+   *  takes precedence over both `event.callId` and `fallbackCallId`. Used by
+   *  tool_result linking — the consuming user event is on the *next* call,
+   *  but the meaningful "source" is the call that emitted the matching
+   *  tool_use, so the back-link UI lands on that producer. */
+  sourceCallIdOverride?: number;
+  sourceTurnIdOverride?: number;
 }): JsonlOrigin {
+  const resolvedCallId =
+    params.sourceCallIdOverride !== undefined
+      ? params.sourceCallIdOverride
+      : params.event.callId !== undefined
+        ? params.event.callId
+        : params.fallbackCallId;
+  const resolvedTurnId =
+    params.sourceTurnIdOverride !== undefined
+      ? params.sourceTurnIdOverride
+      : params.event.turnId !== undefined
+        ? params.event.turnId
+        : params.fallbackTurnId;
   return {
     kind: "jsonl",
     eventKind: params.eventKind,
     jsonlLineIdx: params.event.lineIdx,
-    ...(params.event.callId !== undefined
-      ? { sourceCallId: params.event.callId }
-      : params.fallbackCallId !== undefined
-        ? { sourceCallId: params.fallbackCallId }
-        : {}),
-    ...(params.event.turnId !== undefined
-      ? { sourceTurnId: params.event.turnId }
-      : params.fallbackTurnId !== undefined
-        ? { sourceTurnId: params.fallbackTurnId }
-        : {}),
+    ...(resolvedCallId !== undefined ? { sourceCallId: resolvedCallId } : {}),
+    ...(resolvedTurnId !== undefined ? { sourceTurnId: resolvedTurnId } : {}),
     ...(params.toolUseId ? { toolUseId: params.toolUseId } : {}),
     confidence: params.confidence,
     fullyCovered: params.fullyCovered,
@@ -191,7 +283,7 @@ function linkToolUseNode(node: SegmentNode, index: JsonlIndex, ctx: CallContext)
   const event = index.toolUseEventById.get(id);
   if (!event) return false;
   node.origin = buildJsonlOrigin({
-    eventKind: "tool_use",
+    eventKind: { source: "tool_use" },
     event,
     fallbackCallId: ctx.callId,
     fallbackTurnId: ctx.turnId,
@@ -209,8 +301,16 @@ function linkToolResultNode(node: SegmentNode, index: JsonlIndex, ctx: CallConte
   if (!id) return false;
   const hit = index.toolResultEventById.get(id);
   if (!hit) return false;
+  // Evidence line stays on the consuming user event (that JSONL row IS the
+  // tool_result payload). But the `sourceCallId` we expose to attribution
+  // consumers should be the call that asked for this execution — i.e. the
+  // call that emitted the matching tool_use — not the consuming call (which
+  // is just `ctx.callId`, the current one being inspected). Pointing back at
+  // self is what the UI used to show; the override below fixes that so the
+  // "open source call" link lands on the producer.
+  const toolUseEvent = index.toolUseEventById.get(id);
   node.origin = buildJsonlOrigin({
-    eventKind: "tool_result",
+    eventKind: { source: "tool_result" },
     event: hit.event,
     fallbackCallId: ctx.callId,
     fallbackTurnId: ctx.turnId,
@@ -218,54 +318,72 @@ function linkToolResultNode(node: SegmentNode, index: JsonlIndex, ctx: CallConte
     confidence: "definitive",
     // tool_result 是 wire 原子单元（即便 SmooshContent 切出 SR 子节点，本节点作为 container 仍由 wire 协议完整解释）。
     fullyCovered: true,
+    sourceCallIdOverride: toolUseEvent?.callId,
+    sourceTurnIdOverride: toolUseEvent?.turnId,
   });
   return true;
 }
 
 function linkUserInputNode(node: SegmentNode, index: JsonlIndex, ctx: CallContext): boolean {
-  // user_input 候选条件：
+  // user_input 候选条件（与 assistant_text 路径对称）：
   //   - role === "user"
-  //   - 是叶子节点 messages.text 或 messages.inline.free-text
-  //   - messageIdx === 0（仅原始 user 输入；后续 user 消息通常是 tool_result）
+  //   - 是叶子节点 messages.text / messages.inline.free-text / side-query.user
+  //
+  // 不再用 messageIdx 当判据。多轮会话里第二轮新人类输入位于 messages[N>0]
+  // （proxy 累积态自然结果），按 messageIdx===0 过滤会把它们漏掉。slot 类型已经
+  // 通过 isUserInputLikeSlot 把 tool_result / smoosh SR 子段 / command 类文本排除；
+  // 此处只依赖内容相等做 deterministic join，与 assistantTextIndex 同构。
   if (node.wireMeta?.messageRole !== "user") return false;
-  if (node.wireMeta.messageIdx !== 0) return false;
   if (!isUserInputLikeSlot(node.slotType)) return false;
   if (node.children.length > 0) return false;
 
   const key = normalizeTextKey(node.rawText);
   if (key.length === 0) return false;
 
-  // 优先：内容相等的 jsonl 事件
-  for (const ev of index.userInputEvents) {
-    if (ev.userText && normalizeTextKey(ev.userText) === key) {
-      node.origin = buildJsonlOrigin({
-        eventKind: "user_input",
-        event: ev,
-        fallbackCallId: ctx.callId,
-        fallbackTurnId: ctx.turnId,
-        confidence: "definitive",
-        // 内容 normalized 相等 → 完整解释。
-        fullyCovered: true,
-      });
-      return true;
-    }
-  }
+  // 内容相等：O(1) hash 命中即 definitive。
+  // 不再走"取 turn 内首条事件"的 inferred 兜底 —— 在产线 LinkableJsonlEvent.turnId
+  // 长期为 undefined（attribution-service.readSessionEventsForLinker 未填写）的
+  // 实情下，那条兜底实际上等价于"无差别拿全 session 首条 user-input"，会把任何
+  // 非首条 turn 的 user 文本误绑到首条 turn 上。改成等值不命中即 structural，
+  // 让 audit 的 none/structural_no_rule 桶更诚实地反映"没被 deterministic 解释"。
+  const exact = index.userInputTextIndex.get(key);
+  if (!exact) return false;
+  node.origin = buildJsonlOrigin({
+    eventKind: { source: "user_input", contentType: "text" },
+    event: exact,
+    fallbackCallId: ctx.callId,
+    fallbackTurnId: ctx.turnId,
+    confidence: "definitive",
+    fullyCovered: true,
+  });
+  return true;
+}
 
-  // 退而：取当前 turn 范围内首条 user input 事件 → inferred
-  const inTurn = index.userInputEvents.find((ev) => ev.turnId === undefined || ev.turnId === ctx.turnId);
-  if (inTurn) {
-    node.origin = buildJsonlOrigin({
-      eventKind: "user_input",
-      event: inTurn,
-      fallbackCallId: ctx.callId,
-      fallbackTurnId: ctx.turnId,
-      confidence: "inferred",
-      // 仅按 turn 范围回退，未做内容核对 → partial。
-      fullyCovered: false,
-    });
-    return true;
-  }
-  return false;
+function linkCommandTextNode(node: SegmentNode, index: JsonlIndex, ctx: CallContext): boolean {
+  // command-text 候选条件：与 user_input 同槽位（role=user 的文本叶子），但文本
+  // 必须以 COMMAND_TEXT_PREFIX_RE 锚定的 tag 开头。这一限制让候选集严格收敛到
+  // claude-code 注入的 slash command / local command / bash 外壳块，避免和普通
+  // user_input 抢命中。adapter 那一头由同一个 isCommandLikeText 把这类文本
+  // 路由进 commandText 维度，本函数只对这类节点尝试匹配。
+  if (node.wireMeta?.messageRole !== "user") return false;
+  if (!isUserInputLikeSlot(node.slotType)) return false;
+  if (node.children.length > 0) return false;
+  if (!isCommandLikeText(node.rawText)) return false;
+
+  const key = normalizeTextKey(node.rawText);
+  if (key.length === 0) return false;
+
+  const exact = index.commandTextIndex.get(key);
+  if (!exact) return false;
+  node.origin = buildJsonlOrigin({
+    eventKind: { source: "system_local_command", contentType: "text" },
+    event: exact,
+    fallbackCallId: ctx.callId,
+    fallbackTurnId: ctx.turnId,
+    confidence: "definitive",
+    fullyCovered: true,
+  });
+  return true;
 }
 
 function linkAssistantTextNode(node: SegmentNode, index: JsonlIndex, ctx: CallContext): boolean {
@@ -281,7 +399,7 @@ function linkAssistantTextNode(node: SegmentNode, index: JsonlIndex, ctx: CallCo
   const exact = index.assistantTextIndex.get(key);
   if (exact) {
     node.origin = buildJsonlOrigin({
-      eventKind: "assistant_text",
+      eventKind: { source: "assistant_text", contentType: "text" },
       event: exact,
       fallbackCallId: ctx.callId,
       fallbackTurnId: ctx.turnId,
@@ -298,7 +416,7 @@ function linkAssistantTextNode(node: SegmentNode, index: JsonlIndex, ctx: CallCo
     if (!ev.assistantText) continue;
     if (normalizeTextKey(ev.assistantText).includes(key)) {
       node.origin = buildJsonlOrigin({
-        eventKind: "assistant_text",
+        eventKind: { source: "assistant_text", contentType: "text" },
         event: ev,
         fallbackCallId: ctx.callId,
         fallbackTurnId: ctx.turnId,
@@ -322,6 +440,31 @@ function isUserInputLikeSlot(slotType: string): boolean {
 
 function isAssistantTextLikeSlot(slotType: string): boolean {
   return slotType === "messages.text" || slotType === "messages.inline.free-text";
+}
+
+// ─── thinking 节点 link ──────────────────────────────────────────────────────
+//
+// thinking / redacted_thinking 块：rawText 可能为空字符串，content equality 不可靠；
+// 但 wireMeta.thinkingSignature 是 Anthropic 服务端按 thinking 内容算的唯一 hash，
+// 跨 turn 1:1 稳定 —— 用它在 jsonl index O(1) 查 assistant event 即定位。
+function linkThinkingNode(node: SegmentNode, index: JsonlIndex, ctx: CallContext): boolean {
+  if (node.slotType !== "messages.thinking") return false;
+  const sig = node.wireMeta?.thinkingSignature;
+  if (!sig) return false;
+
+  const ev = index.thinkingEventBySignature.get(sig);
+  if (!ev) return false;
+
+  node.origin = buildJsonlOrigin({
+    eventKind: { source: "thinking" },
+    event: ev,
+    fallbackCallId: ctx.callId,
+    fallbackTurnId: ctx.turnId,
+    confidence: "definitive",
+    // signature 唯一匹配 → 整段视为已被 jsonl 解释（即便 rawText="" 也认 fullyCovered）。
+    fullyCovered: true,
+  });
+  return true;
 }
 
 // ─── SmooshContent SR 子节点 link（#5） ──────────────────────────────────────
@@ -410,7 +553,7 @@ function linkSmooshSegmentNode(node: SegmentNode, index: JsonlIndex, ctx: CallCo
 
   if (bestExact) {
     node.origin = buildJsonlOrigin({
-      eventKind: "attachment",
+      eventKind: { source: "attachment" },
       event: bestExact,
       fallbackCallId: ctx.callId,
       fallbackTurnId: ctx.turnId,
@@ -427,7 +570,7 @@ function linkSmooshSegmentNode(node: SegmentNode, index: JsonlIndex, ctx: CallCo
   const inTurn = candidates.find((ev) => ev.turnId === undefined || ev.turnId === ctx.turnId);
   if (inTurn) {
     node.origin = buildJsonlOrigin({
-      eventKind: "attachment",
+      eventKind: { source: "attachment" },
       event: inTurn,
       fallbackCallId: ctx.callId,
       fallbackTurnId: ctx.turnId,
@@ -439,10 +582,70 @@ function linkSmooshSegmentNode(node: SegmentNode, index: JsonlIndex, ctx: CallCo
   return false;
 }
 
+// ─── #6 image node link ─────────────────────────────────────────────────────
+//
+// 从 node.rawText（matcher 写入的 image block JSON 字面量）解出 source.data 或 source.url，
+// 算 sha256 前 16 位的 digest，与 JsonlIndex.userImageEventByDigest 做 O(1) 查找。
+// 命中 → JsonlOrigin({source:"user_input", contentType:"image"}, definitive)。
+
+function linkImageNode(node: SegmentNode, index: JsonlIndex, ctx: CallContext): boolean {
+  if (node.slotType !== "messages.block.image") return false;
+
+  let parsed: { source?: { type?: string; data?: string; url?: string } };
+  try {
+    parsed = JSON.parse(node.rawText);
+  } catch {
+    return false;
+  }
+  const src = parsed?.source;
+  if (!src) return false;
+
+  let fingerprint: string | null = null;
+  if (src.type === "base64" && typeof src.data === "string") {
+    fingerprint = src.data;
+  } else if (src.type === "url" && typeof src.url === "string") {
+    fingerprint = src.url;
+  }
+  if (!fingerprint) return false;
+
+  // 使用与 attribution-service.extractUserImages 相同的 sha256 前 16 位口径。
+  const digest = sha256First16(fingerprint);
+  const hit = index.userImageEventByDigest.get(digest);
+  if (!hit) return false;
+
+  node.origin = buildJsonlOrigin({
+    eventKind: { source: "user_input", contentType: "image" },
+    event: hit.event,
+    fallbackCallId: ctx.callId,
+    fallbackTurnId: ctx.turnId,
+    confidence: "definitive",
+    // image digest 精确匹配 → 整段 rawText 由 JSONL 完整解释。
+    fullyCovered: true,
+  });
+  return true;
+}
+
+/** sha256(s) 前 16 位（与 attribution-service.digest16 同口径）。 */
+function sha256First16(s: string): string {
+  return createHash("sha256").update(s).digest("hex").slice(0, 16);
+}
+
 // ─── 顶层入口 ────────────────────────────────────────────────────────────────
 
 export interface LinkJsonlReport {
-  matched: { toolUse: number; toolResult: number; userInput: number; assistantText: number; smooshSegment: number };
+  matched: {
+    toolUse: number;
+    toolResult: number;
+    /** tool_result container 被 SmooshContent 切出 SR 子段后剩下的 free-text leaf（实际工具输出）
+     *  继承父节点 jsonl/tool_result origin 的数量。 */
+    toolResultLeftover: number;
+    userInput: number;
+    commandText: number;
+    assistantText: number;
+    smooshSegment: number;
+    userImage: number;
+    thinking: number;
+  };
   totalLeaves: number;
 }
 
@@ -459,7 +662,7 @@ export function linkJsonl(
 ): LinkJsonlReport {
   const index = buildIndex(events);
   const report: LinkJsonlReport = {
-    matched: { toolUse: 0, toolResult: 0, userInput: 0, assistantText: 0, smooshSegment: 0 },
+    matched: { toolUse: 0, toolResult: 0, toolResultLeftover: 0, userInput: 0, commandText: 0, assistantText: 0, smooshSegment: 0, userImage: 0, thinking: 0 },
     totalLeaves: 0,
   };
 
@@ -486,6 +689,13 @@ export function linkJsonl(
       report.matched.userInput += 1;
       continue;
     }
+    // #3b：command-text — slash command / local command / bash 外壳；与 user_input
+    // 互斥（前者文本以固定 tag 起始，后者不会）。放在 user_input 之后只是 try-chain
+    // 的稳定顺序，命中互斥所以语义无关。
+    if (linkCommandTextNode(node, index, ctx)) {
+      report.matched.commandText += 1;
+      continue;
+    }
     if (linkAssistantTextNode(node, index, ctx)) {
       report.matched.assistantText += 1;
       continue;
@@ -495,6 +705,48 @@ export function linkJsonl(
       report.matched.smooshSegment += 1;
       continue;
     }
+    // #6：image content block — 通过 source.data/url 的 sha256 前 16 位指纹匹配 user 事件。
+    if (linkImageNode(node, index, ctx)) {
+      report.matched.userImage += 1;
+      continue;
+    }
+    // #7：thinking 块 — wireMeta.thinkingSignature 在 assistant event 的 thinkingBlocks 上 O(1) 查。
+    if (linkThinkingNode(node, index, ctx)) {
+      report.matched.thinking += 1;
+      continue;
+    }
+  }
+
+  // 终末 pass：tool_result container 被 SmooshContent 切出 SR 子段后，剩下的
+  // free-text leaf 就是真正的工具输出。它的 rawText 是父 tool_result 事件
+  // contentText 的一部分（SR 段被切走后的剩余），按"父事件已 deterministic 链上"
+  // 这个事实直接继承 origin 即可。
+  //
+  // 不在主循环里做是因为依赖父节点 origin 已写定（linkToolResultNode 已跑过）。
+  // 顺序：container 在 index 里通常在子之前，但不保证；用单独 pass 安全。
+  for (const node of Object.values(snapshot.index)) {
+    if (node.children.length !== 0) continue;
+    if (node.slotType !== "messages.inline.free-text") continue;
+    if (node.origin.kind === "jsonl") continue; // 已被前面任何 linker 写过的就别覆盖
+    const parent = node.parentId ? snapshot.index[node.parentId] : undefined;
+    if (!parent) continue;
+    if (parent.slotType !== "messages.tool_result") continue;
+    if (parent.origin.kind !== "jsonl") continue;
+    if (parent.origin.eventKind?.source !== "tool_result") continue;
+    node.origin = buildJsonlOrigin({
+      eventKind: { source: "tool_result" },
+      // 直接借用父的 jsonlLineIdx：构造一个最小 event-shape 给 buildJsonlOrigin。
+      // 父 origin 里已有 jsonlLineIdx 与 sourceCallId/TurnId，全部 forward。
+      event: { lineIdx: parent.origin.jsonlLineIdx, type: "user", ...(parent.origin.sourceCallId !== undefined && { callId: parent.origin.sourceCallId }), ...(parent.origin.sourceTurnId !== undefined && { turnId: parent.origin.sourceTurnId }) },
+      fallbackCallId: ctx.callId,
+      fallbackTurnId: ctx.turnId,
+      ...(parent.origin.toolUseId && { toolUseId: parent.origin.toolUseId }),
+      confidence: "definitive",
+      // leaf rawText 就是父事件 contentText 去掉 SR 段后剩下的实际输出 ——
+      // 对 leaf 自身字节级覆盖 = 完整解释。
+      fullyCovered: true,
+    });
+    report.matched.toolResultLeftover += 1;
   }
 
   return report;

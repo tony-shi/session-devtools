@@ -327,17 +327,74 @@ function splitInlineTags(
 
   const systemReminderSlot = childSlots.find((s) => s.id === "messages.inline.system-reminder");
   const localCommandSlot = childSlots.find((s) => s.id === "messages.inline.local-command");
+  const imagePlaceholderSlot = childSlots.find((s) => s.id === "messages.inline.image-placeholder");
   const freeTextSlot = childSlots.find((s) => s.id === "messages.inline.free-text");
+
+  /**
+   * CLI 注入的图片占位文本固定形态：
+   *   [Image: source: <path>]
+   *   [Image #<N>: source: <path>]
+   *   [Image #<N>]
+   * 不允许跨行，path 内不含 `]` —— 这是 CLI 端生成时的硬约束。
+   */
+  const IMAGE_PLACEHOLDER_RE = /^\[Image(?:\s*#\d+)?(?:\s*:\s*source:\s*[^\]\n]+)?\]$/;
+
+  // ── 整块快路径：CLI 自动注入的图片占位 ───────────────────────────────────────
+  // 命中条件严格：text 经 trim 后整段与 IMAGE_PLACEHOLDER_RE 等值匹配。
+  // 这样保证只切"独立成块"的占位（CLI 上传图片时自动注入），不会切到用户 prose
+  // 里的 `[Image #N]` 回引文本 —— 那些和用户输入一起组成完整 jsonl userText，
+  // 切碎会让 user_input 的 hash 等值匹配失败。
+  if (imagePlaceholderSlot) {
+    const trimmed = text.trim();
+    if (trimmed.length > 0 && IMAGE_PLACEHOLDER_RE.test(trimmed)) {
+      out.push({
+        slotType: imagePlaceholderSlot.id,
+        jsonPath: parentJsonPath,
+        charRange: { start: 0, end: text.length },
+        rawText: text,
+        anchorEvidence: "[Image",
+        children: [],
+      });
+      return out;
+    }
+  }
 
   let cursor = 0;
   let freeTextStart = 0;
 
-  function tagAt(pos: number): { slot: TemplateSlot; kind: "system-reminder" | "local-command"; openLen: number } | null {
+  /**
+   * 落到 messages.inline.local-command 槽的"前缀家族"。
+   *
+   * 命名按 Claude Code CLI 在 user turn 里注入的 tag 形态分三组：
+   *   - <local-command-*>  : caveat / stdout / stderr —— slash command / 外部命令的输出
+   *   - <bash-*>           : input / stdout / stderr —— "! ..." 触发的 bash 转录
+   *   - <command-*>        : name / message / args —— slash command 调用头
+   *
+   * 每组用一个 open 前缀（前缀终止于第一个 `-` 后的任意名称）做识别，关闭 tag
+   * 用相同前缀的 `</open` 形式，这样能稳定捕获家族内任意命名后续（避免每个具体
+   * 名字都硬编码进 splitInlineTags 与 rule 正则两边）。
+   */
+  const LOCAL_COMMAND_TAG_FAMILIES = [
+    { open: "<local-command-", close: "</local-command-" },
+    { open: "<bash-",          close: "</bash-" },
+    { open: "<command-",       close: "</command-" },
+  ] as const;
+  type LocalCommandFamily = (typeof LOCAL_COMMAND_TAG_FAMILIES)[number];
+
+  function tagAt(pos: number):
+    | { slot: TemplateSlot; kind: "system-reminder"; openLen: number; family: null }
+    | { slot: TemplateSlot; kind: "local-command";   openLen: number; family: LocalCommandFamily }
+    | null
+  {
     if (systemReminderSlot && text.startsWith("<system-reminder>", pos)) {
-      return { slot: systemReminderSlot, kind: "system-reminder", openLen: "<system-reminder>".length };
+      return { slot: systemReminderSlot, kind: "system-reminder", openLen: "<system-reminder>".length, family: null };
     }
-    if (localCommandSlot && text.startsWith("<local-command-", pos)) {
-      return { slot: localCommandSlot, kind: "local-command", openLen: "<local-command-".length };
+    if (localCommandSlot) {
+      for (const fam of LOCAL_COMMAND_TAG_FAMILIES) {
+        if (text.startsWith(fam.open, pos)) {
+          return { slot: localCommandSlot, kind: "local-command", openLen: fam.open.length, family: fam };
+        }
+      }
     }
     return null;
   }
@@ -365,10 +422,10 @@ function splitInlineTags(
 
     flushFreeText(cursor);
 
-    const anchorPrefix = tag.kind === "system-reminder" ? "<system-reminder>" : "<local-command-";
+    const anchorPrefix = tag.kind === "system-reminder" ? "<system-reminder>" : tag.family.open;
     let segEnd: number;
     if (tag.kind === "local-command") {
-      const closeStart = text.indexOf("</local-command-", cursor + tag.openLen);
+      const closeStart = text.indexOf(tag.family.close, cursor + tag.openLen);
       if (closeStart === -1) {
         segEnd = text.length;
       } else {
@@ -388,6 +445,37 @@ function splitInlineTags(
         segEnd += 1;
       } else {
         break;
+      }
+    }
+
+    // 合并相邻 local-command 家族 tag：slash command 的转录块在 CLI 端是
+    //   <command-name>...</command-name>\s+<command-message>...</command-message>\s+<command-args>...</command-args>
+    // 这种紧挨着的三段。每段单独成 leaf 会让中间的纯空白也成为 inline.free-text
+    // 噪声 leaf。这里把"仅由空白分隔的同家族 tag 串"折叠成一个 local-command leaf，
+    // 与"格式固定"的 CLI 输出形态对齐。system-reminder 不参与合并（独立块语义）。
+    if (tag.kind === "local-command") {
+      let probe = segEnd;
+      while (probe < text.length) {
+        let ws = probe;
+        while (ws < text.length && /\s/.test(text[ws]!)) ws++;
+        if (ws >= text.length) break;
+        const next = tagAt(ws);
+        if (!next || next.kind !== "local-command") break;
+        let nextEnd: number;
+        const closeStart = text.indexOf(next.family.close, ws + next.openLen);
+        if (closeStart === -1) {
+          nextEnd = text.length;
+        } else {
+          const closeGT = text.indexOf(">", closeStart);
+          nextEnd = closeGT === -1 ? text.length : closeGT + 1;
+        }
+        while (nextEnd < text.length) {
+          if (text[nextEnd] === "\r" && text[nextEnd + 1] === "\n") nextEnd += 2;
+          else if (text[nextEnd] === "\n") nextEnd += 1;
+          else break;
+        }
+        segEnd = nextEnd;
+        probe = nextEnd;
       }
     }
 

@@ -22,7 +22,9 @@ export type SegmentCategory =
   | "tools_schema"
   | "billing_noise"
   | "harness_injection"
+  | "ide_injection"
   | "memory_injection"
+  | "user_image"
   | "skill_listing"
   | "local_command_history"
   | "slash_command"
@@ -57,5 +59,6 @@ export type RuleMechanism =
   | "cache_hint_detector"
   | "task_reminder_smoosh"
   | "smoosh_content_match"
+  | "messages_content_block_pattern"
   | "manual_fixture"
   | "unknown";

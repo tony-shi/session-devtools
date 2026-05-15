@@ -160,6 +160,30 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
             ...(blk.name && { toolName: blk.name }),
           },
         });
+      } else if (blk.type === "thinking" || blk.type === "redacted_thinking") {
+        // extended thinking 块：
+        //   { type: "thinking",          thinking: "...", signature: "<base64>" }
+        //   { type: "redacted_thinking", data: "<base64-encrypted>" }
+        // signature/data 是 Anthropic 服务端按 thinking 内容算出的唯一 token，
+        // 跨 turn 1:1 稳定 —— 用作 jsonl-linker 的 deterministic join key。
+        const sig = (blk as { signature?: string; data?: string }).signature
+          ?? (blk as { signature?: string; data?: string }).data;
+        const text = blk.type === "thinking"
+          ? ((blk as { thinking?: string }).thinking ?? "")
+          : ((blk as { data?: string }).data ?? "");
+        out.push({
+          slotType: "messages.thinking",
+          jsonPath,
+          rawText: text,
+          anchorEvidence: blk.type,
+          children: [],
+          cachePolicy: parseCachePolicy(blk.cache_control as Record<string, unknown> | undefined),
+          wireMeta: {
+            messageIdx: mi,
+            ...(roleNorm && { messageRole: roleNorm }),
+            ...(sig && { thinkingSignature: sig }),
+          },
+        });
       } else if (blk.type === "tool_result") {
         out.push({
           slotType: "messages.tool_result",
@@ -174,9 +198,22 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
             ...(blk.tool_use_id && { toolUseId: blk.tool_use_id }),
           },
         });
+      } else if (blk.type === "image") {
+        // image content block：Anthropic 协议固定类型，含 source.{type,media_type,data|url}。
+        // rawText 保留完整 JSON 字面量（含 base64 data），便于后续 rule 命中 +
+        // jsonl-linker 用 source.data 指纹做 deterministic 匹配。
+        out.push({
+          slotType: "messages.block.image",
+          jsonPath,
+          rawText: JSON.stringify(blk),
+          anchorEvidence: "image",
+          children: [],
+          cachePolicy: parseCachePolicy(blk.cache_control as Record<string, unknown> | undefined),
+          wireMeta: { messageIdx: mi, ...(roleNorm && { messageRole: roleNorm }) },
+        });
       } else {
-        // 未知 block type（image、document 等）：保留原始内容，不丢字符。
-        // 阶段 2 按需补 slot；这里先产出 messages.block.unknown 供 audit 识别 gap。
+        // 其他未识别 block type（document 等）：保留原始内容，不丢字符。
+        // 待新增协议类型时按需补 slot；当前产出 messages.block.unknown 供 audit 识别 gap。
         out.push({
           slotType: UNKNOWN_SLOT.MESSAGES_BLOCK,
           jsonPath,

@@ -46,9 +46,17 @@ export function SummaryCardsV2({ data, loading }: Props) {
 
   // Treat dashboard hero stats with the same flat header layout used in detail
   // pages so visual rhythm stays identical when navigating in & out of a session.
+  //
+  // Token ledger semantics — the four columns are *non-overlapping* billing
+  // buckets (matches Anthropic API usage breakdown):
+  //   • freshIn    = input_tokens         (uncached fresh prompt, full rate)
+  //   • cacheRead  = cache_read_tokens    (loaded from cache, ~10% rate)
+  //   • cacheWrite = cache_creation       (newly cached this call, ~125% rate)
+  //   • output     = output_tokens        (model generated)
+  // Cache ratio is the standard hit rate = cacheRead / (in + cacheRead + cacheWrite).
   const cacheRead  = data?.cache_read_tokens     ?? 0;
   const cacheWrite = data?.cache_creation_tokens ?? 0;
-  const freshIn    = (data?.input_tokens ?? 0) + cacheWrite;
+  const freshIn    = data?.input_tokens          ?? 0;
   const output     = data?.output_tokens         ?? 0;
   const inputTotal = freshIn + cacheRead + cacheWrite;
   const cacheRatio = inputTotal > 0 ? (cacheRead / inputTotal) * 100 : null;
@@ -64,8 +72,9 @@ export function SummaryCardsV2({ data, loading }: Props) {
         </div>
       ) : (
         <div style={{ display: "flex", alignItems: "stretch", gap: 24 }}>
-          {/* Left: hero counters */}
-          <div style={{ flex: "0 0 auto" }}>
+          {/* Left: hero counters — claim at least half of the row so the right
+              ledger doesn't visually swamp the headline numbers */}
+          <div style={{ flex: "1 1 50%", minWidth: 0 }}>
             <HeaderStatRow
               noDivider
               stats={[
@@ -79,8 +88,9 @@ export function SummaryCardsV2({ data, loading }: Props) {
           {/* Vertical separator */}
           <div style={{ width: 1, background: "#f3f4f6" }} />
 
-          {/* Right: token ledger occupies remaining space */}
-          <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Right: token ledger — also flex:1 so the row balances 50/50 with
+              room for the bar to breathe; shrinks naturally on narrow widths */}
+          <div style={{ flex: "1 1 50%", minWidth: 0 }}>
             <TokenLedgerInline
               noTopPadding
               freshIn={freshIn}
@@ -108,29 +118,62 @@ interface MiniLedgerSession {
 
 export function MiniTokenLedger({ session, maxTotal }: { session: MiniLedgerSession; maxTotal: number }) {
   const { t } = useTranslation();
-  const freshIn = session.input_tokens + session.cache_creation_tokens;
-  const entries = [
-    { id: "fresh_input", value: freshIn },
-    { id: "cache_read",  value: session.cache_read_tokens },
-    { id: "cache_write", value: session.cache_creation_tokens },
-    { id: "output",      value: session.output_tokens },
+  // Display semantics — Fresh In is broad-sense "what was newly sent this
+  // round": API input_tokens + cache_creation. Bar segments stay
+  // non-overlapping so widths still represent actual token volume.
+  const apiInput = session.input_tokens;
+  const cacheWrite = session.cache_creation_tokens;
+  const cacheRead = session.cache_read_tokens;
+  const output = session.output_tokens;
+  const freshInDisplay = apiInput + cacheWrite;
+  // Column / bar order reads as a timeline: Fresh In + Cache Write (new
+  // this round) → Cache Read (replayed) → Output (model produced). Fresh In
+  // and Cache Write are adjacent so the subset relationship reads at a
+  // glance.
+  const columns = [
+    { id: "fresh_input", value: freshInDisplay },
+    { id: "cache_write", value: cacheWrite },
+    { id: "cache_read",  value: cacheRead },
+    { id: "output",      value: output },
+  ];
+  const barSegments = [
+    { id: "fresh_input", value: apiInput },
+    { id: "cache_write", value: cacheWrite },
+    { id: "cache_read",  value: cacheRead },
+    { id: "output",      value: output },
   ];
 
-  const inputTotal = freshIn + session.cache_read_tokens;
-  const cacheRatio = inputTotal > 0 ? (session.cache_read_tokens / inputTotal) * 100 : null;
-  const total = entries.reduce((s, e) => s + e.value, 0);
+  // Cache hit ratio = cache_read / (input + cache_read + cache_creation).
+  // Same denominator as the Turn / Session headers so values agree.
+  const inputTotal = apiInput + cacheRead + cacheWrite;
+  const cacheRatio = inputTotal > 0 ? (cacheRead / inputTotal) * 100 : null;
+  const total = barSegments.reduce((s, e) => s + e.value, 0);
   const barWidthPct = maxTotal > 0 ? (total / maxTotal) * 100 : 0;
 
+  // Whole-row hover — plain language summary of the four numbers.
+  const interpretation = t("terms.ledgerInterpretation", {
+    freshIn: fmt(freshInDisplay),
+    cacheWrite: fmt(cacheWrite),
+    cacheRead: fmt(cacheRead),
+    output: fmt(output),
+    ratio: cacheRatio != null
+      ? t("terms.ledgerInterpretationRatio", { pct: fmtPct(cacheRatio) })
+      : "",
+  });
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }} title={interpretation}>
       {/* label + value row — fixed-width columns to keep alignment across rows */}
-      <div style={{ display: "grid", gridTemplateColumns: "56px 60px 64px 52px 1px 52px", alignItems: "end" }}>
-        {entries.map(({ id, value }) => {
+      {/* Column widths track the new order: Fresh In · Cache Write · Cache
+          Read · Output · | · Cache Ratio. Sized to fit each label without
+          wrapping. */}
+      <div style={{ display: "grid", gridTemplateColumns: "56px 64px 60px 52px 1px 52px", alignItems: "end" }}>
+        {columns.map(({ id, value }) => {
           const m = TOKEN_METRICS[id];
           const hasVal = value > 0;
           return (
             <div key={id} style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-              <span style={{ fontSize: 9, color: "#9ca3af", fontWeight: 500, whiteSpace: "nowrap" }} title={m.description}>
+              <span style={{ fontSize: 9, color: "#9ca3af", fontWeight: 500, whiteSpace: "nowrap" }}>
                 {m.label}
               </span>
               <span style={{ fontSize: 11, fontWeight: 700, color: hasVal ? m.color : "#d1d5db", lineHeight: 1 }}>
@@ -154,14 +197,16 @@ export function MiniTokenLedger({ session, maxTotal }: { session: MiniLedgerSess
         )}
       </div>
 
-      {/* stacked bar, width scaled to maxTotal */}
+      {/* stacked bar, width scaled to maxTotal — uses non-overlapping
+          segments (apiInput / cacheRead / cacheWrite / output) so widths
+          reflect actual token volume. Column display above shows broad-sense
+          Fresh In; bar shows the underlying breakdown. */}
       {total > 0 && (
         <div style={{ width: "100%", height: 3, borderRadius: 2, background: "#f3f4f6", overflow: "hidden" }}>
           <div style={{ width: `${barWidthPct}%`, height: "100%", display: "flex", overflow: "hidden", borderRadius: 2 }}>
-            {entries.filter(e => e.value > 0).map(({ id, value }) => (
+            {barSegments.filter(e => e.value > 0).map(({ id, value }) => (
               <div
                 key={id}
-                title={`${TOKEN_METRICS[id].label}: ${fmt(value)}`}
                 style={{ flex: value, background: TOKEN_METRICS[id].color }}
               />
             ))}

@@ -24,6 +24,7 @@ import type { JsonlEventKind } from "../attribution/origin";
 
 export type ReverseEventKind =
   | "user_input"
+  | "command_text"
   | "assistant_text"
   | "tool_use"
   | "tool_result"
@@ -74,9 +75,30 @@ function slotHintFor(kind: ReverseEventKind): string {
   switch (kind) {
     case "tool_use":      return "messages.tool_use";
     case "tool_result":   return "messages.tool_result";
-    case "user_input":    return "messages.text 或 messages.inline.free-text (role=user, idx=0)";
+    case "user_input":    return "messages.text 或 messages.inline.free-text (role=user, 真实人类输入)";
+    case "command_text":  return "messages.text 或 messages.inline.free-text (role=user, 以 <command-name>/<local-command-*>/<bash-*> 起始)";
     case "assistant_text":return "messages.text 或 messages.inline.free-text (role=assistant)";
     case "attachment":    return "messages.inline.system-reminder (smoosh SR 子段)";
+  }
+}
+
+/**
+ * 把结构化 JsonlEventKind 投影为扁平 ReverseEventKind（用于 audit 统计粒度）。
+ * audit 当前不区分 contentType（text/image），只按 source 桶统计。
+ * 未来需要按 contentType 拆桶时，扩展 ReverseEventKind 并更新此处即可。
+ */
+function flattenToReverseKind(kind: JsonlEventKind): ReverseEventKind | null {
+  switch (kind.source) {
+    case "user_input":
+    case "assistant_text":
+    case "tool_use":
+    case "tool_result":
+    case "attachment":
+      return kind.source;
+    case "system_local_command":
+      return "command_text";
+    default:
+      return null;
   }
 }
 
@@ -87,11 +109,11 @@ function slotHintFor(kind: ReverseEventKind): string {
  *   - linkedToolResultIds: 已被某 tool_result segment 引用的 toolUseId 集合
  */
 function indexLinks(snapshot: ParsedQuerySnapshot): {
-  linkedByLine: Map<number, Set<JsonlEventKind>>;
+  linkedByLine: Map<number, Set<ReverseEventKind>>;
   linkedToolUseIds: Set<string>;
   linkedToolResultIds: Set<string>;
 } {
-  const linkedByLine = new Map<number, Set<JsonlEventKind>>();
+  const linkedByLine = new Map<number, Set<ReverseEventKind>>();
   const linkedToolUseIds = new Set<string>();
   const linkedToolResultIds = new Set<string>();
 
@@ -99,14 +121,17 @@ function indexLinks(snapshot: ParsedQuerySnapshot): {
     const origin = node.origin;
     if (origin.kind !== "jsonl") continue;
 
-    const set = linkedByLine.get(origin.jsonlLineIdx) ?? new Set<JsonlEventKind>();
-    set.add(origin.eventKind);
-    linkedByLine.set(origin.jsonlLineIdx, set);
+    const reverseKind = flattenToReverseKind(origin.eventKind);
+    if (reverseKind) {
+      const set = linkedByLine.get(origin.jsonlLineIdx) ?? new Set<ReverseEventKind>();
+      set.add(reverseKind);
+      linkedByLine.set(origin.jsonlLineIdx, set);
+    }
 
-    if (origin.eventKind === "tool_use" && origin.toolUseId) {
+    if (origin.eventKind.source === "tool_use" && origin.toolUseId) {
       linkedToolUseIds.add(origin.toolUseId);
     }
-    if (origin.eventKind === "tool_result" && origin.toolUseId) {
+    if (origin.eventKind.source === "tool_result" && origin.toolUseId) {
       linkedToolResultIds.add(origin.toolUseId);
     }
   }
@@ -128,6 +153,7 @@ export function computeReverseAudit(
 
   const byKind: Record<ReverseEventKind, ReverseAuditBucket> = {
     user_input: emptyBucket(),
+    command_text: emptyBucket(),
     assistant_text: emptyBucket(),
     tool_use: emptyBucket(),
     tool_result: emptyBucket(),
@@ -163,6 +189,14 @@ export function computeReverseAudit(
         ...baseUnit,
         eventKind: "user_input",
         preview: preview(ev.userText),
+      });
+    }
+    if (ev.commandText !== undefined) {
+      const linked = kindsThisLine?.has("command_text") ?? false;
+      record("command_text", linked, {
+        ...baseUnit,
+        eventKind: "command_text",
+        preview: preview(ev.commandText),
       });
     }
     if (ev.assistantText !== undefined) {

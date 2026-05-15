@@ -52,14 +52,16 @@ export interface ForwardAudit {
  *
  *   rule.regex.partial_match       — regex 只命中 rawText 子串
  *   rule.prefix.anchor_only        — prefix 锚点命中但未解释整段
- *   jsonl.user_input.inferred      — 仅按 turn 回退、未做内容核对
  *   jsonl.assistant_text.substring — jsonl 文本包含 node（estimated）
  *   jsonl.attachment.fingerprint   — SR 子段 attachment 仅匹配片段
+ *
+ * user_input 路径目前是严格内容相等（jsonl-linker B 方案）：命中即 fullyCovered=true
+ * 进 full 桶，不命中则保留 structural / no_rule_matched 进 none 桶，永远不会落 partial，
+ * 因此 PartialReason 不再保留 "jsonl.user_input.*" 条目。
  */
 export type PartialReason =
   | "rule.regex.partial_match"
   | "rule.prefix.anchor_only"
-  | "jsonl.user_input.inferred"
   | "jsonl.assistant_text.substring"
   | "jsonl.attachment.fingerprint"
   | "rule.unknown"
@@ -79,9 +81,10 @@ function partialReason(node: SegmentNode): PartialReason {
     return "rule.unknown";
   }
   if (origin.kind === "jsonl") {
-    if (origin.eventKind === "user_input") return "jsonl.user_input.inferred";
-    if (origin.eventKind === "assistant_text") return "jsonl.assistant_text.substring";
-    if (origin.eventKind === "attachment") return "jsonl.attachment.fingerprint";
+    // user_input 在 B 方案下永不进 partial（见 PartialReason 注释）；显式不分支，
+    // 走 jsonl.unknown 作为保险落点 —— 即便未来有新的 partial 路径加入，桶位仍可识别。
+    if (origin.eventKind.source === "assistant_text") return "jsonl.assistant_text.substring";
+    if (origin.eventKind.source === "attachment") return "jsonl.attachment.fingerprint";
     return "jsonl.unknown";
   }
   // structural / unknown 不会进 partial 桶。
@@ -92,7 +95,6 @@ function emptyByReason(): Record<PartialReason, string[]> {
   return {
     "rule.regex.partial_match": [],
     "rule.prefix.anchor_only": [],
-    "jsonl.user_input.inferred": [],
     "jsonl.assistant_text.substring": [],
     "jsonl.attachment.fingerprint": [],
     "rule.unknown": [],

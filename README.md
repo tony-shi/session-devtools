@@ -7,16 +7,26 @@ It currently focuses on Claude Code sessions and request-side context attributio
 
 > **Alpha** — Claude Code 2.x only. Attribution requires proxy dump.
 
-## Quick Start
+## Install
 
 ```bash
-git clone https://github.com/tony-shi/session-dashboard
-cd session-dashboard
-npm install
-npm run dev
+npm i -g session-devtools
+session-devtools
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Opens [http://localhost:5173](http://localhost:5173) automatically. Requires Node.js >= 22.
+
+CLI flags:
+
+```
+session-devtools --port <n>        # default 5173
+                 --data-dir <path> # default ~/.api-dashboard
+                 --no-open         # don't open browser
+                 --quiet           # suppress logs
+```
+
+When a new version is published, `session-devtools` prints an update notice on next launch.
+Upgrade with `npm i -g session-devtools@latest`.
 
 ## What it does
 
@@ -60,8 +70,11 @@ The database is stored at `~/.api-dashboard/sessions.db`. Override with `API_DAS
 ## Development
 
 ```bash
+git clone https://github.com/tony-shi/session-devtools
+cd session-devtools
+npm install
 npm run dev          # start server + client with hot reload
-npm run build        # production build of client
+npm run build        # production build (server + client)
 npx tsc --noEmit     # type check
 cd client && npm run lint
 ```

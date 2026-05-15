@@ -1,29 +1,31 @@
 name: Release
 
+# Manual-only for the alpha phase — publishing is run from the maintainer's
+# laptop (`npm publish`). When the project is ready for automated releases,
+# re-enable the tag trigger and add an `npm publish` step using NPM_TOKEN.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Create Release
+    name: Create GitHub Release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         with:
-          bun-version: latest
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        run: bun install && cd client && bun install
+        run: npm ci && cd client && npm ci
 
-      - name: Build client
-        run: bun run build
+      - name: Build
+        run: npm run build
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

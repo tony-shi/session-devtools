@@ -38,3 +38,6 @@ mock-to-real.md
 session-devtools-*.tgz
 
 .playwright-cli
+
+# found-ground-info skill output
+tmp/

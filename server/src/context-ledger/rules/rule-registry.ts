@@ -363,6 +363,60 @@ export const CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE: ContextLedgerRule = {
   materialization: "normalized_text",
 };
 
+// ── # VSCode Extension Context section ────────────────────────────────────────
+//
+// 来源：VSCode 扩展 anthropic.claude-code 2.1.142, extension.js:800（变量 N64）。
+// 注入方式：扩展端 `systemPrompt: { preset: "claude_code", append: N64 }`
+//   无条件追加；CLI harness 对此段无感知。
+//
+// 与 harness_injection 的区别：
+//   - 触发条件：仅 VSCode 扩展发起的请求才有；CLI 直接调用、其他客户端不出现
+//   - 注入侧：扩展端在 SDK 调用前 append，不属于 CLI harness 行为
+//   → 用独立 category `ide_injection` 区分
+//
+// 稳定性：完全静态。形如 `[filename.ts](src/filename.ts)` 看似占位符，
+//   实为文档里的字面示例；无模板变量、无条件分支。
+//
+// 注意原文特征（保持精确匹配）：
+//   - "from the root of  the user's workspace" 中 "of  the" 是**两个空格**（扩展原文）
+//   - "DO NOT USE backtickets `" 含一个未配对的反引号（扩展 template literal 里写作 \`）
+
+export const CLAUDE_CODE_VSCODE_EXTENSION_CONTEXT_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.vscode-extension-context.v1",
+  // 校对来源：本地 vscode 扩展 anthropic.claude-code 2.1.142 extension.js:800
+  // 已知限制：扩展版本与 SUPPORTED_CLAUDE_CODE_VERSION (CLI 版本号) 不同步。
+  // 当前框架只有一个版本常量，先按"已人工校对"标记 verified；版本追踪精细化后再细分。
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "VSCode 扩展通过 systemPrompt.append 注入的 IDE 上下文块。" +
+    "完全静态字符串，无条件注入、无动态字段。" +
+    "仅在通过 VSCode 扩展发起请求时出现，CLI 直接调用不出现。",
+  stability: "static",
+  sourcemapRef: "vscode-extension/extension.js:800 (anthropic.claude-code 2.1.142, var N64)",
+
+  attribution: {
+    // 完整文本精确匹配。整段为扩展中变量 N64 的硬编码字面量。
+    pattern:
+      "# VSCode Extension Context\n\n" +
+      "You are running inside a VSCode native extension environment.\n\n" +
+      "## Code References in Text\n" +
+      "IMPORTANT: When referencing files or code locations, use markdown link syntax to make them clickable:\n" +
+      "- For files: [filename.ts](src/filename.ts)\n" +
+      "- For specific lines: [filename.ts:42](src/filename.ts#L42)\n" +
+      "- For a range of lines: [filename.ts:42-51](src/filename.ts#L42-L51)\n" +
+      "- For folders: [src/utils/](src/utils/)\n" +
+      "Unless explicitly asked for by the user, DO NOT USE backtickets ` or HTML tags like code for file references - always use markdown [text](link) format.\n" +
+      "The URL links should be relative paths from the root of  the user's workspace.\n\n" +
+      "## User Selection Context\n" +
+      "The user's IDE selection (if any) is included in the conversation context and marked with ide_selection tags. This represents code or text the user has highlighted in their editor and may or may not be relevant to their request.\n",
+    matchMode: "exact",
+    mechanism: "system_prompt_pattern",
+    category: "ide_injection",
+  },
+
+  materialization: "exact_text",
+};
+
 // 保留旧名称作为兼容别名，指向 Environment rule（attribution 代码直接用 ruleId 字符串引用）
 /** @deprecated 已拆分为三条独立 rule，此别名仅供过渡期引用 */
 export const CLAUDE_CODE_SYSTEM_PROMPT_DYNAMIC_SECTION_RULE = CLAUDE_CODE_ENVIRONMENT_SECTION_RULE;
@@ -741,30 +795,41 @@ export const CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE: ContextLedgerRule = {
 
 export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-tone-style.external.v1",
-  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION, // 已对照 2.1.126 binary + 真实 dump 校对（4 bullet）
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION, // 已对照 2.1.142 binary + 真实 dump 校对（4 bullet, 555B）
   description:
     "Claude Code system prompt 的 # Tone and style section（4 条 bullet，所有用户共用）。" +
-    "2.1.126 binary 里函数名 HM3，原 sourcemap (2.1.88) 里叫 getSimpleToneAndStyleSection。",
+    "2.1.142 binary 里函数名 Nm3（2.1.126 是 HM3，原 sourcemap (2.1.88) 里叫 getSimpleToneAndStyleSection）。",
   stability: "static",
-  // 当前事实源：2.1.126 cli binary 里的 HM3 函数（约 offset 84030280）
+  // 当前事实源：2.1.142 cli binary 里的 Nm3 函数
   // 旧 sourcemap 路径仅供历史参考；P0/P1 优先级见 AGENTS.md §6.3
-  sourcemapRef: "binary:HM3 (2.1.126) | restored-src/src/constants/prompts.ts:430 (2.1.88, stale)",
+  sourcemapRef:
+    "binary:Nm3 (2.1.142) | binary:HM3 (2.1.126) | restored-src/src/constants/prompts.ts:430 (2.1.88, stale)",
 
   attribution: {
     // 与真实 dump byte-exact 对齐（555 字节，无尾换行）。
     // 2.1.88 → 2.1.126 的两处变化：
     //   1. 删除 "When referencing GitHub issues or pull requests..." 这条 bullet
     //   2. "Your responses should be short and concise." 不再被 USER_TYPE==='ant' 条件过滤
-    // proxy-block-splitter 切割逻辑：section endChar = 下一 header 的 charOffset，
-    // 因此 section text 末尾会带上 "\n\n"（本 section 末尾 \n + 下 section 前的空行 \n）。
-    // 实测 dump（2026-05-01）：section len=557，即 555B 内容 + 2 尾 \n。
-    // Tone and style 后紧跟 # Text output（does not apply to tool calls），故有两个 \n。
+    //
+    // 关于尾换行：Nm3()/HM3() 内部用 `[header, ...bullets].join('\n')` 拼接，
+    // join 只在元素之间插 `\n`，**不会**给输出尾部加 `\n`。也就是说函数本身的返回
+    // 严格止于最后一个 bullet 末尾的 `period.`，共 555 字节。
+    //
+    // 历史上观测到 dump 里 section 末尾跟着 `\n\n`，那两个 `\n` 实际来自外层把多个
+    // section 用 `\n\n` 分隔后塞进同一个 system block 时留下的分隔符 —— 不属于
+    // Nm3 的输出。2.1.142 起 Anthropic 把 cache 切点放在 Nm3 之后（# Tone and style
+    // 是 block N 的最后一段，# Text output 落到 block N+1 开头），分隔的 `\n\n`
+    // 跑到了块边界外，block N 的内容就完全等于 Nm3 输出（555B）。
+    //
+    // 因此 pattern 不再带尾部 `\n\n`：旧 2.1.126 dump 形态依赖 proxy-block-splitter
+    // 在切 section 时把后续 `\n\n` 划入本段；新 2.1.142 形态 block 边界天然切干净。
+    // 两种形态的 leaf content 都是 555 字节，exact 命中。
     pattern:
       "# Tone and style\n" +
       " - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.\n" +
       " - Your responses should be short and concise.\n" +
       " - When referencing specific functions or pieces of code include the pattern file_path:line_number to allow the user to easily navigate to the source code location.\n" +
-      " - Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like \"Let me read the file:\" followed by a read tool call should just be \"Let me read the file.\" with a period.\n\n",
+      " - Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like \"Let me read the file:\" followed by a read tool call should just be \"Let me read the file.\" with a period.",
     matchMode: "exact",
     mechanism: "system_prompt_pattern",
     category: "system_prompt",
@@ -817,91 +882,101 @@ export const CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE: ContextLedgerRule = {
 
 // ── # Context management section ─────────────────────────────────────────────
 //
-// 【复杂度说明】此 section 由两个完全独立的来源在 system block 组装期间拼接而成，
-// sourcemap (2.1.88) 里两者均未以此形态存在，是 2.1.x 新引入（binary 里 context-hint-2026-04-09 标记）。
+// 【拆分原因】历史上 "# Context management" 和后续 "gitStatus: ..." 在 dump 里贴在
+// 同一个 system block 末尾，老版本 rule 用一个 regex 把两者一起匹配。2.1.142 起
+// template 把它们切成两个独立 slot（context-management / context），各自走一个 leaf：
 //
-// 组成结构（dump 实测，block index=3，最后一个 system block）：
+//   slot context-management leaf : `# Context management\n{mm3 body}\n\n` (有 gitStatus 跟随时)
+//   slot context           leaf : `gitStatus: ...\n\nCurrent branch: ...`（块末尾，无尾换行）
 //
-//   # Context management
-//   When working with tool results, write down any important information...   ← 来源 A：常量 DM3
+// 因此拆成两条 rule，分别绑定到各自 slot。
 //
-//   gitStatus: This is the git status at the start of the conversation. ...   ← 来源 B：x98() 函数
+// 【内容变化（2.1.126 → 2.1.142）】DM3 常量改名为 mm3，且文案完全换了：
+//   旧（DM3 / 2.1.126）：
+//     "When working with tool results, write down any important information you
+//      might need later in your response, as the original tool result may be
+//      cleared later."
+//   新（mm3 / 2.1.142）：
+//     "When the conversation grows long, some or all of the current context is
+//      summarized; the summary, along with any remaining unsummarized context, is
+//      provided in the next context window so work can continue — you don't need
+//      to wrap up early or hand off mid-task."
 //
-//   Current branch: <branch>
+// 二者完全是两条独立 hint —— 不是 "改了一个标点" 的小变更。
 //
-//   Main branch (you will usually use this for PRs): <main>
-//
-//   Git user: <name>                                                           ← 条件字段，无 git config 时缺失
-//
-//   Status:
-//   <git status --short 输出，可为空（clean），超 2000 chars 时截断>
-//
-//   Recent commits:
-//   <git log --oneline -n 5，5 行 sha+message>
-//
-// 【来源 A】常量 DM3（binary offset ~84042887）：
-//   静态字符串，无动态变量。
-//   与 # Focus mode（JM3）并列定义，按 context hint 机制注入。
-//   sourcemap 无对应条目（新增功能）。
-//
-// 【来源 B】函数 x98()（memoized，binary ~76535798）：
-//   等价于 sourcemap 的 getGitStatusContext()，但结构已变。
-//   前提：!CLAUDE_CODE_REMOTE && X5_()（X5_ 检查 CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS 和
-//         settings.includeGitInstructions，默认 true）。
-//   非 git 仓库时 fj() 返回 false → x98() 返回 null → gitStatus 字段整体缺失。
-//   组装：[preamble, "Current branch: %s", "Main branch: %s",
-//          ...(gitUser ? ["Git user: %s"] : []), "Status:\n%s", "Recent commits:\n%s"]
-//         .join("\n\n")
-//   key 名 "gitStatus" 在 system prompt 中显示为标签前缀（"gitStatus: ..."）。
-//
-// 【为何用 regex 而非 exact】：
-//   branch / mainBranch / gitUser / status / commits 全是运行时动态值，
-//   且 gitUser / status 是条件字段（可缺失或为空），无法 exact match。
-//
-// 【reconciliation 注意事项】：
-//   - DM3 前言文字本身静态可比（char_diff）
-//   - gitStatus 动态内容只能 structural 比对（有/无 git repo，字段存在性）
-//   - 不要对 commits / status 做 raw_hash 比对
+// 【尾换行说明】slot context-management leaf 末尾的 `\n\n` 是与下个 slot
+// (`gitStatus:...`) 之间的 section 分隔符，被 proxy-block-splitter 划入本 leaf。
+// 非 git 仓库时 gitStatus slot 缺失，这个 leaf 会是块内最后一段，无尾换行。
+// 因此 pattern 用 regex + `(?:\n\n)?$` 兼容两种形态。
 
 export const CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-context-management.v1",
-  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION, // 已对照 2.1.126 binary + dump 逆向验证（见注释）
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION, // 已对照 2.1.142 binary（mm3）+ dump 校对（leaf 282B / 280B）
   description:
-    "Claude Code system prompt 的 # Context management section。" +
-    "由两部分拼接：(A) 静态前言常量 DM3（context hint 功能，2.1.x 新增）；" +
-    "(B) x98() 动态 git 状态块（gitStatus 字段）。" +
-    "非 git 仓库时 (B) 整体缺失，section 只有 (A) 的两行。" +
-    "gitUser 是条件字段（git config user.name 为空时缺失）。",
-  stability: "dynamic",
-  // P0 事实：binary offset ~84042887 (DM3) + ~76535798 (x98)；dump 实测 728 chars（git 项目，有 gitUser）
-  // P1 参考：sourcemap 无此 section（2.1.88 之后新增，大约 2026-04-09 引入）
-  sourcemapRef: "binary:DM3+x98 (2.1.126) | sourcemap: 无对应条目",
+    "Claude Code system prompt 的 # Context management section（静态前言常量 mm3 单独成段，" +
+    "对应 slot system.main-prompt.section.context-management）。" +
+    "2.1.142 binary 里常量名 mm3（2.1.126 是 DM3），文案完全替换 —— 见上方注释。",
+  stability: "static",
+  sourcemapRef: "binary:mm3 (2.1.142) | binary:DM3 (2.1.126) | sourcemap: 无对应条目",
 
   attribution: {
-    // regex 匹配整个 section（从 section header 到 block 末尾或下一个 # heading）。
-    //
-    // 捕获组语义（matchMode=regex，由 attribution 代码提取到 metadata）：
-    //   gitStatusPreamble — "This is the git status..." 前言（存在时表示 git 仓库）
-    //   currentBranch    — 当前分支名
-    //   mainBranch       — PR base 分支名
-    //   gitUser          — git config user.name（可选，缺失时该字段不出现）
-    //   status           — git status --short 输出（空时为 "(clean)"，>2000 chars 时截断）
-    //   recentCommits    — git log --oneline -n 5（5 行 sha+message）
-    //
-    // 非 git 项目时整个 (?:gitStatus:...)? 段不匹配，只匹配 DM3 前言两行。
+    // regex：anchor 整段，(?:\n\n)?$ 兼容 "有/无 gitStatus 跟随" 两种 leaf 形态。
     pattern:
       "^# Context management\\n" +
-      "When working with tool results, write down any important information you might need later in your response, as the original tool result may be cleared later\\." +
-      "(?:\\n\\n(?<gitStatusPreamble>gitStatus: This is the git status at the start of the conversation\\. Note that this status is a snapshot in time, and will not update during the conversation\\.)" +
+      "When the conversation grows long, some or all of the current context is summarized; the summary, along with any remaining unsummarized context, is provided in the next context window so work can continue — you don't need to wrap up early or hand off mid-task\\." +
+      "(?:\\n\\n)?$",
+    matchMode: "regex",
+    mechanism: "system_prompt_pattern",
+    category: "system_prompt",
+  },
+
+  materialization: "exact_text",
+};
+
+// ── gitStatus 块（slot system.main-prompt.section.context）──────────────────
+//
+// 【来源】函数 x98() / sourcemap getGitStatusContext()（2.1.142 binary）：
+//   组装：[
+//     "This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.",
+//     `Current branch: ${O}`,
+//     `Main branch (you will usually use this for PRs): ${T}`,
+//     ...A ? [`Git user: ${A}`] : [],
+//     `Status:\n${w||"(clean)"}`,
+//     `Recent commits:\n${z}`,
+//   ].join("\n\n")
+//
+// 之后 appendSystemContext 把它作为 (key, value) 注入 system，key 名是 "gitStatus"，
+// 显示为前缀 "gitStatus: "。
+//
+// 前提：!CLAUDE_CODE_REMOTE && X5_()（X5_ 检查 CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS 和
+//       settings.includeGitInstructions，默认 true）。
+// 非 git 仓库时 fj() 返回 false → x98() 返回 null → 整个 slot 缺失（leaf 不存在）。
+//
+// gitUser 是条件字段（git config user.name 为空时整行缺失）。
+// status 空时为 "(clean)"，>2000 chars 时被截断附提示。
+
+export const CLAUDE_CODE_GITSTATUS_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.system-prompt-gitstatus.v1",
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION, // 2.1.142 binary x98() + dump 校对（694B leaf）
+  description:
+    "Claude Code system prompt 末尾 gitStatus 块（动态 git 信息，对应 slot " +
+    "system.main-prompt.section.context）。" +
+    "2.1.142 binary 里函数名 x98（sourcemap 旧名 getGitStatusContext）。" +
+    "非 git 仓库时整个 slot 缺失。gitUser 是条件字段。",
+  stability: "dynamic",
+  sourcemapRef: "binary:x98 (2.1.142) | restored-src getGitStatusContext (2.1.88)",
+
+  attribution: {
+    // regex 捕获各动态字段；leaf 是块末尾段，无尾换行（不需要 (?:\n\n)?$）。
+    pattern:
+      "^gitStatus: This is the git status at the start of the conversation\\. Note that this status is a snapshot in time, and will not update during the conversation\\." +
       "\\n\\nCurrent branch: (?<currentBranch>[^\\n]+)" +
       "\\n\\nMain branch \\(you will usually use this for PRs\\): (?<mainBranch>[^\\n]+)" +
       "(?:\\n\\nGit user: (?<gitUser>[^\\n]+))?" +
       "\\n\\nStatus:\\n(?<status>[\\s\\S]*?)" +
-      "\\n\\nRecent commits:\\n(?<recentCommits>[\\s\\S]+)" +
-      ")?$",
+      "\\n\\nRecent commits:\\n(?<recentCommits>[\\s\\S]+)$",
     matchMode: "regex",
     captureGroups: {
-      gitStatusPreamble: "git 状态前言（存在时表示当前工作目录是 git 仓库）",
       currentBranch: "当前 git 分支名（git branch --show-current）",
       mainBranch: "PR base 分支名（origin/main 或 origin/master 等探测结果）",
       gitUser: "git config user.name（可选，未配置时缺失）",
@@ -910,13 +985,10 @@ export const CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE: ContextLedgerRule = {
     },
     mechanism: "system_prompt_pattern",
     category: "harness_injection",
-    // P2-2：notes 模板（替代 proxy-attribution.ts 里 CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE ruleId 分支）
-    // currentBranch 存在 → git repo；不存在 → absentGroup 触发 no_git_repo note
     notesTemplate: [
       { format: "currentBranch={currentBranch}", requireGroup: "currentBranch" },
       { format: "mainBranch={mainBranch}", requireGroup: "mainBranch" },
       { format: "gitUser={gitUser}", requireGroup: "gitUser" },
-      { format: "no_git_repo: gitStatus block absent", absentGroup: "currentBranch" },
     ],
   },
 
@@ -2180,8 +2252,10 @@ export const CLAUDE_CODE_LOCAL_COMMAND_RULE: ContextLedgerRule = {
   sourcemapRef: "restored-src/src/utils/messages.ts (createUserMessage local command)",
 
   attribution: {
-    // P2-8：加 ^ anchor，任意一个本地命令标签作为 segment 开头即可命中
-    pattern: "^(?:<local-command-caveat>|<bash-input>|<bash-stdout>|<bash-stderr>|<command-name>|<local-command-stdout>)[\\s\\S]*$",
+    // 锚定家族前缀：<local-command-*> / <bash-*> / <command-*>。
+    // 三类家族的具体后缀都由 CLI 自由命名（caveat / stdout / stderr / name / message / args / input / ...），
+    // 用前缀通配比硬编码完整名字更不易漏；与 ast-builder.splitInlineTags 的家族列表对齐。
+    pattern: "^(?:<local-command-[a-z-]+>|<bash-[a-z-]+>|<command-[a-z-]+>)[\\s\\S]*$",
     matchMode: "regex",
     mechanism: "local_command_pattern",
     category: "local_command_history",
@@ -2266,6 +2340,94 @@ export const CLAUDE_CODE_FILE_ATTACHMENT_RULE: ContextLedgerRule = {
   materialization: "exact_text",
 };
 
+// ── image content block ──────────────────────────────────────────────────────
+//
+// 来源：Anthropic API 协议固定 content block 类型。
+//   wire 形态：{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iV..."}}
+//             或 {"type":"image","source":{"type":"url","url":"https://..."}}
+//   JSONL 形态：同上（在 user 事件的 message.content[] 里，与 text block 平级）
+//
+// matcher 把 image block 切到独立 slot "messages.block.image"，rawText 为完整 JSON 字面量。
+//
+// 稳定性：dynamic（base64 data / url 内容不可预测）。
+// materialization：presence——能确认"此处有一张图（含 mediaType）"，但不试图重建 data。
+//
+// captureGroups：从 JSON 字面量提取 source.type 和 media_type 供 attribution notes 展示，
+//   也作为 jsonl-linker 后续做 digest 匹配的元信息。
+
+export const CLAUDE_CODE_MESSAGES_IMAGE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.image.v1",
+  // Anthropic API 协议固定形态，与 Claude Code CLI 版本无关；直接标 verified。
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "用户上传的 image content block（Anthropic API 协议类型）。" +
+    "rawText 为完整 JSON 字面量，含 source.{type,media_type,data|url}。" +
+    "内容动态（base64 data 不可重建），用 captureGroups 提取 sourceType / mediaType。",
+  stability: "dynamic",
+  sourcemapRef: "Anthropic API content block schema (image type)",
+
+  attribution: {
+    // 锚定 JSON 字面量起始字符。source.type 在 media_type 之前出现，
+    // 兼顾 base64（带 data 字段）与 url（带 url 字段）两种 source 形态。
+    // 末尾用 [\s\S]*$ 兜住 data / url 等动态字段直到 JSON 闭合。
+    pattern:
+      "^\\{\"type\":\"image\",\"source\":\\{" +
+      "\"type\":\"(?<sourceType>base64|url)\"," +
+      "(?:\"media_type\":\"(?<mediaType>[^\"]+)\",)?" +
+      "[\\s\\S]*\\}\\s*\\}\\s*$",
+    matchMode: "regex",
+    mechanism: "messages_content_block_pattern",
+    category: "user_image",
+    captureGroups: {
+      sourceType: "image source 类型：base64 | url",
+      mediaType: "image MIME type（base64 形态必有；url 形态可选）",
+    },
+    notesTemplate: [
+      { format: "sourceType={sourceType}", requireGroup: "sourceType" },
+      { format: "mediaType={mediaType}", requireGroup: "mediaType" },
+    ],
+  },
+
+  materialization: "presence",
+};
+
+// CLI 把"用户上传图片"这件事在 proxy reqBody 里同时表达成两种 block：
+//   1. {type:"image", source:{...}}  —— 真正喂给模型的 base64 / url（由 CLAUDE_CODE_MESSAGES_IMAGE_RULE 处理）
+//   2. {type:"text",  text:"[Image: source: /path/to/foo.png]"}  —— 给 user 看的占位文本，本规则负责
+//
+// 后续 turn 用户回引同一张图时，CLI 会发出 `[Image #N]`（无 source），也归此规则。
+//
+// 形态由 ast-builder.splitInlineTags 在 messages.text 子树里识别为
+// messages.inline.image-placeholder slot；本规则按形态 regex 覆盖 rawText。
+export const CLAUDE_CODE_MESSAGES_IMAGE_PLACEHOLDER_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.image-placeholder.v1",
+  // CLI 形态固定（与 messages.image 规则同因），直接标 verified。
+  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION,
+  description:
+    "CLI 在 user message 里注入的图片占位文本。" +
+    "形态：`[Image: source: <path>]`、`[Image #<N>: source: <path>]`、`[Image #<N>]`。" +
+    "对应同 user message 内同时存在的 messages.block.image 真实 base64 块。",
+  stability: "dynamic",
+  sourcemapRef: "claude-code CLI image upload placeholder (cli text injection)",
+
+  attribution: {
+    // 与 ast-builder 的 IMAGE_PLACEHOLDER_RE 同源同形态，捕获 imageIndex（可选）和 path（可选）。
+    pattern:
+      "^\\[Image(?:\\s*#(?<imageIndex>\\d+))?" +
+      "(?:\\s*:\\s*source:\\s*(?<path>[^\\]\\n]+))?" +
+      "\\]$",
+    matchMode: "regex",
+    mechanism: "messages_content_block_pattern",
+    category: "user_image_placeholder",
+    captureGroups: {
+      imageIndex: "1-based 图片序号（多图或回引时存在）",
+      path: "上传时的本地文件路径（回引形态 `[Image #N]` 无此字段）",
+    },
+  },
+
+  materialization: "exact_text",
+};
+
 export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   // ── identity / noise ──────────────────────────────────────────────────────
   CLAUDE_CODE_BILLING_NOISE_RULE,
@@ -2284,8 +2446,11 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_SESSION_GUIDANCE_RULE,
   CLAUDE_CODE_AUTO_MEMORY_SECTION_RULE,
   CLAUDE_CODE_ENVIRONMENT_SECTION_RULE,
+  // ── IDE 扩展注入（仅 VSCode 扩展发起的请求才出现）────────────────────────
+  CLAUDE_CODE_VSCODE_EXTENSION_CONTEXT_RULE,
   // ── 动态 context 注入（session 级）────────────────────────────────────────
   CLAUDE_CODE_CONTEXT_MANAGEMENT_RULE,
+  CLAUDE_CODE_GITSTATUS_RULE,
   // ── tool schema rules ─────────────────────────────────────────────────────
   CLAUDE_CODE_TOOL_EDIT_RULE,
   CLAUDE_CODE_TOOL_WRITE_RULE,
@@ -2344,6 +2509,9 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_LOCAL_COMMAND_RULE,
   CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,
   CLAUDE_CODE_FILE_ATTACHMENT_RULE,
+  // ── image content block ──────────────────────────────────────────────────
+  CLAUDE_CODE_MESSAGES_IMAGE_RULE,
+  CLAUDE_CODE_MESSAGES_IMAGE_PLACEHOLDER_RULE,
   // ── side query rules ──────────────────────────────────────────────────────
   CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE,
 ];

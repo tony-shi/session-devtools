@@ -87,16 +87,16 @@ const SLOT_BINDINGS: Record<string, string[]> = {
   "claude-code.system-prompt-session-guidance.v1": ["system.main-prompt.section.session-guidance"],
   "claude-code.system-prompt-environment.v1": ["system.main-prompt.section.environment"],
   "claude-code.system-prompt-auto-memory.v1": ["system.main-prompt.section.auto-memory"],
-  "claude-code.system-prompt-context-management.v1": [
-    "system.main-prompt.section.context-management",
-    "system.main-prompt.section.context",
-  ],
+  "claude-code.system-prompt-context-management.v1": ["system.main-prompt.section.context-management"],
+  "claude-code.system-prompt-gitstatus.v1": ["system.main-prompt.section.context"],
 
   "claude-code.messages.user-context.v1": ["messages.inline.system-reminder"],
   "claude-code.messages.system-reminder.v1": ["messages.inline.system-reminder"],
   "claude-code.messages.local-command.v1": ["messages.inline.local-command"],
   "claude-code.messages.file-attachment.v1": ["messages.inline.system-reminder"],
   "claude-code.messages.tool-result.smoosh.v1": ["messages.tool_result"],
+  "claude-code.messages.image.v1": ["messages.block.image"],
+  "claude-code.messages.image-placeholder.v1": ["messages.inline.image-placeholder"],
 
   // SmooshContent v2 rule 簇：tool_result.content 尾部 smoosh 切出的 SR 子段。
   // 当前 ast-builder 还未切 tool_result 尾部（阶段 2.2 完成后），但 rule 先就位。

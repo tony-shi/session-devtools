@@ -187,15 +187,20 @@ const SUB_BAR_HEIGHT = 36;
 
 function SectionBar({
   stats, totalChars, selectedSection, onSelect,
+  filter = "all", filteredStats = null, filterColor = null,
 }: {
   stats: SectionStat[];
   totalChars: number;
   selectedSection: SectionId | null;
   onSelect: (s: SectionId) => void;
+  filter?: "all" | "partial" | "none";
+  filteredStats?: SectionStat[] | null;
+  filterColor?: string | null;
 }) {
   const [hoveredId, setHoveredId] = useState<SectionId | null>(null);
   if (totalChars === 0) return null;
   const hasSelection = selectedSection !== null;
+  const filterActive = filter !== "all" && filteredStats !== null;
   return (
     <div
       style={{ display: "flex", gap: 4, height: BAR_HEIGHT }}
@@ -215,8 +220,13 @@ function SectionBar({
         } else if (hoveredId !== null) {
           intensity = isHov ? 2 : 1;
         }
-        const opacity = intensity === 0 ? 0.18 : 1;
+        let opacity = intensity === 0 ? 0.18 : 1;
         const fontWeight = intensity >= 2 ? 800 : 700;
+        // filter 命中数（按 section）。无命中且未选中 → 进一步降饱和。
+        const hitCount = filterActive
+          ? (filteredStats!.find((fs) => fs.id === s.id)?.leafCount ?? 0)
+          : null;
+        if (filterActive && hitCount === 0 && !isSel) opacity = Math.min(opacity, 0.25);
         const outline = isSel ? "2px solid #1f2937" : (intensity === 2 ? "2px solid rgba(31,41,55,0.45)" : "none");
         return (
           <button
@@ -240,8 +250,28 @@ function SectionBar({
               transition: "opacity 0.15s, outline-color 0.15s",
             }}
           >
-            <div style={{ fontSize: 13, fontWeight, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {meta.label}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {meta.label}
+              </div>
+              {/* 角标只画在 ≥5% 宽度的块里，避免撑破窄块的 minWidth；窄块的"无命中"信号交给 opacity 灰化即可。
+                  纯数字 + 彩色方块，不重复显示 filter 名（顶部 AuditBadge 已激活态，用户知道当前 filter 是什么）。*/}
+              {filterActive && filterColor && hitCount !== null && pct >= 0.05 && (
+                <span
+                  title={`${hitCount} leaf${hitCount === 1 ? "" : "s"} match ${filter}`}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    fontSize: 10, fontWeight: 700,
+                    padding: "1px 5px", borderRadius: 3,
+                    background: "rgba(255,255,255,0.7)",
+                    color: "#1f2937",
+                    whiteSpace: "nowrap", flexShrink: 0,
+                  }}
+                >
+                  <span style={{ width: 5, height: 5, borderRadius: 1, background: filterColor }} />
+                  {hitCount}
+                </span>
+              )}
             </div>
           </button>
         );
@@ -341,18 +371,27 @@ function LeafStrip({
 
 function SectionTable({
   stats, totalChars, selectedSection, onSelect,
+  filter = "all", filteredStats = null, filterColor = null,
 }: {
   stats: SectionStat[];
   totalChars: number;
   selectedSection: SectionId | null;
   onSelect: (s: SectionId) => void;
+  filter?: "all" | "partial" | "none";
+  filteredStats?: SectionStat[] | null;
+  filterColor?: string | null;
 }) {
+  const filterActive = filter !== "all" && filteredStats !== null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {stats.map((s) => {
         const meta = SECTION_META[s.id];
         const pct = totalChars > 0 ? (s.totalChars / totalChars) * 100 : 0;
         const isSel = selectedSection === s.id;
+        const hitCount = filterActive
+          ? (filteredStats!.find((fs) => fs.id === s.id)?.leafCount ?? 0)
+          : null;
+        const rowOpacity = filterActive && hitCount === 0 && !isSel ? 0.45 : 1;
         return (
           <button
             key={s.id}
@@ -362,6 +401,7 @@ function SectionTable({
               padding: "8px 8px",
               background: isSel ? meta.rowBg : "transparent",
               border: "none", borderRadius: 4,
+              opacity: rowOpacity,
               cursor: "pointer", textAlign: "left",
               transition: "background 0.1s",
             }}
@@ -374,6 +414,19 @@ function SectionTable({
             <span style={{ fontSize: 11, color: "#9ca3af", minWidth: 44 }}>{pct.toFixed(1)}%</span>
             <span style={{ fontSize: 10, color: "#9ca3af", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {subStatDescription(s)}
+              {filterActive && hitCount !== null && filterColor && (
+                <span
+                  style={{
+                    marginLeft: 10,
+                    fontSize: 10, fontWeight: 600,
+                    padding: "1px 6px", borderRadius: 3,
+                    background: `${filterColor}26`,
+                    color: hitCount > 0 ? "#1f2937" : "#9ca3af",
+                  }}
+                >
+                  {hitCount} {filter}
+                </span>
+              )}
             </span>
           </button>
         );
@@ -431,7 +484,19 @@ function LeafTable({
 
 // ─── 叶子详情 ───────────────────────────────────────────────────────────────
 
-function SelectedDetail({ leaf }: { leaf: LeafLite }) {
+function SelectedDetail({ leaf, onLinkSource }: {
+  leaf: LeafLite;
+  onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
+}) {
+  // Back-link: when this leaf's payload was emitted by a previous LLM call
+  // (tool_use / tool_result / assistant_text linked via jsonl), expose a
+  // pill that opens that source call in the linked panel. Only visible when
+  // the parent provides onLinkSource — panel-mode renders skip this to avoid
+  // recursive panel stacking.
+  const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;
+  const sourceTurnId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceTurnId : undefined;
+  const canLinkSource = onLinkSource && sourceCallId !== undefined;
+
   // 扁平展示：无 card 外框、无重复的 slot 名（hover readout / 当前行已显示）
   // 仅保留 origin 元信息 + raw 内容
   return (
@@ -450,6 +515,21 @@ function SelectedDetail({ leaf }: { leaf: LeafLite }) {
           color: "#4b5563",
         }}>{leaf.origin.kind}</span>
         <span style={{ color: "#6b7280" }}>{originLabel(leaf.origin)}</span>
+        {canLinkSource && (
+          <button
+            type="button"
+            onClick={() => onLinkSource!(sourceCallId!, sourceTurnId)}
+            title={`在右侧打开 call #${sourceCallId} 所在 turn 的 call 事件列表（聚焦到该 call）`}
+            style={{
+              fontSize: 10, fontWeight: 700,
+              color: "#4338ca", background: "#eef2ff",
+              border: "1px solid #c7d2fe", borderRadius: 4,
+              padding: "1px 6px", cursor: "pointer",
+            }}
+          >
+            → 在 Turn 中查看 call #{sourceCallId}
+          </button>
+        )}
         {(leaf.origin.kind === "rule" || leaf.origin.kind === "jsonl") && (
           <span style={{ marginLeft: "auto", fontSize: 9, color: "#9ca3af" }}>
             confidence · {leaf.origin.confidence}
@@ -547,14 +627,41 @@ function AuditBadge({
             title="structural（slot 已知但无规则）或 unknown（template 未识别）" />
       <span style={{ color: "#d1d5db" }}>|</span>
       <Pill label="missing jsonl" value={missing} active={false} color="#ef4444"
-            title="jsonl 中存在但 proxy 中无对应 segment 的原子单元（tool_use / tool_result / user / assistant / attachment）" />
+            title="jsonl 中存在但 proxy 中无对应 segment 的原子单元（tool_use / tool_result / user / assistant / attachment）。当前已按 call 时间截断，不含未来 turn 的事件。" />
+      {/*
+        TODO(audit-missing-belongs-on-turn-view):
+        missing jsonl 的语义是"jsonl event 是否被任何 call 引用"，本质属于 session/turn
+        视角 —— 一条 jsonl event 属于某个 turn，不属于 call。call 视图当前展示的是
+        "截至本 call 时刻 proxy 漏掉的事件"（已经修过 reverse audit 的截断），
+        够用但不是终态。终态应该在 turn 视图按 jsonl event 行级展示，标记"被哪些 call
+        引用 / 全程无引用 / 只在部分窗口引用"，把诊断粒度下沉到 event。
+        现阶段先用本 call 视图凑合，等需要诊断具体哪条 jsonl event 丢了再做 turn 视图。
+      */}
+      <span
+        title="TODO: missing jsonl 更适合放在 turn 视图（按 jsonl event 行展示）。call 视图是 last-call 视角的近似。详见源码 TODO(audit-missing-belongs-on-turn-view)。"
+        style={{
+          fontSize: 10, color: "#a16207",
+          padding: "1px 6px", borderRadius: 3,
+          background: "#fef3c7", border: "1px dashed #fcd34d",
+          cursor: "help",
+          userSelect: "none",
+        }}
+      >
+        TODO: 应移至 turn 视图
+      </span>
     </div>
   );
 }
 
 export function AttributionTreePanel({
-  sessionId, callId,
-}: { sessionId: string; callId: number }) {
+  sessionId, callId, onLinkSource,
+}: {
+  sessionId: string;
+  callId: number;
+  /** 反向 link：点击 jsonl origin 带 sourceCallId 的 leaf 时调用。
+   *  parent 决定要不要展示 link 按钮（main 模式提供，panel 模式留空避免嵌套）。*/
+  onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
+}) {
   const [result, setResult] = useState<AttributionTreeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -583,6 +690,14 @@ export function AttributionTreePanel({
 
   const stats = useMemo(() => computeSectionStats(allLeaves), [allLeaves]);
   const totalChars = useMemo(() => allLeaves.reduce((s, l) => s + l.charCount, 0), [allLeaves]);
+
+  // filter 启用时按 section 算"命中数"，给 SectionBar / SectionTable 显示角标 + 灰化。
+  // 顶部 bar 形状仍按全集分布，避免点击 filter 后整个布局跳动。
+  const filteredStats = useMemo(
+    () => auditFilter === "all" ? null : computeSectionStats(leaves),
+    [leaves, auditFilter],
+  );
+  const filterColor = auditFilter === "partial" ? "#f59e0b" : auditFilter === "none" ? "#9ca3af" : null;
 
   const selectedStat = useMemo(() => {
     if (!selectedSection) return null;
@@ -630,6 +745,9 @@ export function AttributionTreePanel({
           setSelectedSection((cur) => (cur === s ? null : s));
           setSelectedNodeId(null);
         }}
+        filter={auditFilter}
+        filteredStats={filteredStats}
+        filterColor={filterColor}
       />
 
       {selectedStat === null ? (
@@ -639,6 +757,9 @@ export function AttributionTreePanel({
           totalChars={totalChars}
           selectedSection={null}
           onSelect={(s) => setSelectedSection(s)}
+          filter={auditFilter}
+          filteredStats={filteredStats}
+          filterColor={filterColor}
         />
       ) : (
         <>
@@ -660,7 +781,7 @@ export function AttributionTreePanel({
 
           {/* Layer 3: leaf detail（扁平展示） */}
           {selectedLeaf && sectionOf(selectedLeaf.rootSlotType) === selectedStat.id && (
-            <SelectedDetail leaf={selectedLeaf} />
+            <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} />
           )}
         </>
       )}

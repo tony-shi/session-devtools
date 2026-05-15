@@ -88,6 +88,14 @@ export class SessionsV2Controller {
 
     const since24h = new Date(Date.now() - 24 * 3_600_000).toISOString();
 
+    // Match the list query's "has LLM activity" filter so the headline
+    // "会话 N" count agrees with the "会话列表 N · 仅含 LLM 交互" count
+    // shown below. Sessions with zero token movement (never produced any LLM
+    // call — usually aborted before the first round-trip) are excluded here
+    // exactly as they are in the list. Other aggregates (tokens, llm_call_count,
+    // tool_call_count) are unaffected since those sessions contribute zero
+    // anyway; human_input_count drops slightly because aborted sessions can
+    // carry a human input that never reached the model.
     const totals = db.prepare(`
       SELECT
         COUNT(*) AS total_sessions,
@@ -101,6 +109,7 @@ export class SessionsV2Controller {
         COALESCE(SUM(human_input_count), 0) AS human_input_count
       FROM sessions_meta_v2
       WHERE source_present = 1
+        AND (input_tokens > 0 OR output_tokens > 0)
     `).get(since24h) as {
       total_sessions: number;
       active_24h: number;
@@ -117,6 +126,7 @@ export class SessionsV2Controller {
       SELECT tool, COUNT(*) as cnt
       FROM sessions_meta_v2
       WHERE source_present = 1
+        AND (input_tokens > 0 OR output_tokens > 0)
       GROUP BY tool
     `).all() as { tool: string; cnt: number }[];
 

@@ -19,12 +19,14 @@
 //                                          AttributionTreeResult (serializable)
 
 import { readFileSync, existsSync } from "fs";
+import { createHash } from "crypto";
 import type { Database } from "better-sqlite3";
 
 import {
   attributeWithJsonl,
   computeTreeDiff,
   collectLeaves,
+  isCommandLikeText,
   type ParsedQuerySnapshot,
   type LinkableJsonlEvent,
   type LinkJsonlReport,
@@ -310,25 +312,38 @@ function isToolResultOnlyContent(content: unknown): boolean {
   return content.length > 0 && (content as Array<{ type?: string }>).every((b) => b?.type === "tool_result");
 }
 
-function isCommandLikeUserText(text: string): boolean {
-  const t = text.trimStart();
-  return (
-    t.startsWith("<command-name>") ||
-    t.startsWith("<local-command-caveat>") ||
-    t.startsWith("<local-command-stdout>") ||
-    t.startsWith("<local-command-stderr>") ||
-    t.startsWith("<bash-input>") ||
-    t.startsWith("<bash-stdout>") ||
-    t.startsWith("<bash-stderr>")
-  );
-}
-
 function extractAssistantText(content: unknown): string {
   if (!Array.isArray(content)) return "";
   return (content as Array<{ type?: string; text?: string }>)
     .filter((b) => b?.type === "text" && typeof b?.text === "string")
     .map((b) => b.text ?? "")
     .join("");
+}
+
+/**
+ * 抽取 assistant event 中的 extended thinking 块（type="thinking" / "redacted_thinking"）。
+ *   thinking          → signature = block.signature, content = block.thinking ?? ""
+ *   redacted_thinking → signature = block.data,      content = block.data ?? ""
+ * 没有 signature/data 的块（理论上不应发生）跳过。
+ */
+function extractAssistantThinkingBlocks(
+  content: unknown,
+): Array<{ signature: string; content: string }> {
+  if (!Array.isArray(content)) return [];
+  const out: Array<{ signature: string; content: string }> = [];
+  for (const b of content as Array<{ type?: string; thinking?: string; signature?: string; data?: string }>) {
+    if (!b || typeof b !== "object") continue;
+    if (b.type === "thinking") {
+      const sig = typeof b.signature === "string" ? b.signature : "";
+      if (!sig) continue;
+      out.push({ signature: sig, content: typeof b.thinking === "string" ? b.thinking : "" });
+    } else if (b.type === "redacted_thinking") {
+      const sig = typeof b.data === "string" ? b.data : "";
+      if (!sig) continue;
+      out.push({ signature: sig, content: sig });
+    }
+  }
+  return out;
 }
 
 function extractAssistantToolUses(content: unknown): Array<{ id: string; name?: string }> {
@@ -365,6 +380,28 @@ function extractUserPlainText(content: unknown): string {
     .join("");
 }
 
+/** 计算字符串的 sha256 前 16 位（与 rawHash 同口径），作为 image digest。 */
+function digest16(s: string): string {
+  return createHash("sha256").update(s).digest("hex").slice(0, 16);
+}
+
+/** 从 user message content[] 提 image content blocks，输出供 jsonl-linker 索引的 digest 列表。
+ *  base64 形态用 source.data 算 digest，url 形态用 source.url 算 digest（两者天然唯一）。 */
+function extractUserImages(content: unknown): Array<{ digest: string; mediaType?: string; sourceType: "base64" | "url" }> {
+  if (!Array.isArray(content)) return [];
+  const out: Array<{ digest: string; mediaType?: string; sourceType: "base64" | "url" }> = [];
+  for (const b of content as Array<{ type?: string; source?: { type?: string; media_type?: string; data?: string; url?: string } }>) {
+    if (b?.type !== "image" || !b.source) continue;
+    const src = b.source;
+    if (src.type === "base64" && typeof src.data === "string") {
+      out.push({ digest: digest16(src.data), sourceType: "base64", ...(src.media_type && { mediaType: src.media_type }) });
+    } else if (src.type === "url" && typeof src.url === "string") {
+      out.push({ digest: digest16(src.url), sourceType: "url", ...(src.media_type && { mediaType: src.media_type }) });
+    }
+  }
+  return out;
+}
+
 export function readSessionEventsForLinker(sourceFile: string): LinkableJsonlEvent[] {
   if (!existsSync(sourceFile)) return [];
   const text = readFileSync(sourceFile, "utf-8");
@@ -394,15 +431,30 @@ export function readSessionEventsForLinker(sourceFile: string): LinkableJsonlEve
         continue;
       }
       const content = ev.message?.content;
+      const userImages = extractUserImages(content);
+      const withImages: Partial<LinkableJsonlEvent> = userImages.length > 0 ? { userImages } : {};
       // tool_result-only user 事件 → toolResults
       if (isToolResultOnlyContent(content)) {
-        out.push({ ...base, toolResults: extractToolResultsFromUser(content) });
+        out.push({ ...base, ...withImages, toolResults: extractToolResultsFromUser(content) });
         continue;
       }
-      // command-like user 文本（slash command 等）不算 human input
+      // user 事件的文本块分流：
+      //   - 以 claude-code 固定 tag 起始（<command-name>/<local-command-*>/<bash-*>） → commandText 维度
+      //   - 其它 → userText 维度（真正的人类自由输入）
+      // 同一 event 不会同时有 userText 和 commandText —— 实际上每个 user 事件
+      // 的 plain text 只有一种性质。
       const plain = extractUserPlainText(content);
-      if (plain && !isCommandLikeUserText(plain)) {
-        out.push({ ...base, userText: plain });
+      if (plain) {
+        if (isCommandLikeText(plain)) {
+          out.push({ ...base, ...withImages, commandText: plain });
+        } else {
+          out.push({ ...base, ...withImages, userText: plain });
+        }
+        continue;
+      }
+      // 纯 image 输入（无 text）：仍要让 userImages 被索引到
+      if (userImages.length > 0) {
+        out.push({ ...base, ...withImages });
         continue;
       }
       out.push(base);
@@ -415,10 +467,12 @@ export function readSessionEventsForLinker(sourceFile: string): LinkableJsonlEve
       const content = ev.message?.content;
       const assistantText = extractAssistantText(content);
       const toolUses = extractAssistantToolUses(content);
+      const thinkingBlocks = extractAssistantThinkingBlocks(content);
       out.push({
         ...base,
         ...(assistantText && { assistantText }),
         ...(toolUses.length > 0 && { toolUses }),
+        ...(thinkingBlocks.length > 0 && { thinkingBlocks }),
       });
     } else if (ev.type === "attachment" && ev.attachment && typeof ev.attachment.type === "string") {
       // SmooshContent 来源：task_reminder / queued_command / edited_text_file 等

@@ -505,7 +505,9 @@ function buildOption(data: MinimapData, tFn: (key: string, fallback?: string) =>
         xAxisIndex: 1,
         yAxisIndex: 1,
         data: customData,
-        renderItem: renderDualCell as unknown as echarts.CustomSeriesOption["renderItem"],
+        // CustomSeriesOption["renderItem"] — echarts/core doesn't re-export this type,
+        // so we go through `any` rather than dragging in echarts/types just for the cast.
+        renderItem: renderDualCell as unknown as (...args: unknown[]) => unknown,
         encode: { x: 0, y: 1 },
         z: 2,
       },
@@ -529,22 +531,25 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
     const chart = echarts.init(el, undefined, { renderer: "canvas" });
     chartRef.current = chart;
 
-    chart.on("click", (params) => {
+    // Single zr-level click handler: the tooltip already snaps to a column on
+    // hover (axisPointer trigger), so any click within either grid should
+    // navigate to that column — regardless of whether the user landed on the
+    // line marker, the area fill, a markPoint diamond/triangle, a heatmap
+    // cell, or the splitArea between cells. We convert pixel → category index
+    // via the x-axis, and use containPixel to ignore clicks outside the grids
+    // (legend, padding, zoom slider).
+    chart.getZr().on("click", (e) => {
       if (!onSelectCall) return;
-      // Context line: dataIndex = call array index
-      if (params.seriesName === "Context") {
-        const call = turn.calls[params.dataIndex as number];
-        if (call) onSelectCall(call.id);
-        return;
-      }
-      // Custom dual-cell: value[0] = callIdx (array index into turn.calls)
-      if (params.seriesName === "Tool calls") {
-        const value = params.value as number[] | undefined;
-        if (typeof value?.[0] === "number") {
-          const call = turn.calls[value[0]];
-          if (call) onSelectCall(call.id);
-        }
-      }
+      const px: [number, number] = [e.offsetX, e.offsetY];
+      const inCtx = chart.containPixel({ gridIndex: 0 }, px);
+      const inMatrix = chart.containPixel({ gridIndex: 1 }, px);
+      if (!inCtx && !inMatrix) return;
+      const axisIndex = inCtx ? 0 : 1;
+      const raw = chart.convertFromPixel({ xAxisIndex: axisIndex }, px) as unknown as number | null;
+      if (typeof raw !== "number" || raw < 0) return;
+      const idx = Math.round(raw);
+      const call = turn.calls[idx];
+      if (call) onSelectCall(call.id);
     });
 
     const ro = new ResizeObserver(() => chart.resize());
@@ -561,7 +566,7 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
     const totalH = 10 + CTX_H + GAP + X_LABEL_H + rowCount * ROW_H + (showZoom ? ZOOM_H : 10);
     if (containerRef.current) containerRef.current.style.height = `${totalH}px`;
     chart.resize();
-    chart.setOption(buildOption(data, t), true);
+    chart.setOption(buildOption(data, (key, fallback) => t(key, fallback ?? key) as string), true);
   }, [turn, t]);
 
   if (!turn.calls.length) return null;

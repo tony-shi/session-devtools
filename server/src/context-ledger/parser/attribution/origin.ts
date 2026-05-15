@@ -94,9 +94,23 @@ export interface JsonlOrigin {
   fullyCovered: boolean;
 }
 
-export type JsonlEventKind =
+/**
+ * JsonlEventKind：结构化对象，描述 JSONL 事件的"来源 × 内容类型"二维分类。
+ *
+ *   source       — 事件大类（user_input / assistant_text / tool_use / ...）
+ *   contentType  — 同一 source 下的 block 子类型（text / image / ...）。省略 = "text"。
+ *
+ * 设计动机：JSONL 里 user 事件的 message.content[] 可以同时包含 text 和 image
+ * block，它们都来自同一条 user 事件。用 (source, contentType) 笛卡尔积表达
+ * 比扁平字面量（user_input vs user_image）更准确，也避免给同一来源拆出多个 source 值。
+ *
+ * 兼容策略：构造方仅设 source、不设 contentType 时，语义等价于 contentType="text"
+ * （由 `getContentType()` helper 兜底）。
+ */
+export type JsonlEventSource =
   | "user_input"
   | "assistant_text"
+  | "thinking"
   | "tool_use"
   | "tool_result"
   | "system_local_command"
@@ -104,6 +118,23 @@ export type JsonlEventKind =
   | "away_summary"
   | "attachment"
   | "unknown";
+
+export type JsonlEventContentType = "text" | "image";
+
+export interface JsonlEventKind {
+  source: JsonlEventSource;
+  contentType?: JsonlEventContentType;
+}
+
+/** 返回 kind.contentType，省略时兜底 "text"。 */
+export function getContentType(kind: JsonlEventKind): JsonlEventContentType {
+  return kind.contentType ?? "text";
+}
+
+/** 便捷构造：source-only kind（contentType 缺省 = text）。 */
+export function eventKindOf(source: JsonlEventSource, contentType?: JsonlEventContentType): JsonlEventKind {
+  return contentType ? { source, contentType } : { source };
+}
 
 /**
  * StructuralOrigin：节点的结构身份已知，但内容没有被规则或 jsonl 解释。

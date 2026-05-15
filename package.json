@@ -1,17 +1,25 @@
 {
   "name": "session-devtools",
-  "version": "0.1.0-alpha",
+  "version": "0.1.0-alpha.1",
   "description": "Local devtools for AI coding sessions. Claude Code first.",
   "license": "MIT",
+  "author": "tony-shi <realshihuashen@gmail.com>",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tony-shi/session-devtools"
+    "url": "git+https://github.com/tony-shi/session-devtools.git"
   },
   "homepage": "https://github.com/tony-shi/session-devtools#readme",
+  "bugs": {
+    "url": "https://github.com/tony-shi/session-devtools/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "keywords": ["claude-code", "ai", "devtools", "sessions", "dashboard"],
   "type": "module",
   "bin": {
-    "session-devtools": "./bin/session-devtools.js"
+    "session-devtools": "bin/session-devtools.js"
   },
   "files": [
     "bin/",
@@ -34,8 +42,8 @@
     "start": "node bin/session-devtools.js",
     "test": "cd server && npm test",
     "env:init": "[ -f .env ] || cp .env.example .env && echo 'Created .env from .env.example'",
-    "audit:snapshot": "server/node_modules/.bin/tsx scripts/audit-snapshot.ts",
-    "audit:snapshot:json": "server/node_modules/.bin/tsx scripts/audit-snapshot.ts --json",
+    "audit": "server/node_modules/.bin/tsx scripts/audit.ts",
+    "audit:json": "server/node_modules/.bin/tsx scripts/audit.ts --json",
     "migrate:proxy-traffic": "server/node_modules/.bin/tsx scripts/migrate-proxy-traffic.ts",
     "backfill:proxy-request-id": "server/node_modules/.bin/tsx scripts/backfill-proxy-request-id.ts",
     "jsonl:coverage": "server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json scripts/jsonl-coverage-report.ts"

@@ -8,7 +8,7 @@
 //   - 无 Legend（+/-/~ 前缀 + 三色已足够）
 //   - SelectedDetail 扁平展示，无 card 外框
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
 import { FisheyeStrip } from "./fisheye-strip";
@@ -138,19 +138,23 @@ export function DiffPanel({ sessionId, callId, prevCallId }: Props) {
               <span style={{ color: "#374151", fontWeight: 600 }}>
                 {t("diff.segmentsChanged", { count: changedSegments })}
               </span>
-              {sum.insertedChars > 0 && (
-                <span style={{
+              <span style={{ color: "#9ca3af" }}>·</span>
+              <span
+                title={t("diff.charsTooltip")}
+                style={{
                   fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                  color: DIFF_TEXT_COLOR.added, fontWeight: 700,
-                }}>+{fmtK(sum.insertedChars)}</span>
-              )}
-              {sum.deletedChars > 0 && (
-                <span style={{
-                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                  color: DIFF_TEXT_COLOR.removed, fontWeight: 700,
-                }}>−{fmtK(sum.deletedChars)}</span>
-              )}
-              <span style={{ color: "#9ca3af" }}>{t("diff.charsLabel")}</span>
+                  color: sum.netCharDelta > 0
+                    ? DIFF_TEXT_COLOR.added
+                    : sum.netCharDelta < 0
+                      ? DIFF_TEXT_COLOR.removed
+                      : "#6b7280",
+                  fontWeight: 700,
+                }}
+              >{fmtDelta(sum.netCharDelta)}</span>
+              <span
+                title={t("diff.charsTooltip")}
+                style={{ color: "#9ca3af", cursor: "help", borderBottom: "1px dotted #d1d5db" }}
+              >{t("diff.charsLabel")}</span>
             </>
           ) : (
             <>
@@ -524,9 +528,164 @@ function SectionDrillIn({
         />
       </div>
 
+      {/* Diff list — selecting a section auto-renders every change in this
+          module so the user can scan/click without expanding each strip bar
+          one by one. Unchanged segments collapse into a single fold row. */}
+      <LeafDiffList
+        merged={merged}
+        selectedLeafId={selectedLeafId}
+        onSelectLeaf={onSelectLeaf}
+        expandedBins={expandedBins}
+        setExpandedBins={setExpandedBins}
+      />
+
       {/* SelectedDetail — 扁平展示，无 card 外框 */}
       {selectedLeaf && <SelectedDiffDetail leaf={selectedLeaf} />}
     </>
+  );
+}
+
+// ─── Layer 2.5: LeafDiffList — flat scannable list of every change ──────────
+//
+// Default state: every added/removed/modified leaf rendered as its own row.
+// Consecutive unchanged leaves collapse into a single "▶ N unchanged" fold
+// row that the user can expand on demand. Clicking any row also drives the
+// FisheyeStrip selection above and the SelectedDiffDetail panel below.
+
+function LeafDiffList({
+  merged, selectedLeafId, onSelectLeaf, expandedBins, setExpandedBins,
+}: {
+  merged: MergedItem[];
+  selectedLeafId: string | null;
+  onSelectLeaf: (id: string | null) => void;
+  expandedBins: Set<string>;
+  setExpandedBins: (s: Set<string>) => void;
+}) {
+  const { t } = useTranslation();
+
+  const toggleBin = (binId: string) => {
+    const next = new Set(expandedBins);
+    if (next.has(binId)) next.delete(binId); else next.add(binId);
+    setExpandedBins(next);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 4 }}>
+      {merged.map((m) => {
+        if (m.kind === "bin") {
+          const expanded = expandedBins.has(m.id);
+          return (
+            <Fragment key={m.id}>
+              <button
+                onClick={() => toggleBin(m.id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "5px 8px",
+                  background: "transparent", border: "none", borderRadius: 4,
+                  cursor: "pointer", textAlign: "left",
+                  color: "#9ca3af", fontSize: 11, fontStyle: "italic",
+                  transition: "background 0.1s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "#fafafa"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: BIN_COLOR, flexShrink: 0 }} />
+                <span style={{ fontSize: 9, fontFamily: "ui-monospace, SFMono-Regular, monospace", color: "#9ca3af" }}>
+                  {expanded ? "▼" : "▶"}
+                </span>
+                <span>
+                  {m.leaves.length} {t("diff.unchanged")} · {fmtK(m.totalSize)} chars
+                </span>
+              </button>
+              {expanded && m.leaves.map((l) => (
+                <DiffLeafRow
+                  key={l.id}
+                  leaf={l}
+                  selected={selectedLeafId === l.id}
+                  onClick={() => onSelectLeaf(selectedLeafId === l.id ? null : l.id)}
+                />
+              ))}
+            </Fragment>
+          );
+        }
+        const l = m.leaf;
+        return (
+          <DiffLeafRow
+            key={l.id}
+            leaf={l}
+            selected={selectedLeafId === l.id}
+            onClick={() => onSelectLeaf(selectedLeafId === l.id ? null : l.id)}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function DiffLeafRow({
+  leaf, selected, onClick,
+}: { leaf: DiffLeaf; selected: boolean; onClick: () => void }) {
+  const fill = DIFF_COLOR[leaf.kind];
+  const txtColor = DIFF_TEXT_COLOR[leaf.kind];
+  const prefix = DIFF_PREFIX[leaf.kind] || "·";
+  const sizeText =
+    leaf.kind === "removed"
+      ? `${fmtK(leaf.oldCharCount ?? 0)}`
+      : leaf.kind === "modified"
+        ? `${fmtK(leaf.oldCharCount ?? 0)} → ${fmtK(leaf.newCharCount)}`
+        : `${fmtK(leaf.newCharCount)}`;
+  const delta = leaf.kind === "modified"
+    ? leaf.newCharCount - (leaf.oldCharCount ?? 0)
+    : null;
+  const preview = (leaf.preview ?? "").replace(/\s+/g, " ").trim();
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: 10,
+        padding: "5px 8px",
+        background: selected ? "#eef2ff" : "transparent",
+        border: "none", borderRadius: 4,
+        cursor: "pointer", textAlign: "left",
+        transition: "background 0.1s",
+      }}
+      onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "#f9fafb"; }}
+      onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = "transparent"; }}
+    >
+      <span style={{ width: 8, height: 8, borderRadius: 2, background: fill, flexShrink: 0 }} />
+      <span
+        style={{
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          fontSize: 11, fontWeight: 700,
+          color: txtColor, minWidth: 14, textAlign: "center",
+        }}
+      >
+        {prefix}
+      </span>
+      <span
+        style={{
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          fontSize: 11, color: "#111827",
+          minWidth: 180, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}
+      >
+        {shortSlot(leaf.slotType)}
+      </span>
+      <span style={{ fontSize: 11, color: "#374151", minWidth: 110 }}>{sizeText}</span>
+      {delta !== null && (
+        <span style={{ minWidth: 52 }}>
+          <DeltaPill delta={delta} small />
+        </span>
+      )}
+      <span
+        style={{
+          fontSize: 10, color: "#6b7280",
+          flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}
+      >
+        {preview}
+      </span>
+    </button>
   );
 }
 
@@ -561,12 +720,28 @@ function SelectedDiffDetail({ leaf }: { leaf: DiffLeaf }) {
       </div>
 
       {/* 内容（无 card 外框） */}
-      {leaf.kind === "modified" ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <DetailBlock title="BEFORE" content={leaf.oldRawText ?? leaf.preview} muted />
-          <DetailBlock title="AFTER" content={leaf.rawText ?? leaf.preview} />
-        </div>
-      ) : leaf.kind === "removed" ? (
+      {leaf.kind === "modified" ? (() => {
+        // Inline diff between BEFORE and AFTER — highlight only the bytes
+        // that actually changed (git-style sub-line diff). Falls back to raw
+        // DetailBlock when one side is missing or strings are identical.
+        const beforeText = leaf.oldRawText ?? leaf.preview;
+        const afterText  = leaf.rawText ?? leaf.preview;
+        if (!beforeText || !afterText || beforeText === afterText) {
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <DetailBlock title="BEFORE" content={beforeText} muted />
+              <DetailBlock title="AFTER" content={afterText} />
+            </div>
+          );
+        }
+        const ops = computeInlineDiff(beforeText, afterText);
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <InlineDiffBlock title="BEFORE" ops={ops} side="before" />
+            <InlineDiffBlock title="AFTER"  ops={ops} side="after" />
+          </div>
+        );
+      })() : leaf.kind === "removed" ? (
         <DetailBlock title="REMOVED" content={leaf.oldRawText ?? leaf.preview} muted />
       ) : leaf.kind === "added" ? (
         <DetailBlock title="ADDED" content={leaf.rawText ?? leaf.preview} />
@@ -582,6 +757,103 @@ function DetailBlock({ title, content, muted }: { title: string; content: string
     <div>
       <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.05em", marginBottom: 3 }}>{title}</div>
       <CodeBlock variant="preview" mono muted={muted} maxHeight={240}>{content}</CodeBlock>
+    </div>
+  );
+}
+
+// ─── Inline (sub-line) diff — git-style highlight ───────────────────────────
+//
+// For "modified" leaves we want to show *where inside the string* the change
+// happened, not just "the whole thing changed". Tokenise on word / whitespace
+// / punctuation boundaries so a change like `cch=7e279` → `cch=ab3d9` ends up
+// with `cch`, `=`, `;` as equal and only the value tokens flagged. The
+// BEFORE block renders eq+del tokens (del highlighted red, strikethrough);
+// the AFTER block renders eq+ins tokens (ins highlighted green). Same idea
+// as GitHub's inline diff for a single-line change.
+
+type InlineOp = { op: "eq" | "del" | "ins"; text: string };
+
+function tokenizeForDiff(s: string): string[] {
+  // Words (incl. underscores), runs of whitespace, or any single non-word char.
+  // Keeps punctuation as separate tokens so e.g. `=` between `cch` and the
+  // value stays equal across before/after.
+  return s.match(/[A-Za-z0-9_]+|\s+|[^A-Za-z0-9_\s]/g) ?? [];
+}
+
+function computeInlineDiff(before: string, after: string): InlineOp[] {
+  const a = tokenizeForDiff(before);
+  const b = tokenizeForDiff(after);
+  const m = a.length, n = b.length;
+  // LCS DP — text snippets here are leaf-sized so O(n²) is fine.
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1]);
+  const ops: InlineOp[] = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && a[i-1] === b[j-1]) { ops.push({ op: "eq",  text: a[i-1] }); i--; j--; }
+    else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) { ops.push({ op: "ins", text: b[j-1] }); j--; }
+    else { ops.push({ op: "del", text: a[i-1] }); i--; }
+  }
+  ops.reverse();
+  // Coalesce consecutive same-kind ops so background pills don't fragment.
+  const merged: InlineOp[] = [];
+  for (const o of ops) {
+    const last = merged[merged.length - 1];
+    if (last && last.op === o.op) last.text += o.text;
+    else merged.push({ ...o });
+  }
+  return merged;
+}
+
+function InlineDiffBlock({
+  title, ops, side,
+}: { title: string; ops: InlineOp[]; side: "before" | "after" }) {
+  // Filter to the tokens this side cares about:
+  //   BEFORE shows eq + del (the original string with deleted bits flagged)
+  //   AFTER  shows eq + ins (the new string with inserted bits flagged)
+  const visible = ops.filter((o) =>
+    o.op === "eq" || (side === "before" ? o.op === "del" : o.op === "ins"),
+  );
+  return (
+    <div>
+      <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.05em", marginBottom: 3 }}>{title}</div>
+      <CodeBlock variant="preview" mono muted={side === "before"} maxHeight={240}>
+        {visible.map((o, k) => {
+          if (o.op === "eq") return <span key={k}>{o.text}</span>;
+          if (o.op === "del") {
+            return (
+              <span
+                key={k}
+                style={{
+                  background: "#fecaca",
+                  color: "#7f1d1d",
+                  textDecoration: "line-through",
+                  borderRadius: 2,
+                  padding: "0 2px",
+                }}
+              >
+                {o.text}
+              </span>
+            );
+          }
+          // ins
+          return (
+            <span
+              key={k}
+              style={{
+                background: "#bbf7d0",
+                color: "#14532d",
+                borderRadius: 2,
+                padding: "0 2px",
+              }}
+            >
+              {o.text}
+            </span>
+          );
+        })}
+      </CodeBlock>
     </div>
   );
 }

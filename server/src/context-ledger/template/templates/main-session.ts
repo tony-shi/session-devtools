@@ -174,6 +174,18 @@ export const CLAUDE_CODE_MAIN_SESSION_TEMPLATE: RequestTemplate = {
             anchor: { kind: "tag_prefix", prefix: "<local-command-" },
           },
           {
+            // CLI 在 user message text block 里注入的图片占位文本，形如：
+            //   [Image: source: /path/to/file.png]
+            //   [Image #2: source: /path/to/file.png]
+            //   [Image #2]                            （后续 turn 对已上传图片的回引）
+            // 与 messages.block.image 的实际 base64 content block 平级出现 —— image
+            // 是真正喂给模型的数据，placeholder 是给 user 看的文本提示。
+            id: "messages.inline.image-placeholder",
+            jsonPathPattern: "reqBody.messages[*].content[*]",
+            multiplicity: "zero_or_more",
+            anchor: { kind: "tag_prefix", prefix: "[Image" },
+          },
+          {
             id: "messages.inline.free-text",
             jsonPathPattern: "reqBody.messages[*].content[*]",
             multiplicity: "optional",
@@ -182,6 +194,15 @@ export const CLAUDE_CODE_MAIN_SESSION_TEMPLATE: RequestTemplate = {
       },
       {
         id: "messages.tool_use",
+        jsonPathPattern: "reqBody.messages[*].content[*]",
+        multiplicity: "zero_or_more",
+      },
+      {
+        // assistant message 内的 extended thinking 块（type="thinking" 或 "redacted_thinking"）。
+        // rawText = block.thinking ?? block.data ?? ""（可能为空字符串）。
+        // wireMeta.thinkingSignature 携带 Anthropic 的 signature/data，作为 jsonl-linker
+        // 的 deterministic join key（content 可能为空但 signature 唯一）。
+        id: "messages.thinking",
         jsonPathPattern: "reqBody.messages[*].content[*]",
         multiplicity: "zero_or_more",
       },
