@@ -582,6 +582,59 @@ describe("PR 3 — jsonl-linker", () => {
     expect(node?.origin.kind).toBe("rule");
   });
 
+  it("away-summary recap prompt（CLI \"while you were away\" 注入）由专门规则覆盖", () => {
+    // CLI 在用户离开重回时把 recap prompt 追加进主 session 最后一条 user message。
+    // prompt 第一句固定 "The user stepped away and is coming back."，后续指令措辞跟随
+    // 版本演进（"Write exactly 1-3 short sentences..." vs "Recap in under 40 words..."），
+    // 规则用通用尾巴 [\s\S]+ 把两种都吃下。
+    const newWording = "The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. Lead with the overall goal.";
+    const oldWording = "The user stepped away and is coming back. Write exactly 1-3 short sentences. Start by stating the high-level task — what they are building or debugging, not implementation details.";
+    for (const promptText of [newWording, oldWording]) {
+      const reqBody = {
+        system: [
+          { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
+          { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
+        ],
+        tools: [{ name: "Read", description: "Read a file", input_schema: {} }],
+        messages: [{ role: "user", content: [{ type: "text", text: promptText }] }],
+      };
+      const { snapshot } = attributeWithJsonl({
+        reqBody, proxyFile: "t.json", jsonl: [], call: { callId: 1, turnId: 1 },
+      });
+      const node = Object.values(snapshot.index).find(
+        (n) => n.children.length === 0 && n.rawText === promptText,
+      );
+      expect(node?.slotType).toBe("messages.inline.free-text");
+      expect(node?.origin.kind).toBe("rule");
+      if (node?.origin.kind === "rule") {
+        expect(node.origin.ruleId).toBe("claude-code.messages.away-summary.v1");
+        expect(node.origin.fullyCovered).toBe(true);
+      }
+    }
+  });
+
+  it("away-summary side-query 形态：messages.text 整块也由同一规则覆盖", () => {
+    // 旧形态（services/awaySummary.ts queryModelWithoutStreaming）：tools:[]、单 message
+    // → selectTemplate 落 side_query 模板 → matcher 把整块塞进 messages.text，
+    // 不再走 splitInlineTags 切分子段，规则需直接绑定到 messages.text 槽。
+    const prompt = "The user stepped away and is coming back. Recap in under 40 words.";
+    const reqBody = {
+      system: [{ type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." }],
+      messages: [{ role: "user", content: prompt }],
+    };
+    const { snapshot } = attributeWithJsonl({
+      reqBody, proxyFile: "t.json", jsonl: [], call: { callId: 1, turnId: 1 },
+    });
+    const node = Object.values(snapshot.index).find(
+      (n) => n.children.length === 0 && n.rawText === prompt,
+    );
+    expect(node?.slotType).toBe("messages.text");
+    expect(node?.origin.kind).toBe("rule");
+    if (node?.origin.kind === "rule") {
+      expect(node.origin.ruleId).toBe("claude-code.messages.away-summary.v1");
+    }
+  });
+
   it("空 jsonl events 时 linkReport.matched 全为 0，origin 保留 PR 2 状态", () => {
     const fx = makeFixture();
     const { snapshot, linkReport } = attributeWithJsonl({

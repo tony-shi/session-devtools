@@ -10,9 +10,20 @@
 //   - 主轴是 coverage 三态，次轴是细分（origin.kind / partial reason / none kind）。
 //   - 不引入 confidence / mechanism / 阈值；只有计数和 segmentId 列表。
 //   - 输出可直接喂给前端 filter + badge，无需进一步派生。
+//
+// IDE 入口排除（cc_entrypoint != "cli"）：
+//   当前 rule 库针对 CLI 入口校准。IDE（claude-vscode / claude-jetbrains 等）
+//   的 system prompt 形态略有差异，直接跑这套 audit 会把大量 IDE-only 内容
+//   计成 partial / none，污染整体覆盖度统计。
+//
+//   排除策略只发生在 audit 这一层 —— parser / matcher / rule 一律照常跑，
+//   snapshot 内容不变，前端归因树仍可查看 IDE 请求的具体 segment。这里只是
+//   在最终 audit 结果上挂一个 excluded 标记并返回空桶，让上游聚合不被噪音
+//   带偏。后续支持 IDE 的 roadmap 见 docs/inner/context-ledger/roadmap.md。
 
 import type { ParsedQuerySnapshot, SegmentNode } from "../types";
 import { coverageStateOf, type CoverageState } from "../attribution/origin";
+import { computeAuditExclusion, type AuditExclusion } from "./entrypoint";
 
 // ─── 输出类型 ────────────────────────────────────────────────────────────────
 
@@ -45,6 +56,11 @@ export interface ForwardAudit {
       unknown: string[];
     };
   };
+  /**
+   * 若被设置，表示此 call 已从 audit 聚合中排除（当前唯一原因：非 CLI entrypoint）。
+   * 所有桶的计数 / segmentIds 均为空。snapshot 自身不受影响。
+   */
+  excluded?: AuditExclusion;
 }
 
 /**
@@ -108,6 +124,19 @@ function emptyByReason(): Record<PartialReason, string[]> {
  * 复杂度：O(n)，n = node 总数。
  */
 export function computeForwardAudit(snapshot: ParsedQuerySnapshot): ForwardAudit {
+  // 非 CLI entrypoint（IDE 集成）：返回空桶 + excluded 标记，跳过逐节点扫描。
+  // 见文件顶部 "IDE 入口排除" 段落，理由：避免 IDE-only 内容污染 audit 统计。
+  const excluded = computeAuditExclusion(snapshot);
+  if (excluded) {
+    return {
+      totals: { leafCount: 0, full: 0, partial: 0, none: 0 },
+      full: { segmentIds: [], byOrigin: { rule: [], jsonl: [] } },
+      partial: { segmentIds: [], byReason: emptyByReason() },
+      none: { segmentIds: [], byKind: { structural_no_rule: [], unknown: [] } },
+      excluded,
+    };
+  }
+
   const audit: ForwardAudit = {
     totals: { leafCount: 0, full: 0, partial: 0, none: 0 },
     full: { segmentIds: [], byOrigin: { rule: [], jsonl: [] } },

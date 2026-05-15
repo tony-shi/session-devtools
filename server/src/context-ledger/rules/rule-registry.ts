@@ -2428,6 +2428,39 @@ export const CLAUDE_CODE_MESSAGES_IMAGE_PLACEHOLDER_RULE: ContextLedgerRule = {
   materialization: "exact_text",
 };
 
+// CLI 的 "while you were away" recap prompt（services/awaySummary.ts）。
+// 两种形态都见过：
+//   1. side-query（旧）：tools:[]、small fast model、独立 querySource: 'away_summary'，
+//      prompt 落在 side-query.user 单一槽。
+//   2. main-session 末尾（新）：把 prompt 追加为主 session 当前 call 的最后一个 user
+//      message，落在 messages.text → splitInlineTags → messages.inline.free-text。
+// prompt 第一句固定（"The user stepped away and is coming back."），后续指令措辞
+// 在版本间会改（"Write exactly 1-3 short sentences..." vs "Recap in under 40 words..."），
+// 用 [\s\S]+ 吃掉后续。
+export const CLAUDE_CODE_MESSAGES_AWAY_SUMMARY_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.away-summary.v1",
+  // 句首形态稳定，措辞跟随版本演进；不绑定具体 verifiedFor。
+  verifiedFor: null,
+  description:
+    "Claude Code 的 \"while-you-were-away\" recap 提示词。" +
+    "CLI 在用户离开重回时生成简短复盘，prompt 以 \"The user stepped away and is coming back.\" 开头。" +
+    "覆盖两种发送形态：独立 side query (querySource=away_summary) 和 main session 末尾追加。",
+  stability: "static",
+  sourcemapRef: "restored-src/src/services/awaySummary.ts buildAwaySummaryPrompt",
+
+  attribution: {
+    // 第一句固定锚定，整段（含可选的 "Session memory (broader context):\n..." 前置块和后续具体指令）由 [\s\S]+ 吃掉。
+    pattern:
+      "^(?:Session memory \\(broader context\\):\\n[\\s\\S]+?\\n\\n)?" +
+      "The user stepped away and is coming back\\.[\\s\\S]+$",
+    matchMode: "regex",
+    mechanism: "session_recap_prompt",
+    category: "system_local_command",
+  },
+
+  materialization: "exact_text",
+};
+
 export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   // ── identity / noise ──────────────────────────────────────────────────────
   CLAUDE_CODE_BILLING_NOISE_RULE,
@@ -2512,6 +2545,8 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   // ── image content block ──────────────────────────────────────────────────
   CLAUDE_CODE_MESSAGES_IMAGE_RULE,
   CLAUDE_CODE_MESSAGES_IMAGE_PLACEHOLDER_RULE,
+  // ── system-injected recap prompts ────────────────────────────────────────
+  CLAUDE_CODE_MESSAGES_AWAY_SUMMARY_RULE,
   // ── side query rules ──────────────────────────────────────────────────────
   CLAUDE_CODE_SIDE_QUERY_SESSION_TITLE_RULE,
 ];

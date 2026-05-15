@@ -2168,7 +2168,7 @@ function AgentLoopFlow({
                     background: "#f0fdf4", border: "1px solid #a7f3d0",
                     borderRadius: 6, padding: "2px 6px", whiteSpace: "nowrap", flexShrink: 0,
                   }}>
-                    →#{mergeCall.indexInTurn}
+                    →#{mergeCall.id}
                     {mergeCall.significantDelta !== 0 && (
                       <span style={{ marginLeft: 3, color: "#6b7280" }}>
                         {mergeCall.significantDelta > 0 ? "+" : ""}{fmtK(mergeCall.significantDelta)}
@@ -3084,15 +3084,19 @@ function JsonlCallChain({
         />
         {turn.midTurnInjections
           .filter(inj => inj.afterCallIndex === 0)
-          .map((inj, injIdx) => (
-            <ChainNarrativeNode
-              key={`inj-before-${injIdx}`}
-              kind="interrupt"
-              label="Mid-turn input"
-              text={inj.text}
-              meta={inj.timestamp ? `before C1 · ${inj.timestamp.slice(11, 19)}` : "before C1"}
-            />
-          ))}
+          .map((inj, injIdx) => {
+            const firstCallId = turn.calls[0]?.id;
+            const anchor = firstCallId != null ? `before #${firstCallId}` : "before first call";
+            return (
+              <ChainNarrativeNode
+                key={`inj-before-${injIdx}`}
+                kind="interrupt"
+                label="Mid-turn input"
+                text={inj.text}
+                meta={inj.timestamp ? `${anchor} · ${inj.timestamp.slice(11, 19)}` : anchor}
+              />
+            );
+          })}
 
         {turn.calls.map((call) => {
           const delta    = call.significantDelta;
@@ -3132,23 +3136,21 @@ function JsonlCallChain({
                   onMouseEnter={e => { e.currentTarget.style.borderColor = "#6366f1"; }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e7eb"; }}
                 >
-                  {/* Header — kept lean: index-in-turn (bold) + #global-id
-                      (muted) + ctx · Δ. Frame lines / messageId / stop_reason
-                      are JSON-level details — they live in the Raw tab. */}
+                  {/* Header — single global call id (no more turn-internal
+                      index): `LLM 调用 N` where N === call.id (session-wide).
+                      messageId / jsonl frame info stays as a hover tooltip on
+                      the same label. Δ + ctx still on the right. */}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderBottom: "1px solid #f3f4f6" }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>
-                      {t("terms.callLabel")} {call.indexInTurn}
-                      {call.isCompaction && <span style={{ marginLeft: 5, fontSize: 10, color: "#ef4444" }}>◆</span>}
-                    </span>
                     <span
-                      style={{ fontSize: 10, color: "#9ca3af", fontFamily: "monospace" }}
+                      style={{ fontSize: 12, fontWeight: 700, color: "#111827" }}
                       title={
                         call.messageId
-                          ? `global id: ${call.id} · message: ${call.messageId}${jsonlLines ? ` · jsonl ${jsonlLines}` : ""}`
-                          : `global id: ${call.id}${jsonlLines ? ` · jsonl ${jsonlLines}` : ""}`
+                          ? `message: ${call.messageId}${jsonlLines ? ` · jsonl ${jsonlLines}` : ""}`
+                          : jsonlLines ? `jsonl ${jsonlLines}` : undefined
                       }
                     >
-                      #{call.id}
+                      {t("terms.callLabel")} {call.id}
+                      {call.isCompaction && <span style={{ marginLeft: 5, fontSize: 10, color: "#ef4444" }}>◆</span>}
                     </span>
                     <span style={{ fontSize: 11, color: "#9ca3af" }}>{fmtK(call.contextSize)}</span>
                     {delta !== 0 && (
@@ -3299,7 +3301,7 @@ function JsonlCallChain({
                   kind="interrupt"
                   label="Mid-turn input"
                   text={inj.text}
-                  meta={inj.timestamp ? `after C${call.indexInTurn} · ${inj.timestamp.slice(11, 19)}` : `after C${call.indexInTurn}`}
+                  meta={inj.timestamp ? `after #${call.id} · ${inj.timestamp.slice(11, 19)}` : `after #${call.id}`}
                 />
               ))}
             </React.Fragment>
@@ -4507,12 +4509,12 @@ function LlmCallDetailPanel({
           the divider line, so we don't stack two borders. */}
       <div>
 
-        {/* Title row */}
+        {/* Title row — single global call id everywhere, no separate
+            in-turn index. */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 14, fontWeight: 800, color: "#111827" }}>
-            {t("terms.callLabel")} {call.indexInTurn}
+            {t("terms.callLabel")} {call.id}
           </span>
-          <span style={{ fontSize: 10, color: "#9ca3af" }}>#{call.id}</span>
           {call.isCompaction && <RiskBadge type="compaction" />}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {onShowTurnContext && (
@@ -4985,8 +4987,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
               <>
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: "#6366f1", flexShrink: 0 }}>
-                  C{selectedCall.indexInTurn}
-                  <span style={{ fontSize: 10, fontWeight: 400, color: "#9ca3af", marginLeft: 4 }}>#{selectedCall.id}</span>
+                  {t("terms.callLabel")} {selectedCall.id}
                 </span>
               </>
             )}
@@ -5071,11 +5072,14 @@ export function SessionDetailV2({ session, onClose }: Props) {
                       onClick={() => handleSelectTurn(turn)}
                     />
                     {isThisTurnSelected && allCallsForNav.length > 0 && allCallsForNav.map(call => {
-                      // Call-level nav: keep info density parity with Turn rows.
-                      // Show #id · ctx · Δ · toolCount, plus compaction badge if any.
+                      // Call-level nav: a single global id everywhere.
+                      // Label is `${callPrefix} ${call.id}` (e.g. `LLM 调用 4`)
+                      // — the same numbering used in the call card header,
+                      // call detail title and the breadcrumb. The sublabel no
+                      // longer repeats #id since it's already in the label.
                       const callLabel = call.isCompaction
-                        ? `${callPrefix} ${call.indexInTurn} ◆`
-                        : `${callPrefix} ${call.indexInTurn}`;
+                        ? `${callPrefix} ${call.id} ◆`
+                        : `${callPrefix} ${call.id}`;
                       const toolCount = call.toolCalls?.length ?? 0;
                       const deltaTxt = call.isSignificant && call.significantDelta !== 0
                         ? ` · ${call.significantDelta > 0 ? "+" : ""}${fmtK(call.significantDelta)}`
@@ -5091,7 +5095,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
                           key={call.id}
                           indent
                           label={callLabel}
-                          sublabel={`#${call.id} · ${fmtK(call.contextSize)}${deltaTxt}${toolsTxt}`}
+                          sublabel={`${fmtK(call.contextSize)}${deltaTxt}${toolsTxt}`}
                           active={
                             selectedCall?.id === call.id
                             || (linkedPanel?.type === "call" && linkedPanel.call.id === call.id)

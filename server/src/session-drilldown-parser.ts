@@ -528,6 +528,38 @@ export function parseSessionDrilldown(
     }
   }
 
+  // ── 4b. Identify compaction boundaries ───────────────────────────────────
+  // Source-map of truth (restored-src/src/utils/messages.ts:4608):
+  //   isCompactBoundaryMessage = message.type === 'system' &&
+  //                              message.subtype === 'compact_boundary'
+  // sessionStorage.ts:1314 writes `isCompaction: true` directly into the jsonl
+  // entry for the compaction boundary; older runs predating that change still
+  // emit only the system event. We accept either form.
+  //
+  // 旧逻辑用 assistant 文本里 "<compaction_summary>" 字面量做启发式 ——
+  // 真实 CLI 从来没有过这个字面量，导致全员漏报。
+  //
+  // 标记规则：把"紧跟 compact_boundary 之后的第一个非 sidechain assistant call"
+  // 视作 compaction call —— 那是基于 compaction summary 重新开始的第一次推理。
+  const compactionCallLineIdxs = new Set<number>();
+  for (let idx = 0; idx < events.length; idx++) {
+    const ev = events[idx];
+    const isBoundary =
+      (ev.type === "system" && (ev as JSystemEvent).subtype === "compact_boundary")
+      || ((ev as { isCompaction?: boolean }).isCompaction === true);
+    if (!isBoundary) continue;
+    // Look forward for the first canonical assistant call line.
+    for (let k = idx + 1; k < events.length; k++) {
+      const kev = events[k];
+      if (kev.type !== "assistant" || (kev as JAssistantEvent).isSidechain) continue;
+      const msgId = (kev as JAssistantEvent).message?.id;
+      const isCanonical = msgId ? lastAssistantByMsgId.get(msgId) === k : true;
+      if (!isCanonical) continue;
+      compactionCallLineIdxs.add(k);
+      break;
+    }
+  }
+
   // ── 5. Build turns ───────────────────────────────────────────────────────
   // Algorithm:
   //   - Scan forward; when we find a human-input user event, start a new turn
@@ -600,11 +632,14 @@ export function parseSessionDrilldown(
       const rawModel = aev.message?.model ?? "";
       const model = rawModel === "<synthetic>" ? "" : normaliseModelName(rawModel);
 
-      // isCompaction: heuristic — assistant content is only a compaction summary
+      // isCompaction: 由 pre-scan 出的 compactionCallLineIdxs 决定 —— 真实信号是
+      // jsonl 里 `type==='system', subtype==='compact_boundary'` 的入口事件，
+      // 之后的第一次 canonical assistant call 即为 compaction 触发点（其 reqBody
+      // 内嵌 isCompactSummary 那条 user message）。assistant 文本里没有
+      // `<compaction_summary>` 这个字面量，老 heuristic 全员漏报。
       const content = aev.message?.content ?? [];
-      const isCompaction = content.some(b =>
-        b.type === "text" && (b.text ?? "").includes("<compaction_summary>")
-      );
+      const isCompaction = compactionCallLineIdxs.has(rawCalls[callIdx].lineIdx)
+        || compactionCallLineIdxs.has(rawCalls[callIdx].firstLineIdx);
 
       // Collect ALL Agent tool_use ids in this call (parallel spawn supported).
       const agentToolUseIds: string[] = [];

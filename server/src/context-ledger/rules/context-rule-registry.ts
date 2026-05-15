@@ -97,6 +97,12 @@ const SLOT_BINDINGS: Record<string, string[]> = {
   "claude-code.messages.tool-result.smoosh.v1": ["messages.tool_result"],
   "claude-code.messages.image.v1": ["messages.block.image"],
   "claude-code.messages.image-placeholder.v1": ["messages.inline.image-placeholder"],
+  // away-summary 同时覆盖：
+  //   - main session 末尾追加 → splitInlineTags 切出 messages.inline.free-text
+  //   - side query 独立形态 → 整块停在 messages.text（side-query 模板下不 expand 子段）
+  // 规则 pattern 以固定句首 "The user stepped away and is coming back." 锚定，
+  // 不会误吃用户散文。
+  "claude-code.messages.away-summary.v1": ["messages.inline.free-text", "messages.text"],
 
   // SmooshContent v2 rule 簇：tool_result.content 尾部 smoosh 切出的 SR 子段。
   // 当前 ast-builder 还未切 tool_result 尾部（阶段 2.2 完成后），但 rule 先就位。

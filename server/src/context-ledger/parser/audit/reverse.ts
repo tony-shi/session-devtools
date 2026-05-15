@@ -15,10 +15,18 @@
 //   - 不做内容相似度回退；linker 没匹配到就是 missing。
 //
 // 用户视角：missing 列表就是"jsonl 里有但 proxy 里看不到"的诊断面。
+//
+// IDE 入口排除（cc_entrypoint != "cli"）：
+//   与 forward audit 同样的策略 —— 当 entrypoint 为 IDE（claude-vscode 等）时，
+//   返回空桶 + excluded 标记。理由：IDE call 的 system prompt 形态当前未在 rule
+//   覆盖范围内，跑反向 audit 也会因 jsonl-linker 命中模式偏差产出 false missing。
+//   排除策略只发生在 audit 这一层；parser / linker 仍照常处理，snapshot 不变。
+//   后续支持计划见 docs/inner/context-ledger/roadmap.md。
 
 import type { ParsedQuerySnapshot } from "../types";
 import type { LinkableJsonlEvent } from "../attribution/jsonl-linker";
 import type { JsonlEventKind } from "../attribution/origin";
+import { computeAuditExclusion, type AuditExclusion } from "./entrypoint";
 
 // ─── 输出类型 ────────────────────────────────────────────────────────────────
 
@@ -56,6 +64,11 @@ export interface MissingJsonlUnit {
 export interface ReverseAudit {
   byKind: Record<ReverseEventKind, ReverseAuditBucket>;
   missing: MissingJsonlUnit[];
+  /**
+   * 若被设置，表示此 call 已从 audit 聚合中排除（当前唯一原因：非 CLI entrypoint）。
+   * 所有桶的计数与 missing 列表均为空。snapshot / linker 自身不受影响。
+   */
+  excluded?: AuditExclusion;
 }
 
 // ─── 实现 ────────────────────────────────────────────────────────────────────
@@ -149,6 +162,24 @@ export function computeReverseAudit(
   snapshot: ParsedQuerySnapshot,
   events: LinkableJsonlEvent[],
 ): ReverseAudit {
+  // 非 CLI entrypoint（IDE 集成）：返回空桶 + excluded 标记，跳过事件扫描。
+  // 见文件顶部 "IDE 入口排除" 段落。
+  const excluded = computeAuditExclusion(snapshot);
+  if (excluded) {
+    return {
+      byKind: {
+        user_input: emptyBucket(),
+        command_text: emptyBucket(),
+        assistant_text: emptyBucket(),
+        tool_use: emptyBucket(),
+        tool_result: emptyBucket(),
+        attachment: emptyBucket(),
+      },
+      missing: [],
+      excluded,
+    };
+  }
+
   const { linkedByLine, linkedToolUseIds, linkedToolResultIds } = indexLinks(snapshot);
 
   const byKind: Record<ReverseEventKind, ReverseAuditBucket> = {

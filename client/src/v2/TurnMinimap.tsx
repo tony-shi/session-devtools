@@ -140,7 +140,7 @@ const SUB_AGENT_MIN_SAVINGS = 2_000;
 
 function buildData(turn: UserTurn): MinimapData {
   const calls = turn.calls.map((c, i) => ({
-    idx: i, label: `C${c.indexInTurn}`,
+    idx: i, label: `#${c.id}`,
     contextSize: c.contextSize, isCompaction: c.isCompaction,
   }));
 

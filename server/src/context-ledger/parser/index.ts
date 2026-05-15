@@ -78,6 +78,13 @@ export { computeForwardAudit } from "./audit/forward";
 export type { ForwardAudit, PartialReason } from "./audit/forward";
 export { computeReverseAudit } from "./audit/reverse";
 export type { ReverseAudit, ReverseAuditBucket, ReverseEventKind, MissingJsonlUnit } from "./audit/reverse";
+export {
+  detectEntrypoint,
+  isNonCliEntrypoint,
+  computeAuditExclusion,
+  CLI_ENTRYPOINT,
+} from "./audit/entrypoint";
+export type { AuditExclusion } from "./audit/entrypoint";
 
 export interface ParseQueryInput {
   reqBody: MatchSlotsInput["reqBody"];
