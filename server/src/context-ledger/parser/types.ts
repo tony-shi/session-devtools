@@ -113,6 +113,16 @@ export interface ParsedQuerySnapshot {
   roots: SegmentNode[];
   /** id → node 平铺索引，包含所有层级节点，O(1) 查找 */
   index: Record<string, SegmentNode>;
+  /**
+   * 归因先验上下文：parser 入口 pre-pass 从 system[0] 抽取 cc_version 等元数据。
+   *
+   *   - ok=true  → ctx 含 ccVersion，attribution 据此版本过滤 rule / template 候选。
+   *   - ok=false → 归因失败的硬错误（billing-noise 未命中 system[0]，Anthropic 协议变了）。
+   *               attributeSnapshot 收到此状态会跳过 rule 评估，所有叶子保持 structural 默认。
+   *
+   * 见 parser/attribution/context.ts 抽取细节。
+   */
+  attributionContext: import("./attribution/context").AttributionContextResult;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

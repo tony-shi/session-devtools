@@ -8,6 +8,7 @@
 //   - 不推导 confidence，不处理 wire_schema fallback，不写 rule_gap。
 
 import type { ContextRule } from "../../rules/context-rule-registry";
+import { satisfiesCcVersion } from "../../version";
 import type { SegmentNode } from "../types";
 import type {
   AttributionMatchMode,
@@ -95,6 +96,14 @@ function queryScopeMatches(rule: ContextRule, queryKind: string): boolean {
   return !rule.queryScope || rule.queryScope === "any" || queryKind === rule.queryScope;
 }
 
+function appliesToMatches(rule: ContextRule, ccVersion: string | undefined): boolean {
+  // 无 appliesTo 字段 = 全版本适用（缺省）
+  if (!rule.appliesTo) return true;
+  // 有 appliesTo 但 ctx 没有 ccVersion = 不满足（保守：标了 appliesTo 必须有 ctx 校验）
+  if (!ccVersion) return false;
+  return satisfiesCcVersion(ccVersion, rule.appliesTo);
+}
+
 /**
  * evaluateRuleForNode：判定一条 rule 是否命中 node。
  *
@@ -109,8 +118,10 @@ export function evaluateRuleForNode(
   node: SegmentNode,
   rule: ContextRule,
   queryKind: string,
+  ccVersion?: string,
 ): RuleEvaluation | null {
   if (!queryScopeMatches(rule, queryKind)) return null;
+  if (!appliesToMatches(rule, ccVersion)) return null;
 
   const { pattern, matchMode } = rule.attribution;
   if (pattern === null) return null;
@@ -184,9 +195,10 @@ export function findFirstRuleEvaluation(
   node: SegmentNode,
   rules: ContextRule[],
   queryKind: string,
+  ccVersion?: string,
 ): RuleEvaluation | null {
   for (const rule of rules) {
-    const evaluation = evaluateRuleForNode(node, rule, queryKind);
+    const evaluation = evaluateRuleForNode(node, rule, queryKind, ccVersion);
     if (evaluation) return evaluation;
   }
   return null;

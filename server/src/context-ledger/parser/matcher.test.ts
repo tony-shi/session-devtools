@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { createHash } from "crypto";
 import { attributeWithJsonl } from "./index";
 import type { LinkableJsonlEvent } from "./attribution/jsonl-linker";
+import { withBillingHeader } from "./attribution/test-fixtures";
 
 function digest16(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
@@ -24,7 +25,7 @@ function makeImageBlock(): { type: "image"; source: { type: "base64"; media_type
 }
 
 function makeReqBodyWithImage() {
-  return {
+  return withBillingHeader({
     system: [
       { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
       { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
@@ -41,7 +42,7 @@ function makeReqBodyWithImage() {
       },
       { role: "assistant", content: [{ type: "text", text: "好的。" }] },
     ],
-  };
+  });
 }
 
 describe("matcher — image content block slot 分配", () => {
@@ -185,7 +186,7 @@ describe("Step 4 — image jsonl-linker", () => {
 // 同时通过 wireMeta.thinkingSignature 保留 join key。
 describe("matcher — redacted thinking (Opus 4.7 风格)", () => {
   function makeReqBodyWithRedactedThinking(signature: string) {
-    return {
+    return withBillingHeader({
       tools: [{ name: "Read", description: "Read a file", input_schema: {} }],
       messages: [
         { role: "user", content: [{ type: "text", text: "继续" }] },
@@ -197,7 +198,7 @@ describe("matcher — redacted thinking (Opus 4.7 风格)", () => {
           ],
         },
       ],
-    };
+    });
   }
 
   it("thinking 字段为空、signature 非空时 → rawText = signature，charCount = signature.length", () => {

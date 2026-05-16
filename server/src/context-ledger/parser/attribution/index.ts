@@ -43,13 +43,19 @@ function flattenNodes(roots: SegmentNode[]): SegmentNode[] {
  * Container 节点跳过（PR 1 已经填了 origin=structural/container_node）。
  *
  * 流程（仅作用于叶子）：
- *   1. 按 slotId 取候选 rules → findFirstRuleEvaluation
+ *   1. 按 slotId 取候选 rules → findFirstRuleEvaluation（含 cc_version 过滤 appliesTo）
  *   2. 命中：resolveFromEvaluation（写 RuleOrigin + 投影 SegmentAttribution）
  *   3. 未命中：wireFallback（tool_use/tool_result/tools.builtin.* → 合成 wire RuleOrigin）
  *   4. 仍未命中：不动 origin（保留 PR 1 的 structural/unknown 默认），projection 输出 rule_gap
+ *
+ * snapshot.attributionContext 失败状态（billing-noise 未命中 system[0]）：跳过所有 rule
+ * 评估，但仍保留 wire fallback（tool_use/tool_result/wire schema 不依赖 cc_version）。
+ * 叶子保持 structural 默认，让上层 UI/audit 可识别"归因失败"信号。
  */
 export function attributeSnapshot(snapshot: ParsedQuerySnapshot): SegmentAttribution[] {
   const out: SegmentAttribution[] = [];
+  const ctxOk = snapshot.attributionContext.ok;
+  const ccVersion = ctxOk ? snapshot.attributionContext.ctx.ccVersion : undefined;
 
   for (const node of flattenNodes(snapshot.roots)) {
     // container 节点：默认 origin 是 structural/container_node，不参与 rule 命中。
@@ -63,13 +69,16 @@ export function attributeSnapshot(snapshot: ParsedQuerySnapshot): SegmentAttribu
       continue;
     }
 
-    const rules = getContextRulesForSlotId(node.slotType);
-    const evaluation = findFirstRuleEvaluation(node, rules, snapshot.queryKind);
+    if (ctxOk) {
+      const rules = getContextRulesForSlotId(node.slotType);
+      const evaluation = findFirstRuleEvaluation(node, rules, snapshot.queryKind, ccVersion);
 
-    if (evaluation) {
-      out.push(resolveFromEvaluation(node, evaluation));
-      continue;
+      if (evaluation) {
+        out.push(resolveFromEvaluation(node, evaluation));
+        continue;
+      }
     }
+    // ctx 失败时直接跳过 rule 评估，进入 wire fallback / rule_gap 分支。
 
     const fallback = wireFallback(node);
     if (fallback) {

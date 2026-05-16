@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { parseQuery, attributeSnapshot } from "../index";
 import { linkJsonl, type LinkableJsonlEvent } from "../attribution/jsonl-linker";
+import { withBillingHeader } from "../attribution/test-fixtures";
 import { computeForwardAudit } from "./forward";
 
 function baseReqBody() {
-  return {
+  return withBillingHeader({
     system: [
       {
         type: "text" as const,
@@ -26,7 +27,7 @@ function baseReqBody() {
         ],
       },
     ],
-  };
+  });
 }
 
 describe("ForwardAudit — 三桶覆盖度计数", () => {

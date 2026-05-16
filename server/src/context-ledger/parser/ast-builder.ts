@@ -26,8 +26,9 @@ export function buildParsedQuerySnapshot(params: {
   queryKind: "main_session" | "side_query" | "unknown";
   proxyFile: string;
   ts: string;
+  attributionContext: import("./attribution/context").AttributionContextResult;
 }): ParsedQuerySnapshot {
-  const { allSlotMatches, template, queryKind, proxyFile, ts } = params;
+  const { allSlotMatches, template, queryKind, proxyFile, ts, attributionContext } = params;
 
   const roots: SegmentNode[] = [];
   const index: Record<string, SegmentNode> = {};
@@ -129,7 +130,7 @@ export function buildParsedQuerySnapshot(params: {
     roots.push(node);
   }
 
-  return { queryKind, proxyFile, ts, roots, index };
+  return { queryKind, proxyFile, ts, roots, index, attributionContext };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

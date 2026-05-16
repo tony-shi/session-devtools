@@ -9,6 +9,15 @@ export interface RequestTemplate {
   id: string;
   queryKindPredicate: "main_session" | "side_query" | "any";
   version: string;
+  /**
+   * appliesTo：cc_version 版本谓词。缺省 = 所有版本都可选用此 template。
+   * 当多个 template 同时满足 queryKindPredicate 时，按 appliesTo 二次过滤；
+   * 没满足任何 appliesTo 的 template 跳过。
+   *
+   * 用于 section 增删 / H1 header 改名 / slot 锚点真变化的版本切换；
+   * 多数版本共享同一个 template 时无需标注。
+   */
+  appliesTo?: import("../version").VersionPredicate;
   slots: {
     system: TemplateSlot[];
     tools: TemplateSlot[];

@@ -7,6 +7,7 @@ import { matchSlots } from "./matcher";
 import { buildParsedQuerySnapshot } from "./ast-builder";
 import { selectTemplate } from "../template/selector";
 import { attributeSnapshot as _attributeSnapshot } from "./attribution";
+import { extractAttributionContext } from "./attribution/context";
 import { linkJsonl as _linkJsonl } from "./attribution/jsonl-linker";
 import type { LinkableJsonlEvent, CallContext, LinkJsonlReport } from "./attribution/jsonl-linker";
 import { assertAllInvariants } from "./attribution/invariants";
@@ -74,6 +75,12 @@ export {
 export type {
   CoverageState,
 } from "./attribution/origin";
+export { extractAttributionContext } from "./attribution/context";
+export type {
+  AttributionContext,
+  AttributionContextFailure,
+  AttributionContextResult,
+} from "./attribution/context";
 export { computeForwardAudit } from "./audit/forward";
 export type { ForwardAudit, PartialReason } from "./audit/forward";
 export { computeReverseAudit } from "./audit/reverse";
@@ -97,10 +104,16 @@ export function parseQuery(input: ParseQueryInput): ParsedQuerySnapshot {
   const { reqBody, proxyFile, reqHeaders } = input;
   const ts = input.ts ?? new Date().toISOString();
 
+  // pre-pass：从 system[0] 抽取 cc_version / entrypoint / cch（billing header）。
+  // 这是归因管线后续按版本 dispatch rule/template 的先验输入。billing-noise 不命中
+  // = 归因失败的硬错误，但我们仍然产出 snapshot；attributeSnapshot 收到 failure 状态
+  // 会跳过 rule 评估，让叶子保持 structural 默认，让上层 UI/audit 看到归因失败信号。
+  const attributionContext = extractAttributionContext(reqBody);
+
   const { template, queryKind } = selectTemplate(reqBody, reqHeaders);
   const allSlotMatches = matchSlots({ reqBody, template });
 
-  return buildParsedQuerySnapshot({ allSlotMatches, template, queryKind, proxyFile, ts });
+  return buildParsedQuerySnapshot({ allSlotMatches, template, queryKind, proxyFile, ts, attributionContext });
 }
 
 /**

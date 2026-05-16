@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { attributeWithJsonl } from "../index";
 import type { LinkableJsonlEvent } from "./jsonl-linker";
 import { isCommandLikeText, COMMAND_TEXT_PREFIX_RE } from "./jsonl-linker";
+import { withBillingHeader } from "./test-fixtures";
 
 // 构造一个完整 fixture：1 个 user input + 1 个 assistant call 含 tool_use + 1 个 tool_result
 // + 1 个 assistant 收尾文本。proxy reqBody 把它们拍扁成 messages[]，jsonl 是事件流。
@@ -14,7 +15,7 @@ function makeFixture() {
   const assistantText2 = "dev 脚本是 vite。";
 
   // —— proxy 视角的 messages（积累态）——
-  const reqBody = {
+  const reqBody = withBillingHeader({
     system: [
       { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
       // 给一个有 H1 的 main-prompt block 让 selector 判定 main_session
@@ -37,7 +38,7 @@ function makeFixture() {
       // [3] 助手最终输出
       { role: "assistant", content: [{ type: "text", text: assistantText2 }] },
     ],
-  };
+  });
 
   // —— jsonl 视角的事件流（claude-code 记录的）——
   const events: LinkableJsonlEvent[] = [
@@ -227,7 +228,7 @@ describe("PR 3 — jsonl-linker", () => {
     // 不再依赖 message 位置。
     const turn1Text = "请帮我看一下 package.json 里的 dev 脚本";
     const turn2Text = "再帮我跑一下 dev 看看会不会报错";
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [
         { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
         { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
@@ -247,7 +248,7 @@ describe("PR 3 — jsonl-linker", () => {
         // Turn 2 新的人类输入：位于 messages[4]，不再是 [0]
         { role: "user", content: [{ type: "text", text: turn2Text }] },
       ],
-    };
+    });
     const events: LinkableJsonlEvent[] = [
       { lineIdx: 1, type: "user", userText: turn1Text },
       { lineIdx: 2, type: "assistant", assistantText: "好，我看一下。", toolUses: [{ id: "toolu_x1", name: "Read" }] },
@@ -282,7 +283,7 @@ describe("PR 3 — jsonl-linker", () => {
     // 的事件做 inferred/partial 兜底。生产里 readSessionEventsForLinker 不填 turnId，
     // 兜底退化为"无脑取全 session 首条 user-input"，会把任何文本不一致的 user 块
     // 误绑到首条 turn 的输入上。B 方案直接放弃这条兜底。
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [
         { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
         { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
@@ -290,7 +291,7 @@ describe("PR 3 — jsonl-linker", () => {
       messages: [
         { role: "user", content: [{ type: "text", text: "proxy 里的用户输入文本（与 jsonl 不完全相同）" }] },
       ],
-    };
+    });
     const events: LinkableJsonlEvent[] = [
       { lineIdx: 1, type: "user", userText: "jsonl 里的另一条用户输入（与 proxy 拼写不同）" },
     ];
@@ -311,7 +312,7 @@ describe("PR 3 — jsonl-linker", () => {
     // linker 走独立的 linkCommandTextNode 等值查命中。
     const commandBlock =
       "<command-name>/status</command-name>\n            <command-message>status</command-message>\n            <command-args></command-args>\n<local-command-stdout>OK</local-command-stdout>";
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [
         { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
         { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
@@ -319,7 +320,7 @@ describe("PR 3 — jsonl-linker", () => {
       messages: [
         { role: "user", content: [{ type: "text", text: commandBlock }] },
       ],
-    };
+    });
     const events: LinkableJsonlEvent[] = [
       { lineIdx: 7, type: "user", commandText: commandBlock },
     ];
@@ -360,13 +361,13 @@ describe("PR 3 — jsonl-linker", () => {
   it("commandText 在 reverse audit 下进 command_text 桶", async () => {
     const { computeReverseAudit } = await import("../audit/reverse");
     const cmd = "<command-name>/status</command-name>";
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [
         { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
         { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
       ],
       messages: [{ role: "user", content: [{ type: "text", text: cmd }] }],
-    };
+    });
     const events: LinkableJsonlEvent[] = [
       { lineIdx: 1, type: "user", commandText: cmd },
       { lineIdx: 2, type: "user", commandText: "<bash-input>ls</bash-input>" }, // 在 jsonl 里有但 proxy 没引用 → missing
@@ -388,7 +389,7 @@ describe("PR 3 — jsonl-linker", () => {
     // 而不是被中间空白拆成多个 free-text 噪声 leaf。
     const block =
       "<command-name>/status</command-name>\n            <command-message>status</command-message>\n            <command-args></command-args>\n";
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [
         { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
         { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
@@ -396,7 +397,7 @@ describe("PR 3 — jsonl-linker", () => {
       // 非空 tools 触发 main_session 模板（含 messages.inline.* 子 slot）
       tools: [{ name: "Read", description: "Read a file", input_schema: {} }],
       messages: [{ role: "user", content: [{ type: "text", text: block }] }],
-    };
+    });
     const { snapshot } = attributeWithJsonl({
       reqBody, proxyFile: "t.json", jsonl: [], call: { callId: 1, turnId: 1 },
     });
@@ -418,7 +419,7 @@ describe("PR 3 — jsonl-linker", () => {
     // 旧 splitInlineTags 只识别 <local-command-*> 与 <system-reminder>，<bash-*> 与
     // <command-*> 落到 messages.inline.free-text 槽，规则因 slot 不对而不放行。
     // 扩家族前缀后这两族也进 local-command 槽并命中正则。
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [
         { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
         { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
@@ -427,7 +428,7 @@ describe("PR 3 — jsonl-linker", () => {
       messages: [
         { role: "user", content: [{ type: "text", text: "<bash-input>ls -la</bash-input>\n<bash-stdout>file1\nfile2\n</bash-stdout>\n" }] },
       ],
-    };
+    });
     const { snapshot } = attributeWithJsonl({
       reqBody, proxyFile: "t.json", jsonl: [], call: { callId: 1, turnId: 1 },
     });
@@ -448,7 +449,7 @@ describe("PR 3 — jsonl-linker", () => {
     const toolUseId = "toolu_leftover_test";
     const toolOutput = "60:  ruleId: string;\n125:  ruleId: \"claude-code.system-prompt-identity.v1\",\n";
     const reminder = "<system-reminder>\nThe task tools haven't been used recently.\n</system-reminder>";
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [
         { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
         { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
@@ -466,7 +467,7 @@ describe("PR 3 — jsonl-linker", () => {
           ],
         },
       ],
-    };
+    });
     const events: LinkableJsonlEvent[] = [
       // 工具结果在 jsonl 里 contentText 包含整段（leftover 内容 + SR 段）
       { lineIdx: 9, type: "user", toolResults: [{ toolUseId, contentText: toolOutput + reminder }] },
@@ -498,7 +499,7 @@ describe("PR 3 — jsonl-linker", () => {
     // 无人认领；现在 ast-builder 整块识别为 messages.inline.image-placeholder slot，
     // 规则 claude-code.messages.image-placeholder.v1 命中 full。
     const placeholder = "[Image: source: /Users/foo/Desktop/截屏.png]";
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [
         { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
         { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
@@ -514,7 +515,7 @@ describe("PR 3 — jsonl-linker", () => {
           ],
         },
       ],
-    };
+    });
     const { snapshot } = attributeWithJsonl({
       reqBody, proxyFile: "t.json", jsonl: [], call: { callId: 1, turnId: 1 },
     });
@@ -534,14 +535,14 @@ describe("PR 3 — jsonl-linker", () => {
     // 回引和散文同 block，强行切会破坏 jsonl userText 哈希等值匹配。
     const mixed =
       "[Image #2] [Image #3]\n\n继续考虑 UI 问题。我们可以看到：[Image #1] 这里点击展开 call 应该跳转。";
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [
         { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
         { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
       ],
       tools: [{ name: "Read", description: "Read a file", input_schema: {} }],
       messages: [{ role: "user", content: [{ type: "text", text: mixed }] }],
-    };
+    });
     const events: LinkableJsonlEvent[] = [
       { lineIdx: 1, type: "user", userText: mixed },
     ];
@@ -564,14 +565,14 @@ describe("PR 3 — jsonl-linker", () => {
   it("[Image #<N>] 形态（无 source）也被 image-placeholder 规则覆盖（独立成块时）", () => {
     // 后续 turn CLI 偶尔会以 `[Image #N]` 单独成块的形式回引已上传的图片。
     const placeholder = "[Image #3]";
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [
         { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
         { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
       ],
       tools: [{ name: "Read", description: "Read a file", input_schema: {} }],
       messages: [{ role: "user", content: [{ type: "text", text: placeholder }] }],
-    };
+    });
     const { snapshot } = attributeWithJsonl({
       reqBody, proxyFile: "t.json", jsonl: [], call: { callId: 1, turnId: 1 },
     });
@@ -590,14 +591,14 @@ describe("PR 3 — jsonl-linker", () => {
     const newWording = "The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown. Lead with the overall goal.";
     const oldWording = "The user stepped away and is coming back. Write exactly 1-3 short sentences. Start by stating the high-level task — what they are building or debugging, not implementation details.";
     for (const promptText of [newWording, oldWording]) {
-      const reqBody = {
+      const reqBody = withBillingHeader({
         system: [
           { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
           { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
         ],
         tools: [{ name: "Read", description: "Read a file", input_schema: {} }],
         messages: [{ role: "user", content: [{ type: "text", text: promptText }] }],
-      };
+      });
       const { snapshot } = attributeWithJsonl({
         reqBody, proxyFile: "t.json", jsonl: [], call: { callId: 1, turnId: 1 },
       });
@@ -618,10 +619,10 @@ describe("PR 3 — jsonl-linker", () => {
     // → selectTemplate 落 side_query 模板 → matcher 把整块塞进 messages.text，
     // 不再走 splitInlineTags 切分子段，规则需直接绑定到 messages.text 槽。
     const prompt = "The user stepped away and is coming back. Recap in under 40 words.";
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [{ type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." }],
       messages: [{ role: "user", content: prompt }],
-    };
+    });
     const { snapshot } = attributeWithJsonl({
       reqBody, proxyFile: "t.json", jsonl: [], call: { callId: 1, turnId: 1 },
     });
@@ -662,7 +663,7 @@ describe("PR 3 — #8 tool-reference turn boundary (`Tool loaded.`)", () => {
   //      block（reqBody 看到，但 jsonl 没有）
   function makeBoundaryFixture() {
     const toolUseId = "toolu_search_42";
-    const reqBody = {
+    const reqBody = withBillingHeader({
       system: [
         { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
         { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
@@ -692,7 +693,7 @@ describe("PR 3 — #8 tool-reference turn boundary (`Tool loaded.`)", () => {
           ],
         },
       ],
-    };
+    });
     const events: LinkableJsonlEvent[] = [
       { lineIdx: 9, type: "user", userText: "请帮我找几个 task 工具" },
       { lineIdx: 10, type: "assistant", toolUses: [{ id: toolUseId, name: "ToolSearch" }] },

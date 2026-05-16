@@ -72,6 +72,11 @@ export interface ContextLedgerRule {
   // "any"          — 匹配所有 query（未指定时默认）
   queryScope?: "main_session" | "side_query" | "any";
 
+  // appliesTo：cc_version 版本谓词。缺省 = 所有版本都尝试（行为不变）。
+  // 标了此字段的 rule 只在 AttributionContext.ccVersion 满足谓词时才进入候选集；
+  // 用于内容/打包形态在不同 cc_version 间有真实差异的场景（如 tone-style v0/v1）。
+  appliesTo?: import("../version").VersionPredicate;
+
   // materialization：命中后能复现到什么程度（PR4 起从 reconstruction 块提升到顶层）。
   materialization?: RuleMaterialization;
 
@@ -799,42 +804,57 @@ export const CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE: ContextLedgerRule = {
 // ant 用户：4 条 bullet（无上述一条）
 // 对 external 用户内容确定，可精确匹配。
 
-export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
-  ruleId: "claude-code.system-prompt-tone-style.external.v1",
-  verifiedFor: SUPPORTED_CLAUDE_CODE_VERSION, // 已对照 2.1.142 binary + 真实 dump 校对（4 bullet, 555B）
+// Nm3()/HM3() 函数本身用 `[header, ...bullets].join('\n')` 拼接，输出严格止于 `period.`，共 555 字节。
+// content 在 2.1.140 / 2.1.142 之间没变；变的是 system 数组的切法（cache 切点位置）。
+// 这导致 splitByH1Headers 切出来的 leaf 在两个版本下尾部不同：
+//   - 2.1.142+ ：cache 切点放在 Nm3 之后，tone-style 落到 system block 末尾，leaf = 555B
+//   - 2.1.140- ：单个 system block 内多 section 用 `\n\n` 拼接，leaf 含尾 `\n\n` = 557B
+//
+// 因此拆 v0/v1 两条 byte-exact rule + appliesTo 版本范围。**不用 regex tolerance**——
+// 把 wire 形态差异交给版本维度表达，rule 严格 byte-equal，未见过的形态明确暴露成 no_rule_matched。
+const TONE_STYLE_NM3_OUTPUT_555B =
+  "# Tone and style\n" +
+  " - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.\n" +
+  " - Your responses should be short and concise.\n" +
+  " - When referencing specific functions or pieces of code include the pattern file_path:line_number to allow the user to easily navigate to the source code location.\n" +
+  " - Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like \"Let me read the file:\" followed by a read tool call should just be \"Let me read the file.\" with a period.";
+
+// 2.1.140 ~ 2.1.141 形态：leaf = Nm3 输出 + 尾 `\n\n` = 557B。
+export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_V0_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.system-prompt-tone-style.external.v0",
+  verifiedFor: "2.1.140.453",
   description:
-    "Claude Code system prompt 的 # Tone and style section（4 条 bullet，所有用户共用）。" +
-    "2.1.142 binary 里函数名 Nm3（2.1.126 是 HM3，原 sourcemap (2.1.88) 里叫 getSimpleToneAndStyleSection）。",
+    "Claude Code # Tone and style section，2.1.140-2.1.141 wire 形态（leaf 含尾 `\\n\\n`）。" +
+    "Nm3 函数输出本身仍是 555B，但 system block 拼接的 glue 被 splitByH1Headers 划入了 leaf。",
   stability: "static",
-  // 当前事实源：2.1.142 cli binary 里的 Nm3 函数
-  // 旧 sourcemap 路径仅供历史参考；P0/P1 优先级见 AGENTS.md §6.3
-  sourcemapRef:
-    "binary:Nm3 (2.1.142) | binary:HM3 (2.1.126) | restored-src/src/constants/prompts.ts:430 (2.1.88, stale)",
+  sourcemapRef: "binary:Nm3 (2.1.140) | dump:427a2904 T3 C1",
+  appliesTo: { range: ["2.1.140", "2.1.141"] },
 
   attribution: {
-    // Nm3()/HM3() 内部用 `[header, ...bullets].join('\n')` 拼接，join 只在元素之间插
-    // `\n`，函数本身返回严格止于 `period.`，共 555 字节。
-    //
-    // 但 leaf 实际进 ast 时的 trailing whitespace 取决于版本的 cache 切点：
-    //   - 2.1.142+ ：cache 切点放在 Nm3 之后，tone-style 落到 system block 末尾，
-    //                splitByH1Headers 切出来 = 555B（正好等于 Nm3 输出）
-    //   - 2.1.140- ：单个 system block 里多 section 用 `\n\n` 拼接，
-    //                splitByH1Headers 把后续 `\n\n` 划入 tone-style leaf = 557B
-    //
-    // 因此 pattern 用 regex + 尾部 `\s*$`，让两个版本的 leaf 都能命中。
-    // 注意：regex 模式下 leaf 里所有 regex 元字符（`.` `(` `)` 等）需要在 pattern
-    // 里转义；这里通过模块初始化时 regex-escape 一次即可（见下方 IIFE）。
-    pattern: (() => {
-      const literal =
-        "# Tone and style\n" +
-        " - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.\n" +
-        " - Your responses should be short and concise.\n" +
-        " - When referencing specific functions or pieces of code include the pattern file_path:line_number to allow the user to easily navigate to the source code location.\n" +
-        " - Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like \"Let me read the file:\" followed by a read tool call should just be \"Let me read the file.\" with a period.";
-      const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      return "^" + escaped + "\\s*$";
-    })(),
-    matchMode: "regex",
+    pattern: TONE_STYLE_NM3_OUTPUT_555B + "\n\n",
+    matchMode: "exact",
+    mechanism: "system_prompt_pattern",
+    category: "system_prompt",
+  },
+
+  materialization: "exact_text",
+};
+
+// 2.1.142+ 形态：cache 切点把 `\n\n` 推到 block 边界外，leaf = Nm3 输出 = 555B。
+export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.system-prompt-tone-style.external.v1",
+  verifiedFor: "2.1.142.6c2",
+  description:
+    "Claude Code # Tone and style section，2.1.142+ wire 形态（leaf 严格止于 `period.`）。" +
+    "Nm3 函数名按版本：2.1.142 = Nm3 / 2.1.126 = HM3 / 2.1.88 sourcemap = getSimpleToneAndStyleSection。",
+  stability: "static",
+  sourcemapRef:
+    "binary:Nm3 (2.1.142) | dump:9b61c7de #93 | restored-src/src/constants/prompts.ts:430 (2.1.88, stale)",
+  appliesTo: { minCcVersion: "2.1.142" },
+
+  attribution: {
+    pattern: TONE_STYLE_NM3_OUTPUT_555B,
+    matchMode: "exact",
     mechanism: "system_prompt_pattern",
     category: "system_prompt",
   },
@@ -2477,6 +2497,7 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_ACTIONS_SECTION_RULE,
   CLAUDE_CODE_USING_YOUR_TOOLS_RULE,
   CLAUDE_CODE_OUTPUT_EFFICIENCY_EXTERNAL_RULE,
+  CLAUDE_CODE_TONE_STYLE_EXTERNAL_V0_RULE,
   CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE,
   CLAUDE_CODE_TEXT_OUTPUT_SECTION_RULE,
   // ── 动态 system prompt sections（main session）───────────────────────────

@@ -10,6 +10,7 @@
 // 扩展成权威规则表，再评估是否回收旧 registry。
 
 import type { Confidence, SegmentCategory } from "../types";
+import type { VersionPredicate } from "../version";
 import {
   CONTEXT_LEDGER_RULES,
   SUPPORTED_CLAUDE_CODE_VERSION,
@@ -47,6 +48,11 @@ export interface ContextRule {
   /** 适用 query 类型；省略等同于 any。 */
   queryScope?: "main_session" | "side_query" | "any";
   /**
+   * appliesTo：cc_version 版本谓词。缺省 = 所有版本都进入候选集。
+   * 从对应 ContextLedgerRule.appliesTo 透传过来。
+   */
+  appliesTo?: VersionPredicate;
+  /**
    * P1-1：声明该 rule 命中后能给出的 materialization 证据。
    *   - 来自旧 ContextLedgerRule.reconstruction.materialization
    *   - 结构兜底 rule（STRUCTURAL_FALLBACK_RULES）默认 "presence"
@@ -82,6 +88,7 @@ const SLOT_BINDINGS: Record<string, string[]> = {
   "claude-code.system-prompt-actions-section.v1": ["system.main-prompt.section.actions"],
   "claude-code.system-prompt-using-your-tools.v1": ["system.main-prompt.section.using-tools"],
   "claude-code.system-prompt-output-efficiency.external.v1": ["system.main-prompt.section.output-efficiency"],
+  "claude-code.system-prompt-tone-style.external.v0": ["system.main-prompt.section.tone-style"],
   "claude-code.system-prompt-tone-style.external.v1": ["system.main-prompt.section.tone-style"],
   "claude-code.system-prompt-text-output-section.v1": ["system.main-prompt.section.text-output"],
   "claude-code.system-prompt-session-guidance.v1": ["system.main-prompt.section.session-guidance"],
@@ -133,6 +140,7 @@ function copyAttributionRule(rule: ContextLedgerRule, slotId: string): ContextRu
     slotId,
     verifiedFor: rule.verifiedFor,
     queryScope: rule.queryScope,
+    ...(rule.appliesTo ? { appliesTo: rule.appliesTo } : {}),
     ...(materialization ? { materialization } : {}),
     attribution: {
       pattern: attr.pattern,
