@@ -11,6 +11,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["server/**/*"],
-  "exclude": ["server/src/context-ledger/_archive/**"]
+  "include": ["server/**/*"]
 }

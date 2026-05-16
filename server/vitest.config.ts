@@ -4,6 +4,6 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
-    exclude: ["**/node_modules/**", "src/context-ledger/_archive/**"],
+    exclude: ["**/node_modules/**"],
   },
 });

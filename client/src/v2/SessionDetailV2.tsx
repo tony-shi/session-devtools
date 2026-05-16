@@ -26,6 +26,7 @@ import {
 } from "./drilldown-real-fill";
 import { getSessionDisplayName } from "./session-display";
 import { AttributionTreePanel } from "./AttributionTreePanel";
+import { AttributionTreeLensPanel } from "./AttributionTreeLensPanel";
 import { ResponseTreePanel } from "./ResponseTreePanel";
 import { DiffPanel } from "./DiffPanel";
 import { TOKEN_METRICS } from "./metricRegistry";
@@ -4379,11 +4380,15 @@ function AttributionSection({
 }) {
   const { t } = useTranslation();
   const [side, setSide] = useState<AttributionSide>("request");
+  // Side-path 切换：经典 = 现有 AttributionTreePanel（仅 Audit 过滤）；
+  // Lens 预览 = AttributionTreeLensPanel（多 lens 切换：来源 / 缓存 / Audit）。
+  // 默认走经典版以保兼容；用户可随时切到 Lens 预览体验，不影响原视图。
+  const [requestVariant, setRequestVariant] = useState<"classic" | "lens">("classic");
 
   return (
     <div>
       {/* Request / Response 子 tab */}
-      <div style={{ marginBottom: 10 }}>
+      <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <SegmentedToggle<AttributionSide>
           value={side}
           onChange={setSide}
@@ -4395,10 +4400,27 @@ function AttributionSection({
             { id: "response", label: t("attribution.response") },
           ]}
         />
+        {side === "request" && (
+          <SegmentedToggle<"classic" | "lens">
+            value={requestVariant}
+            onChange={setRequestVariant}
+            align="start"
+            size="sm"
+            variant="soft"
+            options={[
+              { id: "classic", label: "经典", title: "原 Audit 过滤视图（默认）" },
+              { id: "lens",    label: "Lens 预览", title: "多视角切换（来源 / 缓存 / Audit）" },
+            ]}
+          />
+        )}
       </div>
 
       {side === "request" ? (
-        <AttributionTreePanel sessionId={sessionId} callId={call.id} onLinkSource={onLinkSource} />
+        requestVariant === "lens" ? (
+          <AttributionTreeLensPanel sessionId={sessionId} callId={call.id} onLinkSource={onLinkSource} />
+        ) : (
+          <AttributionTreePanel sessionId={sessionId} callId={call.id} onLinkSource={onLinkSource} />
+        )
       ) : (
         <ResponseTreePanel
           sessionId={sessionId}

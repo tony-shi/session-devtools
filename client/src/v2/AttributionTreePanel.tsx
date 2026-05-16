@@ -27,9 +27,12 @@ import { CodeBlock } from "./shared/CodeBlock";
 
 // ─── 类型与配色 ─────────────────────────────────────────────────────────────
 
-type SectionId = "system" | "tools" | "messages" | "other";
+// NOTE: 这些类型 / 颜色 / 工具函数 / 子组件原本是 module-private 的；现在导出供
+// 旁路的 AttributionTreeLensPanel 复用。本 AttributionTreePanel 的行为完全不变。
 
-interface SectionMeta {
+export type SectionId = "system" | "tools" | "messages" | "other";
+
+export interface SectionMeta {
   label: string;
   barBg: string;
   barText: string;
@@ -38,7 +41,7 @@ interface SectionMeta {
   textColor: string;
 }
 
-const SECTION_META: Record<SectionId, SectionMeta> = {
+export const SECTION_META: Record<SectionId, SectionMeta> = {
   system:   { label: "System",   barBg: "#bfdbfe", barText: "#1e3a8a", rowBg: "#eff6ff", marker: "#3b82f6", textColor: "#1e40af" },
   tools:    { label: "Tools",    barBg: "#3b82f6", barText: "#fff",    rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1e40af" },
   messages: { label: "Messages", barBg: "#a78bfa", barText: "#fff",    rowBg: "#f5f3ff", marker: "#8b5cf6", textColor: "#5b21b6" },
@@ -49,27 +52,27 @@ const SECTION_META: Record<SectionId, SectionMeta> = {
 // unknown 统一用「加重一号」的灰，与可解释段落明显区分。
 const UNKNOWN_FILL = "#9ca3af";
 
-function leafFill(leaf: { origin: SegmentOrigin; rootSlotType: string }): string {
+export function leafFill(leaf: { origin: SegmentOrigin; rootSlotType: string }): string {
   if (leaf.origin.kind === "unknown") return UNKNOWN_FILL;
   return SECTION_META[sectionOf(leaf.rootSlotType)].barBg;
 }
 
 // ─── 工具函数 ────────────────────────────────────────────────────────────────
 
-function sectionOf(slotType: string): SectionId {
+export function sectionOf(slotType: string): SectionId {
   if (slotType.startsWith("system.") || slotType === "side-query.system") return "system";
   if (slotType.startsWith("tools.")) return "tools";
   if (slotType.startsWith("messages.") || slotType === "side-query.user") return "messages";
   return "other";
 }
 
-function fmtK(n: number): string {
+export function fmtK(n: number): string {
   if (n < 1000) return String(n);
   if (n < 10000) return (n / 1000).toFixed(1) + "k";
   return Math.round(n / 1000) + "k";
 }
 
-function shortSlot(slotType: string): string {
+export function shortSlot(slotType: string): string {
   return slotType
     .replace("system.main-prompt.section.", "sys.")
     .replace("system.main-prompt-block", "sys.main")
@@ -77,7 +80,7 @@ function shortSlot(slotType: string): string {
     .replace("tools.builtin.", "tool.");
 }
 
-function originLabel(origin: SegmentOrigin): string {
+export function originLabel(origin: SegmentOrigin): string {
   if (origin.kind === "rule") {
     return origin.ruleId.startsWith("wire.") ? `wire · ${origin.ruleId.slice(5)}` : origin.ruleId;
   }
@@ -91,7 +94,7 @@ function originLabel(origin: SegmentOrigin): string {
 
 // ─── 派生数据：current snapshot → leaves（按 section 分组）────────────────────
 
-interface LeafLite {
+export interface LeafLite {
   nodeId: string;
   slotType: string;
   rootSlotType: string;
@@ -100,9 +103,11 @@ interface LeafLite {
   origin: SegmentOrigin;
   rawText?: string;
   messageRole?: "user" | "assistant" | "system";
+  // Cache 视角需要：节点缓存策略。来自 SerializedNode.cachePolicy（可选）。
+  cachePolicy?: { ttl: "5m" | "1h"; scope: "org" | "global" };
 }
 
-function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
+export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
   if (!result.snapshot) return [];
   const out: LeafLite[] = [];
   function visit(node: SerializedNode, rootSlot: string) {
@@ -116,6 +121,7 @@ function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
         origin: node.origin,
         rawText: node.rawText,
         ...(node.wireMeta?.messageRole && { messageRole: node.wireMeta.messageRole }),
+        ...(node.cachePolicy && { cachePolicy: node.cachePolicy }),
       });
       return;
     }
@@ -125,7 +131,7 @@ function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
   return out;
 }
 
-interface SectionStat {
+export interface SectionStat {
   id: SectionId;
   totalChars: number;
   leafCount: number;
@@ -134,7 +140,7 @@ interface SectionStat {
   toolCount?: number;
 }
 
-function computeSectionStats(leaves: LeafLite[]): SectionStat[] {
+export function computeSectionStats(leaves: LeafLite[]): SectionStat[] {
   const map = new Map<SectionId, LeafLite[]>();
   for (const l of leaves) {
     const id = sectionOf(l.rootSlotType);
@@ -299,12 +305,15 @@ type LayoutMode = "proportional" | "equal";
 /** 过载阈值：最窄段 < 此像素值时认为「太密」，提示用户改用 table */
 const OVERLOAD_MIN_BAR_PX = 1.5;
 
-function LeafStrip({
-  leaves, selectedId, onSelect,
+export function LeafStrip({
+  leaves, selectedId, onSelect, getColor,
 }: {
   leaves: LeafLite[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** Optional override — Lens panel passes lens-based color; default uses
+   *  leafFill (section-based). */
+  getColor?: (leaf: LeafLite) => string;
 }) {
   const { t } = useTranslation();
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("proportional");
@@ -353,7 +362,7 @@ function LeafStrip({
           minCount=5 让 attribution leaves 天然开启鱼眼。 */}
       <FisheyeStrip<LeafItem>
         items={items}
-        getColor={(it) => leafFill(it.leaf)}
+        getColor={(it) => getColor ? getColor(it.leaf) : leafFill(it.leaf)}
         getLabel={(it) => shortSlot(it.leaf.slotType)}
         getTitle={(it) => `${shortSlot(it.leaf.slotType)} · ${fmtK(it.leaf.charCount)} chars · ${originLabel(it.leaf.origin)}`}
         height={SUB_BAR_HEIGHT}
@@ -435,12 +444,15 @@ function SectionTable({
   );
 }
 
-function LeafTable({
-  leaves, selectedId, onSelect,
+export function LeafTable({
+  leaves, selectedId, onSelect, getColor,
 }: {
   leaves: LeafLite[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** Optional override — Lens panel passes lens-based color; default uses
+   *  leafFill (section-based). */
+  getColor?: (leaf: LeafLite) => string;
 }) {
   const total = leaves.reduce((s, l) => s + l.charCount, 0);
   // 选中后只显示该 leaf 行，其他兄弟不再列出（避免与 SelectedDetail 重复信息）
@@ -450,7 +462,7 @@ function LeafTable({
       {visibleLeaves.map((l) => {
         const pct = total > 0 ? (l.charCount / total) * 100 : 0;
         const isSel = selectedId === l.nodeId;
-        const fill = leafFill(l);
+        const fill = getColor ? getColor(l) : leafFill(l);
         return (
           <button
             key={l.nodeId}
@@ -484,7 +496,7 @@ function LeafTable({
 
 // ─── 叶子详情 ───────────────────────────────────────────────────────────────
 
-function SelectedDetail({ leaf, onLinkSource }: {
+export function SelectedDetail({ leaf, onLinkSource }: {
   leaf: LeafLite;
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
 }) {

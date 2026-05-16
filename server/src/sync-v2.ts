@@ -2,7 +2,6 @@ import { statSync } from "fs";
 import { getDb, serializeWrite } from "./db.ts";
 import { discoverFiles } from "./sync.ts";
 import { PARSERS_V2, PARSER_VERSION, type SessionMetaV2 } from "./parsers-v2/index.ts";
-import { clearDaySliceCache } from "./day-slice.ts";
 
 // ── Prepared statements (hoisted to avoid re-compilation per file) ────────────
 
@@ -157,8 +156,6 @@ export async function runSyncV2(files?: { tool: string; path: string }[]): Promi
       errors++;
     }
   }
-
-  if (synced > 0) clearDaySliceCache();
 
   return {
     synced,
