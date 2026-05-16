@@ -86,8 +86,7 @@ session-devtools
 
 ```text
 Use a subagent to inspect this repository and answer one question:
-What are the three files most responsible for turning a raw Claude Code session
-into the call-level drilldown UI?
+What are the three most important files in this codebase, and why?
 
 Do not edit files. The subagent should return file paths and one-sentence reasons.
 After it returns, summarize the answer in a short table.
