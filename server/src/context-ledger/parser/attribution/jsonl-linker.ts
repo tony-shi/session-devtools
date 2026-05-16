@@ -52,8 +52,15 @@ export interface LinkableJsonlEvent {
   ts?: string;
   /** assistant 事件携带的 tool_use blocks（用于 #1 匹配）。 */
   toolUses?: Array<{ id: string; name?: string }>;
-  /** user 事件携带的 tool_result blocks（用于 #2 匹配）。 */
-  toolResults?: Array<{ toolUseId: string; contentText: string }>;
+  /**
+   * user 事件携带的 tool_result blocks（用于 #2 匹配）。
+   *
+   * `toolReferenceNames` 仅在该 tool_result 的 content 是结构化数组、且其中有
+   * `{type:'tool_reference', tool_name}` 子块时填充 —— Tool Search beta 路径的
+   * 副产物。downstream 通过它把 reqBody 里被 API normalize 合成出来的
+   * `Tool loaded.` 边界文本回链到这条 jsonl 事件（见 #8）。
+   */
+  toolResults?: Array<{ toolUseId: string; contentText: string; toolReferenceNames?: string[] }>;
   /** user 事件的人类输入文本（isHumanInput=true 时填写，用于 #3 匹配）。 */
   userText?: string;
   /**
@@ -113,6 +120,16 @@ interface JsonlIndex {
   toolUseEventById: Map<string, LinkableJsonlEvent>;
   /** tool_use_id → 含该 tool_result 的 user 事件（首次出现）。 */
   toolResultEventById: Map<string, { event: LinkableJsonlEvent; contentText: string }>;
+  /**
+   * 含 tool_reference 子块的 tool_result 事件（按 lineIdx 升序）。每个 entry
+   * 记下触发它的 tool_use_id 与被加载进上下文的 MCP tool 名字 —— 用于把 reqBody
+   * 里 API normalize 合成的 `Tool loaded.` 边界文本叶子回链到这条 jsonl 行。
+   */
+  toolReferenceBoundaryEvents: Array<{
+    event: LinkableJsonlEvent;
+    toolUseId: string;
+    names: string[];
+  }>;
   /** 按 lineIdx 升序的所有 user (isHumanInput) 事件。 */
   userInputEvents: LinkableJsonlEvent[];
   /** userText (normalized) → 事件，便于 O(1) 内容匹配。与 assistantTextIndex 同构。 */
@@ -136,6 +153,11 @@ interface JsonlIndex {
 function buildIndex(events: LinkableJsonlEvent[]): JsonlIndex {
   const toolUseEventById = new Map<string, LinkableJsonlEvent>();
   const toolResultEventById = new Map<string, { event: LinkableJsonlEvent; contentText: string }>();
+  const toolReferenceBoundaryEvents: Array<{
+    event: LinkableJsonlEvent;
+    toolUseId: string;
+    names: string[];
+  }> = [];
   const userInputEvents: LinkableJsonlEvent[] = [];
   const userInputTextIndex = new Map<string, LinkableJsonlEvent>();
   const commandTextEvents: LinkableJsonlEvent[] = [];
@@ -156,6 +178,13 @@ function buildIndex(events: LinkableJsonlEvent[]): JsonlIndex {
       for (const tr of ev.toolResults) {
         if (!toolResultEventById.has(tr.toolUseId)) {
           toolResultEventById.set(tr.toolUseId, { event: ev, contentText: tr.contentText });
+        }
+        if (tr.toolReferenceNames && tr.toolReferenceNames.length > 0) {
+          toolReferenceBoundaryEvents.push({
+            event: ev,
+            toolUseId: tr.toolUseId,
+            names: tr.toolReferenceNames,
+          });
         }
       }
     }
@@ -205,8 +234,9 @@ function buildIndex(events: LinkableJsonlEvent[]): JsonlIndex {
   userInputEvents.sort((a, b) => a.lineIdx - b.lineIdx);
   commandTextEvents.sort((a, b) => a.lineIdx - b.lineIdx);
   assistantEvents.sort((a, b) => a.lineIdx - b.lineIdx);
+  toolReferenceBoundaryEvents.sort((a, b) => a.event.lineIdx - b.event.lineIdx);
 
-  return { toolUseEventById, toolResultEventById, userInputEvents, userInputTextIndex, commandTextEvents, commandTextIndex, assistantEvents, assistantTextIndex, attachmentEventsByType, userImageEventByDigest, thinkingEventBySignature };
+  return { toolUseEventById, toolResultEventById, userInputEvents, userInputTextIndex, commandTextEvents, commandTextIndex, assistantEvents, assistantTextIndex, attachmentEventsByType, userImageEventByDigest, thinkingEventBySignature, toolReferenceBoundaryEvents };
 }
 
 // 文本匹配时统一规范化（trim + 折叠连续空白）。
@@ -630,6 +660,76 @@ function sha256First16(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
 }
 
+// ─── #8 Tool-reference turn boundary link ───────────────────────────────────
+//
+// Claude Code 在 API normalize 阶段（restored-src/src/utils/messages.ts:2159-2185）
+// 给含 tool_reference 子块的 user 消息追加一个合成 text block `Tool loaded.`
+// （feature gate tengu_toolref_defer_j8m OFF 时；ON 时改走 relocateToolReferenceSiblings）。
+//
+// 这条 text 不在 jsonl 里（jsonl 只记真实事件），但**因**在 jsonl 里：触发它的
+// 那条 user 事件含 tool_result，其 content 数组里有 tool_reference 块（来自
+// ToolSearch tool_use 的结果，由 attribution-service.extractToolResultsFromUser
+// 抽出 toolReferenceNames 字段）。
+//
+// 这里把 reqBody 里的 `Tool loaded.` 文本叶子按 chronology 顺序回链到 jsonl 那
+// 条 tool_result 行 —— origin.kind="jsonl"、eventKind.source="tool_result"，
+// 让 forward audit 不再把它丢进 unknown 桶，同时归因证据完全来自 jsonl，不是
+// proxy 先验。
+
+/** `Tool loaded.` 文本块的字面正则。可带 appendMessageTag 注入的 [id:xxx] 尾标。 */
+const TOOL_REFERENCE_BOUNDARY_RE = /^Tool loaded\.(?:\n\[id:[^\]\n]+\])?$/;
+
+function isToolReferenceBoundaryLeaf(node: SegmentNode): boolean {
+  if (node.children.length > 0) return false;
+  if (node.wireMeta?.messageRole !== "user") return false;
+  if (!isUserInputLikeSlot(node.slotType)) return false;
+  // 前面的 linker 已经把这个叶子链到 jsonl（罕见但理论可能：用户真打字打了
+  // `Tool loaded.`）→ 不覆盖，保留 deterministic content-equality 命中。
+  if (node.origin.kind === "jsonl") return false;
+  return TOOL_REFERENCE_BOUNDARY_RE.test(node.rawText);
+}
+
+function linkToolReferenceBoundaryNodes(
+  snapshot: ParsedQuerySnapshot,
+  index: JsonlIndex,
+  ctx: CallContext,
+): number {
+  // 全 0 早退：常见 session（无 ToolSearch）这里直接 noop。
+  if (index.toolReferenceBoundaryEvents.length === 0) return 0;
+
+  // 收集 reqBody 里所有候选叶子。snapshot.index 的迭代顺序与 node.id 生成顺序
+  // 一致，对每个 message 内部按 path 自顶向下，整体上等价于 reqBody 文档序 ——
+  // 与 jsonl 按 lineIdx 排序的 boundary 队列一一对齐做配对即可。
+  const candidates: SegmentNode[] = [];
+  for (const node of Object.values(snapshot.index)) {
+    if (isToolReferenceBoundaryLeaf(node)) candidates.push(node);
+  }
+  if (candidates.length === 0) return 0;
+
+  // 按 lineIdx 队列消费：第 i 个候选 ↔ 第 i 个 boundary 事件。多/少都按 min 配。
+  const pairCount = Math.min(candidates.length, index.toolReferenceBoundaryEvents.length);
+  for (let i = 0; i < pairCount; i++) {
+    const node = candidates[i];
+    const hit = index.toolReferenceBoundaryEvents[i];
+    node.origin = buildJsonlOrigin({
+      // source=tool_result：归因证据指向那条含 tool_reference 子块的 tool_result
+      // 事件（line=hit.event.lineIdx）。这条 jsonl 事件本身已被 #2 linkToolResultNode
+      // 解释；此处复用它作为 boundary 文本的"因果上游"。
+      eventKind: { source: "tool_result" },
+      event: hit.event,
+      fallbackCallId: ctx.callId,
+      fallbackTurnId: ctx.turnId,
+      toolUseId: hit.toolUseId,
+      confidence: "definitive",
+      // 整段文本字面就是 `Tool loaded.`(+ optional id tag)；rule 没有对应规则，
+      // jsonl 没有原文，但归因机制是结构性确定（ToolSearch tool_result → API
+      // normalize 注入），故仍标 fullyCovered=true 进 full.byOrigin.jsonl。
+      fullyCovered: true,
+    });
+  }
+  return pairCount;
+}
+
 // ─── 顶层入口 ────────────────────────────────────────────────────────────────
 
 export interface LinkJsonlReport {
@@ -645,6 +745,8 @@ export interface LinkJsonlReport {
     smooshSegment: number;
     userImage: number;
     thinking: number;
+    /** API normalize 合成的 `Tool loaded.` 边界文本叶子被回链到 jsonl tool_result 行的数量。 */
+    toolReferenceBoundary: number;
   };
   totalLeaves: number;
 }
@@ -662,7 +764,7 @@ export function linkJsonl(
 ): LinkJsonlReport {
   const index = buildIndex(events);
   const report: LinkJsonlReport = {
-    matched: { toolUse: 0, toolResult: 0, toolResultLeftover: 0, userInput: 0, commandText: 0, assistantText: 0, smooshSegment: 0, userImage: 0, thinking: 0 },
+    matched: { toolUse: 0, toolResult: 0, toolResultLeftover: 0, userInput: 0, commandText: 0, assistantText: 0, smooshSegment: 0, userImage: 0, thinking: 0, toolReferenceBoundary: 0 },
     totalLeaves: 0,
   };
 
@@ -748,6 +850,11 @@ export function linkJsonl(
     });
     report.matched.toolResultLeftover += 1;
   }
+
+  // #8：Tool-reference turn boundary —— Claude Code API normalize 合成的
+  // `Tool loaded.` 文本回链到 jsonl 里同源的 tool_result 行。放在末尾 post-pass，
+  // 不与前面 deterministic linker 抢候选；只覆盖 origin.kind !== "jsonl" 的剩余叶。
+  report.matched.toolReferenceBoundary += linkToolReferenceBoundaryNodes(snapshot, index, ctx);
 
   return report;
 }

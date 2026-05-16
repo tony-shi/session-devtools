@@ -175,3 +175,57 @@ describe("PR 2 — attributeSnapshot 原地写 origin", () => {
     }
   });
 });
+
+// Tone-style section 在 wire 上有两种字节形态（cc_version 决定）：
+//   - 2.1.142+：cache 切点放在 Nm3 之后，section 落到 system block 末尾，splitByH1Headers 切出 = 555B
+//   - 2.1.140-：多 section 用 `\n\n` 拼到同一个 block，splitByH1Headers 把后续 `\n\n` 划入本段 = 557B
+// rule 用 regex + 尾部 `\s*$` 两个版本都命中。这条 case 锁定两种形态都识别为 rule。
+describe("tone-style rule — cc_version 版本兼容", () => {
+  const TONE_LITERAL =
+    "# Tone and style\n" +
+    " - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.\n" +
+    " - Your responses should be short and concise.\n" +
+    " - When referencing specific functions or pieces of code include the pattern file_path:line_number to allow the user to easily navigate to the source code location.\n" +
+    " - Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like \"Let me read the file:\" followed by a read tool call should just be \"Let me read the file.\" with a period.";
+
+  function reqWithToneSection(toneSuffix: string) {
+    return {
+      system: [
+        { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
+        {
+          type: "text" as const,
+          // 至少一个 prelude/前置 section，让 splitByH1Headers 把 tone-style 当作一个独立 H1。
+          text: "Prelude line.\n\n" + TONE_LITERAL + toneSuffix,
+        },
+      ],
+      tools: [{ name: "Read", description: "Read a file", input_schema: {} }],
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    };
+  }
+
+  it("2.1.142+ 形态（555B，无尾换行）→ rule 命中且 fullyCovered", () => {
+    const snap = parseQuery({ reqBody: reqWithToneSection(""), proxyFile: "t.json" });
+    attributeSnapshot(snap);
+    const tone = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt.section.tone-style");
+    expect(tone).toBeDefined();
+    expect(tone!.charCount).toBe(555);
+    expect(tone!.origin.kind).toBe("rule");
+    if (tone!.origin.kind === "rule") {
+      expect(tone!.origin.ruleId).toBe("claude-code.system-prompt-tone-style.external.v1");
+      expect(tone!.origin.fullyCovered).toBe(true);
+    }
+  });
+
+  it("2.1.140- 形态（557B，尾 \\n\\n 划入本段）→ 同一条 rule 仍命中且 fullyCovered", () => {
+    const snap = parseQuery({ reqBody: reqWithToneSection("\n\n"), proxyFile: "t.json" });
+    attributeSnapshot(snap);
+    const tone = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt.section.tone-style");
+    expect(tone).toBeDefined();
+    expect(tone!.charCount).toBe(557);
+    expect(tone!.origin.kind).toBe("rule");
+    if (tone!.origin.kind === "rule") {
+      expect(tone!.origin.ruleId).toBe("claude-code.system-prompt-tone-style.external.v1");
+      expect(tone!.origin.fullyCovered).toBe(true);
+    }
+  });
+});

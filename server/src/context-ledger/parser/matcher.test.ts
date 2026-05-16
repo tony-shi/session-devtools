@@ -178,3 +178,68 @@ describe("Step 4 — image jsonl-linker", () => {
     }
   });
 });
+
+// Opus 4.7 风格的 redacted thinking：thinking 字段空串、signature 携带密文。
+// 这种块在 wire 上确实占字节、确实计 prompt input token，不应在 attribution 里
+// 显示为 0 chars。matcher 把 signature 落进 rawText，让 charCount 反映真实占用，
+// 同时通过 wireMeta.thinkingSignature 保留 join key。
+describe("matcher — redacted thinking (Opus 4.7 风格)", () => {
+  function makeReqBodyWithRedactedThinking(signature: string) {
+    return {
+      tools: [{ name: "Read", description: "Read a file", input_schema: {} }],
+      messages: [
+        { role: "user", content: [{ type: "text", text: "继续" }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "", signature },
+            { type: "text", text: "ok" },
+          ],
+        },
+      ],
+    };
+  }
+
+  it("thinking 字段为空、signature 非空时 → rawText = signature，charCount = signature.length", () => {
+    const sig = "EskCClkIDRgC" + "x".repeat(436);
+    const { snapshot } = attributeWithJsonl({
+      reqBody: makeReqBodyWithRedactedThinking(sig),
+      proxyFile: "t.json",
+      jsonl: [],
+      call: { callId: 1, turnId: 2 },
+    });
+
+    const node = Object.values(snapshot.index).find((n) => n.slotType === "messages.thinking");
+    expect(node).toBeDefined();
+    expect(node!.rawText).toBe(sig);
+    expect(node!.charCount).toBe(sig.length);
+    expect(node!.wireMeta?.thinkingSignature).toBe(sig);
+  });
+
+  it("老 Sonnet 风格（thinking 非空）→ rawText 仍是思考正文，行为不变", () => {
+    const reqBody = {
+      tools: [{ name: "Read", description: "Read a file", input_schema: {} }],
+      messages: [
+        { role: "user", content: [{ type: "text", text: "继续" }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "let me think about this", signature: "sig-xyz" },
+            { type: "text", text: "ok" },
+          ],
+        },
+      ],
+    };
+    const { snapshot } = attributeWithJsonl({
+      reqBody,
+      proxyFile: "t.json",
+      jsonl: [],
+      call: { callId: 1, turnId: 2 },
+    });
+
+    const node = Object.values(snapshot.index).find((n) => n.slotType === "messages.thinking");
+    expect(node).toBeDefined();
+    expect(node!.rawText).toBe("let me think about this");
+    expect(node!.wireMeta?.thinkingSignature).toBe("sig-xyz");
+  });
+});

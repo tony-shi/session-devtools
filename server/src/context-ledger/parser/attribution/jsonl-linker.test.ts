@@ -653,3 +653,137 @@ describe("PR 3 — jsonl-linker", () => {
     }
   });
 });
+
+describe("PR 3 — #8 tool-reference turn boundary (`Tool loaded.`)", () => {
+  // 模拟 Tool Search beta 流程：
+  //   1) assistant 一次 ToolSearch tool_use（jsonl line 10）
+  //   2) user tool_result 携带 tool_reference 子块（jsonl line 11）
+  //   3) Claude Code 在 API normalize 时给同一 user 消息追加 `Tool loaded.` text
+  //      block（reqBody 看到，但 jsonl 没有）
+  function makeBoundaryFixture() {
+    const toolUseId = "toolu_search_42";
+    const reqBody = {
+      system: [
+        { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
+        { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
+      ],
+      tools: [{ name: "ToolSearch", description: "Search tools", input_schema: {} }],
+      messages: [
+        { role: "user", content: [{ type: "text", text: "请帮我找几个 task 工具" }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: toolUseId, name: "ToolSearch", input: { query: "task" } },
+          ],
+        },
+        {
+          // tool_result + 末尾被 normalize 追加的 Tool loaded.
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: toolUseId,
+              content: [
+                { type: "tool_reference", tool_name: "TaskCreate" },
+                { type: "tool_reference", tool_name: "TaskUpdate" },
+              ],
+            },
+            { type: "text", text: "Tool loaded." },
+          ],
+        },
+      ],
+    };
+    const events: LinkableJsonlEvent[] = [
+      { lineIdx: 9, type: "user", userText: "请帮我找几个 task 工具" },
+      { lineIdx: 10, type: "assistant", toolUses: [{ id: toolUseId, name: "ToolSearch" }] },
+      {
+        lineIdx: 11,
+        type: "user",
+        toolResults: [
+          {
+            toolUseId,
+            contentText: "",
+            toolReferenceNames: ["TaskCreate", "TaskUpdate"],
+          },
+        ],
+      },
+    ];
+    return { reqBody, events, toolUseId };
+  }
+
+  it("`Tool loaded.` 文本叶子 → JsonlOrigin(source=tool_result, toolUseId, jsonlLineIdx=11)", () => {
+    const fx = makeBoundaryFixture();
+    const { snapshot, linkReport } = attributeWithJsonl({
+      reqBody: fx.reqBody,
+      proxyFile: "t.json",
+      jsonl: fx.events,
+      call: { callId: 1, turnId: 1 },
+    });
+    expect(linkReport.matched.toolReferenceBoundary).toBe(1);
+
+    const boundary = Object.values(snapshot.index).find(
+      (n) =>
+        n.wireMeta?.messageRole === "user" &&
+        n.children.length === 0 &&
+        n.rawText === "Tool loaded.",
+    );
+    expect(boundary?.origin.kind).toBe("jsonl");
+    if (boundary?.origin.kind === "jsonl") {
+      expect(boundary.origin.eventKind.source).toBe("tool_result");
+      expect(boundary.origin.toolUseId).toBe(fx.toolUseId);
+      expect(boundary.origin.jsonlLineIdx).toBe(11);
+      expect(boundary.origin.fullyCovered).toBe(true);
+      expect(boundary.origin.confidence).toBe("definitive");
+    }
+  });
+
+  it("appendMessageTag 加 `[id:xxx]` 尾标的 `Tool loaded.` 也能命中", () => {
+    const fx = makeBoundaryFixture();
+    // 改写 reqBody 里 Tool loaded text 为带尾标形态
+    const msgs = fx.reqBody.messages;
+    const tooledMsg = msgs[2] as { content: Array<{ type: string; text?: string }> };
+    tooledMsg.content[1].text = "Tool loaded.\n[id:a1b2c3]";
+
+    const { snapshot, linkReport } = attributeWithJsonl({
+      reqBody: fx.reqBody,
+      proxyFile: "t.json",
+      jsonl: fx.events,
+      call: { callId: 1, turnId: 1 },
+    });
+    expect(linkReport.matched.toolReferenceBoundary).toBe(1);
+
+    const boundary = Object.values(snapshot.index).find(
+      (n) =>
+        n.wireMeta?.messageRole === "user" &&
+        n.children.length === 0 &&
+        n.rawText === "Tool loaded.\n[id:a1b2c3]",
+    );
+    expect(boundary?.origin.kind).toBe("jsonl");
+  });
+
+  it("jsonl 完全没有 tool_reference 事件时不误链 `Tool loaded.` 字面叶子", () => {
+    const fx = makeBoundaryFixture();
+    // 砍掉 tool_reference 信息：toolResults 还在，但 toolReferenceNames 缺失
+    const events = fx.events.map((ev) =>
+      ev.toolResults
+        ? { ...ev, toolResults: ev.toolResults.map(({ toolReferenceNames: _, ...rest }) => rest) }
+        : ev,
+    );
+    const { snapshot, linkReport } = attributeWithJsonl({
+      reqBody: fx.reqBody,
+      proxyFile: "t.json",
+      jsonl: events,
+      call: { callId: 1, turnId: 1 },
+    });
+    expect(linkReport.matched.toolReferenceBoundary).toBe(0);
+
+    const boundary = Object.values(snapshot.index).find(
+      (n) =>
+        n.wireMeta?.messageRole === "user" &&
+        n.children.length === 0 &&
+        n.rawText === "Tool loaded.",
+    );
+    // 没有 jsonl 证据 → 保持非 jsonl origin（structural / no_rule）
+    expect(boundary?.origin.kind).not.toBe("jsonl");
+  });
+});

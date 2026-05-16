@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import type { SummaryV2 } from "./types";
 import { TOKEN_METRICS } from "./metricRegistry";
 import { HeaderStatRow, TokenLedgerInline } from "./shared/HeaderStats";
+import { CacheFormulaBox } from "./shared/CacheFormulaBox";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -89,8 +90,13 @@ export function SummaryCardsV2({ data, loading }: Props) {
           <div style={{ width: 1, background: "#f3f4f6" }} />
 
           {/* Right: token ledger — also flex:1 so the row balances 50/50 with
-              room for the bar to breathe; shrinks naturally on narrow widths */}
-          <div style={{ flex: "1 1 50%", minWidth: 0 }}>
+              room for the bar to breathe; shrinks naturally on narrow widths.
+              Formula toggle sits below the ledger; folded by default so the
+              dashboard's compact rhythm is preserved. */}
+          <div style={{
+            flex: "1 1 50%", minWidth: 0,
+            display: "flex", flexDirection: "column", gap: 6,
+          }}>
             <TokenLedgerInline
               noTopPadding
               freshIn={freshIn}
@@ -98,6 +104,11 @@ export function SummaryCardsV2({ data, loading }: Props) {
               cacheWrite={cacheWrite}
               output={output}
               cacheRatio={cacheRatio}
+            />
+            <CacheFormulaBox
+              freshIn={freshIn}
+              cacheRead={cacheRead}
+              cacheWrite={cacheWrite}
             />
           </div>
         </div>

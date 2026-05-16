@@ -85,7 +85,11 @@ export function originLabel(origin: SegmentOrigin): string {
     return origin.ruleId.startsWith("wire.") ? `wire · ${origin.ruleId.slice(5)}` : origin.ruleId;
   }
   if (origin.kind === "jsonl") {
-    return `${origin.eventKind} @L${origin.jsonlLineIdx}` +
+    const ek = origin.eventKind;
+    const kindStr = ek.contentType && ek.contentType !== "text"
+      ? `${ek.source}:${ek.contentType}`
+      : ek.source;
+    return `${kindStr} @L${origin.jsonlLineIdx}` +
       (origin.sourceCallId !== undefined ? ` · call #${origin.sourceCallId}` : "");
   }
   if (origin.kind === "structural") return `slot · ${origin.reason}`;

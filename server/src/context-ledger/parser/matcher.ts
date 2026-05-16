@@ -168,8 +168,17 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
         // 跨 turn 1:1 稳定 —— 用作 jsonl-linker 的 deterministic join key。
         const sig = (blk as { signature?: string; data?: string }).signature
           ?? (blk as { signature?: string; data?: string }).data;
+        // Opus 4.7 thinking 在 wire 上是 `{ thinking: "", signature: "<base64>" }`：
+        // 思考正文服务端 redacted，但 signature 是真实占 prompt input token 的 wire 字节。
+        // 用 thinking || signature 作 rawText 是为了：
+        //   1) charCount 反映该块在 request body 真实占的字节数（不再误报 0）；
+        //   2) detail panel 仍能看到完整 signature 字符串（保留 raw 能力）。
+        // 老 Sonnet 风格（thinking 字段非空）走前支，行为不变。
+        // jsonl-linker 用 wireMeta.thinkingSignature 做 join，不依赖 rawText —— 安全。
         const text = blk.type === "thinking"
-          ? ((blk as { thinking?: string }).thinking ?? "")
+          ? ((blk as { thinking?: string }).thinking
+              || (blk as { signature?: string }).signature
+              || "")
           : ((blk as { data?: string }).data ?? "");
         out.push({
           slotType: "messages.thinking",

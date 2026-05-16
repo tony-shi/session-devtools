@@ -353,20 +353,34 @@ function extractAssistantToolUses(content: unknown): Array<{ id: string; name?: 
     .map((b) => ({ id: b.id!, ...(b.name && { name: b.name }) }));
 }
 
-function extractToolResultsFromUser(content: unknown): Array<{ toolUseId: string; contentText: string }> {
+function extractToolResultsFromUser(
+  content: unknown,
+): Array<{ toolUseId: string; contentText: string; toolReferenceNames?: string[] }> {
   if (!Array.isArray(content)) return [];
-  const out: Array<{ toolUseId: string; contentText: string }> = [];
+  const out: Array<{ toolUseId: string; contentText: string; toolReferenceNames?: string[] }> = [];
   for (const b of content as Array<{ type?: string; tool_use_id?: string; content?: unknown }>) {
     if (b?.type !== "tool_result" || !b?.tool_use_id) continue;
     let text = "";
+    const toolReferenceNames: string[] = [];
     if (typeof b.content === "string") text = b.content;
     else if (Array.isArray(b.content)) {
-      text = (b.content as Array<{ type?: string; text?: string }>)
-        .filter((c) => c?.type === "text" && typeof c?.text === "string")
-        .map((c) => c.text ?? "")
-        .join("");
+      for (const c of b.content as Array<{ type?: string; text?: string; tool_name?: string }>) {
+        if (c?.type === "text" && typeof c?.text === "string") {
+          text += c.text;
+        } else if (c?.type === "tool_reference" && typeof c?.tool_name === "string") {
+          // ToolSearchTool 返回的 tool_reference 子块：每个对应一个被 defer-load
+          // 进上下文的 MCP 工具名。Claude Code 在 API normalize 阶段会在同一条
+          // user 消息末尾追加 `text:'Tool loaded.'`（restored-src/src/utils/messages.ts:2159），
+          // jsonl-linker 用这里抽出的 tool_name 列表把那条合成文本回链回来。
+          toolReferenceNames.push(c.tool_name);
+        }
+      }
     }
-    out.push({ toolUseId: b.tool_use_id, contentText: text });
+    out.push({
+      toolUseId: b.tool_use_id,
+      contentText: text,
+      ...(toolReferenceNames.length > 0 && { toolReferenceNames }),
+    });
   }
   return out;
 }
@@ -502,9 +516,11 @@ export function readSessionEventsForLinker(sourceFile: string): LinkableJsonlEve
 
 function serializeNode(node: SegmentNode): SerializedNode {
   const isLeaf = node.children.length === 0;
-  const previewText = node.rawText.length > 200
-    ? node.rawText.replace(/\s+/g, " ").trim().slice(0, 197) + "..."
-    : node.rawText;
+  const redactedThinkingPreview = redactedThinkingPreviewOf(node);
+  const previewText = redactedThinkingPreview
+    ?? (node.rawText.length > 200
+      ? node.rawText.replace(/\s+/g, " ").trim().slice(0, 197) + "..."
+      : node.rawText);
   return {
     id: node.id,
     slotType: node.slotType,
@@ -524,16 +540,30 @@ function serializeNode(node: SegmentNode): SerializedNode {
 }
 
 function serializeSummary(node: SegmentNode): SerializedNodeSummary {
+  const redactedThinkingPreview = redactedThinkingPreviewOf(node);
   return {
     id: node.id,
     slotType: node.slotType,
     charCount: node.charCount,
-    preview: node.rawText.length > 80
-      ? node.rawText.replace(/\s+/g, " ").trim().slice(0, 77) + "..."
-      : node.rawText.replace(/\s+/g, " ").trim(),
+    preview: redactedThinkingPreview
+      ?? (node.rawText.length > 80
+        ? node.rawText.replace(/\s+/g, " ").trim().slice(0, 77) + "..."
+        : node.rawText.replace(/\s+/g, " ").trim()),
     ...(node.parentId && { parentId: node.parentId }),
     origin: node.origin,
   };
+}
+
+// Opus 4.7 redacted thinking：matcher 把 signature 落进 rawText（让 charCount 反映
+// 真实 wire 占用字节），但 signature 是 base64 密文，作为预览毫无可读性。
+// 此处仅在 preview 字段把它替换为 "<redacted thinking · N bytes>" 状态描述；
+// rawText 本身保持不变 —— 详情面板点开仍能看到完整 signature。
+function redactedThinkingPreviewOf(node: SegmentNode): string | null {
+  if (node.slotType !== "messages.thinking") return null;
+  const sig = node.wireMeta?.thinkingSignature;
+  if (!sig) return null;
+  if (node.rawText !== sig) return null;
+  return `<redacted thinking · ${sig.length} bytes>`;
 }
 
 function serializeSnapshot(snapshot: ParsedQuerySnapshot): SerializedSnapshot {

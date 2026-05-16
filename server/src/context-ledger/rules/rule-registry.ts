@@ -474,13 +474,19 @@ export const CLAUDE_CODE_BILLING_NOISE_RULE: ContextLedgerRule = {
 
   attribution: {
     // 正则：必选字段精确锚定，可选字段用 (?:...)? 兜住，尾部留扩展余地。
-    // 必选：cc_version=<semver>.<hex_fingerprint>; cc_entrypoint=<word>;
+    // 必选：cc_version=<semver>.<hex_fingerprint>; cc_entrypoint=<kebab-token>;
     // 可选：cch=<hex>;（NATIVE_CLIENT_ATTESTATION）、cc_workload=<tag>;（cron 等）
     // 尾部：(?:; \w+=[^;]+)* 兜住未来新增字段（sourcemap 注释："tolerates unknown extra fields"）
+    //
+    // entrypoint 取值是 CLAUDE_CODE_ENTRYPOINT 环境变量原样，IDE 集成会注入
+    // 含连字符的 kebab 形态（claude-vscode / claude-jetbrains 等）。早期版本
+    // 用 \w+ 把连字符排除在外，会让整条 rule 失配 —— audit IDE 排除分支随之
+    // 失效，IDE 流量被当作 CLI 跑完整覆盖度统计。改用 [\w-]+ 保留 CLI 严格
+    // 形态的同时覆盖 kebab。
     pattern:
       "^x-anthropic-billing-header: " +
       "cc_version=(?<version>\\d+\\.\\d+\\.\\d+\\.[0-9a-f]+); " +
-      "cc_entrypoint=(?<entrypoint>\\w+);" +
+      "cc_entrypoint=(?<entrypoint>[\\w-]+);" +
       "(?: cch=(?<cch>[0-9a-f]+);)?" +
       "(?: cc_workload=(?<workload>\\S+);)?" +
       "(?:; \\w+=[^;]+)*" +
@@ -806,31 +812,29 @@ export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
     "binary:Nm3 (2.1.142) | binary:HM3 (2.1.126) | restored-src/src/constants/prompts.ts:430 (2.1.88, stale)",
 
   attribution: {
-    // 与真实 dump byte-exact 对齐（555 字节，无尾换行）。
-    // 2.1.88 → 2.1.126 的两处变化：
-    //   1. 删除 "When referencing GitHub issues or pull requests..." 这条 bullet
-    //   2. "Your responses should be short and concise." 不再被 USER_TYPE==='ant' 条件过滤
+    // Nm3()/HM3() 内部用 `[header, ...bullets].join('\n')` 拼接，join 只在元素之间插
+    // `\n`，函数本身返回严格止于 `period.`，共 555 字节。
     //
-    // 关于尾换行：Nm3()/HM3() 内部用 `[header, ...bullets].join('\n')` 拼接，
-    // join 只在元素之间插 `\n`，**不会**给输出尾部加 `\n`。也就是说函数本身的返回
-    // 严格止于最后一个 bullet 末尾的 `period.`，共 555 字节。
+    // 但 leaf 实际进 ast 时的 trailing whitespace 取决于版本的 cache 切点：
+    //   - 2.1.142+ ：cache 切点放在 Nm3 之后，tone-style 落到 system block 末尾，
+    //                splitByH1Headers 切出来 = 555B（正好等于 Nm3 输出）
+    //   - 2.1.140- ：单个 system block 里多 section 用 `\n\n` 拼接，
+    //                splitByH1Headers 把后续 `\n\n` 划入 tone-style leaf = 557B
     //
-    // 历史上观测到 dump 里 section 末尾跟着 `\n\n`，那两个 `\n` 实际来自外层把多个
-    // section 用 `\n\n` 分隔后塞进同一个 system block 时留下的分隔符 —— 不属于
-    // Nm3 的输出。2.1.142 起 Anthropic 把 cache 切点放在 Nm3 之后（# Tone and style
-    // 是 block N 的最后一段，# Text output 落到 block N+1 开头），分隔的 `\n\n`
-    // 跑到了块边界外，block N 的内容就完全等于 Nm3 输出（555B）。
-    //
-    // 因此 pattern 不再带尾部 `\n\n`：旧 2.1.126 dump 形态依赖 proxy-block-splitter
-    // 在切 section 时把后续 `\n\n` 划入本段；新 2.1.142 形态 block 边界天然切干净。
-    // 两种形态的 leaf content 都是 555 字节，exact 命中。
-    pattern:
-      "# Tone and style\n" +
-      " - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.\n" +
-      " - Your responses should be short and concise.\n" +
-      " - When referencing specific functions or pieces of code include the pattern file_path:line_number to allow the user to easily navigate to the source code location.\n" +
-      " - Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like \"Let me read the file:\" followed by a read tool call should just be \"Let me read the file.\" with a period.",
-    matchMode: "exact",
+    // 因此 pattern 用 regex + 尾部 `\s*$`，让两个版本的 leaf 都能命中。
+    // 注意：regex 模式下 leaf 里所有 regex 元字符（`.` `(` `)` 等）需要在 pattern
+    // 里转义；这里通过模块初始化时 regex-escape 一次即可（见下方 IIFE）。
+    pattern: (() => {
+      const literal =
+        "# Tone and style\n" +
+        " - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.\n" +
+        " - Your responses should be short and concise.\n" +
+        " - When referencing specific functions or pieces of code include the pattern file_path:line_number to allow the user to easily navigate to the source code location.\n" +
+        " - Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like \"Let me read the file:\" followed by a read tool call should just be \"Let me read the file.\" with a period.";
+      const escaped = literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return "^" + escaped + "\\s*$";
+    })(),
+    matchMode: "regex",
     mechanism: "system_prompt_pattern",
     category: "system_prompt",
   },

@@ -25,9 +25,11 @@ export type SegmentCategory =
   | "ide_injection"
   | "memory_injection"
   | "user_image"
+  | "user_image_placeholder"
   | "skill_listing"
   | "local_command_history"
   | "slash_command"
+  | "system_local_command"
   | "prior_session_history"
   | "permission"
   | "hook_event"
@@ -60,5 +62,6 @@ export type RuleMechanism =
   | "task_reminder_smoosh"
   | "smoosh_content_match"
   | "messages_content_block_pattern"
+  | "session_recap_prompt"
   | "manual_fixture"
   | "unknown";

@@ -157,6 +157,20 @@ export const cacheLens: Lens = {
   },
 };
 
+// TODO(cache-lens · bp-dot 叠加层): 在 Cache lens 激活时，给 SectionBar
+// 叠加 cache_control breakpoint 标记，帮助用户一眼看出"钉死/移动"的边界。
+// 设计要点（来自 claude-visual dark 范式）：
+//   - anchor dot (蓝 #38bdf8 / 静) ：标"钉死"的 bp（一般固定在 sys[2] 末尾，
+//     跨轮不动），表示"以下内容会被复用缓存"。
+//   - cursor dot (橙 #ff8a3d / 动) ：标"跟着最新 user 移动"的 bp，表示
+//     "上一轮 cache_creation 写入到这里为止"。
+//   - dot 圆头位于 bar 上方 8px，label 在 dot 上方约 40px；末端 dot 用
+//     lblLeft 反向偏移避免被 view 边界裁切。
+//   - 数据源：SerializedNode.cachePolicy 上需要带 bpKind（anchor / cursor）
+//     + bpIndex；目前 cachePolicy 只到 ttl 粒度，需要 parser 侧补字段。
+// 实施时机：等 OriginCall lens（见下方 TODO）一起做，二者都依赖前后 call
+// 维度的"prefix 滚雪球"语义，可以共享同一组 prefix-history 数据结构。
+
 // ─── Audit Lens（兼容现有 Audit 视角） ────────────────────────────────────────
 //
 // 把现有 AttributionTreePanel 里的 Audit 三桶（full / partial / none）也包装成
@@ -186,6 +200,31 @@ export const auditLens: Lens = {
 };
 
 // ─── Registry ────────────────────────────────────────────────────────────────
+
+// TODO(lens · OriginCall / 来源累积): 这是一个独立的归因维度，值得作为一个
+// 单独的 Lens 接入（不是塞进 Provenance / Cache 任何一个）。
+//
+// 桶定义（按"贡献到当前 call prefix 的 token 数"排名）：
+//   - originCall:topN  (N=1..3) ：贡献最多的前 3 次历史 call，每个一桶
+//   - originCall:others           ：其余历史 call 折叠成 1 桶（仿 DiffPanel 的
+//     unchanged bin idiom，可点开展开完整列表）
+//   - originCall:this             ：本 call 新增的 cache_creation 内容
+//
+// 用途：让用户在一次 call 的 SectionBar 上看到"这一段 token 是哪一轮历史
+// call 第一次生成、后续被沿用复用过来的"，传达 prefix 滚雪球的累积叙事。
+// 跟 demo 里的「消息1 / 消息2 / 消息3」横向累积条同源，但通过 lens 着色复用
+// 现有 SectionBar，不引入新组件。
+//
+// 数据依赖：每个 leaf 需要知道"首次出现于哪个 call_id / call_index"。当前
+// SerializedNode 不带这个字段，需要 parser / reconciliation 在 session 维度
+// 给每个稳定 leaf 打一个 firstSeenCallIndex 标签（hashing 或 stable id 路径
+// 都可以）。
+//
+// 粒度：Call，不是 Turn。一个 turn 内的多次 tool_use 来回，每次 call 的
+// prefix 都不同，叙事最小单元是 call。
+//
+// 与 bp-dot TODO 的关系：二者都依赖 prefix-history 视角；可以共用同一份
+// firstSeenCallIndex / bpKind 数据。
 
 /** 默认 Lens 顺序。审计性 lens 放最后；内容性 lens（用户更关心）放前面。 */
 export const LENSES: Lens[] = [provenanceLens, cacheLens, auditLens];

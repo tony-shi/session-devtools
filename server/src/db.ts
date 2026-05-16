@@ -1,7 +1,6 @@
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, statSync } from "fs";
+import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import type { Session, Turn } from "./parsers/index";
 
 // ── Path config ───────────────────────────────────────────────────────────────
 
@@ -43,126 +42,6 @@ export function serializeWrite<T>(fn: () => T | Promise<T>): Promise<T> {
 // ── Schema init ───────────────────────────────────────────────────────────────
 
 export function initDb(): void {
-  const db = getDb();
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      id TEXT PRIMARY KEY,
-      tool TEXT NOT NULL,
-      project TEXT,
-      cwd TEXT,
-      started_at TEXT,
-      ended_at TEXT,
-      turn_count INTEGER DEFAULT 0,
-      human_turn_count INTEGER DEFAULT 0,
-      model TEXT,
-      source_file TEXT NOT NULL,
-      input_tokens INTEGER DEFAULT 0,
-      output_tokens INTEGER DEFAULT 0,
-      cache_creation_tokens INTEGER DEFAULT 0,
-      cache_read_tokens INTEGER DEFAULT 0,
-      tool_call_count INTEGER DEFAULT 0,
-      tool_call_names TEXT DEFAULT '{}',
-      title TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS turns (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      role TEXT NOT NULL,
-      turn_kind TEXT NOT NULL DEFAULT 'assistant',
-      content TEXT,
-      timestamp TEXT,
-      turn_index INTEGER,
-      tool_calls INTEGER DEFAULT 0,
-      tool_names TEXT DEFAULT '[]',
-      input_tokens INTEGER DEFAULT 0,
-      output_tokens INTEGER DEFAULT 0,
-      cache_creation_tokens INTEGER DEFAULT 0,
-      cache_read_tokens INTEGER DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS sync_state (
-      source_file TEXT PRIMARY KEY,
-      mtime REAL,
-      size INTEGER,
-      last_updated TEXT,
-      synced_at TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
-    CREATE INDEX IF NOT EXISTS idx_sessions_tool ON sessions(tool);
-    CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source_file);
-    CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
-    CREATE INDEX IF NOT EXISTS idx_turns_timestamp ON turns(timestamp);
-    CREATE INDEX IF NOT EXISTS idx_turns_kind ON turns(turn_kind);
-  `);
-
-  // FTS5 virtual table
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS turns_fts USING fts5(
-      content,
-      content='turns',
-      content_rowid='rowid'
-    );
-
-    CREATE TRIGGER IF NOT EXISTS turns_ai AFTER INSERT ON turns BEGIN
-      INSERT INTO turns_fts(rowid, content) VALUES (new.rowid, new.content);
-    END;
-    CREATE TRIGGER IF NOT EXISTS turns_ad AFTER DELETE ON turns BEGIN
-      INSERT INTO turns_fts(turns_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-    END;
-  `);
-
-  // turn_pairs view
-  db.exec(`
-    CREATE VIEW IF NOT EXISTS turn_pairs AS
-    SELECT
-      u.id,
-      u.session_id,
-      s.tool,
-      s.project,
-      date(u.timestamp) AS date,
-      u.content AS user_content,
-      u.timestamp AS user_ts,
-      (
-        SELECT a.content FROM turns a
-        WHERE a.session_id = u.session_id
-          AND a.role = 'assistant'
-          AND a.turn_index > u.turn_index
-          AND a.turn_index < COALESCE(
-            (SELECT MIN(u2.turn_index) FROM turns u2
-             WHERE u2.session_id = u.session_id
-               AND u2.role = 'user'
-               AND u2.turn_index > u.turn_index),
-            999999)
-        ORDER BY a.turn_index DESC LIMIT 1
-      ) AS assistant_final,
-      (
-        SELECT a.timestamp FROM turns a
-        WHERE a.session_id = u.session_id
-          AND a.role = 'assistant'
-          AND a.turn_index > u.turn_index
-          AND a.turn_index < COALESCE(
-            (SELECT MIN(u2.turn_index) FROM turns u2
-             WHERE u2.session_id = u.session_id
-               AND u2.role = 'user'
-               AND u2.turn_index > u.turn_index),
-            999999)
-        ORDER BY a.turn_index DESC LIMIT 1
-      ) AS assistant_ts
-    FROM turns u
-    JOIN sessions s ON s.id = u.session_id
-    WHERE u.role = 'user' AND u.turn_kind = 'human_input';
-  `);
-
-  // 迁移：为存量 DB 补 title 列（幂等）
-  const sessionCols = db.prepare("PRAGMA table_info(sessions)").all() as { name: string }[];
-  if (!sessionCols.some((c) => c.name === "title")) {
-    db.exec("ALTER TABLE sessions ADD COLUMN title TEXT");
-  }
-
-  initDigestSchema();
   initProxySchema();
 }
 
@@ -316,152 +195,13 @@ export function initV2Schema(): void {
   }
 }
 
-export function initDigestSchema(): void {
-  const db = getDb();
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS daily_digest (
-      date TEXT PRIMARY KEY,
-      summary TEXT,
-      pair_count INTEGER,
-      model TEXT,
-      mock INTEGER DEFAULT 1,
-      generated_at TEXT,
-      stale INTEGER DEFAULT 0
-    );
-  `);
-}
-
-// ── Upsert session + turns ────────────────────────────────────────────────────
-
-export function upsertSession(
-  session: Session,
-  turns: Turn[],
-  filePath: string,
-): Promise<void> {
-  return serializeWrite(() => _upsertSessionSync(session, turns, filePath));
-}
-
-function _upsertSessionSync(
-  session: Session,
-  turns: Turn[],
-  filePath: string,
-): void {
-  const db = getDb();
-
-  const insertSession = db.prepare(`
-    INSERT OR REPLACE INTO sessions
-      (id, tool, project, cwd, started_at, ended_at, turn_count, human_turn_count,
-       model, source_file, input_tokens, output_tokens, cache_creation_tokens,
-       cache_read_tokens, tool_call_count, tool_call_names, title)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const deleteTurns = db.prepare("DELETE FROM turns WHERE session_id = ?");
-
-  const insertTurn = db.prepare(`
-    INSERT OR REPLACE INTO turns
-      (id, session_id, role, turn_kind, content, timestamp, turn_index,
-       tool_calls, tool_names, input_tokens, output_tokens,
-       cache_creation_tokens, cache_read_tokens)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const upsertSync = db.prepare(`
-    INSERT OR REPLACE INTO sync_state (source_file, mtime, size, synced_at)
-    VALUES (?, ?, ?, ?)
-  `);
-
-  const markStale = db.prepare(`
-    UPDATE daily_digest SET stale = 1
-    WHERE date = date(?) AND stale = 0
-  `);
-
-  db.transaction(() => {
-    insertSession.run(
-      session.id,
-      session.tool,
-      session.project,
-      session.cwd,
-      session.started_at,
-      session.ended_at,
-      session.turn_count,
-      session.human_turn_count,
-      session.model,
-      session.source_file,
-      session.input_tokens,
-      session.output_tokens,
-      session.cache_creation_tokens,
-      session.cache_read_tokens,
-      session.tool_call_count,
-      JSON.stringify(session.tool_call_names),
-      session.title ?? null,
-    );
-
-    deleteTurns.run(session.id);
-
-    for (const t of turns) {
-      insertTurn.run(
-        t.id,
-        t.session_id,
-        t.role,
-        t.turn_kind,
-        t.content,
-        t.timestamp,
-        t.turn_index,
-        t.tool_calls,
-        JSON.stringify(t.tool_names),
-        t.input_tokens,
-        t.output_tokens,
-        t.cache_creation_tokens,
-        t.cache_read_tokens,
-      );
-    }
-
-    // Update sync state
-    const stat = statSync(filePath);
-    upsertSync.run(filePath, stat.mtimeMs, stat.size, new Date().toISOString());
-
-    // Mark digest stale for affected dates
-    if (session.started_at) {
-      markStale.run(session.started_at);
-    }
-    if (session.ended_at && session.ended_at !== session.started_at) {
-      markStale.run(session.ended_at);
-    }
-  })();
-}
-
-// ── File change detection ─────────────────────────────────────────────────────
-
-export function fileChanged(filePath: string): boolean {
-  const db = getDb();
-  const row = db
-    .prepare("SELECT mtime, size FROM sync_state WHERE source_file = ?")
-    .get(filePath) as { mtime: number; size: number } | undefined;
-
-  if (!row) return true;
-
-  try {
-    const stat = statSync(filePath);
-    return stat.mtimeMs !== row.mtime || stat.size !== row.size;
-  } catch {
-    return true;
-  }
-}
-
-export function markDigestStale(date: string): void {
-  const db = getDb();
-  db.prepare("UPDATE daily_digest SET stale = 1 WHERE date = ? AND stale = 0").run(date);
-}
-
 // ── DB health check ───────────────────────────────────────────────────────────
 
-const REQUIRED_TABLES = ["sessions", "turns", "sync_state", "daily_digest"];
-const REQUIRED_INDEXES = ["idx_sessions_started", "idx_turns_session", "idx_turns_timestamp"];
+const REQUIRED_TABLES = ["proxy_requests", "indexed_cold_files"];
 
 export type DbHealthResult =
   | { status: "missing" }
-  | { status: "ok"; sessions: number; turns: number }
+  | { status: "ok"; sessions: number }
   | { status: "incomplete"; missing: string[] };
 
 export function checkDbHealth(): DbHealthResult {
@@ -474,15 +214,14 @@ export function checkDbHealth(): DbHealthResult {
       .map((r) => r.name),
   );
 
-  const missing = [
-    ...REQUIRED_TABLES.filter((t) => !existing.has(t)),
-    ...REQUIRED_INDEXES.filter((i) => !existing.has(i)),
-  ];
-
+  const missing = REQUIRED_TABLES.filter((t) => !existing.has(t));
   if (missing.length > 0) return { status: "incomplete", missing };
 
-  const sessRow = db.prepare("SELECT COUNT(*) as sessions FROM sessions").get() as { sessions: number };
-  const turnRow = db.prepare("SELECT COUNT(*) as turns FROM turns").get() as { turns: number };
+  // sessions_meta_v2 may not exist yet on a fresh DB; tolerate that.
+  let sessions = 0;
+  if (existing.has("sessions_meta_v2")) {
+    sessions = (db.prepare("SELECT COUNT(*) as n FROM sessions_meta_v2").get() as { n: number }).n;
+  }
 
-  return { status: "ok", sessions: sessRow.sessions, turns: turnRow.turns };
+  return { status: "ok", sessions };
 }

@@ -1,7 +1,59 @@
-import { statSync } from "fs";
+import { existsSync, readdirSync, statSync } from "fs";
+import { join } from "path";
 import { getDb, serializeWrite } from "./db.ts";
-import { discoverFiles } from "./sync.ts";
 import { PARSERS_V2, PARSER_VERSION, type SessionMetaV2 } from "./parsers-v2/index.ts";
+
+// ── File discovery ────────────────────────────────────────────────────────────
+
+const HOME = process.env.HOME ?? "~";
+const CLAUDE_ROOT = join(HOME, ".claude", "projects");
+const CODEX_ROOT = join(HOME, ".codex", "sessions");
+const GEMINI_ROOT = join(HOME, ".gemini", "tmp");
+
+function globRecursive(dir: string, pattern: RegExp, exclude?: (p: string) => boolean): string[] {
+  const results: string[] = [];
+  if (!existsSync(dir)) return results;
+
+  function walk(current: string) {
+    let entries;
+    try {
+      entries = readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (!exclude?.(fullPath)) walk(fullPath);
+      } else if (entry.isFile() && pattern.test(entry.name)) {
+        results.push(fullPath);
+      }
+    }
+  }
+  walk(dir);
+  return results;
+}
+
+export function discoverFiles(): { tool: string; path: string }[] {
+  const results: { tool: string; path: string }[] = [];
+
+  // Claude Code: exclude subagents/
+  for (const p of globRecursive(CLAUDE_ROOT, /\.jsonl$/, (path) => path.includes("/subagents"))) {
+    results.push({ tool: "claude", path: p });
+  }
+
+  // Codex CLI
+  for (const p of globRecursive(CODEX_ROOT, /\.jsonl$/)) {
+    results.push({ tool: "codex", path: p });
+  }
+
+  // Gemini CLI
+  for (const p of globRecursive(GEMINI_ROOT, /^session-.*\.json$/)) {
+    results.push({ tool: "gemini", path: p });
+  }
+
+  return results;
+}
 
 // ── Prepared statements (hoisted to avoid re-compilation per file) ────────────
 
