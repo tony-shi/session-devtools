@@ -312,5 +312,29 @@
     "toolsSuffix": "tools",
     "ledgerInterpretation": "New input this round: {{freshIn}} ({{cacheWrite}} written to cache for reuse) · loaded from cache: {{cacheRead}} · model output: {{output}}{{ratio}}",
     "ledgerInterpretationRatio": " · cache hit rate {{pct}}"
+  },
+  "ledgerExplainer": {
+    "title": "Token Ledger · How it's computed",
+    "variantAggregate": "Σ aggregate",
+    "variantCall": "single call",
+    "inputSection": "{{sigma}}Input (what's fed to the model)",
+    "outputSection": "{{sigma}}Output (what the model generated)",
+    "ratioLabel": "Cache Ratio",
+    "ratioFormulaCall": "cache_read / (cache_read + cache_write + fresh_in)",
+    "ratioFormulaAgg": "Σcache_read / Σ(input triple)",
+    "ratioFormulaEquals": "= {{formula}}",
+    "emptyInput": "No input this round — all three input buckets are 0; Cache Ratio is undefined.",
+    "footer": "The <strong>four buckets above never overlap</strong> and map to Anthropic's real billing tiers: cache_read ≈ 0.1× discount · cache_write ≈ 1.25× premium · fresh_in ≈ 1.0× baseline · output billed independently.",
+    "footerAggSuffix": " In aggregate view, each bucket sums across the session/turn scope.",
+    "rows": {
+      "cacheReadCall": "Replay from history: read back from a previous call's cache, no re-inference needed",
+      "cacheReadAgg": "Cumulative cache reuse: read back from past calls' cache hits",
+      "cacheWriteCall": "Written to cache this round: first-time content marked with a cache breakpoint for future reuse",
+      "cacheWriteAgg": "Cumulative cache writes: this-round content marked with a cache breakpoint",
+      "freshInCall": "Uncached this round: first-time content with no cache breakpoint",
+      "freshInAgg": "Cumulative uncached input: this-round content without a cache breakpoint",
+      "outputCall": "Tokens the LLM generated in this call",
+      "outputAgg": "Cumulative model-generated tokens"
+    }
   }
 }

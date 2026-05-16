@@ -32,6 +32,13 @@ import {
   type LinkableJsonlEvent,
   type JsonlEventSource,
 } from "./context-ledger/parser";
+import {
+  buildEventIndex,
+  linkMessages,
+  messageFingerprint,
+  sharedPrefixLength,
+  type EventIndex,
+} from "./session-attribution-light-linker";
 
 // ─── 输出类型 ─────────────────────────────────────────────────────────────────
 
@@ -163,18 +170,125 @@ export async function computeSessionAttributionGraph(
   sessionId: string,
   db: Database,
   helpers: SessionGraphHelpers,
+  opts?: { algorithm?: "incremental" | "legacy" },
+): Promise<SessionAttributionGraph> {
+  const algorithm = opts?.algorithm ?? "incremental";
+  if (algorithm === "legacy") {
+    return computeSessionAttributionGraphLegacy(sessionId, db, helpers);
+  }
+  return computeSessionAttributionGraphIncremental(sessionId, db, helpers);
+}
+
+// ─── Incremental algorithm (default) ────────────────────────────────────────
+//
+// For each call:
+//   1. fetch its reqBody via the same proxy hook the legacy path uses
+//   2. compute message fingerprints
+//   3. shared-prefix-length with prev call → only audit the *tail* messages
+//   4. inherit prev call's consumedLineIdxs (the cached prefix already touched
+//      those events); union with the tail's freshly-linked lineIdxs.
+//
+// Uses a `light linker` (see session-attribution-light-linker.ts) that walks
+// reqBody.messages directly and matches by id / content-hash — skipping the
+// expensive ParsedQuerySnapshot tree build that loadAttributionTree does.
+//
+// Falls back to a per-call full audit when the proxy reqBody is missing for
+// some call (mcli / no proxy / fork) — that call goes into unauditedCallIds.
+//
+// Performance: 32478a3f session, lastN=20: ~74s (legacy) → ~1-3s expected.
+// Correctness: see ./session-attribution-light-linker.ts coverage notes.
+async function computeSessionAttributionGraphIncremental(
+  sessionId: string,
+  _db: Database,
+  helpers: SessionGraphHelpers,
 ): Promise<SessionAttributionGraph> {
   const calls = helpers.listCalls(sessionId);
   if (calls.length === 0) {
     return { sessionId, events: [], auditedCallIds: [], unauditedCallIds: [] };
   }
 
-  // ── 步骤 1：读取 jsonl events（一次性，sourceFile 在 session 内固定） ──
   const sourceFile = calls[0].sourceFile;
   const events: LinkableJsonlEvent[] = readSessionEventsForLinker(sourceFile);
-  // 没有 events → 不可能有 annotation，直接返回空图（但保留 audited/unaudited 反馈）。
+  const eventIndex: EventIndex = buildEventIndex(events);
 
-  // ── 步骤 2 + 3：跑每个 call，收集 (lineIdx → callId) ──
+  const callConsumers: Array<{ callId: number; consumedLineIdxs: number[] }> = [];
+  const unauditedCallIds: Array<{ callId: number; reason: string }> = [];
+
+  // Cross-call carry: lets us audit only the tail messages and inherit the
+  // prefix's consumedLineIdxs without re-linking.
+  let prevMessages: unknown[] | null = null;
+  let prevFingerprints: string[] = [];
+  let prevConsumedLineIdxs: Set<number> | null = null;
+
+  for (const { callId } of calls) {
+    const meta = helpers.loadCallHelpers.resolveCallMeta(sessionId, callId);
+    if (!meta) {
+      unauditedCallIds.push({ callId, reason: "call not found in session drilldown" });
+      continue;
+    }
+    const proxy = await helpers.loadCallHelpers.fetchProxyReqBodyAt(
+      sessionId, meta.call.timestamp, undefined, meta.call.apiRequestId,
+    );
+    if (!proxy || !proxy.reqBody) {
+      unauditedCallIds.push({ callId, reason: "proxy reqBody unavailable for this call" });
+      continue;
+    }
+
+    const messages: unknown[] = Array.isArray((proxy.reqBody as { messages?: unknown[] }).messages)
+      ? (proxy.reqBody as { messages: unknown[] }).messages
+      : [];
+    // Fingerprint each message (cheap structural hash; see light-linker).
+    // We compare these to the previous call's fingerprints to find how much
+    // prefix is shared, so only newly appended tail messages need linking.
+    const curFingerprints = messages.map((m) => messageFingerprint(m as never));
+
+    const auditStart = prevMessages != null
+      ? sharedPrefixLength(prevFingerprints, curFingerprints)
+      : 0;
+    // tail = messages from auditStart onward (everything newer than what
+    // prev call already saw). When auditStart === 0 (cache miss / first
+    // call / compaction), this is the full message list — same cost as
+    // the legacy path's per-call linker run.
+    const tail = messages.slice(auditStart);
+    const tailMatched = linkMessages(tail as never[], eventIndex);
+
+    // Inherit prefix consumedLineIdxs from prev call, union with tail matches.
+    const consumedThisCall: Set<number> = prevConsumedLineIdxs != null
+      ? new Set(prevConsumedLineIdxs)
+      : new Set<number>();
+    for (const li of tailMatched) consumedThisCall.add(li);
+
+    callConsumers.push({
+      callId,
+      consumedLineIdxs: [...consumedThisCall].sort((a, b) => a - b),
+    });
+
+    prevMessages = messages;
+    prevFingerprints = curFingerprints;
+    prevConsumedLineIdxs = consumedThisCall;
+  }
+
+  return annotateJsonlFromCallConsumers(sessionId, events, callConsumers, unauditedCallIds);
+}
+
+// ─── Legacy algorithm (kept for fallback / snapshot diff) ────────────────────
+//
+// Per-call full attribution via loadAttributionTree. Slow on large sessions
+// (74s for 32478a3f lastN=20) but exercises the canonical linker with full
+// segment tree → useful as a correctness baseline for the incremental path.
+async function computeSessionAttributionGraphLegacy(
+  sessionId: string,
+  db: Database,
+  helpers: SessionGraphHelpers,
+): Promise<SessionAttributionGraph> {
+  const calls = helpers.listCalls(sessionId);
+  if (calls.length === 0) {
+    return { sessionId, events: [], auditedCallIds: [], unauditedCallIds: [] };
+  }
+
+  const sourceFile = calls[0].sourceFile;
+  const events: LinkableJsonlEvent[] = readSessionEventsForLinker(sourceFile);
+
   const callConsumers: Array<{ callId: number; consumedLineIdxs: number[] }> = [];
   const unauditedCallIds: Array<{ callId: number; reason: string }> = [];
 
@@ -196,9 +310,6 @@ export async function computeSessionAttributionGraph(
       });
       continue;
     }
-    // 遍历 nodeSummaries 收集 jsonlLineIdx —— 全节点（含 container），让父节点
-    // 的 jsonl origin 也算引用。实际只有 jsonl-link 写入的节点会有 jsonlLineIdx，
-    // structural / rule / unknown 自然过滤。
     const consumedLineIdxs: number[] = [];
     for (const node of Object.values(result.snapshot.nodeSummaries)) {
       const origin = node.origin;
@@ -210,9 +321,7 @@ export async function computeSessionAttributionGraph(
     callConsumers.push({ callId, consumedLineIdxs });
   }
 
-  // ── 步骤 4：annotate（纯函数，便于测试） ──
-  const result = annotateJsonlFromCallConsumers(sessionId, events, callConsumers, unauditedCallIds);
-  return result;
+  return annotateJsonlFromCallConsumers(sessionId, events, callConsumers, unauditedCallIds);
 }
 
 /**

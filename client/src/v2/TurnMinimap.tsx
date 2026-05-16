@@ -525,6 +525,16 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
 
+  // Latest-callback / latest-data refs. The init effect below must only run
+  // once per mount (otherwise dispose+reinit happens on every parent render
+  // because callers typically pass an inline `onSelectCall` lambda, which
+  // races with the setOption effect and leaves the chart data-less → all
+  // clicks silently no-op). The click handler reads these refs at call time.
+  const onSelectCallRef = useRef(onSelectCall);
+  const turnRef = useRef(turn);
+  useEffect(() => { onSelectCallRef.current = onSelectCall; }, [onSelectCall]);
+  useEffect(() => { turnRef.current = turn; }, [turn]);
+
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -539,7 +549,8 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
     // via the x-axis, and use containPixel to ignore clicks outside the grids
     // (legend, padding, zoom slider).
     chart.getZr().on("click", (e) => {
-      if (!onSelectCall) return;
+      const cb = onSelectCallRef.current;
+      if (!cb) return;
       const px: [number, number] = [e.offsetX, e.offsetY];
       const inCtx = chart.containPixel({ gridIndex: 0 }, px);
       const inMatrix = chart.containPixel({ gridIndex: 1 }, px);
@@ -548,14 +559,14 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
       const raw = chart.convertFromPixel({ xAxisIndex: axisIndex }, px) as unknown as number | null;
       if (typeof raw !== "number" || raw < 0) return;
       const idx = Math.round(raw);
-      const call = turn.calls[idx];
-      if (call) onSelectCall(call.id);
+      const call = turnRef.current.calls[idx];
+      if (call) cb(call.id);
     });
 
     const ro = new ResizeObserver(() => chart.resize());
     ro.observe(el);
     return () => { ro.disconnect(); chart.dispose(); chartRef.current = null; };
-  }, [onSelectCall, turn.calls]);
+  }, []);
 
   useEffect(() => {
     const chart = chartRef.current;

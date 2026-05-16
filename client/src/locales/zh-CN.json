@@ -308,5 +308,29 @@
     "toolsSuffix": "tools",
     "ledgerInterpretation": "本轮新增 {{freshIn}}（其中 {{cacheWrite}} 写入缓存供后续复用）· 从缓存读回 {{cacheRead}} · 模型输出 {{output}}{{ratio}}",
     "ledgerInterpretationRatio": " · 缓存命中率 {{pct}}"
+  },
+  "ledgerExplainer": {
+    "title": "Token 账本 · 计算说明",
+    "variantAggregate": "Σ 聚合",
+    "variantCall": "单 call",
+    "inputSection": "{{sigma}}输入（喂给模型的内容）",
+    "outputSection": "{{sigma}}输出（模型生成的内容）",
+    "ratioLabel": "Cache Ratio",
+    "ratioFormulaCall": "cache_read / (cache_read + cache_write + fresh_in)",
+    "ratioFormulaAgg": "Σcache_read / Σ(input 三件套)",
+    "ratioFormulaEquals": "= {{formula}}",
+    "emptyInput": "本次没有 input —— 三个 input 桶都为 0，Cache Ratio 无意义。",
+    "footer": "以上 <strong>四个桶互不重叠</strong>，对应 Anthropic API 的真实计费档位：cache_read ≈ 0.1× 折扣 · cache_write ≈ 1.25× 溢价 · fresh_in ≈ 1.0× 标准 · output 独立计费。",
+    "footerAggSuffix": " 聚合视图下，每个桶的数值都是 session/turn 范围内的累加。",
+    "rows": {
+      "cacheReadCall": "历史复用：从过往 call 的缓存读回，不需要重新过模型",
+      "cacheReadAgg": "累计历史复用：从过往 call 的缓存命中读回",
+      "cacheWriteCall": "本轮写入缓存：第一次给模型、且被打了 cache breakpoint 供下次复用",
+      "cacheWriteAgg": "累计写入缓存：被打了 cache breakpoint 的本轮新内容",
+      "freshInCall": "本轮未缓存：第一次给模型、且没被 cache breakpoint 拦下的部分",
+      "freshInAgg": "累计未缓存输入：本轮新内容中未被打 cache breakpoint 的部分",
+      "outputCall": "LLM 这一 call 生成的 token",
+      "outputAgg": "累计模型生成 token"
+    }
   }
 }

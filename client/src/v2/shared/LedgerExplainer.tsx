@@ -10,12 +10,20 @@
 //   - 区分 "input 四桶 / output 一桶"，把 Anthropic API 计费档位讲清楚
 //   - aggregate 版本额外标 Σ 累加语义
 //
-// 暴露 useLedgerHover() hook 让 CallLedger / AggregateLedger 自己决定何时
-// 把 wrapper 设为 position: relative；popover 节点位置 absolute，挂在
-// wrapper 内部。
+// 渲染策略：通过 createPortal 把 popover 节点挂在 document.body，定位用
+// position:fixed + 由 wrapper 测量的 boundingClientRect 计算。这样可以
+// 完全逃出任何 overflow:hidden 祖先（Turn card / Call card 都有），
+// 不被裁切。视口空间不够时自动上下翻转。
 
-import React, { useState } from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { TOKEN_METRICS } from "../metricRegistry";
+
+const POP_WIDTH = 460;
+const POP_EST_HEIGHT = 360; // 用于上下翻转的粗略估计；之后用真实测高校正
+const POP_GAP = 6;
+const VIEWPORT_PADDING = 8;
 
 function fmtK(n: number): string {
   const abs = Math.abs(n);
@@ -38,17 +46,20 @@ export interface LedgerExplainerProps {
   output: number;
   /** 已计算好的 cache ratio (0-100)；null 表示输入侧无数据。 */
   ratio: number | null;
-  /** popover 锚点。"above-right" 在 ledger 上方右对齐，"below-right" 在下方右对齐。
-   *  默认 above-right —— 大多数 ledger 都贴在 page top，下方有内容容易遮住。 */
-  anchor?: "above-right" | "below-right";
+  /** Wrapper 测出的锚点矩形（screen coords）。popover 自身负责上下翻转 + 越界纠偏。 */
+  anchorRect: DOMRect;
+  /** 偏好方向：默认 below。空间不足时仍会自动翻转。 */
+  preferredAnchor?: "above" | "below";
 }
 
 export function LedgerExplainer({
-  variant, freshIn, cacheRead, cacheWrite, output, ratio, anchor = "above-right",
+  variant, freshIn, cacheRead, cacheWrite, output, ratio, anchorRect,
+  preferredAnchor = "below",
 }: LedgerExplainerProps) {
+  const { t } = useTranslation();
   const M = TOKEN_METRICS;
   const isAgg = variant === "aggregate";
-  const sigma = isAgg ? "Σ" : "";
+  const sigma = isAgg ? "Σ " : "";
 
   const inputTotal = freshIn + cacheRead + cacheWrite;
   const ratioFormula =
@@ -56,32 +67,26 @@ export function LedgerExplainer({
       ? `${fmtK(cacheRead)} / (${fmtK(cacheRead)} + ${fmtK(cacheWrite)} + ${fmtK(freshIn)}) = ${fmtPct(ratio)}`
       : null;
 
-  // 输入侧 4 行：cache_read / cache_write / fresh_input / cache_ratio (derived)
-  // 顺序对齐 ledger 本体的列序：read → write → fresh → ratio
+  // 输入侧 3 行：cache_read / cache_write / fresh_input
+  // 顺序对齐 ledger 本体的列序：read → write → fresh
   const inputRows: ExplainerRow[] = [
     {
       color: M.cache_read.color,
       label: M.cache_read.label,
       value: fmtK(cacheRead),
-      hint: isAgg
-        ? "累计历史复用：从过往 call 的缓存命中读回"
-        : "历史复用：从过往 call 的缓存读回，不需要重新过模型",
+      hint: t(isAgg ? "ledgerExplainer.rows.cacheReadAgg" : "ledgerExplainer.rows.cacheReadCall"),
     },
     {
       color: M.cache_write.color,
       label: M.cache_write.label,
       value: fmtK(cacheWrite),
-      hint: isAgg
-        ? "累计写入缓存：被打了 cache breakpoint 的本轮新内容"
-        : "本轮写入缓存：第一次给模型、且被打了 cache breakpoint 供下次复用",
+      hint: t(isAgg ? "ledgerExplainer.rows.cacheWriteAgg" : "ledgerExplainer.rows.cacheWriteCall"),
     },
     {
       color: M.fresh_input.color,
       label: M.fresh_input.label,
       value: fmtK(freshIn),
-      hint: isAgg
-        ? "累计未缓存输入：本轮新内容中未被打 cache breakpoint 的部分"
-        : "本轮未缓存：第一次给模型、且没被 cache breakpoint 拦下的部分",
+      hint: t(isAgg ? "ledgerExplainer.rows.freshInAgg" : "ledgerExplainer.rows.freshInCall"),
     },
   ];
 
@@ -90,22 +95,34 @@ export function LedgerExplainer({
       color: M.output.color,
       label: M.output.label,
       value: fmtK(output),
-      hint: isAgg ? "累计模型生成 token" : "LLM 这一 call 生成的 token",
+      hint: t(isAgg ? "ledgerExplainer.rows.outputAgg" : "ledgerExplainer.rows.outputCall"),
     },
   ];
 
-  // 上方 / 下方定位
-  const popStyle: React.CSSProperties = anchor === "below-right"
-    ? { position: "absolute", top: "calc(100% + 6px)", right: 0 }
-    : { position: "absolute", bottom: "calc(100% + 6px)", right: 0 };
+  // ── Portal 定位：fixed + 视口感知 ────────────────────────────────────────
+  // 先按"上方优先"放，如果上方空间不够（rect.top 不够装下 popover），翻到下方。
+  // 横向：右对齐 anchor.right；若右对齐导致左边越界，则左对齐 anchor.left。
+  // 渲染后用真实高度做一次校正（防止估算偏差）。
+  const popRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number }>(() =>
+    computePosition(anchorRect, POP_EST_HEIGHT, preferredAnchor));
 
-  return (
+  useLayoutEffect(() => {
+    if (!popRef.current) return;
+    const h = popRef.current.offsetHeight;
+    setPos(computePosition(anchorRect, h, preferredAnchor));
+  }, [anchorRect.top, anchorRect.bottom, anchorRect.left, anchorRect.right, preferredAnchor]);
+
+  const node = (
     <div
+      ref={popRef}
       role="tooltip"
       style={{
-        ...popStyle,
+        position: "fixed",
+        top: pos.top,
+        left: pos.left,
         zIndex: 1000,
-        width: 380,
+        width: POP_WIDTH,
         background: "#fff",
         border: "1px solid #e5e7eb",
         borderRadius: 8,
@@ -123,19 +140,19 @@ export function LedgerExplainer({
         letterSpacing: "0.04em", textTransform: "uppercase",
         marginBottom: 8,
       }}>
-        <span>Token 账本 · 计算说明</span>
+        <span>{t("ledgerExplainer.title")}</span>
         <span style={{
           fontSize: 9, fontWeight: 600, color: "#6366f1",
           background: "#eef2ff", border: "1px solid #c7d2fe",
           borderRadius: 3, padding: "1px 5px", letterSpacing: 0,
           textTransform: "none",
         }}>
-          {isAgg ? "Σ 聚合" : "单 call"}
+          {t(isAgg ? "ledgerExplainer.variantAggregate" : "ledgerExplainer.variantCall")}
         </span>
       </div>
 
       {/* INPUT */}
-      <SectionTitle>{sigma} 输入（喂给模型的内容）</SectionTitle>
+      <SectionTitle>{t("ledgerExplainer.inputSection", { sigma })}</SectionTitle>
       <RowList rows={inputRows} />
 
       {/* Cache Ratio derived */}
@@ -145,40 +162,78 @@ export function LedgerExplainer({
           background: "#fafafa", border: "1px solid #f3f4f6", borderRadius: 6,
           fontSize: 10, color: "#374151",
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-            <span style={{ width: 6, height: 6, borderRadius: 1, background: M.cache_ratio.color }} />
-            <span style={{ fontWeight: 700, color: M.cache_ratio.color }}>{M.cache_ratio.label}</span>
-            <span style={{ color: "#9ca3af" }}>· {isAgg ? "Σcache_read / Σ(input 三件套)" : "cache_read / (cache_read + cache_write + fresh_in)"}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 3 }}>
+            <span style={{ width: 6, height: 6, borderRadius: 1, background: M.cache_ratio.color, flexShrink: 0 }} />
+            <span style={{ fontWeight: 700, color: M.cache_ratio.color }}>{t("ledgerExplainer.ratioLabel")}</span>
+            <span style={{ color: "#9ca3af", wordBreak: "break-word" }}>
+              · {t(isAgg ? "ledgerExplainer.ratioFormulaAgg" : "ledgerExplainer.ratioFormulaCall")}
+            </span>
           </div>
-          <div style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "#111827" }}>
-            = {ratioFormula}
+          <div style={{
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            color: "#111827",
+            wordBreak: "break-word", whiteSpace: "normal",
+          }}>
+            {t("ledgerExplainer.ratioFormulaEquals", { formula: ratioFormula })}
           </div>
         </div>
       )}
 
       {inputTotal === 0 && (
         <div style={{ fontSize: 10, color: "#9ca3af", fontStyle: "italic", padding: "4px 0" }}>
-          本次没有 input —— 三个 input 桶都为 0，Cache Ratio 无意义。
+          {t("ledgerExplainer.emptyInput")}
         </div>
       )}
 
       {/* OUTPUT */}
       <div style={{ height: 8 }} />
-      <SectionTitle>{sigma} 输出（模型生成的内容）</SectionTitle>
+      <SectionTitle>{t("ledgerExplainer.outputSection", { sigma })}</SectionTitle>
       <RowList rows={outputRows} />
 
-      {/* Footer note */}
-      <div style={{
-        marginTop: 10, paddingTop: 8, borderTop: "1px dashed #f3f4f6",
-        fontSize: 10, color: "#9ca3af", lineHeight: 1.55,
-      }}>
-        以上 <strong style={{ color: "#6b7280" }}>四个桶互不重叠</strong>，
-        对应 Anthropic API 的真实计费档位：
-        cache_read ≈ 0.1× 折扣 · cache_write ≈ 1.25× 溢价 · fresh_in ≈ 1.0× 标准 · output 独立计费。
-        {isAgg && " 聚合视图下，每个桶的数值都是 session/turn 范围内的累加。"}
-      </div>
+      {/* Footer note —— 含 <strong> 标签，用 dangerouslySetInnerHTML 渲染 i18n value */}
+      <div
+        style={{
+          marginTop: 10, paddingTop: 8, borderTop: "1px dashed #f3f4f6",
+          fontSize: 10, color: "#9ca3af", lineHeight: 1.55,
+        }}
+        dangerouslySetInnerHTML={{
+          __html: t("ledgerExplainer.footer") + (isAgg ? t("ledgerExplainer.footerAggSuffix") : ""),
+        }}
+      />
     </div>
   );
+
+  return createPortal(node, document.body);
+}
+
+function computePosition(
+  rect: DOMRect,
+  popHeight: number,
+  preferred: "above" | "below",
+): { top: number; left: number } {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  // 偏好方向先放；空间不够再翻转（只在确实装不下时翻，否则尊重 preferred）。
+  const need = popHeight + POP_GAP + VIEWPORT_PADDING;
+  const spaceAbove = rect.top;
+  const spaceBelow = vh - rect.bottom;
+  let placeAbove: boolean;
+  if (preferred === "above") {
+    placeAbove = spaceAbove >= need || spaceAbove >= spaceBelow;
+  } else {
+    placeAbove = !(spaceBelow >= need || spaceBelow >= spaceAbove);
+  }
+  let top = placeAbove ? rect.top - popHeight - POP_GAP : rect.bottom + POP_GAP;
+  // 视口纠偏
+  top = Math.max(VIEWPORT_PADDING, Math.min(top, vh - popHeight - VIEWPORT_PADDING));
+
+  // 横向：右对齐 anchor.right；若导致 left < padding，则改为 left = padding。
+  let left = rect.right - POP_WIDTH;
+  if (left < VIEWPORT_PADDING) left = VIEWPORT_PADDING;
+  if (left + POP_WIDTH > vw - VIEWPORT_PADDING) left = vw - POP_WIDTH - VIEWPORT_PADDING;
+
+  return { top, left };
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -233,32 +288,53 @@ function RowList({ rows }: { rows: ExplainerRow[] }) {
 
 // ─── Hover wrapper ───────────────────────────────────────────────────────────
 //
-// 包装外壳 + 状态：把 onMouseEnter/Leave 挂在外层 div，hover 时渲染 popover。
-// ledger 实现只需要把自己的内容塞进 children，再传 ledger 各字段过来。
+// 包装外壳 + 状态：把 onMouseEnter/Leave 挂在外层 div，hover 时测量自身
+// boundingClientRect 并交给 LedgerExplainer 通过 portal 渲染到 body。
+// 这样不论外层 card 是否 overflow:hidden 都不会被裁切。
 //
 // 用法：
 //   <LedgerHoverWrapper variant="call" freshIn={...} ...>
 //     {/* 原来 ledger 的 JSX */}
 //   </LedgerHoverWrapper>
 
-export interface LedgerHoverWrapperProps extends LedgerExplainerProps {
+export interface LedgerHoverWrapperProps extends Omit<LedgerExplainerProps, "anchorRect"> {
   children: React.ReactNode;
-  /** 外层 wrapper 的样式补丁；继承 position:relative 给 popover 锚定。 */
+  /** 外层 wrapper 的样式补丁。 */
   style?: React.CSSProperties;
+  /** 兼容旧调用：`anchor="below-right"` 映射到 preferredAnchor="below"，"above-right" 同理。 */
+  anchor?: "above-right" | "below-right";
 }
 
 export function LedgerHoverWrapper({
-  children, style, ...explainerProps
+  children, style, anchor, preferredAnchor, ...explainerProps
 }: LedgerHoverWrapperProps) {
-  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const [rect, setRect] = useState<DOMRect | null>(null);
+
+  // 把旧 anchor 写法映射到新 preferredAnchor；显式 preferredAnchor 优先
+  const effectivePreferred: "above" | "below" =
+    preferredAnchor ?? (anchor === "above-right" ? "above" : "below");
+
+  const open = () => {
+    if (wrapperRef.current) setRect(wrapperRef.current.getBoundingClientRect());
+  };
+  const close = () => setRect(null);
+
   return (
     <div
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-      style={{ position: "relative", ...style }}
+      ref={wrapperRef}
+      onMouseEnter={open}
+      onMouseLeave={close}
+      style={style}
     >
       {children}
-      {open && <LedgerExplainer {...explainerProps} />}
+      {rect && (
+        <LedgerExplainer
+          {...explainerProps}
+          anchorRect={rect}
+          preferredAnchor={effectivePreferred}
+        />
+      )}
     </div>
   );
 }
