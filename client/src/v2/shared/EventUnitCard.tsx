@@ -153,12 +153,14 @@ export function EventUnitCard(props: EventUnitCardProps) {
   const cardOpacity = isSkipped ? 0.6 : 1;
 
   // Skipped events never offer a jump — there's no call to point at.
-  // Audit-gap events also hide the jump, because the displayed
-  // firstSeenInCall is almost certainly *not* the real first consumer (the
-  // real one lives in an unaudited call we can't see); jumping there would
-  // mislead the user.
+  // Audit-gap events DO keep their jump chip (so users see a consistent
+  // affordance everywhere), but the chip is restyled in amber + ⚠ icon and
+  // its tooltip spells out "early calls not audited, target may be wrong".
+  // The hide-it-entirely approach left users wondering "why does this one
+  // have a chip and that one doesn't"; surfacing the unreliability is more
+  // honest than hiding.
   const auditGapped = !!impact?.firstSeenIsAfterAuditGap;
-  const effectiveOnJump = (isSkipped || auditGapped) ? undefined : onJump;
+  const effectiveOnJump = isSkipped ? undefined : onJump;
 
   return (
     <div
@@ -244,32 +246,41 @@ export function EventUnitCard(props: EventUnitCardProps) {
           </span>
         )}
 
-        {/* jump button — solid indigo button (not a quiet chip) so users
-            can spot it from across the card and won't accidentally trigger
-            it by clicking elsewhere. Pure caret / dashed-chip variants
-            previously got mistaken for hint glyphs. */}
+        {/* jump button — solid indigo (normal) or amber (audit-gap warning).
+            Two visual states share the same shape so the affordance is
+            consistent across every event; only color + icon + tooltip
+            differ. */}
         {effectiveOnJump && (
           <button
             type="button"
-            title={jumpTooltip}
+            title={auditGapped
+              ? `${jumpTooltip ?? ""}\n\n⚠ 数据可能不准 — 当前 jump 目标只是 audit 数据里能看到的最早 call。早期一些 call 没有 proxy 数据（unaudited），真正首次消费这条 event 的 call 可能在那段空白里。`.trim()
+              : jumpTooltip}
             onClick={(e) => { e.stopPropagation(); effectiveOnJump(); }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = "#4338ca"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "#4f46e5"; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = auditGapped ? "#b45309" : "#4338ca";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = auditGapped ? "#d97706" : "#4f46e5";
+            }}
             style={{
               display: "inline-flex", alignItems: "center", gap: 5,
-              border: "none", background: "#4f46e5",
+              border: "none",
+              background: auditGapped ? "#d97706" : "#4f46e5",
               color: "#fff", borderRadius: 4,
               fontSize: 10, fontWeight: 700,
               padding: "3px 9px",
               cursor: "pointer", lineHeight: 1.3,
               flexShrink: 0, whiteSpace: "nowrap",
               transition: "background 0.12s",
-              boxShadow: "0 1px 2px rgba(79,70,229,0.25)",
+              boxShadow: auditGapped
+                ? "0 1px 2px rgba(217,119,6,0.30)"
+                : "0 1px 2px rgba(79,70,229,0.25)",
               letterSpacing: "0.02em",
             }}
           >
-            <LinkIcon />
-            {jumpLabel ?? "跳转"}
+            {auditGapped ? <WarningIcon /> : <LinkIcon />}
+            {auditGapped && jumpLabel ? `?${jumpLabel}` : (jumpLabel ?? "跳转")}
           </button>
         )}
 
@@ -326,16 +337,7 @@ function ImpactChips({ impact }: { impact: NonNullable<EventUnitCardProps["impac
   const fst = impact.firstSeenInCall;
   const usedIn = impact.consumedByCallIds?.length ?? 0;
   const windowQualifier = impact.firstSeenIsWindowBounded;
-  // Audit-gap takes priority: firstSeen value is unreliable, don't show it
-  // as a clean answer. Show a clear warning instead so the user knows the
-  // data isn't trustworthy here.
-  if (impact.firstSeenIsAfterAuditGap) {
-    return (
-      <span style={{ color: "#b45309" }}>
-        first seen 数据不可信 · 早期 call 未审计（无 proxy 数据）
-      </span>
-    );
-  }
+  const gapQualifier = impact.firstSeenIsAfterAuditGap;
   return (
     <>
       {fst != null && (
@@ -343,6 +345,11 @@ function ImpactChips({ impact }: { impact: NonNullable<EventUnitCardProps["impac
           first seen → call #{fst}
           {windowQualifier && (
             <span style={{ color: "#b45309", marginLeft: 4 }}>(审计窗口内)</span>
+          )}
+          {gapQualifier && (
+            <span style={{ color: "#b45309", marginLeft: 4 }}>
+              ⚠ 数据可能不准 — 早期 call 未审计
+            </span>
           )}
         </span>
       )}
@@ -367,6 +374,17 @@ function CoordinateChips({ coordinate }: { coordinate: EventCoordinate }) {
       {coordinate.callIndex != null && <span>call #{coordinate.callIndex}</span>}
       {coordinate.source && <span>source: {coordinate.source}</span>}
     </>
+  );
+}
+
+function WarningIcon() {
+  // Triangle exclamation mark — universally readable "data may be wrong".
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style={{ flexShrink: 0 }}>
+      <path d="M8 1.5 L15 14 L1 14 Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <rect x="7.3" y="6" width="1.4" height="4.5" fill="currentColor" />
+      <rect x="7.3" y="11.4" width="1.4" height="1.4" fill="currentColor" />
+    </svg>
   );
 }
 
