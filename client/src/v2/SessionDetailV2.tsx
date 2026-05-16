@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -39,6 +39,7 @@ import {
 } from "./shared/HeaderStats";
 import { CallLedger } from "./shared/CallLedger";
 import { EventUnitCard } from "./shared/EventUnitCard";
+import { AttributionGraphProvider, AuditBoundaryStatus, useAttributionGraph } from "./attribution-graph-context";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { getToolPalette } from "./shared/toolRegistry";
 import { CHART_COLORS, TOOLTIP_PRESET, brandAreaGradient } from "./shared/chart-theme";
@@ -2753,13 +2754,18 @@ function ChainNarrativeNode({
 
 // ── ToolCallRow: tool_use request carried by the assistant response ───────────
 function ToolCallRow({
-  tc, active, onHoverToolUse,
+  tc, callId, active, onHoverToolUse,
 }: {
   tc: ToolCallSlot;
+  /** The LLM call that emitted this tool_use — its response is where the
+   *  `›` jump opens (the user's mental model: "this Tool Use came back in
+   *  call #N's response"). */
+  callId: number;
   active: boolean;
   onHoverToolUse: (id: string | null) => void;
 }) {
   const chip = toolChip(tc.name);
+  const { onJumpToCall } = useAttributionGraph();
 
   // Row preview: prefer the human-readable "description" field when the tool
   // emits one (e.g. Bash always carries a one-line description of intent —
@@ -2805,6 +2811,9 @@ function ToolCallRow({
         active={active}
         onMouseEnter={() => onHoverToolUse(tc.toolUseId)}
         onMouseLeave={() => onHoverToolUse(null)}
+        onJump={onJumpToCall ? () => onJumpToCall(callId, "response") : undefined}
+        jumpLabel={`call #${callId}`}
+        jumpTooltip={`在 call #${callId} 的 response 里查看（这条 tool_use 是该 call 的输出）`}
       />
     </div>
   );
@@ -2832,6 +2841,37 @@ function IntervalEventRow({
   // input/output framing — leave bare bytes (direction undefined).
   const direction: "in" | "out" | undefined = ev.kind === "user:tool_result" ? "out" : undefined;
 
+  // ── Reverse-attribution lookup ────────────────────────────────────────
+  // Each jsonl event may already have been audited by the session graph:
+  //   - indexed → render normal + jump to firstSeenInCall
+  //   - pending → yellow tint + "暂未消费"
+  //   - skipped → dim + "仅元数据"
+  // When the graph hasn't loaded yet (or this lineIdx is outside the
+  // current lastN window), annotation === null and the card renders without
+  // any impact treatment (back-compat with pre-Phase-1 visuals).
+  //
+  // IMPORTANT caveat on `firstSeenInCall`: it is "earliest reference within
+  // the *audited window*", not "earliest reference in the whole session".
+  // When loadedLastN != null and the true first call sits outside the
+  // window, the server's `firstSeenInCall` will point to whichever in-window
+  // call referenced this event earliest — which can be much later than the
+  // user expects. We surface this honestly in the jump tooltip so users
+  // know to click "load full ›" if the target looks suspicious.
+  const { getEventAnnotation, onJumpToCall, loadedLastN } = useAttributionGraph();
+  const annotation = getEventAnnotation(ev.lineIdx);
+  const impact = annotation ? {
+    state: annotation.contextImpact,
+    firstSeenInCall: annotation.firstSeenInCall,
+    consumedByCallIds: annotation.consumedByCallIds,
+  } : undefined;
+  const jumpTarget = annotation?.firstSeenInCall ?? null;
+  const handleJump = (onJumpToCall && jumpTarget != null)
+    ? () => onJumpToCall(jumpTarget, "request")
+    : undefined;
+  const auditCaveat = loadedLastN != null
+    ? `\n\n注意：当前是 last-${loadedLastN} 审计窗口，跳转目标是窗口内最早引用 —— 若实际首次消费在窗口之外，请先点顶部"load full ›"获取全 session 归因。`
+    : "";
+
   return (
     <div style={{ marginBottom: 2 }}>
       <EventUnitCard
@@ -2846,9 +2886,15 @@ function IntervalEventRow({
           { content: ev.rawJson, monospace: true, truncateAt: 1000 },
         ]}
         coordinate={{ kind: "jsonl", line: ev.lineIdx + 1 }}
+        impact={impact}
         active={linked}
         onMouseEnter={() => { if (hoverLinkedId) onHoverToolUse(hoverLinkedId); }}
         onMouseLeave={() => { if (hoverLinkedId) onHoverToolUse(null); }}
+        onJump={handleJump}
+        jumpLabel={jumpTarget != null ? `call #${jumpTarget}` : undefined}
+        jumpTooltip={jumpTarget != null
+          ? `在 call #${jumpTarget} 的 request 里查看（首次进入 prompt 的 call）${auditCaveat}`
+          : undefined}
       />
     </div>
   );
@@ -2868,6 +2914,11 @@ function JsonlCallChain({
   const [filterOpen, setFilterOpen] = useState(false);
   const [showFoldedSubAgentResults, setShowFoldedSubAgentResults] = useState(false);
   const [activeToolUseId, setActiveToolUseId] = useState<string | null>(null);
+
+  // When `onJumpToCall` fires from anywhere, the Provider sets
+  // highlightedCallId. The matching call card flashes an amber outline so
+  // the user can visually confirm where the jump landed.
+  const { highlightedCallId } = useAttributionGraph();
 
   if (!turn.calls.length) return null;
 
@@ -3017,7 +3068,16 @@ function JsonlCallChain({
 
           return (
             <React.Fragment key={call.id}>
-            <div id={`turn-${turn.id}-call-${call.id}`} style={{ position: "relative", zIndex: 1, marginBottom: 8 }}>
+            <div
+              id={`turn-${turn.id}-call-${call.id}`}
+              style={{
+                position: "relative", zIndex: 1, marginBottom: 8,
+                borderRadius: 8,
+                // Flash outline driven by AttributionGraphContext: lights up
+                // for ~2s after a jump points to this call.
+                boxShadow: highlightedCallId === call.id ? "0 0 0 3px rgba(245,158,11,0.45)" : "none",
+                transition: "box-shadow 350ms ease",
+              }}>
 
               {/* ── LLM Call card ───────────────────────────── */}
               <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
@@ -3104,6 +3164,7 @@ function JsonlCallChain({
 	                        <ToolCallRow
 	                          key={tc.toolUseId || ti}
 	                          tc={tc}
+	                          callId={call.id}
 	                          active={activeToolUseId === tc.toolUseId}
 	                          onHoverToolUse={setActiveToolUseId}
 	                        />
@@ -4870,7 +4931,30 @@ export function SessionDetailV2({ session, onClose }: Props) {
 
   const allCallsForNav = selectedTurn?.calls ?? [];
 
+  // ── Attribution graph wiring ────────────────────────────────────────────
+  // Build a fast lookup so EventUnitCard's `›` jump button can resolve a
+  // bare callId (e.g. firstSeenInCall from a JsonlEventAnnotation) to a
+  // MockLlmCall and open the linked panel. turns may be a fallback array
+  // before drilldown lands — the closure stays correct because turns is
+  // referenced fresh each render.
+  const callById = useMemo(() => {
+    const m = new Map<number, MockLlmCall>();
+    for (const turn of turns) {
+      for (const call of turn.calls) m.set(call.id, call);
+    }
+    return m;
+  }, [turns]);
+
+  const onJumpToCall = useCallback((callId: number) => {
+    const call = callById.get(callId);
+    if (call) openLinkedCall(call);
+    // Lens hint (request/response) is accepted by the prop signature but not
+    // wired through yet — LinkedPanel's call view doesn't currently honor it.
+    // Punt the lens-focus follow-up to Phase 2.
+  }, [callById]); // openLinkedCall is closure-stable enough at this scope; turns flow through callById
+
   return (
+    <AttributionGraphProvider sessionId={session.session_id} onJumpToCall={onJumpToCall}>
     <div
       style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }}
       onClick={onClose}
@@ -4931,6 +5015,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
             {loadState === "error" && (
               <span style={{ fontSize: 10, color: "#dc2626", background: "#fef2f2", borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.error")}</span>
             )}
+            <AuditBoundaryStatus />
             <button onClick={onClose} style={{ border: "none", background: "transparent", cursor: "pointer", color: "#9ca3af", fontSize: 20, lineHeight: 1, padding: 4 }}>×</button>
           </div>
         </div>
@@ -5107,6 +5192,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
         </div>
       </div>
     </div>
+    </AttributionGraphProvider>
   );
 }
 

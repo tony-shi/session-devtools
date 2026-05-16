@@ -248,8 +248,9 @@ function LinkedResultBlock({
       onJump={linked.nextCallId != null && onLinkCall
         ? () => onLinkCall(linked.nextCallId!)
         : undefined}
+      jumpLabel={linked.nextCallId != null ? `call #${linked.nextCallId}` : undefined}
       jumpTooltip={linked.nextCallId != null
-        ? `Show in Turn (Call #${linked.nextCallId}) →`
+        ? `打开 call #${linked.nextCallId}（消费这条 tool_result 的下一次 LLM 调用）`
         : undefined}
     />
   );

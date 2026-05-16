@@ -24,6 +24,10 @@ import type {
 import { coverageStateOf } from "./attribution-tree-types";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { CodeBlock } from "./shared/CodeBlock";
+import { EventUnitCard, type EventCoordinate } from "./shared/EventUnitCard";
+import { EVENT_PALETTES } from "./shared/eventPalette";
+import type { IntervalEventKind } from "./drilldown-types";
+import { useAttributionGraph } from "./attribution-graph-context";
 
 // ─── 类型与配色 ─────────────────────────────────────────────────────────────
 
@@ -505,53 +509,69 @@ export function SelectedDetail({ leaf, onLinkSource }: {
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
 }) {
   // Back-link: when this leaf's payload was emitted by a previous LLM call
-  // (tool_use / tool_result / assistant_text linked via jsonl), expose a
-  // pill that opens that source call in the linked panel. Only visible when
-  // the parent provides onLinkSource — panel-mode renders skip this to avoid
-  // recursive panel stacking.
+  // (tool_use / tool_result / assistant_text linked via jsonl), expose the
+  // header jump chip that opens that source call.
+  //
+  // Two backends are available; prefer the AttributionGraph-aware one when
+  // it's wired up (Session detail mounted under AttributionGraphProvider),
+  // because it opens a single-call detail panel + scrolls + flashes the
+  // main timeline — visually consistent with forward jumps. Fall back to
+  // the legacy onLinkSource (turn-excerpt opening) when context is missing
+  // or when the caller explicitly didn't provide attribution-graph wiring.
+  const { onJumpToCall } = useAttributionGraph();
   const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;
   const sourceTurnId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceTurnId : undefined;
-  const canLinkSource = onLinkSource && sourceCallId !== undefined;
+  const handleJumpSource = sourceCallId !== undefined
+    ? (onJumpToCall
+        ? () => onJumpToCall(sourceCallId)
+        : (onLinkSource ? () => onLinkSource(sourceCallId, sourceTurnId) : undefined))
+    : undefined;
 
-  // 扁平展示：无 card 外框、无重复的 slot 名（hover readout / 当前行已显示）
-  // 仅保留 origin 元信息 + raw 内容
+  // Translate the leaf's origin into EventUnitCard params so this detail view
+  // shares the same visual shell as Turn-card events / Call-detail response
+  // blocks (dot · kind · title · shortId · size · META).
+  const { color, kindLabel, title, shortId } = leafOriginToCardHeader(leaf);
+  const coordinate: EventCoordinate | undefined =
+    leaf.origin.kind === "jsonl"
+      ? { kind: "jsonl", line: leaf.origin.jsonlLineIdx + 1 }
+      : leaf.origin.kind === "rule"
+        ? { kind: "structured", path: leaf.origin.ruleId, source: "rule" }
+        : undefined;
+  const confidence =
+    leaf.origin.kind === "rule" || leaf.origin.kind === "jsonl"
+      ? leaf.origin.confidence
+      : undefined;
+  const isJsonContent = leaf.origin.kind === "jsonl";
+
   return (
-    <div style={{
-      paddingTop: 6,
-      display: "flex", flexDirection: "column", gap: 6,
-    }}>
-      {/* origin 元信息（单行，紧凑）*/}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 8,
-        fontSize: 10, color: "#374151",
-        padding: "2px 2px",
-      }}>
-        <span style={{
-          fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em",
-          color: "#4b5563",
-        }}>{leaf.origin.kind}</span>
-        <span style={{ color: "#6b7280" }}>{originLabel(leaf.origin)}</span>
-        {canLinkSource && (
-          <button
-            type="button"
-            onClick={() => onLinkSource!(sourceCallId!, sourceTurnId)}
-            title={`在右侧打开 call #${sourceCallId} 所在 turn 的 call 事件列表（聚焦到该 call）`}
-            style={{
-              fontSize: 10, fontWeight: 700,
-              color: "#4338ca", background: "#eef2ff",
-              border: "1px solid #c7d2fe", borderRadius: 4,
-              padding: "1px 6px", cursor: "pointer",
-            }}
-          >
-            → 在 Turn 中查看 call #{sourceCallId}
-          </button>
-        )}
-        {(leaf.origin.kind === "rule" || leaf.origin.kind === "jsonl") && (
-          <span style={{ marginLeft: "auto", fontSize: 9, color: "#9ca3af" }}>
-            confidence · {leaf.origin.confidence}
-          </span>
-        )}
-      </div>
+    <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
+      <EventUnitCard
+        color={color}
+        kindLabel={kindLabel}
+        title={title}
+        shortId={shortId}
+        size={{ bytes: leaf.charCount }}
+        segments={[
+          {
+            label: "CONTENT",
+            content: leaf.rawText ?? leaf.preview,
+            monospace: isJsonContent,
+          },
+        ]}
+        coordinate={coordinate}
+        confidence={confidence}
+        expandable={false}
+        defaultExpanded={true}
+        onJump={handleJumpSource}
+        jumpLabel={sourceCallId !== undefined ? `call #${sourceCallId}` : undefined}
+        jumpTooltip={sourceCallId !== undefined
+          ? `打开 call #${sourceCallId} 详情（产生这一段内容的源 call）`
+          : undefined}
+      />
+
+      {/* Rule origin's dynamic field injection trail — kept as a collapsible
+          aside below the main card (orthogonal information, not part of the
+          event-unit identity). */}
       {leaf.origin.kind === "rule" && leaf.origin.dynamicFields && leaf.origin.dynamicFields.length > 0 && (
         <details style={{ fontSize: 10 }}>
           <summary style={{ cursor: "pointer", color: "#6366f1" }}>
@@ -570,9 +590,63 @@ export function SelectedDetail({ leaf, onLinkSource }: {
           </div>
         </details>
       )}
-      <CodeBlock variant="preview" maxHeight={240}>{leaf.rawText ?? leaf.preview}</CodeBlock>
     </div>
   );
+}
+
+// Map a leaf's SegmentOrigin onto EventUnitCard's header slots so that the
+// Attribution leaf-detail view reads with the same visual vocabulary as the
+// JSONL event rows in Turn cards. The color comes from `EVENT_PALETTES` when
+// the origin is a jsonl event (so the dot matches the corresponding
+// IntervalEventRow exactly), and from a small rule/structural/unknown
+// fallback palette otherwise.
+function leafOriginToCardHeader(leaf: LeafLite): {
+  color: string;
+  kindLabel: string;
+  title?: string;
+  shortId?: string;
+} {
+  const o = leaf.origin;
+  if (o.kind === "rule") {
+    return {
+      color: "#3b82f6",
+      kindLabel: "Rule",
+      title: o.ruleId.startsWith("wire.") ? `wire · ${o.ruleId.slice(5)}` : o.ruleId,
+    };
+  }
+  if (o.kind === "jsonl") {
+    const src = o.eventKind.source;
+    const ct = o.eventKind.contentType;
+    // Map jsonl event source → IntervalEventKind so we can reuse the
+    // existing palette. The mapping mirrors the parser's own taxonomy.
+    const ikind: IntervalEventKind = jsonlSourceToIntervalKind(src);
+    const palette = EVENT_PALETTES[ikind] ?? { fg: "#64748b" };
+    const titleParts = [src];
+    if (ct && ct !== "text") titleParts.push(`:${ct}`);
+    return {
+      color: palette.fg,
+      kindLabel: "JSONL",
+      title: titleParts.join(""),
+      shortId: o.sourceCallId !== undefined ? `call #${o.sourceCallId}` : undefined,
+    };
+  }
+  if (o.kind === "structural") {
+    return { color: "#9ca3af", kindLabel: "Structural", title: o.reason };
+  }
+  return { color: "#9ca3af", kindLabel: "Unknown", title: o.reason };
+}
+
+function jsonlSourceToIntervalKind(source: string): IntervalEventKind {
+  switch (source) {
+    case "user_input":         return "user:human";
+    case "tool_result":        return "user:tool_result";
+    case "system_local_command": return "user:command";
+    case "attachment":         return "attachment:file";
+    case "system_api_error":   return "system:api_error";
+    case "stop_hook":          return "system:stop_hook_summary";
+    case "away_summary":       return "system:away_summary";
+    default:                   return "unknown";
+  }
 }
 
 // ─── 顶层 Panel ─────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ import type { SessionDrilldown, CallDetail } from "./drilldown-types";
 import type { AttributionTreeResult } from "./attribution-tree-types";
 import type { ResponseTreeResult } from "./response-tree-types";
 import type { DiffTreeResult } from "./diff-tree-types";
+import type { SessionAttributionGraph } from "./attribution-graph-types";
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(path);
@@ -41,6 +42,19 @@ export const apiV2 = {
 
   diffTree: (sessionId: string, callId: number) =>
     get<DiffTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/diff-tree`),
+
+  /**
+   * Reverse attribution graph for the session — every jsonl event annotated
+   * with which calls consumed it. `lastN` limits the audit window (only
+   * the last K calls drive the reverse lookup); omit for full session
+   * (slow on big sessions: ~13s for 149 calls).
+   */
+  attributionGraph: (sessionId: string, opts?: { lastN?: number }) => {
+    const qs = opts?.lastN ? `?lastN=${opts.lastN}` : "";
+    return get<SessionAttributionGraph>(
+      `/api/v2/sessions/${encodeURIComponent(sessionId)}/attribution-graph${qs}`,
+    );
+  },
 
   subAgentDrilldown: (sessionId: string, agentFileId: string) =>
     get<SessionDrilldown>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/subagent/${encodeURIComponent(agentFileId)}/drilldown`),

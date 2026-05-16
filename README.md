@@ -12,7 +12,7 @@
 
 <!-- HERO: 15s autoplay GIF, 800px wide, <5MB. Frames: session list → turn drilldown → sub-agent boundary. -->
 
-![session-devtools hero demo](./docs/pr/assets/hero.gif)
+![session-devtools hero demo](./docs/assets/hero.png)
 
 ▶ Watch the full 60s demo → [YouTube](https://youtu.be/REPLACE_ID) · [Bilibili](https://www.bilibili.com/video/REPLACE_ID)
 
@@ -42,7 +42,7 @@ A single Claude Code turn often hides:
 - silently injected instructions
 - a context compaction
 
-Think of it as browser DevTools — but for LLM interactions.
+Think of `session-devtools` as browser DevTools — but for LLM interactions.
 
 Click into any call to see the full context window, with every chunk attributed to its source: which system prompt block, which tool result, which prior turn contributed which tokens. Diff two adjacent calls to find exactly what changed. Trace every sub-agent from parent to child and back.
 
@@ -101,6 +101,8 @@ Once it finishes, switch back to `session-devtools` and look at:
 - where the parent's **next call** sourced its context from
 
 One run, and "what a sub-agent really is" stops being abstract.
+
+From there, keep exploring. Every Claude Code's litte tricks becomes inspectable — the way every webpage is, in browser DevTools.
 
 ---
 

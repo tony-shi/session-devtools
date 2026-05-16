@@ -53,6 +53,21 @@ export interface EventUnitCardProps {
   /** Confidence level (definitive / high / partial / none / etc.) — appended
    *  to the META footer when present. */
   confidence?: string;
+  /**
+   * Reverse-attribution facts (server-side `JsonlEventAnnotation` projected
+   * onto this event). Drives:
+   *   - META row chips ("first seen → call #N · used in K calls")
+   *   - Three-state visual:
+   *       · indexed → normal card
+   *       · pending → yellow tint, "暂未消费" chip
+   *       · skipped → opacity 0.6, "仅元数据" chip, no `›` jump
+   * Pass null/undefined to render the card without any impact treatment.
+   */
+  impact?: {
+    state: "indexed" | "skipped" | "pending";
+    firstSeenInCall?: number | null;
+    consumedByCallIds?: number[];
+  };
 
   // === Behavior ===
   /** Default true; if false, expanded state is fixed and no ▼ toggle shown. */
@@ -65,7 +80,11 @@ export interface EventUnitCardProps {
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
   onClick?: () => void;            // fires alongside expand toggle
-  onJump?: () => void;             // header › button: jump to other view
+  onJump?: () => void;             // header jump button (chip)
+  /** Short label shown inside the jump chip — e.g. "call #140". Without it
+   *  the chip falls back to "跳转". A label is strongly recommended so users
+   *  see the target before clicking. */
+  jumpLabel?: string;
   jumpTooltip?: string;
 
   // === Style overrides ===
@@ -95,19 +114,31 @@ function shortenId(id: string): string {
 export function EventUnitCard(props: EventUnitCardProps) {
   const {
     color, kindLabel, title, shortId, size, timestamp,
-    preview, segments = [], coordinate, confidence,
+    preview, segments = [], coordinate, confidence, impact,
     expandable = true, defaultExpanded = false,
     active = false,
-    onMouseEnter, onMouseLeave, onClick, onJump, jumpTooltip,
+    onMouseEnter, onMouseLeave, onClick, onJump, jumpLabel, jumpTooltip,
     bg, border, compact = false,
   } = props;
 
   const [expanded, setExpanded] = useState(defaultExpanded);
   const showExpanded = expandable ? expanded : true;
 
+  // Impact state cascades into background / opacity / jump button visibility.
+  // Skipped events are "metadata only" → dim and non-navigable. Pending
+  // events are highlighted yellow so the eye catches them as "weirdly
+  // unconsumed". Indexed events render normally.
+  const isSkipped = impact?.state === "skipped";
+  const isPending = impact?.state === "pending";
+
   const headerPadding = compact ? "3px 8px" : "5px 10px";
-  const effectiveBg     = active ? "#fff7ed"   : (bg     ?? "#fafafa");
-  const effectiveBorder = active ? "#f59e0b"   : (border ?? "#f0f0f0");
+  const impactBg = isPending ? "#fffbeb" : undefined;
+  const effectiveBg     = active ? "#fff7ed" : (impactBg ?? bg ?? "#fafafa");
+  const effectiveBorder = active ? "#f59e0b" : (isPending ? "#fde68a" : (border ?? "#f0f0f0"));
+  const cardOpacity = isSkipped ? 0.6 : 1;
+
+  // Skipped events never offer a jump — there's no call to point at.
+  const effectiveOnJump = isSkipped ? undefined : onJump;
 
   return (
     <div
@@ -118,8 +149,9 @@ export function EventUnitCard(props: EventUnitCardProps) {
         border: `1px solid ${effectiveBorder}`,
         borderRadius: 6,
         overflow: "hidden",
+        opacity: cardOpacity,
         boxShadow: active ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
-        transition: "background 0.1s, border-color 0.1s",
+        transition: "background 0.1s, border-color 0.1s, opacity 0.1s",
       }}
     >
       {/* === Header === */}
@@ -192,20 +224,28 @@ export function EventUnitCard(props: EventUnitCardProps) {
           </span>
         )}
 
-        {/* jump button (to other view) */}
-        {onJump && (
+        {/* jump button (to other view) — explicit chip with target label so
+            users see *where* the jump lands before clicking. Pure caret was
+            too easy to mis-tap when adjacent to the expand toggle. */}
+        {effectiveOnJump && (
           <button
             type="button"
             title={jumpTooltip}
-            onClick={(e) => { e.stopPropagation(); onJump(); }}
+            onClick={(e) => { e.stopPropagation(); effectiveOnJump(); }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "#e0e7ff"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "#eef2ff"; }}
             style={{
-              border: "none", background: "transparent", cursor: "pointer",
-              fontSize: 14, color: "#6366f1", padding: "0 4px",
-              lineHeight: 1, fontWeight: 700,
-              flexShrink: 0,
+              display: "inline-flex", alignItems: "center", gap: 3,
+              border: "1px solid #c7d2fe", background: "#eef2ff",
+              color: "#4338ca", borderRadius: 4,
+              fontSize: 10, fontWeight: 700,
+              padding: "1px 6px",
+              cursor: "pointer", lineHeight: 1.4,
+              flexShrink: 0, whiteSpace: "nowrap",
+              transition: "background 0.1s",
             }}
           >
-            ›
+            {jumpLabel ?? "跳转"} <span style={{ fontSize: 11 }}>→</span>
           </button>
         )}
 
@@ -227,16 +267,17 @@ export function EventUnitCard(props: EventUnitCardProps) {
       )}
 
       {/* === META footer === */}
-      {showExpanded && (coordinate || confidence) && (
+      {showExpanded && (coordinate || confidence || impact) && (
         <div style={{
           padding: "5px 10px",
           borderTop: "1px solid #f3f4f6",
           fontSize: 9, color: "#6b7280",
           display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center",
-          background: "#fcfcfc",
+          background: isPending ? "#fffdf2" : "#fcfcfc",
         }}>
           <span style={{ fontWeight: 700, color: "#9ca3af", letterSpacing: "0.04em" }}>META</span>
           {coordinate && <CoordinateChips coordinate={coordinate} />}
+          {impact && <ImpactChips impact={impact} />}
           {confidence && (
             <span style={{ marginLeft: "auto", color: "#9ca3af" }}>
               confidence · {confidence}
@@ -249,6 +290,24 @@ export function EventUnitCard(props: EventUnitCardProps) {
 }
 
 // ─── Sub-components ──────────────────────────────────────────────────────────
+
+function ImpactChips({ impact }: { impact: NonNullable<EventUnitCardProps["impact"]> }) {
+  if (impact.state === "skipped") {
+    return <span style={{ color: "#9ca3af" }}>仅元数据 · 未进入 prompt</span>;
+  }
+  if (impact.state === "pending") {
+    return <span style={{ color: "#b45309" }}>暂未消费</span>;
+  }
+  // indexed
+  const fst = impact.firstSeenInCall;
+  const usedIn = impact.consumedByCallIds?.length ?? 0;
+  return (
+    <>
+      {fst != null && <span>first seen → call #{fst}</span>}
+      {usedIn > 1 && <span>used in {usedIn} calls</span>}
+    </>
+  );
+}
 
 function CoordinateChips({ coordinate }: { coordinate: EventCoordinate }) {
   if (coordinate.kind === "jsonl") {

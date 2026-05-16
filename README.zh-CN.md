@@ -12,7 +12,7 @@
 
 <!-- HERO: 15 秒自动循环 GIF，宽 800px，<5MB。镜头：session 列表 → turn drilldown → sub-agent 边界。 -->
 
-![session-devtools hero demo](./docs/pr/assets/hero.gif)
+![session-devtools hero demo](./docs/assets/hero.png)
 
 ▶ 观看完整 60 秒 demo → [Bilibili](https://www.bilibili.com/video/REPLACE_ID) · [YouTube](https://youtu.be/REPLACE_ID)
 
@@ -26,7 +26,7 @@
 
 `session-devtools` 就是那个 harness。
 
-> **Alpha** · 仅支持 Claude Code 2.x · 本地运行 · 数据不出本机。
+> **Alpha** · 当前仅支持 Claude Code 2.x · 本地运行 · 数据不出本机。
 
 ---
 
@@ -56,7 +56,8 @@
 npx session-devtools
 ```
 
-Node 22+。自动在浏览器打开 [http://localhost:5173](http://localhost:5173)。**数据不上传。**
+Node 22+。
+自动在浏览器打开 [http://localhost:5173](http://localhost:5173)。**数据不上传。**
 
 或者全局安装：
 
@@ -101,6 +102,8 @@ After it returns, summarize the answer in a short table.
 
 跑完这一次，"sub-agent 到底是什么"就不再抽象了。
 
+之后继续探索 —— 每一个 Claude Code 的“小把戏”都能被点开看清，就像你用 Chrome DevTools 探索喜爱的网页那样。
+
 ---
 
 ## CLI 参数
@@ -137,7 +140,7 @@ session-devtools --no-proxy
 
 ---
 
-## Alpha 阶段坦白说
+## Alpha 阶段坦白
 
 - **目前仅支持 Claude Code 2.x。** Codex / Gemini 暂未支持。
 - **归因**需要 MITM 代理（首次启动自动安装，可用 `--no-proxy` 关闭）。
