@@ -5,7 +5,9 @@ import { parseJsonField } from "./parser-utils.ts";
 import { buildMockDrilldown } from "./session-drilldown-mock.ts";
 import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
 import { loadCallDetail, readProxyRecord, findProxyRowForCall } from "./call-detail.ts";
-import { loadAttributionTree } from "./attribution-service.ts";
+import { loadAttributionTree, readSessionEventsForLinker } from "./attribution-service.ts";
+import { computeSessionAttributionGraph } from "./session-attribution-graph.ts";
+import type { LinkableJsonlEvent } from "./context-ledger/parser";
 import { loadDiffTree } from "./diff-tree-service.ts";
 import { loadResponseTree } from "./response-attribution-service.ts";
 
@@ -256,6 +258,85 @@ export class SessionsV2Controller {
           proxyRequestId: proxyRow.id,
           startedAt: proxyRow.started_at ?? ts,
         };
+      },
+    });
+  }
+
+  /**
+   * Session-level attribution graph：把整 session 跑过的 per-call snapshot 反向
+   * 聚合成"每个 jsonl event 在哪些 call 里被消费"。配合 per-call attribution-tree
+   * 一起，前端就能做双向归因（leaf → jsonl line ↔ event → consuming calls）。
+   *
+   * - 无 query 参数 → 跑整 session 所有 call（大 session 会慢，O(N) call × O(K) leaves）
+   * - `?lastN=K` → 只跑最后 K 个 call（用于 hot path 快速预览；与 audit 脚本同语义）
+   *
+   * 性能：session 内 jsonl events 单次解析，loadAttributionTree 内部走同款缓存；
+   * proxy reqBody 仍按 call 现读（与 attributionTree endpoint 一致，未做 LRU）。
+   */
+  @Get("sessions/:id/attribution-graph")
+  async attributionGraph(
+    @Param("id") id: string,
+    @Query("lastN") lastNParam?: string,
+  ) {
+    const db = getDb();
+    const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+    const sourceFile = row.source_file as string;
+
+    let drilldown;
+    try {
+      drilldown = parseSessionDrilldown(sourceFile, id, row, db);
+    } catch {
+      throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
+    }
+
+    const allCalls = drilldown.turns.flatMap((t) => t.calls.map((c) => ({ call: c, turnId: t.id })));
+    const lastN = lastNParam ? Math.max(1, parseInt(lastNParam, 10)) : undefined;
+    const targetCalls = lastN ? allCalls.slice(-lastN) : allCalls;
+
+    // session 级 events 缓存：computeSessionAttributionGraph 顶层读一次；
+    // 每个 call 的 loadAttributionTree 内部也复用这一份（通过 loadJsonlEvents hook）。
+    // 避免 (N+1) 次解析整 jsonl 文件。
+    let cachedEvents: LinkableJsonlEvent[] | null = null;
+    const loadJsonlEvents = (file: string): LinkableJsonlEvent[] | null => {
+      if (file !== sourceFile) return null;
+      if (cachedEvents === null) cachedEvents = readSessionEventsForLinker(file);
+      return cachedEvents;
+    };
+
+    return computeSessionAttributionGraph(id, db, {
+      listCalls: () => targetCalls.map((x) => ({ callId: x.call.id, sourceFile })),
+      loadCallHelpers: {
+        resolveCallMeta: (_sid, cid) => {
+          const cur = allCalls.find((x) => x.call.id === cid);
+          if (!cur) return null;
+          const curIdx = allCalls.indexOf(cur);
+          const prev = curIdx > 0 ? allCalls[curIdx - 1] : null;
+          return {
+            call: { id: cur.call.id, timestamp: cur.call.timestamp, turnId: cur.turnId, sourceFile, apiRequestId: cur.call.apiRequestId },
+            prevCall: prev ? { id: prev.call.id, timestamp: prev.call.timestamp, apiRequestId: prev.call.apiRequestId } : null,
+          };
+        },
+        fetchProxyReqBodyAt: async (sid, ts, excludeProxyId, apiRequestId) => {
+          const proxyRow = findProxyRowForCall(db, sid, apiRequestId, ts, excludeProxyId);
+          if (!proxyRow) return null;
+          const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
+          const reqBodyStr = rec?.reqBody as string | undefined;
+          if (typeof reqBodyStr !== "string") return null;
+          let reqBody: Record<string, unknown> | null = null;
+          try { reqBody = JSON.parse(reqBodyStr) as Record<string, unknown>; }
+          catch { return null; }
+          let reqHeaders: Record<string, string> = {};
+          try { reqHeaders = JSON.parse(proxyRow.req_headers ?? "{}") as Record<string, string>; }
+          catch { /* default empty */ }
+          return {
+            reqBody,
+            reqHeaders,
+            proxyRequestId: proxyRow.id,
+            startedAt: proxyRow.started_at ?? ts,
+          };
+        },
+        loadJsonlEvents,
       },
     });
   }

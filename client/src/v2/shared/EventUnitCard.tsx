@@ -50,6 +50,9 @@ export interface EventUnitCardProps {
   // === Expanded content ===
   segments?: EventSegment[];
   coordinate?: EventCoordinate;
+  /** Confidence level (definitive / high / partial / none / etc.) — appended
+   *  to the META footer when present. */
+  confidence?: string;
 
   // === Behavior ===
   /** Default true; if false, expanded state is fixed and no ▼ toggle shown. */
@@ -92,7 +95,7 @@ function shortenId(id: string): string {
 export function EventUnitCard(props: EventUnitCardProps) {
   const {
     color, kindLabel, title, shortId, size, timestamp,
-    preview, segments = [], coordinate,
+    preview, segments = [], coordinate, confidence,
     expandable = true, defaultExpanded = false,
     active = false,
     onMouseEnter, onMouseLeave, onClick, onJump, jumpTooltip,
@@ -224,16 +227,21 @@ export function EventUnitCard(props: EventUnitCardProps) {
       )}
 
       {/* === META footer === */}
-      {showExpanded && coordinate && (
+      {showExpanded && (coordinate || confidence) && (
         <div style={{
           padding: "5px 10px",
           borderTop: "1px solid #f3f4f6",
           fontSize: 9, color: "#6b7280",
-          display: "flex", gap: 10, flexWrap: "wrap",
+          display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center",
           background: "#fcfcfc",
         }}>
           <span style={{ fontWeight: 700, color: "#9ca3af", letterSpacing: "0.04em" }}>META</span>
-          <CoordinateChips coordinate={coordinate} />
+          {coordinate && <CoordinateChips coordinate={coordinate} />}
+          {confidence && (
+            <span style={{ marginLeft: "auto", color: "#9ca3af" }}>
+              confidence · {confidence}
+            </span>
+          )}
         </div>
       )}
     </div>

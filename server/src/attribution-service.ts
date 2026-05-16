@@ -27,6 +27,8 @@ import {
   computeTreeDiff,
   collectLeaves,
   isCommandLikeText,
+  authorshipOf,
+  coverageStateOf,
   type ParsedQuerySnapshot,
   type LinkableJsonlEvent,
   type LinkJsonlReport,
@@ -34,6 +36,8 @@ import {
   type SegmentNode,
   type ForwardAudit,
   type ReverseAudit,
+  type Authorship,
+  type CoverageState,
 } from "./context-ledger/parser";
 import { parseQuery, attributeSnapshot } from "./context-ledger/parser";
 
@@ -115,6 +119,16 @@ export interface SerializedNode {
   rawText?: string;
   parentId?: string;
   origin: SegmentNode["origin"];
+  /**
+   * 派生轴 1：authorship（"谁写的"）。origin 多维信息在 5 值枚举上的投影，前端
+   * Origin lens 默认配色键。后端单点 derive，前端只读，避免口径漂移。
+   */
+  authorship: Authorship;
+  /**
+   * 派生轴 2：coverageState（audit 三桶主轴）。origin + fullyCovered 的投影，
+   * 前端 Coverage facet / 旧 Audit lens 直接消费。
+   */
+  coverageState: CoverageState;
   wireMeta?: SegmentNode["wireMeta"];
   cachePolicy?: SegmentNode["cachePolicy"];
   unknownMeta?: SegmentNode["unknownMeta"];
@@ -128,6 +142,8 @@ export interface SerializedNodeSummary {
   preview: string;
   parentId?: string;
   origin: SegmentNode["origin"];
+  authorship: Authorship;
+  coverageState: CoverageState;
 }
 
 // ─── 入口：加载并归因一个 call ────────────────────────────────────────────────
@@ -615,6 +631,9 @@ function serializeNode(node: SegmentNode): SerializedNode {
     ...(isLeaf && { rawText: node.rawText }),
     ...(node.parentId && { parentId: node.parentId }),
     origin: node.origin,
+    // 派生字段：authorship + coverageState 由后端一次性 derive，前端只读。
+    authorship: authorshipOf(node.origin),
+    coverageState: coverageStateOf(node.origin),
     ...(node.wireMeta && { wireMeta: node.wireMeta }),
     ...(node.cachePolicy && { cachePolicy: node.cachePolicy }),
     ...(node.unknownMeta && { unknownMeta: node.unknownMeta }),
@@ -634,6 +653,8 @@ function serializeSummary(node: SegmentNode): SerializedNodeSummary {
         : node.rawText.replace(/\s+/g, " ").trim()),
     ...(node.parentId && { parentId: node.parentId }),
     origin: node.origin,
+    authorship: authorshipOf(node.origin),
+    coverageState: coverageStateOf(node.origin),
   };
 }
 

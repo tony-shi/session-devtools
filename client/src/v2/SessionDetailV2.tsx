@@ -2789,7 +2789,11 @@ function ToolCallRow({
   return (
     <div style={{ marginBottom: 3 }}>
       <EventUnitCard
-        color={chip.fg}
+        // dot color is the *event type* (Tool Use = orange), not the tool's
+        // individual chip color — tool identity is conveyed by the `title`
+        // chip + tool name text. This keeps the type-color visual anchor
+        // ("orange = tool_use anywhere in the app") intact across calls.
+        color="#f59e0b"
         kindLabel="Tool Use"
         title={tc.name}
         shortId={tc.toolUseId}

@@ -23,6 +23,7 @@ Options:
   --port <n>        Port to listen on (default: 5173)
   --data-dir <path> Data directory (default: ~/.api-dashboard)
   --no-open         Do not open browser on start
+  --no-proxy        Do not start the proxy on launch
   --quiet           Suppress server logs
   --help            Show this help
 `);
@@ -37,6 +38,7 @@ function getFlag(flag) {
 const port = getFlag("--port") ?? process.env.PORT ?? "5173";
 const dataDir = getFlag("--data-dir") ?? process.env.API_DASHBOARD_DIR;
 const noOpen = args.includes("--no-open");
+const noProxy = args.includes("--no-proxy");
 const quiet = args.includes("--quiet");
 
 // ── update-notifier (best-effort) ─────────────────────────────────────────────
@@ -63,6 +65,7 @@ const env = {
   PORT: port,
   ...(dataDir ? { API_DASHBOARD_DIR: dataDir } : {}),
   ...(quiet ? { SESSION_DEVTOOLS_QUIET: "1" } : {}),
+  ...(noProxy ? { SESSION_DEVTOOLS_NO_PROXY: "1" } : {}),
 };
 
 const child = spawn(process.execPath, [DIST_SERVER], {

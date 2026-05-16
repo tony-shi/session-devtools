@@ -1,4 +1,8 @@
 // Proxy v2 管理页 —— 控制面板（Start / Stop）+ 流量展示。
+//
+// 视觉风格已对齐主站：indigo `#6366f1` 主色 / emerald `#10b981` 成功 /
+// `#dc2626` 错误 / `#d97706` 警告。border `#e5e7eb` / `#f3f4f6`。和
+// SessionDetail / Dashboard 同源。
 import { useEffect, useRef, useState } from "react";
 import { ProxyTraffic } from "./ProxyTraffic";
 
@@ -61,10 +65,11 @@ export function ProxyV2Setup() {
   const isRunning = phase === "running";
   const isTransitioning = phase === "starting" || phase === "stopping";
 
+  // Phase 颜色对齐主站：emerald running / indigo starting / amber stopping / gray idle
   const phaseColor =
-    phase === "running"  ? "#34c759" :
-    phase === "starting" ? "#007aff" :
-    phase === "stopping" ? "#ff9f0a" : "#8e8e93";
+    phase === "running"  ? "#10b981" :
+    phase === "starting" ? "#6366f1" :
+    phase === "stopping" ? "#d97706" : "#9ca3af";
 
   const phaseLabel =
     phase === "running"  ? "运行中" :
@@ -73,25 +78,25 @@ export function ProxyV2Setup() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* 警告条 */}
+      {/* 信息条 —— 用主站 indigo 配色 */}
       <div style={{
-        background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 8,
-        padding: "10px 16px", fontSize: 13, color: "#1e40af",
+        background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 8,
+        padding: "10px 16px", fontSize: 13, color: "#3730a3",
       }}>
         Proxy v2 — 极简控制器版。Start = 注入 settings + 启动；Stop = 还原 settings + 停止。
         Dashboard 退出时自动 Stop。
       </div>
 
       {/* 状态卡片 */}
-      <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e5e5", padding: "20px 24px" }}>
+      <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb", padding: "20px 24px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 17 }}>Proxy v2</div>
-            <div style={{ fontSize: 12, color: "#999", marginTop: 2 }}>controller-managed</div>
+            <div style={{ fontWeight: 700, fontSize: 17, color: "#111827" }}>Proxy v2</div>
+            <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 2 }}>controller-managed</div>
           </div>
           <div style={{
             padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-            background: `${phaseColor}15`, color: phaseColor,
+            background: `${phaseColor}1a`, color: phaseColor,
           }}>
             ● {phaseLabel}
           </div>
@@ -102,7 +107,7 @@ export function ProxyV2Setup() {
           <Field label="target" value={target} />
           <Field label="port" value={String(snap?.port ?? "-")} />
           <Field label="pid" value={snap?.pid ? String(snap.pid) : "-"} />
-          <Field label="active.json" value={snap?.active ? "存在" : "无"} color={snap?.active ? "#34c759" : "#8e8e93"} />
+          <Field label="active.json" value={snap?.active ? "存在" : "无"} color={snap?.active ? "#10b981" : "#9ca3af"} />
         </div>
 
         {/* 按钮 */}
@@ -162,7 +167,7 @@ export function ProxyV2Setup() {
         {snap && snap.preflightWarnings.length > 0 && (
           <div style={{
             marginTop: 10, padding: "8px 12px", borderRadius: 6,
-            background: "#f0f9ff", border: "1px solid #bae6fd", color: "#075985", fontSize: 12,
+            background: "#eef2ff", border: "1px solid #c7d2fe", color: "#3730a3", fontSize: 12,
           }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>preflight warnings（已通过）</div>
             <ul style={{ margin: 0, paddingLeft: 18 }}>
@@ -173,12 +178,12 @@ export function ProxyV2Setup() {
       </div>
 
       {/* 日志窗口 */}
-      <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e5e5", padding: "14px 20px" }}>
-        <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>日志（最近 50 条）</div>
+      <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb", padding: "14px 20px" }}>
+        <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14, color: "#111827" }}>日志（最近 50 条）</div>
         <pre
           ref={logRef}
           style={{
-            background: "#1a1a1a", color: "#d8d8d8", borderRadius: 6,
+            background: "#1f2937", color: "#e5e7eb", borderRadius: 6,
             padding: "10px 12px", fontSize: 11, overflow: "auto",
             maxHeight: 280, margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all",
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
@@ -197,8 +202,8 @@ export function ProxyV2Setup() {
 function Field({ label, value, color }: { label: string; value: string; color?: string }) {
   return (
     <div>
-      <div style={{ fontSize: 11, color: "#999", marginBottom: 3 }}>{label}</div>
-      <div style={{ fontWeight: 600, fontSize: 13, color: color ?? "#111" }}>{value}</div>
+      <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 3 }}>{label}</div>
+      <div style={{ fontWeight: 600, fontSize: 13, color: color ?? "#111827" }}>{value}</div>
     </div>
   );
 }
@@ -213,9 +218,10 @@ function btnStyle(variant: "primary" | "danger" | "neutral" | "ghost" | "disable
     cursor: disabled ? "not-allowed" : "pointer",
     opacity: disabled ? 0.5 : 1,
   };
-  if (variant === "primary") return { ...base, background: "#007aff", color: "#fff" };
-  if (variant === "danger")  return { ...base, background: "#ff3b30", color: "#fff" };
-  if (variant === "neutral") return { ...base, background: "#e5e5ea", color: "#111" };
-  if (variant === "ghost")   return { ...base, background: "transparent", border: "1px solid #ddd", color: "#444" };
-  return { ...base, background: "#e5e5ea", color: "#999" };
+  // 主色 indigo / 危险 red / 中性 gray-50 / ghost 边框 —— 全部对齐主站调色板。
+  if (variant === "primary") return { ...base, background: "#6366f1", color: "#fff" };
+  if (variant === "danger")  return { ...base, background: "#dc2626", color: "#fff" };
+  if (variant === "neutral") return { ...base, background: "#f3f4f6", color: "#111827", border: "1px solid #e5e7eb" };
+  if (variant === "ghost")   return { ...base, background: "transparent", border: "1px solid #e5e7eb", color: "#374151" };
+  return { ...base, background: "#f3f4f6", color: "#9ca3af" };
 }

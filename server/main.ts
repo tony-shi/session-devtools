@@ -144,10 +144,14 @@ async function startBackgroundServices() {
     startFilesystemDiffWorker();
   }
 
-  // Proxy v2 boot reconcile
+  // Proxy v2 boot reconcile + auto-start
   try {
     const { proxyV2Controller } = await import("./src/proxy-v2/controller.ts");
     await proxyV2Controller.reconcileOnBoot();
+    if (!process.env.SESSION_DEVTOOLS_NO_PROXY) {
+      console.log("[proxy-v2] auto-starting proxy (use --no-proxy to disable)");
+      await proxyV2Controller.setTarget("RUNNING");
+    }
   } catch (err) {
     console.error("[proxy-v2] boot reconcile fatal:", err);
   }

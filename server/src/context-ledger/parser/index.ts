@@ -74,7 +74,12 @@ export {
 } from "./attribution/origin";
 export type {
   CoverageState,
+  JsonlEventSource,
+  JsonlEventKind,
+  JsonlEventContentType,
 } from "./attribution/origin";
+export { authorshipOf } from "./attribution/derived";
+export type { Authorship } from "./attribution/derived";
 export { extractAttributionContext } from "./attribution/context";
 export type {
   AttributionContext,

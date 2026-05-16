@@ -570,6 +570,12 @@ export function parseSessionDrilldown(
 
   const turns: UserTurn[] = [];
   let globalCallIndex = 0; // 1-based across the whole session
+  // Session-wide pointer to the previous canonical assistant call event.
+  // Used to compute Δ-vs-prev for the *first* call of each turn — without
+  // this, every turn's first call would treat prevContext=0 and report Δ
+  // equal to its full contextSize (the user-visible "Call 329 +426.2k" bug).
+  // Updated at the end of each turn to the turn's last canonical call.
+  let prevCallEvAcrossTurns: JAssistantEvent | null = null;
 
   let i = 0;
   while (i < events.length) {
@@ -793,18 +799,26 @@ export function parseSessionDrilldown(
       // Note: freshIn = inputTokens + cacheWrite, so we use inputTokens here to
       // avoid double-counting cacheWrite.
       const contextSize = inputTokens + cacheRead + cacheWrite;
-      // Delta vs previous call (across the whole session, not just within turn)
-      const prevCall = callIdx > 0 ? rawCalls[callIdx - 1].ev : null;
+      // Delta vs previous call — *session-wide*, not just within turn.
+      // Within a turn, fall back to the in-turn predecessor; at turn boundary
+      // (callIdx === 0), use prevCallEvAcrossTurns set by the previous turn's
+      // last call. Only the very first call of the session has no prev.
+      const prevCall = callIdx > 0
+        ? rawCalls[callIdx - 1].ev
+        : prevCallEvAcrossTurns;
       const prevUsage = prevCall?.message?.usage ?? {};
       const prevContext = (prevUsage.input_tokens ?? 0)
         + (prevUsage.cache_read_input_tokens ?? 0)
         + (prevUsage.cache_creation_input_tokens ?? 0);
       const significantDelta = contextSize - prevContext;
       // freshIn per-call = context growth since previous call.
-      // API input_tokens only counts non-cached tokens; here we want the actual
-      // new content injected (user turn + prev assistant output), regardless of
-      // whether it was served from cache or written fresh.
-      const callFreshIn = callIdx === 0 ? contextSize : Math.max(0, contextSize - prevContext);
+      // Only the absolute first call of the session has no prev; for that
+      // single case, treat the entire contextSize as "fresh" (nothing to
+      // compare against). All other turn boundaries chain through
+      // prevCallEvAcrossTurns and get a real delta.
+      const callFreshIn = prevCall === null
+        ? contextSize
+        : Math.max(0, contextSize - prevContext);
 
       return {
         id: globalCallIndex,
@@ -895,6 +909,13 @@ export function parseSessionDrilldown(
       calls,
       _toolNames: turnToolNames,
     } as UserTurn & { _toolNames: string[] });
+
+    // Carry the last canonical call of this turn forward, so the *next*
+    // turn's first call can compute Δ against it (otherwise turn-boundary
+    // calls would all report Δ = contextSize, which is the bug being fixed).
+    if (rawCalls.length > 0) {
+      prevCallEvAcrossTurns = rawCalls[rawCalls.length - 1].ev;
+    }
 
     i = j + 1;
   }

@@ -51,7 +51,7 @@ const CATEGORY_META: Record<Category, CategoryMeta> = {
   auth:      { label: { zh: "认证",     en: "Auth"      }, color: "#0369a1", bg: "#e0f2fe" },
   telemetry: { label: { zh: "遥测",     en: "Telemetry" }, color: "#92400e", bg: "#fef3c7" },
   mcp:       { label: { zh: "MCP",      en: "MCP"       }, color: "#065f46", bg: "#d1fae5" },
-  other:     { label: { zh: "其他",     en: "Other"     }, color: "#555",    bg: "#f0f0f0" },
+  other:     { label: { zh: "其他",     en: "Other"     }, color: "#374151",    bg: "#f3f4f6" },
 };
 
 function classifyRequest(url: string, sni: string): Category {
@@ -100,9 +100,9 @@ function formatBytes(n: number): string {
 
 function statusColor(s: number | null): string {
   if (!s) return "#999";
-  if (s < 300) return "#34c759";
-  if (s < 400) return "#ff9f0a";
-  return "#ff3b30";
+  if (s < 300) return "#10b981";
+  if (s < 400) return "#d97706";
+  return "#dc2626";
 }
 
 function pathFromUrl(url: string): string {
@@ -161,7 +161,16 @@ function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | 
         if (data.error === "file_deleted") {
           setError(lang === "zh" ? "原始日志文件已被删除" : "Original log file has been deleted");
         } else if (data.error) {
-          setError(data.error);
+          // 之前直接显示 data.error 裸 token（例如 "parse_error"），用户看不到
+          // 实际失败原因。这里把 server 透传的 message 一起 surface 出来，
+          // 并对 parse_error 这一最常见错误码加一条简短解读。
+          const reason = data.message ? `${data.error} · ${data.message}` : data.error;
+          const hint = data.error === "parse_error"
+            ? (lang === "zh"
+                ? "（无法解析 proxy 日志该行 JSON —— 可能日志被截断 / rotate 后 byte offset 不对齐 / gzip 冷文件读到半行）"
+                : " (failed to parse the proxy log line — possibly truncated, offset stale after rotation, or partial gzip read)")
+            : "";
+          setError((lang === "zh" ? "读取原始数据失败：" : "Failed to read raw body: ") + reason + hint);
         } else {
           const value = kind === "req" ? (data.req_body ?? "") : (data.res_body ?? "");
           const encoding = kind === "req" ? (data.req_body_encoding ?? "utf8") : (data.res_body_encoding ?? "utf8");
@@ -180,21 +189,21 @@ function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | 
         onClick={handleOpen}
         style={{ background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
       >
-        <span style={{ fontSize: 10, color: "#007aff" }}>{t("loadBody", lang)}</span>
+        <span style={{ fontSize: 10, color: "#6366f1" }}>{t("loadBody", lang)}</span>
       </button>
     );
   }
 
   if (loading) {
-    return <span style={{ color: "#999", fontSize: 12 }}>{t("loading", lang)}</span>;
+    return <span style={{ color: "#9ca3af", fontSize: 12 }}>{t("loading", lang)}</span>;
   }
 
   if (error) {
-    return <span style={{ color: "#999", fontSize: 12, fontStyle: "italic" }}>{error}</span>;
+    return <span style={{ color: "#9ca3af", fontSize: 12, fontStyle: "italic" }}>{error}</span>;
   }
 
   if (!body || body.value === "") {
-    return <span style={{ color: "#ccc", fontSize: 12 }}>—</span>;
+    return <span style={{ color: "#d1d5db", fontSize: 12 }}>—</span>;
   }
 
   // SSE / stream placeholder（legacy）
@@ -205,7 +214,7 @@ function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | 
     const msg = lang === "zh"
       ? `[SSE 流式响应，${events} 个事件，${formatBytes(bytes)}]`
       : `[SSE stream, ${events} events, ${formatBytes(bytes)}]`;
-    return <span style={{ color: "#999", fontSize: 12, fontStyle: "italic" }}>{msg}</span>;
+    return <span style={{ color: "#9ca3af", fontSize: 12, fontStyle: "italic" }}>{msg}</span>;
   }
 
   let displayValue = body.value;
@@ -215,7 +224,7 @@ function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | 
       const msg = lang === "zh"
         ? `[二进制内容，${formatBytes(decoded.bytes)}（已 base64 落盘，原文完整）]`
         : `[Binary payload, ${formatBytes(decoded.bytes)} (stored as base64, original intact)]`;
-      return <span style={{ color: "#999", fontSize: 12, fontStyle: "italic" }}>{msg}</span>;
+      return <span style={{ color: "#9ca3af", fontSize: 12, fontStyle: "italic" }}>{msg}</span>;
     }
     displayValue = decoded.text;
   }
@@ -225,14 +234,14 @@ function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | 
 
   return (
     <div>
-      <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "#999", marginBottom: 4, padding: 0 }}>
+      <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "#9ca3af", marginBottom: 4, padding: 0 }}>
         ▲ 收起
       </button>
       <pre style={{
-        background: "#1a1a1a", color: "#e8e8e8", borderRadius: 6,
+        background: "#1f2937", color: "#e8e8e8", borderRadius: 6,
         padding: "10px 12px", fontSize: 11, overflow: "auto",
         maxHeight: 400, margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all",
-        fontFamily: "monospace",
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
       }}>
         {pretty}
       </pre>
@@ -255,7 +264,7 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
       zIndex: 1000, display: "flex", flexDirection: "column",
     }}>
       {/* 固定头部 */}
-      <div style={{ padding: "16px 20px", borderBottom: "1px solid #f0f0f0", flexShrink: 0 }}>
+      <div style={{ padding: "16px 20px", borderBottom: "1px solid #f3f4f6", flexShrink: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -268,16 +277,16 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
                 {catMeta.label[lang]}
               </span>
               {(req.is_stream === 1 || req.is_stream === true) && (
-                <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 8, background: "#f0f0f0", color: "#666" }}>SSE</span>
+                <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 8, background: "#f3f4f6", color: "#6b7280" }}>SSE</span>
               )}
             </div>
-            <div style={{ fontSize: 12, color: "#666", wordBreak: "break-all" }}>{req.url}</div>
-            <div style={{ fontSize: 11, color: "#999" }}>
+            <div style={{ fontSize: 12, color: "#6b7280", wordBreak: "break-all" }}>{req.url}</div>
+            <div style={{ fontSize: 11, color: "#9ca3af" }}>
               {requestStartedAt(req)} · {req.duration_ms != null ? `${req.duration_ms}ms` : "—"} · {formatBytes(req.bytes_out || req.bytes_in)}
               {req.sse_event_count > 0 && ` · ${req.sse_event_count} SSE events`}
             </div>
           </div>
-          <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 22, color: "#999", flexShrink: 0, marginLeft: 12 }}>✕</button>
+          <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 22, color: "#9ca3af", flexShrink: 0, marginLeft: 12 }}>✕</button>
         </div>
       </div>
 
@@ -306,7 +315,7 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
 function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div style={{ fontWeight: 600, fontSize: 11, color: "#999", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>{title}</div>
+      <div style={{ fontWeight: 600, fontSize: 11, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>{title}</div>
       {children}
     </div>
   );
@@ -314,14 +323,14 @@ function DetailSection({ title, children }: { title: string; children: React.Rea
 
 function HeaderTable({ headers }: { headers: Record<string, string> }) {
   const entries = Object.entries(headers);
-  if (!entries.length) return <span style={{ color: "#ccc", fontSize: 12 }}>—</span>;
+  if (!entries.length) return <span style={{ color: "#d1d5db", fontSize: 12 }}>—</span>;
   return (
     <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
       <tbody>
         {entries.map(([k, v]) => (
-          <tr key={k} style={{ borderBottom: "1px solid #f5f5f5" }}>
-            <td style={{ padding: "3px 10px 3px 0", color: "#888", whiteSpace: "nowrap", verticalAlign: "top", width: 1 }}>{k}</td>
-            <td style={{ padding: "3px 0", wordBreak: "break-all", color: "#333" }}>{v}</td>
+          <tr key={k} style={{ borderBottom: "1px solid #f3f4f6" }}>
+            <td style={{ padding: "3px 10px 3px 0", color: "#9ca3af", whiteSpace: "nowrap", verticalAlign: "top", width: 1 }}>{k}</td>
+            <td style={{ padding: "3px 0", wordBreak: "break-all", color: "#374151" }}>{v}</td>
           </tr>
         ))}
       </tbody>
@@ -360,7 +369,7 @@ function CaptureTargets({ lang, onSaved }: { lang: Lang; onSaved: () => void }) 
   };
 
   return (
-    <div style={{ background: "#fff", borderRadius: 8, padding: "14px 18px", border: "1px solid #e5e5e5" }}>
+    <div style={{ background: "#fff", borderRadius: 8, padding: "14px 18px", border: "1px solid #e5e7eb" }}>
       <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 14 }}>{t("captureTargets", lang)}</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
         <HostChip label="api.anthropic.com" removable={false} />
@@ -373,16 +382,16 @@ function CaptureTargets({ lang, onSaved }: { lang: Lang; onSaved: () => void }) 
           value={newHost} onChange={(e) => setNewHost(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && addHost()}
           placeholder="127.0.0.1:8742 / my-gw.example.com"
-          style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid #ddd", fontSize: 13 }}
+          style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid #e5e7eb", fontSize: 13 }}
         />
-        <button onClick={addHost} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #ddd", background: "#f5f5f7", cursor: "pointer", fontSize: 13 }}>
+        <button onClick={addHost} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#f3f4f6", cursor: "pointer", fontSize: 13 }}>
           {t("addHost", lang)}
         </button>
-        <button onClick={save} disabled={saving} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#007aff", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+        <button onClick={save} disabled={saving} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#6366f1", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
           {saving ? "…" : t("saveTargets", lang)}
         </button>
       </div>
-      {saved && <div style={{ marginTop: 6, fontSize: 12, color: "#34c759" }}>{t("targetsSaved", lang)}</div>}
+      {saved && <div style={{ marginTop: 6, fontSize: 12, color: "#10b981" }}>{t("targetsSaved", lang)}</div>}
     </div>
   );
 }
@@ -392,13 +401,13 @@ function HostChip({ label, removable, onRemove }: { label: string; removable: bo
     <div style={{
       display: "inline-flex", alignItems: "center", gap: 4,
       padding: "3px 10px", borderRadius: 20,
-      background: removable ? "#f0f4ff" : "#f5f5f7",
-      border: `1px solid ${removable ? "#c7d7ff" : "#e0e0e0"}`,
+      background: removable ? "#f0f4ff" : "#f3f4f6",
+      border: `1px solid ${removable ? "#c7d7ff" : "#e5e7eb"}`,
       fontSize: 12, color: removable ? "#2563eb" : "#666",
     }}>
       {label}
       {removable && onRemove && (
-        <button onClick={onRemove} style={{ background: "none", border: "none", cursor: "pointer", color: "#999", fontSize: 14, padding: 0, lineHeight: 1 }}>×</button>
+        <button onClick={onRemove} style={{ background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 14, padding: 0, lineHeight: 1 }}>×</button>
       )}
     </div>
   );
@@ -429,8 +438,8 @@ function CategoryTabs({ active, counts, lang, onChange }: {
         return (
           <button key={id} onClick={() => onChange(id)} style={{
             padding: "4px 10px", borderRadius: 20, border: "1.5px solid",
-            borderColor: isActive ? (color ?? "#007aff") : "#e0e0e0",
-            background: isActive ? (color ?? "#007aff") : "#fff",
+            borderColor: isActive ? (color ?? "#6366f1") : "#e5e7eb",
+            background: isActive ? (color ?? "#6366f1") : "#fff",
             color: isActive ? "#fff" : (color ?? "#555"),
             cursor: "pointer", fontSize: 12, fontWeight: isActive ? 600 : 400,
             display: "flex", alignItems: "center", gap: 5,
@@ -438,7 +447,7 @@ function CategoryTabs({ active, counts, lang, onChange }: {
             {label}
             {cnt > 0 && (
               <span style={{
-                background: isActive ? "rgba(255,255,255,0.3)" : "#f0f0f0",
+                background: isActive ? "rgba(255,255,255,0.3)" : "#f3f4f6",
                 color: isActive ? "#fff" : "#666",
                 borderRadius: 8, padding: "0 5px", fontSize: 10, fontWeight: 600,
               }}>{cnt}</span>
@@ -579,27 +588,27 @@ export function ProxyTraffic() {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <CaptureTargets lang={lang} onSaved={() => {}} />
 
-      <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e5e5", overflow: "hidden" }}>
+      <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb", overflow: "hidden" }}>
         {/* 工具栏 */}
-        <div style={{ padding: "12px 16px", borderBottom: "1px solid #f0f0f0", display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ padding: "12px 16px", borderBottom: "1px solid #f3f4f6", display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontWeight: 600, fontSize: 15, flex: 1 }}>
               {t("title", lang)}
               {serverTotal > 0 && (
-                <span style={{ marginLeft: 6, fontSize: 12, color: "#999", fontWeight: 400 }}>
+                <span style={{ marginLeft: 6, fontSize: 12, color: "#9ca3af", fontWeight: 400 }}>
                   {requests.length < serverTotal ? `${requests.length} / ${serverTotal}` : serverTotal}
                 </span>
               )}
             </span>
             <button onClick={() => setLive((v) => !v)} style={{
               padding: "4px 10px", borderRadius: 6, border: "1px solid",
-              borderColor: live ? "#34c759" : "#ddd",
-              background: live ? "#f0fff4" : "#f5f5f7",
-              color: live ? "#34c759" : "#666", cursor: "pointer", fontSize: 12,
+              borderColor: live ? "#10b981" : "#ddd",
+              background: live ? "#f0fff4" : "#f3f4f6",
+              color: live ? "#10b981" : "#666", cursor: "pointer", fontSize: 12,
             }}>
               {live ? `● ${t("live", lang)}` : t("paused", lang)}
             </button>
-            <button onClick={handleSync} disabled={syncing} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #ddd", background: "#f5f5f7", cursor: "pointer", fontSize: 12 }}>
+            <button onClick={handleSync} disabled={syncing} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#f3f4f6", cursor: "pointer", fontSize: 12 }}>
               {syncing ? t("syncing", lang) : t("sync", lang)}
             </button>
           </div>
@@ -609,7 +618,7 @@ export function ProxyTraffic() {
 
         {/* 列表 */}
         {filtered.length === 0 ? (
-          <div style={{ padding: 32, textAlign: "center", color: "#999", fontSize: 13 }}>{t("noData", lang)}</div>
+          <div style={{ padding: 32, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>{t("noData", lang)}</div>
         ) : (
           <>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
@@ -632,7 +641,7 @@ export function ProxyTraffic() {
                     <tr
                       key={r.id}
                       onClick={() => setSelected(r)}
-                      style={{ cursor: "pointer", borderBottom: "1px solid #f5f5f5" }}
+                      style={{ cursor: "pointer", borderBottom: "1px solid #f3f4f6" }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = "#fafafa")}
                       onMouseLeave={(e) => (e.currentTarget.style.background = "")}
                     >
@@ -645,7 +654,7 @@ export function ProxyTraffic() {
                         </span>
                       </td>
                       <td style={tdStyle}>
-                        <span style={{ fontWeight: 600, color: "#007aff" }}>{r.method}</span>
+                        <span style={{ fontWeight: 600, color: "#6366f1" }}>{r.method}</span>
                       </td>
                       <td style={tdStyle}>
                         <span style={{ color: statusColor(r.status), fontWeight: 600 }}>{r.status ?? "—"}</span>
@@ -654,8 +663,8 @@ export function ProxyTraffic() {
                         )}
                       </td>
                       <td style={{ ...tdStyle, maxWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        <span style={{ color: "#555" }}>{r.sni}</span>
-                        <span style={{ color: "#999", marginLeft: 4 }}>{pathFromUrl(r.url)}</span>
+                        <span style={{ color: "#374151" }}>{r.sni}</span>
+                        <span style={{ color: "#9ca3af", marginLeft: 4 }}>{pathFromUrl(r.url)}</span>
                       </td>
                       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{r.duration_ms != null ? `${r.duration_ms}ms` : "—"}</td>
                       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{formatBytes(r.bytes_out || r.bytes_in)}</td>
@@ -675,11 +684,11 @@ export function ProxyTraffic() {
             </table>
 
             {/* 无限滚动哨兵 + 加载状态 */}
-            <div ref={sentinelRef} style={{ padding: "12px 16px", textAlign: "center", fontSize: 12, color: "#999" }}>
+            <div ref={sentinelRef} style={{ padding: "12px 16px", textAlign: "center", fontSize: 12, color: "#9ca3af" }}>
               {loadingMore
                 ? t("loadingMore", lang)
                 : hasMore
-                  ? <button onClick={loadMore} style={{ background: "none", border: "none", cursor: "pointer", color: "#007aff", fontSize: 12 }}>{t("loadMore", lang)}</button>
+                  ? <button onClick={loadMore} style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", fontSize: 12 }}>{t("loadMore", lang)}</button>
                   : requests.length > PAGE_SIZE
                     ? t("noMore", lang)
                     : null}
@@ -693,5 +702,5 @@ export function ProxyTraffic() {
   );
 }
 
-const thStyle: React.CSSProperties = { padding: "7px 12px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "#888", whiteSpace: "nowrap" };
+const thStyle: React.CSSProperties = { padding: "7px 12px", textAlign: "left", fontWeight: 600, fontSize: 11, color: "#9ca3af", whiteSpace: "nowrap" };
 const tdStyle: React.CSSProperties = { padding: "8px 12px" };
