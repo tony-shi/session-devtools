@@ -133,4 +133,57 @@ describe("annotateJsonlFromCallConsumers — jsonl event 维度的消费历史�
     );
     expect(g.unauditedCallIds).toEqual([{ callId: 11, reason: "proxy reqBody unavailable" }]);
   });
+
+  it("audit-gap detection: marks firstSeenIsAfterAuditGap when there's an unaudited prefix", () => {
+    // Reproduces session 8dc5ef73 bug: Call 1-69 unaudited (no proxy data),
+    // Call 70+ audited. Event L0 (a tool_result emitted at call 1) ends up
+    // with firstSeenInCall=70 because that's the first call graph can see.
+    // We must flag this so UI doesn't show a misleading "first seen → #70"
+    // chip that's actually an audit-window boundary artifact.
+    const events = makeEvents();
+    const g = annotateJsonlFromCallConsumers(
+      "s",
+      events,
+      // All audited calls start at 70 — earlier calls had no proxy data.
+      [{ callId: 70, consumedLineIdxs: [0, 1, 2] }],
+      // Unaudited calls 1-69 (only one shown for brevity; the test only
+      // requires ONE unaudited call before the min audited call to trip
+      // the flag).
+      [{ callId: 1, reason: "proxy reqBody unavailable for this call" }],
+    );
+    const l0 = g.events.find((e) => e.lineIdx === 0)!;
+    expect(l0.firstSeenInCall).toBe(70);
+    expect(l0.firstSeenIsAfterAuditGap).toBe(true);
+  });
+
+  it("audit-gap detection: does NOT flag when firstSeen is well inside audit window", () => {
+    // call 80 references L0 but min audited is 70 → firstSeenInCall=80,
+    // which is NOT the audit-window boundary → not a gap artifact.
+    const g = annotateJsonlFromCallConsumers(
+      "s",
+      makeEvents(),
+      [
+        { callId: 70, consumedLineIdxs: [1] },  // 70 references L1, not L0
+        { callId: 80, consumedLineIdxs: [0] },  // L0 first seen at 80
+      ],
+      [{ callId: 1, reason: "proxy reqBody unavailable for this call" }],
+    );
+    const l0 = g.events.find((e) => e.lineIdx === 0)!;
+    expect(l0.firstSeenInCall).toBe(80);
+    expect(l0.firstSeenIsAfterAuditGap).toBeUndefined();
+  });
+
+  it("audit-gap detection: not flagged when no unaudited prefix exists", () => {
+    // Even though firstSeenInCall === minAudited, no calls before it were
+    // skipped → the value is the real first-seen, no caveat needed.
+    const g = annotateJsonlFromCallConsumers(
+      "s",
+      makeEvents(),
+      [{ callId: 10, consumedLineIdxs: [0] }],
+      [],  // no unaudited
+    );
+    const l0 = g.events.find((e) => e.lineIdx === 0)!;
+    expect(l0.firstSeenInCall).toBe(10);
+    expect(l0.firstSeenIsAfterAuditGap).toBeUndefined();
+  });
 });

@@ -2868,6 +2868,9 @@ function IntervalEventRow({
     // *within the audit window*" — surface that caveat directly in META so
     // users don't misread a window-local answer as session-wide.
     firstSeenIsWindowBounded: loadedLastN != null,
+    // Audit-gap caveat from server: firstSeen value here is unreliable
+    // because unaudited calls (no proxy) exist before the audit window.
+    firstSeenIsAfterAuditGap: annotation.firstSeenIsAfterAuditGap,
   } : undefined;
   const jumpTarget = annotation?.firstSeenInCall ?? null;
   const handleJump = (onJumpToCall && jumpTarget != null)

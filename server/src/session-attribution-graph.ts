@@ -82,6 +82,19 @@ export interface JsonlEventAnnotation {
    *                也可能是 audit 还没覆盖到的 call 范围
    */
   contextImpact: "indexed" | "skipped" | "pending";
+  /**
+   * True when `firstSeenInCall` is the earliest *audited* call but unaudited
+   * calls exist before it — meaning the "true" first-seen call might be one
+   * of those unaudited calls, not this one. Front-end uses this to hide the
+   * jump chip (or show a "audit gap" warning) so users aren't misled into
+   * thinking the event was first consumed by a call hundreds of slots later.
+   *
+   * Typical trigger: user started a session before installing the local
+   * proxy → first N calls have no reqBody → graph can only see references
+   * from call N+1 onward, so every event from the unaudited prefix gets
+   * firstSeenInCall = N+1 (the first audited call), which is misleading.
+   */
+  firstSeenIsAfterAuditGap?: boolean;
 }
 
 export interface SessionAttributionGraph {
@@ -348,6 +361,22 @@ export function annotateJsonlFromCallConsumers(
     }
   }
 
+  // For audit-gap detection: any event whose firstSeenInCall equals the
+  // smallest audited callId AND there exists an unaudited call with a
+  // smaller id, is suspicious. The "true" first-seen might live in those
+  // unaudited slots, but we have no proxy data to verify. Mark such events
+  // so the front-end can warn / hide the jump chip.
+  //
+  // Common trigger: user installed proxy mid-session — all calls before
+  // installation are unaudited. Every event referenced before the proxy
+  // window ends up with firstSeenInCall = first-audited-call (e.g. 70),
+  // even though logically the previous call (say #2) consumed it.
+  const minAuditedCallId = auditedCallIds.length > 0
+    ? Math.min(...auditedCallIds)
+    : null;
+  const hasUnauditedBeforeMin = minAuditedCallId != null
+    && unauditedCallIds.some(u => u.callId < minAuditedCallId);
+
   const annotations: JsonlEventAnnotation[] = [];
   for (const ev of events) {
     const consumers = lineIdxToCalls.get(ev.lineIdx);
@@ -357,6 +386,13 @@ export function annotateJsonlFromCallConsumers(
     const contextImpact: JsonlEventAnnotation["contextImpact"] =
       callIdsSorted.length > 0 ? "indexed" : consumable ? "pending" : "skipped";
 
+    // Mark when firstSeen lands on the audit-window boundary and there's
+    // an unaudited prefix before it — see audit-gap comment above.
+    const firstSeenIsAfterAuditGap =
+      firstSeenInCall != null
+      && firstSeenInCall === minAuditedCallId
+      && hasUnauditedBeforeMin;
+
     annotations.push({
       lineIdx: ev.lineIdx,
       source: pickPrimarySource(ev),
@@ -364,6 +400,7 @@ export function annotateJsonlFromCallConsumers(
       firstSeenInCall,
       consumedByCallIds: callIdsSorted,
       contextImpact,
+      ...(firstSeenIsAfterAuditGap && { firstSeenIsAfterAuditGap: true }),
     });
   }
 

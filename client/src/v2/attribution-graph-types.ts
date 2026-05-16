@@ -49,6 +49,14 @@ export interface JsonlEventAnnotation {
    *   outside audit window or genuinely dropped)
    */
   contextImpact: ContextImpact;
+  /**
+   * Audit-gap caveat: when `firstSeenInCall` is the earliest *audited* call
+   * but unaudited calls exist before it, the true first-seen may live in
+   * those unaudited slots. UI hides the jump chip and shows an "audit gap"
+   * note instead, so users don't misread the window boundary as the actual
+   * first consumer.
+   */
+  firstSeenIsAfterAuditGap?: boolean;
 }
 
 export interface SessionAttributionGraph {

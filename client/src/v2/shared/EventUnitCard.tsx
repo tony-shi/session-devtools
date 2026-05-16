@@ -74,6 +74,14 @@ export interface EventUnitCardProps {
      * the window-local answer for the session-wide answer.
      */
     firstSeenIsWindowBounded?: boolean;
+    /**
+     * Audit-gap caveat: server detected that firstSeenInCall is the
+     * earliest audited call but there are unaudited calls (no proxy data)
+     * before it. The true first-seen may be one of those unaudited calls.
+     * UI hides the jump chip + shows a warning instead of misleading the
+     * user to jump to a call hundreds of slots later than the real source.
+     */
+    firstSeenIsAfterAuditGap?: boolean;
   };
 
   // === Behavior ===
@@ -145,7 +153,12 @@ export function EventUnitCard(props: EventUnitCardProps) {
   const cardOpacity = isSkipped ? 0.6 : 1;
 
   // Skipped events never offer a jump — there's no call to point at.
-  const effectiveOnJump = isSkipped ? undefined : onJump;
+  // Audit-gap events also hide the jump, because the displayed
+  // firstSeenInCall is almost certainly *not* the real first consumer (the
+  // real one lives in an unaudited call we can't see); jumping there would
+  // mislead the user.
+  const auditGapped = !!impact?.firstSeenIsAfterAuditGap;
+  const effectiveOnJump = (isSkipped || auditGapped) ? undefined : onJump;
 
   return (
     <div
@@ -313,6 +326,16 @@ function ImpactChips({ impact }: { impact: NonNullable<EventUnitCardProps["impac
   const fst = impact.firstSeenInCall;
   const usedIn = impact.consumedByCallIds?.length ?? 0;
   const windowQualifier = impact.firstSeenIsWindowBounded;
+  // Audit-gap takes priority: firstSeen value is unreliable, don't show it
+  // as a clean answer. Show a clear warning instead so the user knows the
+  // data isn't trustworthy here.
+  if (impact.firstSeenIsAfterAuditGap) {
+    return (
+      <span style={{ color: "#b45309" }}>
+        first seen 数据不可信 · 早期 call 未审计（无 proxy 数据）
+      </span>
+    );
+  }
   return (
     <>
       {fst != null && (
