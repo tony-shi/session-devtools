@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { SessionDetailV2 } from "./SessionDetailV2";
 import type { SessionV2, SessionsV2Response } from "./types";
 import { getSessionTitle, getSessionSubtitle } from "./session-display";
-import { MiniTokenLedger } from "./SummaryCardsV2";
+import { AggregateLedger } from "./shared/AggregateLedger";
 import { Button } from "./shared/Button";
 
 const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
@@ -104,9 +104,16 @@ function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onCl
         </span>
       </td>
 
-      {/* Token Ledger */}
+      {/* Token Ledger (Σ aggregate, compact) */}
       <td style={{ padding: "8px 12px" }}>
-        <MiniTokenLedger session={session} maxTotal={maxTotal} />
+        <AggregateLedger
+          size="compact"
+          maxTotal={maxTotal}
+          freshIn={session.input_tokens}
+          cacheRead={session.cache_read_tokens}
+          cacheWrite={session.cache_creation_tokens}
+          output={session.output_tokens}
+        />
       </td>
 
       {/* Sub agents */}

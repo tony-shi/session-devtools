@@ -29,7 +29,23 @@
 
 import { createHash } from "crypto";
 import type { ParsedQuerySnapshot, SegmentNode } from "../types";
-import type { JsonlOrigin, JsonlEventKind } from "./origin";
+import type { JsonlOrigin, JsonlEventKind, HarnessOriginDetail } from "./origin";
+
+// ─── harness 注入维度 ───────────────────────────────────────────────────────
+//
+// harness-authored（既非人类输入、也非模型输出、也不是工具协议事件）的合成 user 文本。
+// adapter 上溯到这条事件的 *触发链*（哪个 tool_use 把它拉进来）后，把 mechanism / payload
+// 两轴写在 HarnessInjection 上；linker 再把它绑到 reqBody 中相应的 user-text 叶子。
+//
+// authorship 轴在 source="harness_injection" 表达；mechanism × payload 见 HarnessOriginDetail。
+
+/** Skill 工具调用注入的 SKILL.md 体（v1 唯一 mechanism × payload 组合）。 */
+export interface HarnessInjection extends HarnessOriginDetail {
+  /** 实际注入到 user position 的 wire 文本，逐字与 reqBody leaf rawText 比对。 */
+  rawText: string;
+  /** 触发该注入的 tool_use.id（上一条 assistant 发的 Skill tool_use）。 */
+  triggerToolUseId?: string;
+}
 
 // ─── 输入契约 ────────────────────────────────────────────────────────────────
 
@@ -96,6 +112,15 @@ export interface LinkableJsonlEvent {
     /** record 自身的 uuid。 */
     uuid?: string;
   };
+  /**
+   * harness-authored 注入文本（与 userText / commandText / assistantText 同级，
+   * authorship 轴的第四类）。当前仅在 Skill 工具触发的 isMeta=true user-text 上
+   * 填，见 attribution-service:readSessionEventsForLinker 的序贯扫描逻辑。
+   *
+   * adapter 已经在事件粒度上做完触发链识别（mechanism × payload + triggerToolUseId
+   * 都已确定）—— linker 只负责"按 rawText 内容相等"把它绑到 reqBody 叶子。
+   */
+  harnessInjection?: HarnessInjection;
 }
 
 /**
@@ -130,6 +155,12 @@ interface JsonlIndex {
     toolUseId: string;
     names: string[];
   }>;
+  /**
+   * harness-injection 事件按 normalizeTextKey(rawText) 索引。O(1) 内容查找；与
+   * userInputTextIndex / assistantTextIndex 同构。同 key 只保留首次出现（保守，
+   * 避免内容碰撞时 overwrite —— 实际碰撞概率极低，rawText 是 ~kB 量级的 SKILL.md）。
+   */
+  harnessInjectionByText: Map<string, LinkableJsonlEvent>;
   /** 按 lineIdx 升序的所有 user (isHumanInput) 事件。 */
   userInputEvents: LinkableJsonlEvent[];
   /** userText (normalized) → 事件，便于 O(1) 内容匹配。与 assistantTextIndex 同构。 */
@@ -158,6 +189,7 @@ function buildIndex(events: LinkableJsonlEvent[]): JsonlIndex {
     toolUseId: string;
     names: string[];
   }> = [];
+  const harnessInjectionByText = new Map<string, LinkableJsonlEvent>();
   const userInputEvents: LinkableJsonlEvent[] = [];
   const userInputTextIndex = new Map<string, LinkableJsonlEvent>();
   const commandTextEvents: LinkableJsonlEvent[] = [];
@@ -230,13 +262,19 @@ function buildIndex(events: LinkableJsonlEvent[]): JsonlIndex {
         }
       }
     }
+    if (ev.harnessInjection) {
+      const key = normalizeTextKey(ev.harnessInjection.rawText);
+      if (key.length > 0 && !harnessInjectionByText.has(key)) {
+        harnessInjectionByText.set(key, ev);
+      }
+    }
   }
   userInputEvents.sort((a, b) => a.lineIdx - b.lineIdx);
   commandTextEvents.sort((a, b) => a.lineIdx - b.lineIdx);
   assistantEvents.sort((a, b) => a.lineIdx - b.lineIdx);
   toolReferenceBoundaryEvents.sort((a, b) => a.event.lineIdx - b.event.lineIdx);
 
-  return { toolUseEventById, toolResultEventById, userInputEvents, userInputTextIndex, commandTextEvents, commandTextIndex, assistantEvents, assistantTextIndex, attachmentEventsByType, userImageEventByDigest, thinkingEventBySignature, toolReferenceBoundaryEvents };
+  return { toolUseEventById, toolResultEventById, userInputEvents, userInputTextIndex, commandTextEvents, commandTextIndex, assistantEvents, assistantTextIndex, attachmentEventsByType, userImageEventByDigest, thinkingEventBySignature, toolReferenceBoundaryEvents, harnessInjectionByText };
 }
 
 // 文本匹配时统一规范化（trim + 折叠连续空白）。
@@ -660,6 +698,53 @@ function sha256First16(s: string): string {
   return createHash("sha256").update(s).digest("hex").slice(0, 16);
 }
 
+// ─── #9 Harness injection link（Skill SKILL.md → user position） ───────────
+//
+// Claude Code 的 SkillTool 把 SKILL.md 文件体作为合成 user 文本拍进消息流（紧邻
+// tool_result 的状态字符串）。jsonl 这条事件被打 `isMeta: true`，adapter 已经
+// 在 readSessionEventsForLinker 里识别出"前一条 tool_result 来自 Skill tool_use"
+// 这一结构条件，把内容 + triggerToolUseId 摊到 ev.harnessInjection 上。
+//
+// 这里只做"按 rawText 内容相等"的内容层 link —— authorship/dynamic/mechanism
+// 已由 adapter 决定，linker 不再判定来源。
+//
+// origin 形态：
+//   { kind:"jsonl", eventKind:{source:"harness_injection"},
+//     harness:{ mechanism, payload }, jsonlLineIdx, toolUseId:trigger,
+//     confidence:"definitive", fullyCovered:true }
+
+function linkHarnessInjectionNode(node: SegmentNode, index: JsonlIndex, ctx: CallContext): boolean {
+  if (node.wireMeta?.messageRole !== "user") return false;
+  if (!isUserInputLikeSlot(node.slotType)) return false;
+  if (node.children.length > 0) return false;
+  // 已经被前面任何 deterministic linker 写过的就不抢覆盖（保留更精确的归因）。
+  if (node.origin.kind === "jsonl") return false;
+
+  const key = normalizeTextKey(node.rawText);
+  if (key.length === 0) return false;
+
+  const ev = index.harnessInjectionByText.get(key);
+  if (!ev || !ev.harnessInjection) return false;
+  const hi = ev.harnessInjection;
+
+  node.origin = {
+    ...buildJsonlOrigin({
+      eventKind: { source: "harness_injection" },
+      event: ev,
+      fallbackCallId: ctx.callId,
+      fallbackTurnId: ctx.turnId,
+      // 用 trigger tool_use_id 而不是注入事件自身的 id —— 让 UI"open source call"
+      // 跳到那条 Skill tool_use 所在的 call，与 tool_result 的语义对齐。
+      toolUseId: hi.triggerToolUseId,
+      confidence: "definitive",
+      // 内容 normalized 后逐字相等 → 整段被 jsonl 解释。
+      fullyCovered: true,
+    }),
+    harness: { mechanism: hi.mechanism, payload: hi.payload },
+  };
+  return true;
+}
+
 // ─── #8 Tool-reference turn boundary link ───────────────────────────────────
 //
 // Claude Code 在 API normalize 阶段（restored-src/src/utils/messages.ts:2159-2185）
@@ -747,6 +832,8 @@ export interface LinkJsonlReport {
     thinking: number;
     /** API normalize 合成的 `Tool loaded.` 边界文本叶子被回链到 jsonl tool_result 行的数量。 */
     toolReferenceBoundary: number;
+    /** harness 注入文本（Skill SKILL.md 等）被回链到 jsonl isMeta=true user-text 行的数量。 */
+    harnessInjection: number;
   };
   totalLeaves: number;
 }
@@ -764,7 +851,7 @@ export function linkJsonl(
 ): LinkJsonlReport {
   const index = buildIndex(events);
   const report: LinkJsonlReport = {
-    matched: { toolUse: 0, toolResult: 0, toolResultLeftover: 0, userInput: 0, commandText: 0, assistantText: 0, smooshSegment: 0, userImage: 0, thinking: 0, toolReferenceBoundary: 0 },
+    matched: { toolUse: 0, toolResult: 0, toolResultLeftover: 0, userInput: 0, commandText: 0, assistantText: 0, smooshSegment: 0, userImage: 0, thinking: 0, toolReferenceBoundary: 0, harnessInjection: 0 },
     totalLeaves: 0,
   };
 
@@ -800,6 +887,13 @@ export function linkJsonl(
     }
     if (linkAssistantTextNode(node, index, ctx)) {
       report.matched.assistantText += 1;
+      continue;
+    }
+    // #9：harness 注入（Skill SKILL.md → user position）。放在 user/assistant
+    // text 之后，作为"非人类非模型 user-text"的兜底归因 —— 内容相等查 jsonl
+    // 里 isMeta=true 的 user-text 事件（adapter 已经过滤为 Skill 触发的）。
+    if (linkHarnessInjectionNode(node, index, ctx)) {
+      report.matched.harnessInjection += 1;
       continue;
     }
     // #5：SmooshContent SR 子节点 — 仅对已被 SmoothContent rule 命中的 SR 叶节点起作用。

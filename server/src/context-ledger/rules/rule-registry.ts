@@ -819,19 +819,21 @@ const TONE_STYLE_NM3_OUTPUT_555B =
   " - When referencing specific functions or pieces of code include the pattern file_path:line_number to allow the user to easily navigate to the source code location.\n" +
   " - Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like \"Let me read the file:\" followed by a read tool call should just be \"Let me read the file.\" with a period.";
 
-// 2.1.142 之前的全部老形态：leaf = Nm3 输出 + 尾 `\n\n` = 557B。
+// 老形态（2.1.140 及更早）：leaf = Nm3 输出 + 尾 `\n\n` = 557B。
 // 已实测：2.1.139.6c9 (15aa1c88 #47) / 2.1.140.453 (427a2904 T3 C1) 都是 557B。
-// 边界是在 2.1.141 和 2.1.142 之间（Anthropic 把 cache 切点放到 Nm3 之后）。
-// 下限不约束：rule 是 byte-exact 的，更老版本如果改过 Nm3 内容，自然字面对不上、不会过匹。
+// 边界 = 2.1.140 → 2.1.141 之间（Anthropic 把 cache 切点放到 Nm3 之后）。
+// 2.1.141.7ed (59339097 #15) 已经是新形态（555B）了——这跟我们一开始的推测不同，
+// 当时把 v0 上限标在 2.1.141 是没实测样本的猜测，现在按观察事实修正到 2.1.140。
+// 下限不约束：rule 是 byte-exact 的，更老版本如果改过 Nm3 内容自然字面对不上。
 export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_V0_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-tone-style.external.v0",
   verifiedFor: "2.1.140.453",
   description:
-    "Claude Code # Tone and style section，2.1.142 之前的 wire 形态（leaf 含尾 `\\n\\n`，557B）。" +
+    "Claude Code # Tone and style section，2.1.140 及更早的 wire 形态（leaf 含尾 `\\n\\n`，557B）。" +
     "Nm3 函数输出本身仍是 555B，但 system block 拼接的 glue 被 splitByH1Headers 划入了 leaf。",
   stability: "static",
   sourcemapRef: "binary:Nm3 (2.1.140) | dump:15aa1c88 #47 (2.1.139) + 427a2904 T3 C1 (2.1.140)",
-  appliesTo: { maxCcVersion: "2.1.141" },
+  appliesTo: { maxCcVersion: "2.1.140" },
 
   attribution: {
     pattern: TONE_STYLE_NM3_OUTPUT_555B + "\n\n",
@@ -843,17 +845,18 @@ export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_V0_RULE: ContextLedgerRule = {
   materialization: "exact_text",
 };
 
-// 2.1.142+ 形态：cache 切点把 `\n\n` 推到 block 边界外，leaf = Nm3 输出 = 555B。
+// 新形态（2.1.141 起）：cache 切点把 `\n\n` 推到 block 边界外，leaf = Nm3 输出 = 555B。
+// 已实测：2.1.141.7ed (59339097 #15) / 2.1.142.6c2 (9b61c7de #93)。
 export const CLAUDE_CODE_TONE_STYLE_EXTERNAL_RULE: ContextLedgerRule = {
   ruleId: "claude-code.system-prompt-tone-style.external.v1",
   verifiedFor: "2.1.142.6c2",
   description:
-    "Claude Code # Tone and style section，2.1.142+ wire 形态（leaf 严格止于 `period.`）。" +
+    "Claude Code # Tone and style section，2.1.141 起的 wire 形态（leaf 严格止于 `period.`，555B）。" +
     "Nm3 函数名按版本：2.1.142 = Nm3 / 2.1.126 = HM3 / 2.1.88 sourcemap = getSimpleToneAndStyleSection。",
   stability: "static",
   sourcemapRef:
-    "binary:Nm3 (2.1.142) | dump:9b61c7de #93 | restored-src/src/constants/prompts.ts:430 (2.1.88, stale)",
-  appliesTo: { minCcVersion: "2.1.142" },
+    "binary:Nm3 (2.1.142) | dump:59339097 #15 (2.1.141) + 9b61c7de #93 (2.1.142) | restored-src/src/constants/prompts.ts:430 (2.1.88, stale)",
+  appliesTo: { minCcVersion: "2.1.141" },
 
   attribution: {
     pattern: TONE_STYLE_NM3_OUTPUT_555B,

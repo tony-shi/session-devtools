@@ -91,6 +91,13 @@ export interface PreviousLeafLite {
  */
 export interface SerializedSnapshot {
   queryKind: string;
+  /**
+   * 从 system[0] billing-header 抽出的 cc_version（完整四段字符串，如 "2.1.142.6c2"）。
+   * 抽取失败（header 漂移 / 非 CLI 入口）时为 undefined —— 配合
+   * snapshot.attributionContext.failure 一起 surface。下游可据此做按版本统计 /
+   * UI 标签等无侵入派生。
+   */
+  ccVersion?: string;
   roots: SerializedNode[];
   /** id → SerializedNode 摘要（不嵌套 children；children 在 roots 树里） */
   nodeSummaries: Record<string, SerializedNodeSummary>;
@@ -421,6 +428,16 @@ export function readSessionEventsForLinker(sourceFile: string): LinkableJsonlEve
   const text = readFileSync(sourceFile, "utf-8");
   const lines = text.split("\n");
   const out: LinkableJsonlEvent[] = [];
+  // 序贯扫描状态（用于识别 Skill harness 注入的触发链）：
+  //   skillToolUseIds       — assistant 发过的 Skill tool_use id 集合
+  //   lastToolResultUseId   — 紧邻当前事件的上一条 user.tool_result 的 tool_use_id
+  //
+  // 触发链：assistant.tool_use(name=Skill, id=X) → user.tool_result(X)="Launching skill: ..."
+  //         → user.isMeta=true.text=<SKILL.md body>
+  // 中间事件类型固定，且 isMeta=true text 事件不可能与 Skill 触发链交叉（jsonl
+  // 总是按时间顺序写入）。lastToolResultUseId 只要被任一非 isMeta 事件打断就清空。
+  const skillToolUseIds = new Set<string>();
+  let lastToolResultUseId: string | null = null;
   for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
     const raw = lines[lineIdx];
     if (!raw) continue;
@@ -440,18 +457,49 @@ export function readSessionEventsForLinker(sourceFile: string): LinkableJsonlEve
 
     if (ev.type === "user") {
       if (ev.isMeta || ev.isSidechain) {
-        // meta / sidechain user 事件不参与 attribution（无 turn 关联）
+        // meta / sidechain user 事件正常情况下不参与 attribution（无 turn 关联）。
+        // 例外：isMeta=true + 纯 text 且 lastToolResultUseId 指向一个 Skill tool_use
+        // → 这是 SkillTool 注入的 SKILL.md body（authorship=harness）。把内容摊到
+        //    harnessInjection 维度，让 jsonl-linker 能按内容相等 link 回 reqBody。
+        // 注意：识别完之后**不要**清空 lastToolResultUseId —— 极少数情况下注入文本
+        // 可能被拆成多个 isMeta event 推过来（保险起见保留状态直到遇到下一非 meta）。
+        if (
+          ev.isMeta &&
+          !ev.isSidechain &&
+          lastToolResultUseId !== null &&
+          skillToolUseIds.has(lastToolResultUseId)
+        ) {
+          const plain = extractUserPlainText(ev.message?.content);
+          if (plain) {
+            out.push({
+              ...base,
+              harnessInjection: {
+                mechanism: "skill_invocation",
+                payload: "skill_md_body",
+                rawText: plain,
+                triggerToolUseId: lastToolResultUseId,
+              },
+            });
+            continue;
+          }
+        }
         out.push(base);
         continue;
       }
       const content = ev.message?.content;
       const userImages = extractUserImages(content);
       const withImages: Partial<LinkableJsonlEvent> = userImages.length > 0 ? { userImages } : {};
-      // tool_result-only user 事件 → toolResults
+      // tool_result-only user 事件 → toolResults。同时刷新 lastToolResultUseId
+      // 以供下一条 isMeta text 判定（一条 user message 通常只有一个 tool_result，
+      // 多个 tool_result 则取最后一个 —— Skill 注入序列里这一步永远是单 tool_result）。
       if (isToolResultOnlyContent(content)) {
-        out.push({ ...base, ...withImages, toolResults: extractToolResultsFromUser(content) });
+        const toolResults = extractToolResultsFromUser(content);
+        if (toolResults.length > 0) lastToolResultUseId = toolResults[toolResults.length - 1].toolUseId;
+        out.push({ ...base, ...withImages, toolResults });
         continue;
       }
+      // 非 tool_result-only 的 user 事件打断 lastToolResultUseId 状态。
+      lastToolResultUseId = null;
       // user 事件的文本块分流：
       //   - 以 claude-code 固定 tag 起始（<command-name>/<local-command-*>/<bash-*>） → commandText 维度
       //   - 其它 → userText 维度（真正的人类自由输入）
@@ -482,6 +530,13 @@ export function readSessionEventsForLinker(sourceFile: string): LinkableJsonlEve
       const assistantText = extractAssistantText(content);
       const toolUses = extractAssistantToolUses(content);
       const thinkingBlocks = extractAssistantThinkingBlocks(content);
+      // 登记 Skill tool_use id —— 下游 user.isMeta=true.text 事件用它判定
+      // "这条 isMeta text 是 Skill harness 注入"。命名匹配 SkillTool 工具实际 name。
+      for (const tu of toolUses) {
+        if (tu.name === "Skill") skillToolUseIds.add(tu.id);
+      }
+      // assistant 事件也会打断 lastToolResultUseId 状态（注入序列中间不可能出现 assistant）。
+      lastToolResultUseId = null;
       out.push({
         ...base,
         ...(assistantText && { assistantText }),
@@ -573,6 +628,9 @@ function serializeSnapshot(snapshot: ParsedQuerySnapshot): SerializedSnapshot {
   }
   return {
     queryKind: snapshot.queryKind,
+    ...(snapshot.attributionContext.ok && {
+      ccVersion: snapshot.attributionContext.ctx.ccVersion,
+    }),
     roots: snapshot.roots.map(serializeNode),
     nodeSummaries,
   };

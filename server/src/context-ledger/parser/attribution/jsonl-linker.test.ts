@@ -788,3 +788,104 @@ describe("PR 3 — #8 tool-reference turn boundary (`Tool loaded.`)", () => {
     expect(boundary?.origin.kind).not.toBe("jsonl");
   });
 });
+
+describe("PR 3 — #9 harness injection (Skill SKILL.md → user position)", () => {
+  // 完整 Skill 触发链 fixture：assistant.tool_use(Skill) → user.tool_result →
+  // user.isMeta=true.text=<SKILL.md body>。proxy reqBody 把后两条合并到一条
+  // user message：content=[tool_result(status), text(skill body)]。
+  function makeSkillFixture() {
+    const toolUseId = "toolu_skill_demo";
+    const skillBody =
+      "Base directory for this skill: /tmp/.claude/skills/demo\n\n" +
+      "# Demo Skill\n\nUse this skill to do demo things. Steps:\n1. Foo\n2. Bar\n";
+    const reqBody = {
+      system: [
+        { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
+        { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
+      ],
+      tools: [{ name: "Skill", description: "Invoke a skill", input_schema: {} }],
+      messages: [
+        { role: "user", content: [{ type: "text", text: "用 demo skill 试试" }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "tool_use", id: toolUseId, name: "Skill", input: { skill: "demo" } },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "tool_result", tool_use_id: toolUseId, content: "Launching skill: demo" },
+            { type: "text", text: skillBody },
+          ],
+        },
+      ],
+    };
+    const events: LinkableJsonlEvent[] = [
+      { lineIdx: 9, type: "user", userText: "用 demo skill 试试" },
+      { lineIdx: 10, type: "assistant", toolUses: [{ id: toolUseId, name: "Skill" }] },
+      { lineIdx: 11, type: "user", toolResults: [{ toolUseId, contentText: "Launching skill: demo" }] },
+      {
+        lineIdx: 12,
+        type: "user",
+        harnessInjection: {
+          mechanism: "skill_invocation",
+          payload: "skill_md_body",
+          rawText: skillBody,
+          triggerToolUseId: toolUseId,
+        },
+      },
+    ];
+    return { reqBody, events, toolUseId, skillBody };
+  }
+
+  it("Skill SKILL.md body 叶子 → JsonlOrigin(source=harness_injection, harness.mechanism=skill_invocation)", () => {
+    const fx = makeSkillFixture();
+    const { snapshot, linkReport } = attributeWithJsonl({
+      reqBody: fx.reqBody,
+      proxyFile: "t.json",
+      jsonl: fx.events,
+      call: { callId: 1, turnId: 1 },
+    });
+    expect(linkReport.matched.harnessInjection).toBe(1);
+
+    const leaf = Object.values(snapshot.index).find(
+      (n) =>
+        n.wireMeta?.messageRole === "user" &&
+        n.children.length === 0 &&
+        n.rawText === fx.skillBody,
+    );
+    expect(leaf?.origin.kind).toBe("jsonl");
+    if (leaf?.origin.kind === "jsonl") {
+      expect(leaf.origin.eventKind.source).toBe("harness_injection");
+      expect(leaf.origin.jsonlLineIdx).toBe(12);
+      expect(leaf.origin.toolUseId).toBe(fx.toolUseId);
+      expect(leaf.origin.harness?.mechanism).toBe("skill_invocation");
+      expect(leaf.origin.harness?.payload).toBe("skill_md_body");
+      expect(leaf.origin.fullyCovered).toBe(true);
+      expect(leaf.origin.confidence).toBe("definitive");
+    }
+  });
+
+  it("没有 harnessInjection 字段（adapter 没识别为 Skill 触发链）时叶子保持 structural", () => {
+    const fx = makeSkillFixture();
+    // 把 harnessInjection 砍掉 —— 模拟 adapter 没把这条 isMeta text 识别为 Skill harness
+    const events = fx.events.map((ev) =>
+      ev.harnessInjection ? { lineIdx: ev.lineIdx, type: ev.type } : ev,
+    );
+    const { snapshot, linkReport } = attributeWithJsonl({
+      reqBody: fx.reqBody,
+      proxyFile: "t.json",
+      jsonl: events,
+      call: { callId: 1, turnId: 1 },
+    });
+    expect(linkReport.matched.harnessInjection).toBe(0);
+    const leaf = Object.values(snapshot.index).find(
+      (n) =>
+        n.wireMeta?.messageRole === "user" &&
+        n.children.length === 0 &&
+        n.rawText === fx.skillBody,
+    );
+    expect(leaf?.origin.kind).not.toBe("jsonl");
+  });
+});

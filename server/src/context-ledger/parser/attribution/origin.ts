@@ -92,6 +92,25 @@ export interface JsonlOrigin {
    *   - 其他（inferred turn 回退、substring 命中、SR 子段 fingerprint 部分匹配） → false
    */
   fullyCovered: boolean;
+  /**
+   * 当 eventKind.source === "harness_injection" 时携带的双轴子分类。
+   *
+   *   mechanism — 触发 harness 注入的具体子系统（哪个 Claude Code 模块在合成）
+   *   payload   — 注入到 wire 的载荷形态（合成出来的内容是什么）
+   *
+   * 两轴正交：将来加入新的 harness 注入路径（如 mcp_tool_doc / subagent_handoff）
+   * 时，只扩这两个枚举的取值，不动 source 轴 —— authorship/dynamic 这两层语义
+   * 已经由 source 表达。
+   */
+  harness?: HarnessOriginDetail;
+}
+
+/** harness 注入路径的子分类。authorship 已由外层 source 表达，这里只描述 how / what。 */
+export interface HarnessOriginDetail {
+  /** 触发机制：哪个 Claude Code 子系统注入的。 */
+  mechanism: "skill_invocation";
+  /** 注入载荷：合成出来的内容形态。 */
+  payload: "skill_md_body";
 }
 
 /**
@@ -117,6 +136,23 @@ export type JsonlEventSource =
   | "stop_hook"
   | "away_summary"
   | "attachment"
+  /**
+   * harness_injection：Claude Code 合成出来、占用 user 位置但不来自人类的文本。
+   *
+   * 与 user_input / assistant_text / tool_result 同为 authorship 轴上的一类：
+   * **harness-authored**（区别于 human / assistant / tool-protocol）。具体由哪
+   * 个子系统、注入的载荷形态，由 JsonlOrigin.harness 子结构的 mechanism × payload
+   * 两轴表达。
+   *
+   * 当前覆盖（仅）：
+   *   mechanism="skill_invocation" + payload="skill_md_body"
+   *     —— assistant 发 Skill tool_use → SkillTool 加载 SKILL.md → 拼到下一条
+   *     user message 末尾（jsonl 里这条 user event 是 isMeta=true text）。
+   *     sourcemap：restored-src/src/tools/SkillTool/SkillTool.ts:1076
+   *              + restored-src/src/skills/loadSkillsDir.ts:346
+   *              + restored-src/src/utils/plugins/loadPluginCommands.ts:329
+   */
+  | "harness_injection"
   | "unknown";
 
 export type JsonlEventContentType = "text" | "image";

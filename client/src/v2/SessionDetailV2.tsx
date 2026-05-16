@@ -32,13 +32,12 @@ import { DiffPanel } from "./DiffPanel";
 import { TOKEN_METRICS } from "./metricRegistry";
 import {
   HeaderStatRow,
-  TokenLedgerInline,
   UnifiedHeader,
   StatusBadgeStrip,
   type StatusBadge,
   type StatusBadgeKind,
 } from "./shared/HeaderStats";
-import { MiniTokenLedger } from "./SummaryCardsV2";
+import { CallLedger } from "./shared/CallLedger";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { getToolPalette } from "./shared/toolRegistry";
 import { CHART_COLORS, TOOLTIP_PRESET, brandAreaGradient } from "./shared/chart-theme";
@@ -674,6 +673,7 @@ function SessionOverviewPanel({
           { label: t("sessionOverview.activity.duration"),  value: durationStr },
         ]}
         ledger={{
+          mode: "aggregate",
           freshIn: totalFreshIn ?? 0,
           cacheRead: totalCacheRead,
           cacheWrite: totalCacheWrite,
@@ -2971,13 +2971,13 @@ function JsonlCallChain({
 
   if (!turn.calls.length) return null;
 
-  // Bar length scale for the per-call MiniTokenLedger — bar width = this
-  // call's total billable tokens / max total across the Turn, so adjacent
-  // rows are visually comparable. Use the same non-overlapping bucket
-  // breakdown that MiniTokenLedger renders: API input_tokens (= ctx − read
-  // − write) + cache_read + cache_write + output. Avoids the previous bug
-  // where `c.freshIn` (parser's "context growth") double-counted cached
-  // content and produced inflated bar widths.
+  // Bar length scale for the per-call CallLedger thumbnail — bar width =
+  // this call's total billable tokens / max total across the Turn, so
+  // adjacent rows are visually comparable. Use the non-overlapping bucket
+  // breakdown CallLedger renders: API input_tokens (= ctx − read − write) +
+  // cache_read + cache_write + output. Avoids the previous bug where
+  // `c.freshIn` (parser's "context growth") double-counted cached content
+  // and produced inflated bar widths.
   const maxCallTotal = Math.max(
     ...turn.calls.map(c => {
       const apiInputTokens = Math.max(0, c.contextSize - c.cacheRead - c.cacheWrite);
@@ -3102,8 +3102,8 @@ function JsonlCallChain({
         {turn.calls.map((call) => {
           const delta    = call.significantDelta;
           // jsonlLines is shown only in the #id tooltip now; the proportional
-          // context bar was replaced by the shared MiniTokenLedger (rendered
-          // below with maxCallTotal as its scale).
+          // context bar was replaced by the shared CallLedger (rendered below
+          // with maxCallTotal as its scale).
           const jsonlLines = formatJsonlLines(call);
           const matchedSubAgentIds = new Set(call.toolCalls.map(tc => tc.toolUseId).filter(id => subAgentByToolUseId.has(id)));
           const isFoldedSubAgentResult = (ev: IntervalEvent) =>
@@ -3162,25 +3162,24 @@ function JsonlCallChain({
                     <span style={{ marginLeft: "auto", fontSize: 10, color: "#d1d5db" }}>›</span>
                   </div>
 
-                  {/* Token ledger — reuses the same MiniTokenLedger component
-                      Session List uses, so columns/colors line up across the
-                      whole app. Bar width is scaled to the Turn's largest
-                      call total, making adjacent rows visually comparable.
-                      `input_tokens` here is the *API-reported* uncached fresh
-                      input (= ctx − cacheRead − cacheWrite). The parser's
-                      `call.freshIn` field is actually "context growth since
-                      the previous call" — a different concept that conflates
-                      cache-loaded content with truly new tokens, so it would
-                      mismatch the Turn / Call header's "Fresh In" value. */}
+                  {/* Token ledger — Call thumbnail uses CallLedger (compact,
+                      two-group "历史复用 / 本轮新处理" semantics) since each
+                      row represents a single LLM call. Bar width is scaled
+                      to the Turn's largest call total so adjacent rows are
+                      visually comparable. `freshIn` here is the strict
+                      API-reported uncached input (= ctx − cacheRead −
+                      cacheWrite); the parser's `call.freshIn` field tracks
+                      "context growth since previous call" which conflates
+                      cache-loaded content with truly new tokens and would
+                      mismatch the Call header's value. */}
                   <div style={{ padding: "8px 12px 9px" }}>
-                    <MiniTokenLedger
-                      session={{
-                        input_tokens: Math.max(0, call.contextSize - call.cacheRead - call.cacheWrite),
-                        cache_read_tokens: call.cacheRead,
-                        cache_creation_tokens: call.cacheWrite,
-                        output_tokens: call.outputTokens,
-                      }}
+                    <CallLedger
+                      size="compact"
                       maxTotal={maxCallTotal}
+                      freshIn={Math.max(0, call.contextSize - call.cacheRead - call.cacheWrite)}
+                      cacheRead={call.cacheRead}
+                      cacheWrite={call.cacheWrite}
+                      output={call.outputTokens}
                     />
                   </div>
 
@@ -3386,6 +3385,7 @@ function UserTurnDetailPanel({
           { label: t("sessionOverview.activity.duration"),  value: dur || "—" },
         ]}
         ledger={{
+          mode: "aggregate",
           freshIn: totalFreshIn,
           cacheRead: turn.cacheRead,
           cacheWrite: turn.cacheWrite,
@@ -4567,10 +4567,10 @@ function LlmCallDetailPanel({
 
         {(() => {
           // Cache hit ratio — denominator includes cache_write so the value
-          // matches the Turn / Session header and the MiniTokenLedger inside
-          // the call card. Previously this used (fresh + cacheRead) only,
-          // which dropped cache_write from the denominator and produced a
-          // different number than the Turn-level view of the same call.
+          // matches the Turn / Session header and the CallLedger thumbnail
+          // inside the call card. Previously this used (fresh + cacheRead)
+          // only, which dropped cache_write from the denominator and produced
+          // a different number than the Turn-level view of the same call.
           const inputTotal = freshIn + call.cacheRead + call.cacheWrite;
           const cacheRatio = inputTotal > 0 ? call.cacheRead / inputTotal * 100 : null;
           // Call-level status badges — currently only "compaction" is meaningful
@@ -4596,6 +4596,7 @@ function LlmCallDetailPanel({
                 { label: "Tool Calls", value: String(call.toolCalls?.length ?? 0) },
               ]}
               ledger={{
+                mode: "call",
                 freshIn,
                 cacheRead: call.cacheRead,
                 cacheWrite: call.cacheWrite,
