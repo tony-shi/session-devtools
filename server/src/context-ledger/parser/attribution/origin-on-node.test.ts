@@ -216,6 +216,19 @@ describe("tone-style rule — cc_version 版本化分发 (v0 / v1)", () => {
     }
   });
 
+  it("2.1.139.6c9 也是老形态（557B）→ 同样命中 v0 rule", () => {
+    const snap = parseQuery({ reqBody: reqWith("\n\n", "2.1.139.6c9"), proxyFile: "t.json" });
+    attributeSnapshot(snap);
+    const tone = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt.section.tone-style");
+    expect(tone).toBeDefined();
+    expect(tone!.charCount).toBe(557);
+    expect(tone!.origin.kind).toBe("rule");
+    if (tone!.origin.kind === "rule") {
+      expect(tone!.origin.ruleId).toBe("claude-code.system-prompt-tone-style.external.v0");
+      expect(tone!.origin.fullyCovered).toBe(true);
+    }
+  });
+
   it("2.1.142.6c2 wire 形态（555B）→ 命中 v1 rule", () => {
     const snap = parseQuery({ reqBody: reqWith("", "2.1.142.6c2"), proxyFile: "t.json" });
     attributeSnapshot(snap);
