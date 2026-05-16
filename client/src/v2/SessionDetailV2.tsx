@@ -38,6 +38,7 @@ import {
   type StatusBadgeKind,
 } from "./shared/HeaderStats";
 import { CallLedger } from "./shared/CallLedger";
+import { EventUnitCard } from "./shared/EventUnitCard";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { getToolPalette } from "./shared/toolRegistry";
 import { CHART_COLORS, TOOLTIP_PRESET, brandAreaGradient } from "./shared/chart-theme";
@@ -2758,9 +2759,6 @@ function ToolCallRow({
   active: boolean;
   onHoverToolUse: (id: string | null) => void;
 }) {
-  const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
-  const [showFullInput, setShowFullInput] = useState(false);
   const chip = toolChip(tc.name);
 
   // Row preview: prefer the human-readable "description" field when the tool
@@ -2782,80 +2780,28 @@ function ToolCallRow({
     } catch {
       // inputPreview may be a truncated/non-JSON snippet — fall through.
     }
-    // Legacy regex fallback (matches the previous behavior for fragments
-    // that don't parse cleanly as JSON).
     return raw
       .replace(/^\{?\s*"(?:command|file_path|pattern|query|prompt|url|description)"\s*:\s*"/, "")
       .replace(/",?\s*.*$/, "")
       .slice(0, 100);
   })();
 
-  const INPUT_LIMIT = 600;
-  const inputTooLong = (tc.inputPreview?.length ?? 0) > INPUT_LIMIT;
-  const inputShown = !inputTooLong || showFullInput
-    ? tc.inputPreview
-    : tc.inputPreview.slice(0, INPUT_LIMIT);
-
   return (
     <div style={{ marginBottom: 3 }}>
-      <div
-        onClick={e => { e.stopPropagation(); setExpanded(v => !v); }}
+      <EventUnitCard
+        color={chip.fg}
+        kindLabel="Tool Use"
+        title={tc.name}
+        shortId={tc.toolUseId}
+        size={{ bytes: tc.inputSize, direction: "in" }}
+        preview={rowPreview}
+        segments={tc.inputPreview ? [
+          { label: "INPUT", content: tc.inputPreview, monospace: true, truncateAt: 600 },
+        ] : []}
+        active={active}
         onMouseEnter={() => onHoverToolUse(tc.toolUseId)}
         onMouseLeave={() => onHoverToolUse(null)}
-        style={{
-          display: "flex", alignItems: "center", gap: 6, padding: "4px 8px",
-          borderRadius: 6, cursor: "pointer",
-          background: active ? "#fff7ed" : "#fafafa",
-          border: `1px solid ${active ? "#f59e0b" : "#f0f0f0"}`,
-          boxShadow: active ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
-        }}
-      >
-        {/* Dispatch arrow */}
-        <span style={{ fontSize: 9, color: active ? "#d97706" : "#9ca3af", flexShrink: 0 }}>↳</span>
-        {/* Tool chip */}
-        <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4, background: chip.bg, border: `1px solid ${chip.border}`, color: chip.fg, flexShrink: 0 }}>
-          {tc.name}
-        </span>
-        {/* Input preview — description-first, falls back to first arg */}
-        <span style={{ fontSize: 11, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-          {rowPreview}
-        </span>
-        {/* Size badges — toolUseId stays out of the visible row (the user
-            can see it in the raw request body); the hover-link still works
-            because the parent passes toolUseId through onHoverToolUse. */}
-        <div style={{ display: "flex", gap: 5, flexShrink: 0, alignItems: "center" }}>
-          {tc.inputSize > 0 && <span style={{ fontSize: 9, color: "#9ca3af" }}>in {fmtBytes(tc.inputSize)}</span>}
-          <span style={{ fontSize: 9, color: "#d1d5db" }}>{expanded ? "▲" : "▼"}</span>
-        </div>
-      </div>
-
-      {expanded && (
-        <div style={{ marginLeft: 12, marginTop: 2, display: "flex", flexDirection: "column", gap: 3 }}>
-          {/* INPUT — what was dispatched. Long inputs cut at INPUT_LIMIT
-              with a Show-more toggle so the row doesn't dominate the view. */}
-          {tc.inputPreview && (
-            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderLeft: "3px solid #94a3b8", borderRadius: "0 5px 5px 0", padding: "5px 8px" }}>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "#64748b", letterSpacing: "0.05em" }}>INPUT &nbsp;</span>
-              <span style={{ fontSize: 9, color: "#94a3b8" }}>{fmtBytes(tc.inputSize)}</span>
-              <pre style={{ margin: "3px 0 0", fontSize: 11, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: showFullInput ? 480 : 160, overflow: "auto" }}>{inputShown}</pre>
-              {inputTooLong && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setShowFullInput(v => !v); }}
-                  style={{
-                    marginTop: 4, fontSize: 10, color: "#6366f1",
-                    background: "none", border: "none", cursor: "pointer", padding: 0,
-                    fontWeight: 600,
-                  }}
-                >
-                  {showFullInput
-                    ? t("terms.showLess")
-                    : t("terms.showMore", { n: tc.inputPreview.length - INPUT_LIMIT })}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      />
     </div>
   );
 }
@@ -2869,8 +2815,6 @@ function IntervalEventRow({
   onHoverToolUse: (id: string | null) => void;
 }) {
   const { t } = useTranslation();
-  const [expanded, setExpanded] = useState(false);
-  const [showFullJson, setShowFullJson] = useState(false);
   const col = KIND_COLOR[ev.kind];
   const linkedToolUseIds = toolUseIdsFromIntervalEvent(ev);
   const linked = activeToolUseId != null && linkedToolUseIds.includes(activeToolUseId);
@@ -2880,76 +2824,28 @@ function IntervalEventRow({
   const kindLabel = ev.kind === "user:tool_result"
     ? t("terms.toolResultLabel")
     : KIND_LABEL[ev.kind];
-  // Size badge: tool_result is the *output* fed back to the LLM, so prefix
-  // with "out" to mirror ToolCallRow's "in {bytes}" badge above. Other event
-  // kinds (user input, attachments, system events) don't fit cleanly into an
-  // input/output framing — keep them as bare bytes.
-  const sizePrefix = ev.kind === "user:tool_result" ? "out " : "";
-
-  const RAW_LIMIT = 1000;
-  const rawTooLong = ev.rawJson.length > RAW_LIMIT;
-  const rawShown = !rawTooLong || showFullJson
-    ? ev.rawJson
-    : ev.rawJson.slice(0, RAW_LIMIT);
+  // tool_result is the *output* fed back to the LLM; other kinds don't fit
+  // input/output framing — leave bare bytes (direction undefined).
+  const direction: "in" | "out" | undefined = ev.kind === "user:tool_result" ? "out" : undefined;
 
   return (
     <div style={{ marginBottom: 2 }}>
-      <div
-        onClick={() => setExpanded(v => !v)}
+      <EventUnitCard
+        color={col.fg}
+        bg={col.bg}
+        border={col.border}
+        kindLabel={kindLabel}
+        size={ev.contentSize > 0 ? { bytes: ev.contentSize, direction } : undefined}
+        timestamp={ev.timestamp}
+        preview={ev.contentPreview.slice(0, 120)}
+        segments={[
+          { content: ev.rawJson, monospace: true, truncateAt: 1000 },
+        ]}
+        coordinate={{ kind: "jsonl", line: ev.lineIdx + 1 }}
+        active={linked}
         onMouseEnter={() => { if (hoverLinkedId) onHoverToolUse(hoverLinkedId); }}
         onMouseLeave={() => { if (hoverLinkedId) onHoverToolUse(null); }}
-        style={{
-          display: "flex", alignItems: "center", gap: 6, padding: "3px 8px",
-          borderRadius: 6, cursor: "pointer", opacity: linked ? 1 : 0.9,
-          background: linked ? "#fff7ed" : col.bg,
-          border: `1px solid ${linked ? "#f59e0b" : col.border}`,
-          boxShadow: linked ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
-        }}
-      >
-        <span style={{ fontSize: 9, fontWeight: 700, color: col.fg, flexShrink: 0, minWidth: 90 }}>
-          {kindLabel}
-        </span>
-        {/* `from toolu_…` chip removed — the hover-link highlight already
-            tells the user which tool_use this event belongs to (matched row
-            in the call's tool list lights up amber). The raw id can still be
-            inspected by expanding the event below. */}
-        <span style={{ fontSize: 10, color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-          {ev.contentPreview.slice(0, 120)}
-        </span>
-        {ev.contentSize > 0 && (
-          <span style={{ fontSize: 9, color: "#94a3b8", flexShrink: 0 }}>
-            {sizePrefix}{fmtBytes(ev.contentSize)}
-          </span>
-        )}
-        <span style={{ fontSize: 9, color: "#d1d5db", flexShrink: 0 }}>{expanded ? "▲" : "▼"}</span>
-      </div>
-
-      {expanded && (
-        <div style={{ marginLeft: 10, marginTop: 2, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6, padding: "6px 8px" }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 9, color: "#64748b" }}>kind: <b>{ev.kind}</b></span>
-            <span style={{ fontSize: 9, color: "#64748b" }}>line: {ev.lineIdx + 1}</span>
-            {ev.timestamp && <span style={{ fontSize: 9, color: "#64748b" }}>{ev.timestamp.slice(11, 19)}</span>}
-          </div>
-          <pre style={{ margin: 0, fontSize: 10, color: "#334155", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: showFullJson ? 480 : 160, overflow: "auto" }}>
-            {rawShown}
-          </pre>
-          {rawTooLong && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowFullJson(v => !v); }}
-              style={{
-                marginTop: 4, fontSize: 10, color: "#6366f1",
-                background: "none", border: "none", cursor: "pointer", padding: 0,
-                fontWeight: 600,
-              }}
-            >
-              {showFullJson
-                ? t("terms.showLess")
-                : t("terms.showMore", { n: ev.rawJson.length - RAW_LIMIT })}
-            </button>
-          )}
-        </div>
-      )}
+      />
     </div>
   );
 }

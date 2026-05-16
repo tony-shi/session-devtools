@@ -296,6 +296,9 @@ interface RawJsonlLine {
   type?: string;
   isMeta?: boolean;
   isSidechain?: boolean;
+  /** Compaction-summary user event marker（compact.ts:621 注入）。与 isMeta 互斥
+   *  使用：compact 注入的 user event 不打 isMeta 而是这一标志。 */
+  isCompactSummary?: boolean;
   timestamp?: string;
   ts?: string;
   uuid?: string;
@@ -456,6 +459,31 @@ export function readSessionEventsForLinker(sourceFile: string): LinkableJsonlEve
     };
 
     if (ev.type === "user") {
+      // 0. compaction_summary：compact 后注入的 user event 用 isCompactSummary=true 标记
+      //    （**不**走 isMeta；与 Skill 注入互斥）。content 通常是 string 形态。
+      //    sourcemap: restored-src/src/services/compact/compact.ts:614-624 +
+      //               restored-src/src/services/compact/prompt.ts:345
+      if (ev.isCompactSummary === true && !ev.isSidechain) {
+        const text =
+          typeof ev.message?.content === "string"
+            ? ev.message.content
+            : extractUserPlainText(ev.message?.content);
+        if (text) {
+          out.push({
+            ...base,
+            harnessInjection: {
+              mechanism: "compaction_summary",
+              payload: "conversation_summary",
+              rawText: text,
+              // 没有 trigger tool_use_id —— compaction 不是 tool 调起的，是 autocompact /
+              // 用户 /compact 命令触发；归因证据是 sourcemap + isCompactSummary 标记本身。
+            },
+          });
+          continue;
+        }
+        out.push(base);
+        continue;
+      }
       if (ev.isMeta || ev.isSidechain) {
         // meta / sidechain user 事件正常情况下不参与 attribution（无 turn 关联）。
         // 例外：isMeta=true + 纯 text 且 lastToolResultUseId 指向一个 Skill tool_use

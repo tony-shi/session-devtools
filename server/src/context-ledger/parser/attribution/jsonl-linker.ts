@@ -713,6 +713,28 @@ function sha256First16(s: string): string {
 //     harness:{ mechanism, payload }, jsonlLineIdx, toolUseId:trigger,
 //     confidence:"definitive", fullyCovered:true }
 
+function buildHarnessOrigin(
+  ev: LinkableJsonlEvent,
+  hi: HarnessInjection,
+  ctx: CallContext,
+): JsonlOrigin {
+  return {
+    ...buildJsonlOrigin({
+      eventKind: { source: "harness_injection" },
+      event: ev,
+      fallbackCallId: ctx.callId,
+      fallbackTurnId: ctx.turnId,
+      // trigger tool_use_id（如有）—— Skill 路径下指向 Skill tool_use；compaction
+      // 路径无 trigger（autocompact / /compact 不是 tool 调起）。
+      toolUseId: hi.triggerToolUseId,
+      confidence: "definitive",
+      // 内容 normalized 后逐字相等 → 整段被 jsonl 解释。
+      fullyCovered: true,
+    }),
+    harness: { mechanism: hi.mechanism, payload: hi.payload },
+  };
+}
+
 function linkHarnessInjectionNode(node: SegmentNode, index: JsonlIndex, ctx: CallContext): boolean {
   if (node.wireMeta?.messageRole !== "user") return false;
   if (!isUserInputLikeSlot(node.slotType)) return false;
@@ -725,24 +747,54 @@ function linkHarnessInjectionNode(node: SegmentNode, index: JsonlIndex, ctx: Cal
 
   const ev = index.harnessInjectionByText.get(key);
   if (!ev || !ev.harnessInjection) return false;
-  const hi = ev.harnessInjection;
 
-  node.origin = {
-    ...buildJsonlOrigin({
-      eventKind: { source: "harness_injection" },
-      event: ev,
-      fallbackCallId: ctx.callId,
-      fallbackTurnId: ctx.turnId,
-      // 用 trigger tool_use_id 而不是注入事件自身的 id —— 让 UI"open source call"
-      // 跳到那条 Skill tool_use 所在的 call，与 tool_result 的语义对齐。
-      toolUseId: hi.triggerToolUseId,
-      confidence: "definitive",
-      // 内容 normalized 后逐字相等 → 整段被 jsonl 解释。
-      fullyCovered: true,
-    }),
-    harness: { mechanism: hi.mechanism, payload: hi.payload },
-  };
+  node.origin = buildHarnessOrigin(ev, ev.harnessInjection, ctx);
   return true;
+}
+
+/**
+ * Container 级 harness 注入归因（**只**用容器 rawText 做匹配定位，不写容器 origin）
+ * + 子叶传播 —— 处理"注入文本里含 `<system-reminder>` 子段、被 splitInlineTags
+ * 切碎成多个 inline.free-text 子叶"的情形（典型 case：compaction_summary 的 12k
+ * 字节中夹杂 SR 块）。
+ *
+ * 为何不写容器 origin：parser 的 container-not-structural invariant 要求 container
+ * 节点 origin 必须是 structural/container_node 或 wire-schema 协议槽 ——
+ * messages.text 既不是 wire 协议槽，也不允许写 jsonl origin（写了会断 invariant）。
+ *
+ * 工作机制：
+ *   - 容器（slotType=messages.text，role=user）的 rawText 是子节点 rawText 串联，
+ *     等于 jsonl 注入事件的完整 rawText —— 按内容相等可命中。
+ *   - 命中后**只**给该容器下未被任何 deterministic linker 写过的 inline.free-text
+ *     子叶继承一份 harness origin。SR 子段（messages.inline.system-reminder）由
+ *     smoosh 路径单独归因，不动；容器自身保持 structural/container_node。
+ */
+function linkHarnessInjectionContainers(snapshot: ParsedQuerySnapshot, index: JsonlIndex, ctx: CallContext): number {
+  if (index.harnessInjectionByText.size === 0) return 0;
+  let propagated = 0;
+  for (const node of Object.values(snapshot.index)) {
+    if (node.children.length === 0) continue;                // 跳过叶子（已由主 linker 处理）
+    if (node.wireMeta?.messageRole !== "user") continue;
+    if (node.slotType !== "messages.text") continue;          // 容器槽
+
+    const key = normalizeTextKey(node.rawText);
+    if (key.length === 0) continue;
+    const ev = index.harnessInjectionByText.get(key);
+    if (!ev?.harnessInjection) continue;
+
+    const harnessOrigin = buildHarnessOrigin(ev, ev.harnessInjection, ctx);
+
+    // 子叶传播：只覆盖 inline.free-text 且尚未被任何 jsonl linker 标过的叶子
+    // —— SR 子段（messages.inline.system-reminder）由 smoosh 路径单独归因，不动。
+    for (const child of node.children) {
+      if (child.children.length !== 0) continue;
+      if (child.slotType !== "messages.inline.free-text") continue;
+      if (child.origin.kind === "jsonl") continue;
+      child.origin = harnessOrigin;
+      propagated += 1;
+    }
+  }
+  return propagated;
 }
 
 // ─── #8 Tool-reference turn boundary link ───────────────────────────────────
@@ -949,6 +1001,13 @@ export function linkJsonl(
   // `Tool loaded.` 文本回链到 jsonl 里同源的 tool_result 行。放在末尾 post-pass，
   // 不与前面 deterministic linker 抢候选；只覆盖 origin.kind !== "jsonl" 的剩余叶。
   report.matched.toolReferenceBoundary += linkToolReferenceBoundaryNodes(snapshot, index, ctx);
+
+  // #9b：harness 注入的容器+子叶传播 —— 当注入文本中含 SR 标记被 splitInlineTags
+  // 切成多片时，主 linker 的叶子内容相等查找无法命中（每片 rawText 只是子串）。
+  // 这里走容器层：messages.text 容器的 rawText 是其全部子节点拼接，可以与 jsonl
+  // 注入事件的完整 rawText 内容相等匹配。命中后把 origin 同步到 inline.free-text
+  // 子叶；SR 子段保留各自原有归因。
+  report.matched.harnessInjection += linkHarnessInjectionContainers(snapshot, index, ctx);
 
   return report;
 }

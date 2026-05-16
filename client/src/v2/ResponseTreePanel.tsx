@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { apiV2 } from "./api";
 import { FisheyeStrip } from "./fisheye-strip";
-import { CodeBlock } from "./shared/CodeBlock";
+import { EventUnitCard } from "./shared/EventUnitCard";
 import type {
   ResponseTreeResult,
   ResponseNode,
@@ -165,18 +165,14 @@ function NodeDetail({
 }) {
   const meta = slotMeta(node.slotType);
   const isToolUse = node.slotType === "response.tool_use";
+  // structured path: response.tool_use / response.text / response.thinking
+  const path = node.slotType;
 
   return (
-    <div style={{
-      marginTop: 4,
-      background: "#fff", border: "1px solid #e5e7eb",
-      borderRadius: 6, overflow: "hidden",
-    }}>
-      {/* Header */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 10,
-        padding: "8px 12px", background: meta.rowBg,
-      }}>
+    <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 6 }}>
+      {/* Back button — kept outside the EventUnitCard since it's a navigation
+          action specific to the detail view, not an attribute of the event. */}
+      <div>
         <button
           onClick={onClose}
           style={{
@@ -185,34 +181,31 @@ function NodeDetail({
             cursor: "pointer", color: "#374151",
           }}
         >← back</button>
-        <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.marker }} />
-        <span style={{ fontSize: 12, fontWeight: 700, color: meta.textColor }}>
-          {meta.label}
-        </span>
-        {node.wireMeta?.toolName && (
-          <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", fontFamily: "ui-monospace, monospace" }}>
-            {node.wireMeta.toolName}
-          </span>
-        )}
-        {node.wireMeta?.toolUseId && (
-          <code style={{ fontSize: 9, color: "#9ca3af" }}>{node.wireMeta.toolUseId}</code>
-        )}
-        <span style={{ marginLeft: "auto", fontSize: 10, color: "#9ca3af" }}>
-          {fmtK(node.charCount)} chars
-        </span>
       </div>
 
-      {/* Content */}
-      <div style={{ padding: "10px 14px" }}>
-        <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.05em", marginBottom: 4 }}>
-          {isToolUse ? "INPUT" : "CONTENT"}
-        </div>
-        <CodeBlock variant="preview" mono={isToolUse} maxHeight={280} style={{ background: "#f9fafb", padding: "6px 10px" }}>
-          {node.rawText ?? node.preview}
-        </CodeBlock>
-      </div>
+      {/* Main event unit — shared shell with Turn-card events */}
+      <EventUnitCard
+        color={meta.marker}
+        bg={meta.rowBg}
+        border="#e5e7eb"
+        kindLabel={meta.label}
+        title={node.wireMeta?.toolName}
+        shortId={node.wireMeta?.toolUseId}
+        size={{ bytes: node.charCount, direction: "out" }}
+        segments={[
+          {
+            label: isToolUse ? "INPUT" : "CONTENT",
+            content: node.rawText ?? node.preview,
+            monospace: isToolUse,
+          },
+        ]}
+        coordinate={{ kind: "structured", path, source: "jsonl" }}
+        expandable={false}
+        defaultExpanded={true}
+      />
 
-      {/* Linked tool result forwarding */}
+      {/* Linked tool_result forwarding — rendered as a sibling EventUnitCard
+          so the "tool_use → tool_result" pair reads as two same-shell units. */}
       {node.linkedToolResult && (
         <LinkedResultBlock
           linked={node.linkedToolResult}
@@ -230,49 +223,35 @@ function LinkedResultBlock({
   onLinkCall?: (callId: number) => void;
 }) {
   const color = linked.isError ? "#dc2626" : "#16a34a";
-  const bg = linked.isError ? "#fef2f2" : "#f0fdf4";
+  const bg    = linked.isError ? "#fef2f2" : "#f0fdf4";
   const border = linked.isError ? "#fecaca" : "#bbf7d0";
 
   return (
-    <div style={{ borderTop: "1px solid #f3f4f6", background: bg, padding: "10px 14px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-        <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: "0.05em" }}>
-          ↩ TOOL RESULT
-        </span>
-        <span style={{ fontSize: 10, color: "#6b7280" }}>
-          {fmtK(linked.charCount)} chars{linked.isError ? " · error" : ""}
-        </span>
-        {linked.nextCallId != null && onLinkCall && (
-          <button
-            onClick={() => onLinkCall(linked.nextCallId!)}
-            title="Locate this tool_result in the Turn timeline"
-            style={{
-              marginLeft: "auto",
-              fontSize: 10, fontWeight: 600,
-              padding: "3px 10px", borderRadius: 4,
-              background: "#fff", border: `1px solid ${border}`,
-              color: "#4338ca", cursor: "pointer",
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = "#eef2ff"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "#fff"; }}
-          >
-            Show in Turn (Call #{linked.nextCallId}) →
-          </button>
-        )}
-      </div>
-      {linked.preview && (
-        <pre style={{
-          margin: 0, fontSize: 10, color: "#374151", lineHeight: 1.5,
-          whiteSpace: "pre-wrap", wordBreak: "break-word",
-          maxHeight: 160, overflowY: "auto",
-          background: "#fff", border: `1px solid ${border}`, borderRadius: 4,
-          padding: "6px 8px",
-          fontFamily: "ui-monospace, SFMono-Regular, monospace",
-        }}>
-          {linked.preview}
-        </pre>
-      )}
-    </div>
+    <EventUnitCard
+      color={color}
+      bg={bg}
+      border={border}
+      kindLabel={linked.isError ? "Tool Result · error" : "Tool Result"}
+      shortId={linked.toolUseId}
+      size={{ bytes: linked.charCount, direction: "in" }}
+      segments={linked.preview ? [
+        { content: linked.preview, monospace: true, truncateAt: 1000 },
+      ] : []}
+      coordinate={linked.nextCallId != null ? {
+        kind: "structured",
+        path: "request.messages[…].tool_result",
+        callIndex: linked.nextCallId,
+        source: "jsonl",
+      } : undefined}
+      expandable={false}
+      defaultExpanded={true}
+      onJump={linked.nextCallId != null && onLinkCall
+        ? () => onLinkCall(linked.nextCallId!)
+        : undefined}
+      jumpTooltip={linked.nextCallId != null
+        ? `Show in Turn (Call #${linked.nextCallId}) →`
+        : undefined}
+    />
   );
 }
 

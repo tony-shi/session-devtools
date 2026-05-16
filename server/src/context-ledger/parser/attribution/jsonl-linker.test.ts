@@ -888,4 +888,53 @@ describe("PR 3 — #9 harness injection (Skill SKILL.md → user position)", () 
     );
     expect(leaf?.origin.kind).not.toBe("jsonl");
   });
+
+  // compaction_summary：与 skill_invocation 同结构（authorship=harness），但
+  // 没有 triggerToolUseId（不是 tool 调起的，是 autocompact / /compact 触发）。
+  it("compaction summary 文本叶子 → harness_injection (mechanism=compaction_summary, payload=conversation_summary, 无 trigger toolUseId)", () => {
+    const summaryBody =
+      "This session is being continued from a previous conversation that ran out of context. " +
+      "The summary below covers the earlier portion of the conversation.\n\n" +
+      "Summary:\n1. Did A\n2. Did B\n\nContinued tasks: do C.";
+    const reqBody = {
+      system: [
+        { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
+        { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
+      ],
+      messages: [{ role: "user", content: [{ type: "text", text: summaryBody }] }],
+    };
+    const events: LinkableJsonlEvent[] = [
+      {
+        lineIdx: 0,
+        type: "user",
+        harnessInjection: {
+          mechanism: "compaction_summary",
+          payload: "conversation_summary",
+          rawText: summaryBody,
+          // 无 triggerToolUseId
+        },
+      },
+    ];
+    const { snapshot, linkReport } = attributeWithJsonl({
+      reqBody,
+      proxyFile: "t.json",
+      jsonl: events,
+      call: { callId: 1, turnId: 1 },
+    });
+    expect(linkReport.matched.harnessInjection).toBeGreaterThanOrEqual(1);
+    const leaf = Object.values(snapshot.index).find(
+      (n) =>
+        n.wireMeta?.messageRole === "user" &&
+        n.children.length === 0 &&
+        n.rawText === summaryBody,
+    );
+    expect(leaf?.origin.kind).toBe("jsonl");
+    if (leaf?.origin.kind === "jsonl") {
+      expect(leaf.origin.eventKind.source).toBe("harness_injection");
+      expect(leaf.origin.harness?.mechanism).toBe("compaction_summary");
+      expect(leaf.origin.harness?.payload).toBe("conversation_summary");
+      // compaction 路径无 triggerToolUseId
+      expect(leaf.origin.toolUseId).toBeUndefined();
+    }
+  });
 });

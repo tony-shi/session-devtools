@@ -107,10 +107,20 @@ export interface JsonlOrigin {
 
 /** harness 注入路径的子分类。authorship 已由外层 source 表达，这里只描述 how / what。 */
 export interface HarnessOriginDetail {
-  /** 触发机制：哪个 Claude Code 子系统注入的。 */
-  mechanism: "skill_invocation";
-  /** 注入载荷：合成出来的内容形态。 */
-  payload: "skill_md_body";
+  /**
+   * 触发机制：哪个 Claude Code 子系统注入的。
+   *
+   *   skill_invocation     — assistant.tool_use(Skill) 触发 SkillTool 加载 SKILL.md
+   *   compaction_summary   — auto/manual compaction 把 N 轮对话压成 summary 注入下条
+   */
+  mechanism: "skill_invocation" | "compaction_summary";
+  /**
+   * 注入载荷：合成出来的内容形态。
+   *
+   *   skill_md_body         — Skill 文件体（含可选 "Base directory for this skill:" 前缀）
+   *   conversation_summary  — "This session is being continued from a previous conversation..." 体
+   */
+  payload: "skill_md_body" | "conversation_summary";
 }
 
 /**
@@ -144,13 +154,20 @@ export type JsonlEventSource =
    * 个子系统、注入的载荷形态，由 JsonlOrigin.harness 子结构的 mechanism × payload
    * 两轴表达。
    *
-   * 当前覆盖（仅）：
-   *   mechanism="skill_invocation" + payload="skill_md_body"
+   * 当前覆盖（mechanism × payload）：
+   *
+   *   skill_invocation × skill_md_body
    *     —— assistant 发 Skill tool_use → SkillTool 加载 SKILL.md → 拼到下一条
    *     user message 末尾（jsonl 里这条 user event 是 isMeta=true text）。
    *     sourcemap：restored-src/src/tools/SkillTool/SkillTool.ts:1076
    *              + restored-src/src/skills/loadSkillsDir.ts:346
    *              + restored-src/src/utils/plugins/loadPluginCommands.ts:329
+   *
+   *   compaction_summary × conversation_summary
+   *     —— auto/manual compaction 把先前的对话压成 summary 注入到下条 user
+   *     message（jsonl 里这条 user event 是 isCompactSummary=true）。
+   *     sourcemap：restored-src/src/services/compact/prompt.ts:345 (getCompactUserSummaryMessage)
+   *              + restored-src/src/services/compact/compact.ts:614-624
    */
   | "harness_injection"
   | "unknown";
