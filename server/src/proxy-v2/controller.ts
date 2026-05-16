@@ -260,7 +260,7 @@ class ProxyController {
   }
 
   private giveUpRespawn(): void {
-    this.lastError = `proxy 反复崩溃 ${MAX_RESPAWN_ATTEMPTS} 次，已停止自动重启。请检查日志或重新点击启动。`;
+    this.lastError = `proxy crashed ${MAX_RESPAWN_ATTEMPTS} times in a row; auto-restart disabled. Check the log or click Start again.`;
     this.appendLog(`[watchdog] ✗ giving up after ${MAX_RESPAWN_ATTEMPTS} attempts`);
     this.target = "STOPPED";
     this.phase = "stopping";

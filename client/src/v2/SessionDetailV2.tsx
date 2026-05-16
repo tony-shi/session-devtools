@@ -2857,12 +2857,17 @@ function IntervalEventRow({
   // call referenced this event earliest — which can be much later than the
   // user expects. We surface this honestly in the jump tooltip so users
   // know to click "load full ›" if the target looks suspicious.
-  const { getEventAnnotation, onJumpToCall, loadedLastN } = useAttributionGraph();
+  const { getEventAnnotation, onJumpToCall, loadedLastN, highlightedLineIdx } = useAttributionGraph();
   const annotation = getEventAnnotation(ev.lineIdx);
+  const isFlashing = highlightedLineIdx === ev.lineIdx;
   const impact = annotation ? {
     state: annotation.contextImpact,
     firstSeenInCall: annotation.firstSeenInCall,
     consumedByCallIds: annotation.consumedByCallIds,
+    // In lastN mode the server's firstSeenInCall is "earliest reference
+    // *within the audit window*" — surface that caveat directly in META so
+    // users don't misread a window-local answer as session-wide.
+    firstSeenIsWindowBounded: loadedLastN != null,
   } : undefined;
   const jumpTarget = annotation?.firstSeenInCall ?? null;
   const handleJump = (onJumpToCall && jumpTarget != null)
@@ -2873,7 +2878,18 @@ function IntervalEventRow({
     : "";
 
   return (
-    <div style={{ marginBottom: 2 }}>
+    <div
+      data-jsonl-line={ev.lineIdx}
+      style={{
+        marginBottom: 2,
+        borderRadius: 6,
+        // Flash outline driven by AttributionGraphContext.flashEvent —
+        // lights up for ~2s when a reverse-jump (Call leaf → Turn view)
+        // targets this row's jsonl line.
+        boxShadow: isFlashing ? "0 0 0 3px rgba(245,158,11,0.45)" : "none",
+        transition: "box-shadow 350ms ease",
+      }}
+    >
       <EventUnitCard
         color={col.fg}
         bg={col.bg}
@@ -3997,7 +4013,13 @@ function PayloadSegmentEvidenceDrawer({ seg, onClear }: { seg: PayloadSegment; o
 
 // ─── LLM Call Detail Panel ────────────────────────────────────────────────────
 
-type CallTab = "attribution" | "diff" | "raw";
+// Three-tab top-level structure for Call detail. The legacy ordering
+// (attribution / diff / raw) put Request and Response under a sub-tab inside
+// "attribution"; the new ordering flattens them to top-level since they're
+// the user's primary navigation axis ("what came in" vs "what came out").
+// Diff is folded into the request tab as a lens (see AttributionTreeLensPanel),
+// and "raw" is renamed to "structure" since it's the wire-format viewer.
+type CallTab = "request" | "response" | "raw";
 type DiffMode = "segment" | "range" | "raw";
 
 // ─── Attribution Tab ──────────────────────────────────────────────────────────
@@ -4324,6 +4346,13 @@ const SECTION_ORDER = ["system", "tools", "messages", "metadata", "unknown"];
 
 
 
+// TODO(remove-after-tab-refactor): AttributionSection is no longer rendered
+// anywhere — the new top-level tab structure (请求 / 响应 / 原始结构) lifts
+// the Request/Response split out and renders AttributionTreeLensPanel /
+// ResponseTreePanel directly. The classic 经典/Lens 预览 sub-toggle inside
+// is also gone (Lens is the only mode now). Kept here purely so accidental
+// callers fail loudly; safe to delete next pass.
+//
 // ─── Attribution section: Request / Response 双向归因 ───────────────────────
 // 子 tab 切换 Request / Response。
 //   - Request: AttributionTreePanel（origin tree）
@@ -4397,9 +4426,57 @@ function AttributionSection({
 // raw tab 在 callDetail.proxyRequestId == null 时整页渲染本组件。
 // 配图位置：client/src/assets/proxy-missing.png（占位文件可为空 0 字节；
 // onError 会自动隐藏 <img>，不会出现破图标）。
+//
+// 改进点（本次）：原来无脑指引用户去 Proxy tab 启动，路径绕；现在主动 fetch
+// /api/proxy-v2/status，分两种情形给不同文案：
+//   - proxy 未启动 → 内置「启动代理」按钮 + 重启 Claude Code 提示
+//   - proxy 已在跑 → 解释为什么这条 call 仍然没数据（启动前发生 / 没重启 CC）
+type ProxyV2Phase = "idle" | "starting" | "running" | "stopping";
+
+interface ProxyV2Status {
+  phase: ProxyV2Phase;
+  active: boolean;
+  port: number;
+  pid: number | null;
+}
+
 function ProxyMissingEmptyState() {
   const { t } = useTranslation();
   const [imgOk, setImgOk] = useState(true);
+  const [status, setStatus] = useState<ProxyV2Status | null>(null);
+  const [loadingStatus, setLoadingStatus] = useState(true);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  // 拉一次当前 proxy 状态。后续如果用户点了「启动」，按钮内部会主动再拉。
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/proxy-v2/status")
+      .then((r) => r.json())
+      .then((d: ProxyV2Status) => { if (!cancelled) setStatus(d); })
+      .catch(() => { /* 网络错误也算 stopped 处理 */ })
+      .finally(() => { if (!cancelled) setLoadingStatus(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleStart = async () => {
+    setStarting(true);
+    setStartError(null);
+    try {
+      const r = await fetch("/api/proxy-v2/start", { method: "POST" });
+      const next = await r.json() as ProxyV2Status & { lastError?: string | null };
+      setStatus(next);
+      if (next.lastError) setStartError(next.lastError);
+    } catch (e) {
+      setStartError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  // running = phase 是 running 或 starting；都视作"代理已在工作 / 即将工作"
+  const isRunning = status?.phase === "running" || status?.phase === "starting";
+
   return (
     <div style={{
       display: "flex", flexDirection: "column", alignItems: "center",
@@ -4413,18 +4490,70 @@ function ProxyMissingEmptyState() {
           style={{ maxWidth: 240, width: "100%", height: "auto", opacity: 0.95 }}
         />
       )}
-      <div style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>
-        {t("rawTab.noProxyTitle")}
-      </div>
-      <div style={{ fontSize: 12, lineHeight: 1.6, color: "#4b5563", maxWidth: 420 }}>
-        {t("rawTab.noProxyBody")}
-      </div>
-      <div style={{ fontSize: 12, lineHeight: 1.6, color: "#4b5563", maxWidth: 420 }}>
-        {t("rawTab.noProxyGuide", { tab: t("nav.proxy") })}
-      </div>
-      <div style={{ fontSize: 11, color: "#9ca3af", maxWidth: 420 }}>
-        {t("rawTab.noProxyCaveat")}
-      </div>
+
+      {loadingStatus ? (
+        <div style={{ fontSize: 12, color: "#9ca3af" }}>
+          {t("rawTab.noProxyStatusChecking")}
+        </div>
+      ) : isRunning ? (
+        // 代理已在运行 —— 解释为什么这条 call 仍然没有数据
+        <>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>
+            {t("rawTab.noProxyTitleRunning")}
+          </div>
+          <div style={{ fontSize: 12, lineHeight: 1.6, color: "#4b5563", maxWidth: 460 }}>
+            {t("rawTab.noProxyBodyRunning")}
+          </div>
+          <div style={{ fontSize: 11, color: "#9ca3af", maxWidth: 460 }}>
+            {t("rawTab.noProxyManageHint", { tab: t("nav.proxy") })}
+          </div>
+        </>
+      ) : (
+        // 代理未启动 —— 主动给一个启动按钮 + 重启 Claude Code 提示
+        <>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>
+            {t("rawTab.noProxyTitleStopped")}
+          </div>
+          <div style={{ fontSize: 12, lineHeight: 1.6, color: "#4b5563", maxWidth: 460 }}>
+            {t("rawTab.noProxyBodyStopped")}
+          </div>
+          <button
+            type="button"
+            onClick={handleStart}
+            disabled={starting}
+            style={{
+              padding: "8px 18px", borderRadius: 8,
+              border: "none",
+              background: starting ? "#c7d2fe" : "#6366f1",
+              color: "#fff", fontWeight: 600, fontSize: 13,
+              cursor: starting ? "not-allowed" : "pointer",
+              minWidth: 120,
+            }}
+          >
+            {starting ? t("rawTab.noProxyStartButtonBusy") : t("rawTab.noProxyStartButton")}
+          </button>
+          {startError && (
+            <div style={{
+              fontSize: 11, color: "#991b1b",
+              background: "#fef2f2", border: "1px solid #fecaca",
+              borderRadius: 6, padding: "6px 10px", maxWidth: 460,
+            }}>
+              {t("rawTab.noProxyStartFailed", { error: startError })}
+            </div>
+          )}
+          <div style={{
+            fontSize: 11, color: "#92400e",
+            background: "#fffbeb", border: "1px solid #fde68a",
+            borderRadius: 6, padding: "8px 12px", maxWidth: 460,
+            lineHeight: 1.55,
+          }}>
+            ⚠ {t("rawTab.noProxyRestartHint")}
+          </div>
+          <div style={{ fontSize: 11, color: "#9ca3af", maxWidth: 460 }}>
+            {t("rawTab.noProxyManageHint", { tab: t("nav.proxy") })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -4445,7 +4574,7 @@ function LlmCallDetailPanel({
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
 }) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<CallTab>("attribution");
+  const [tab, setTab] = useState<CallTab>("request");
   const [callDetail, setCallDetail] = useState<CallDetail | null>(null);
   const [callDetailLoading, setCallDetailLoading] = useState(true);
 
@@ -4479,9 +4608,9 @@ function LlmCallDetailPanel({
   const response = buildMockCallResponse(call);
 
   const TAB_DEFS: Array<{ id: CallTab; label: string }> = [
-    { id: "attribution",    label: t("callTab.attribution") },
-    { id: "diff",           label: t("callTab.diff") },
-    { id: "raw",            label: t("callTab.raw") },
+    { id: "request",   label: t("callTab.request") },
+    { id: "response",  label: t("callTab.response") },
+    { id: "raw",       label: t("callTab.structure") },
   ];
 
   return (
@@ -4592,22 +4721,26 @@ function LlmCallDetailPanel({
             ))}
           </div>
 
-          {/* ══ Attribution (Request / Response) ═════════ */}
-          {tab === "attribution" && (
-            <AttributionSection
-              call={call}
+          {/* ══ Request — attribution of the prompt sent to the model ═══
+              Lens framework (来源 / 缓存 / Audit / Diff vs Previous) is the
+              only view here now; legacy "经典" sub-toggle and the deprecated
+              AttributionSection wrapper are dropped (see TODO above
+              `AttributionSection`). */}
+          {tab === "request" && (
+            <AttributionTreeLensPanel
               sessionId={sessionId}
-              onLinkCall={onLinkCall}
+              callId={call.id}
+              prevCallId={prevCallId}
               onLinkSource={onLinkSource}
             />
           )}
 
-          {/* ══ Diff vs Previous ══════════════════════════ */}
-          {tab === "diff" && (
-            <DiffPanel
+          {/* ══ Response — assistant blocks (thinking / text / tool_use) ══ */}
+          {tab === "response" && (
+            <ResponseTreePanel
               sessionId={sessionId}
               callId={call.id}
-              prevCallId={prevCallId}
+              onLinkCall={onLinkCall}
             />
           )}
 

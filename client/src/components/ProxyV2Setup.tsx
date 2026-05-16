@@ -3,7 +3,11 @@
 // 视觉风格已对齐主站：indigo `#6366f1` 主色 / emerald `#10b981` 成功 /
 // `#dc2626` 错误 / `#d97706` 警告。border `#e5e7eb` / `#f3f4f6`。和
 // SessionDetail / Dashboard 同源。
+//
+// i18n：所有界面文字走 react-i18next 的 `proxy.*` 命名空间，方便在 zh/en
+// 之间切。底部 ProxyTraffic 自己维护了一套 zh/en 的局部 T 字典，沿用不动。
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ProxyTraffic } from "./ProxyTraffic";
 
 type Target = "STOPPED" | "RUNNING";
@@ -25,6 +29,7 @@ interface Snapshot {
 const POLL_INTERVAL_MS = 1000;
 
 export function ProxyV2Setup() {
+  const { t } = useTranslation();
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
@@ -72,9 +77,9 @@ export function ProxyV2Setup() {
     phase === "stopping" ? "#d97706" : "#9ca3af";
 
   const phaseLabel =
-    phase === "running"  ? "运行中" :
-    phase === "starting" ? "启动中…" :
-    phase === "stopping" ? "停止中…" : "已停止";
+    phase === "running"  ? t("proxy.phaseRunning") :
+    phase === "starting" ? t("proxy.phaseStarting") :
+    phase === "stopping" ? t("proxy.phaseStopping") : t("proxy.phaseIdle");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -83,16 +88,15 @@ export function ProxyV2Setup() {
         background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 8,
         padding: "10px 16px", fontSize: 13, color: "#3730a3",
       }}>
-        Proxy v2 — 极简控制器版。Start = 注入 settings + 启动；Stop = 还原 settings + 停止。
-        Dashboard 退出时自动 Stop。
+        {t("proxy.intro")}
       </div>
 
       {/* 状态卡片 */}
       <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb", padding: "20px 24px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 17, color: "#111827" }}>Proxy v2</div>
-            <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 2 }}>controller-managed</div>
+            <div style={{ fontWeight: 700, fontSize: 17, color: "#111827" }}>{t("proxy.title")}</div>
+            <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 2 }}>{t("proxy.subtitle")}</div>
           </div>
           <div style={{
             padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
@@ -104,10 +108,14 @@ export function ProxyV2Setup() {
 
         {/* 字段网格 */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 18 }}>
-          <Field label="target" value={target} />
-          <Field label="port" value={String(snap?.port ?? "-")} />
-          <Field label="pid" value={snap?.pid ? String(snap.pid) : "-"} />
-          <Field label="active.json" value={snap?.active ? "存在" : "无"} color={snap?.active ? "#10b981" : "#9ca3af"} />
+          <Field label={t("proxy.fieldTarget")} value={target} />
+          <Field label={t("proxy.fieldPort")}   value={String(snap?.port ?? "-")} />
+          <Field label={t("proxy.fieldPid")}    value={snap?.pid ? String(snap.pid) : "-"} />
+          <Field
+            label={t("proxy.fieldActive")}
+            value={snap?.active ? t("proxy.fieldActiveYes") : t("proxy.fieldActiveNo")}
+            color={snap?.active ? "#10b981" : "#9ca3af"}
+          />
         </div>
 
         {/* 按钮 */}
@@ -117,21 +125,21 @@ export function ProxyV2Setup() {
             disabled={busy || isRunning || isTransitioning}
             style={btnStyle(isRunning ? "disabled" : "primary", busy || isRunning || isTransitioning)}
           >
-            启动
+            {t("proxy.btnStart")}
           </button>
           <button
             onClick={() => doAction("stop")}
             disabled={busy || (phase === "idle" && !snap?.active && !snap?.pid) || isTransitioning}
             style={btnStyle(isRunning ? "danger" : "neutral", busy || isTransitioning)}
           >
-            停止
+            {t("proxy.btnStop")}
           </button>
           <button
             onClick={fetchStatus}
             disabled={busy}
             style={btnStyle("ghost", busy)}
           >
-            刷新
+            {t("proxy.btnRefresh")}
           </button>
         </div>
 
@@ -141,11 +149,11 @@ export function ProxyV2Setup() {
             marginTop: 14, padding: "10px 12px", borderRadius: 6,
             background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", fontSize: 13,
           }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>✗ 上次失败</div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("proxy.errorTitle")}</div>
             <div>{snap.lastError}</div>
             {snap.respawnAttempt > 0 && (
               <div style={{ marginTop: 4, fontSize: 11, opacity: 0.8 }}>
-                连续崩溃 {snap.respawnAttempt} 次
+                {t("proxy.crashCount", { n: snap.respawnAttempt })}
               </div>
             )}
           </div>
@@ -157,7 +165,7 @@ export function ProxyV2Setup() {
             marginTop: 14, padding: "10px 12px", borderRadius: 6,
             background: "#fffbeb", border: "1px solid #fde68a", color: "#92400e", fontSize: 12,
           }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>⚠ 清理 warnings（不阻断完成）</div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("proxy.warningsTitle")}</div>
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               {snap.lastWarnings.map((w, i) => <li key={i}>[{w.step}] {w.reason}</li>)}
             </ul>
@@ -169,7 +177,7 @@ export function ProxyV2Setup() {
             marginTop: 10, padding: "8px 12px", borderRadius: 6,
             background: "#eef2ff", border: "1px solid #c7d2fe", color: "#3730a3", fontSize: 12,
           }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>preflight warnings（已通过）</div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("proxy.preflightTitle")}</div>
             <ul style={{ margin: 0, paddingLeft: 18 }}>
               {snap.preflightWarnings.map((w, i) => <li key={i}>{w}</li>)}
             </ul>
@@ -179,7 +187,7 @@ export function ProxyV2Setup() {
 
       {/* 日志窗口 */}
       <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb", padding: "14px 20px" }}>
-        <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14, color: "#111827" }}>日志（最近 50 条）</div>
+        <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14, color: "#111827" }}>{t("proxy.logTitle")}</div>
         <pre
           ref={logRef}
           style={{
@@ -189,7 +197,7 @@ export function ProxyV2Setup() {
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
           }}
         >
-          {snap?.log?.length ? snap.log.join("\n") : "(暂无日志)"}
+          {snap?.log?.length ? snap.log.join("\n") : t("proxy.logEmpty")}
         </pre>
       </div>
 

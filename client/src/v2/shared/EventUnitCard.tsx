@@ -67,6 +67,13 @@ export interface EventUnitCardProps {
     state: "indexed" | "skipped" | "pending";
     firstSeenInCall?: number | null;
     consumedByCallIds?: number[];
+    /**
+     * True when `firstSeenInCall` is bounded by the current audit window
+     * (i.e. lastN mode and the true first-seen call may live outside).
+     * Shown in META as a "(审计窗口)" qualifier so users don't mistake
+     * the window-local answer for the session-wide answer.
+     */
+    firstSeenIsWindowBounded?: boolean;
   };
 
   // === Behavior ===
@@ -224,28 +231,32 @@ export function EventUnitCard(props: EventUnitCardProps) {
           </span>
         )}
 
-        {/* jump button (to other view) — explicit chip with target label so
-            users see *where* the jump lands before clicking. Pure caret was
-            too easy to mis-tap when adjacent to the expand toggle. */}
+        {/* jump button — solid indigo button (not a quiet chip) so users
+            can spot it from across the card and won't accidentally trigger
+            it by clicking elsewhere. Pure caret / dashed-chip variants
+            previously got mistaken for hint glyphs. */}
         {effectiveOnJump && (
           <button
             type="button"
             title={jumpTooltip}
             onClick={(e) => { e.stopPropagation(); effectiveOnJump(); }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = "#e0e7ff"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "#eef2ff"; }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "#4338ca"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "#4f46e5"; }}
             style={{
-              display: "inline-flex", alignItems: "center", gap: 3,
-              border: "1px solid #c7d2fe", background: "#eef2ff",
-              color: "#4338ca", borderRadius: 4,
+              display: "inline-flex", alignItems: "center", gap: 5,
+              border: "none", background: "#4f46e5",
+              color: "#fff", borderRadius: 4,
               fontSize: 10, fontWeight: 700,
-              padding: "1px 6px",
-              cursor: "pointer", lineHeight: 1.4,
+              padding: "3px 9px",
+              cursor: "pointer", lineHeight: 1.3,
               flexShrink: 0, whiteSpace: "nowrap",
-              transition: "background 0.1s",
+              transition: "background 0.12s",
+              boxShadow: "0 1px 2px rgba(79,70,229,0.25)",
+              letterSpacing: "0.02em",
             }}
           >
-            {jumpLabel ?? "跳转"} <span style={{ fontSize: 11 }}>→</span>
+            <LinkIcon />
+            {jumpLabel ?? "跳转"}
           </button>
         )}
 
@@ -301,9 +312,17 @@ function ImpactChips({ impact }: { impact: NonNullable<EventUnitCardProps["impac
   // indexed
   const fst = impact.firstSeenInCall;
   const usedIn = impact.consumedByCallIds?.length ?? 0;
+  const windowQualifier = impact.firstSeenIsWindowBounded;
   return (
     <>
-      {fst != null && <span>first seen → call #{fst}</span>}
+      {fst != null && (
+        <span>
+          first seen → call #{fst}
+          {windowQualifier && (
+            <span style={{ color: "#b45309", marginLeft: 4 }}>(审计窗口内)</span>
+          )}
+        </span>
+      )}
       {usedIn > 1 && <span>used in {usedIn} calls</span>}
     </>
   );
@@ -325,6 +344,18 @@ function CoordinateChips({ coordinate }: { coordinate: EventCoordinate }) {
       {coordinate.callIndex != null && <span>call #{coordinate.callIndex}</span>}
       {coordinate.source && <span>source: {coordinate.source}</span>}
     </>
+  );
+}
+
+function LinkIcon() {
+  // Outline link/chain icon — visually signals "navigate" without text.
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8"
+         strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <path d="M6.5 9.5 L9.5 6.5" />
+      <path d="M9 4 L10.5 2.5 a2.5 2.5 0 0 1 3.5 3.5 L12.5 7.5" />
+      <path d="M7 8.5 L5.5 10 a2.5 2.5 0 0 1 -3.5 -3.5 L3.5 5" />
+    </svg>
   );
 }
 

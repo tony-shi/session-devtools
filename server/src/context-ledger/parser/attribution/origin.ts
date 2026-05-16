@@ -103,6 +103,22 @@ export interface JsonlOrigin {
    * 已经由 source 表达。
    */
   harness?: HarnessOriginDetail;
+  /**
+   * 反向归因：首次把这个 jsonl event 写进任一 call prompt 的 callId。
+   * 由 attribution-tree endpoint 在返回前用 session-attribution-graph 反查
+   * 后填入；前端拿到 leaf 后直接用作 jump target —— 不需要再去查 events map。
+   * undefined = 没跑过 graph，或者 graph window 内未匹配。
+   */
+  firstSeenInCall?: number;
+  /**
+   * 引用过该 event 的所有 callId（升序去重）。同 firstSeenInCall 的来源。
+   */
+  consumedByCallIds?: number[];
+  /**
+   * 当 graph 是 lastN 窗口跑出来的（非全 session），firstSeenInCall 实际是
+   * "窗口内最早"而非真正最早。前端用此字段在 UI 上加 caveat。
+   */
+  firstSeenIsWindowBounded?: boolean;
 }
 
 /** harness 注入路径的子分类。authorship 已由外层 source 表达，这里只描述 how / what。 */

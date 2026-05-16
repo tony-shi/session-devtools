@@ -34,8 +34,18 @@ export const apiV2 = {
   callDetail: (sessionId: string, callId: number) =>
     get<CallDetail>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/detail`),
 
-  attributionTree: (sessionId: string, callId: number) =>
-    get<AttributionTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/attribution-tree`),
+  /**
+   * Per-call attribution tree. When `graphLastN` is passed, the server
+   * enriches every jsonl-origin leaf with `firstSeenInCall` /
+   * `consumedByCallIds` / `firstSeenIsWindowBounded` so the UI can use
+   * `leaf.origin.firstSeenInCall` directly as a jump target.
+   */
+  attributionTree: (sessionId: string, callId: number, opts?: { graphLastN?: number }) => {
+    const qs = opts?.graphLastN ? `?graphLastN=${opts.graphLastN}` : "";
+    return get<AttributionTreeResult>(
+      `/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/attribution-tree${qs}`,
+    );
+  },
 
   responseTree: (sessionId: string, callId: number) =>
     get<ResponseTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/response-tree`),

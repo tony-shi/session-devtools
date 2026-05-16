@@ -29,7 +29,7 @@ try {
     if (filename !== "mitm-hosts.json") return;
     reloadMitmWhitelist();
     const hosts = [...getMitmWhitelist()];
-    console.log(`[session-dashboard-proxy] whitelist 热重载：${hosts.join(", ")}`);
+    console.log(`[session-dashboard-proxy] whitelist hot-reloaded: ${hosts.join(", ")}`);
     writeTraffic({
       ts: new Date().toISOString(),
       kind: "event",

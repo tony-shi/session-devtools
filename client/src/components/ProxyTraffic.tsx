@@ -1,58 +1,36 @@
 // 代理流量列表 + 单请求详情（lazy load）。
+//
+// i18n：本文件原先维护一份局部 T zh/en 字典 + getLang() / Lang 类型从
+// localStorage 读取语言，现在统一迁到 react-i18next 的 `proxyTraffic.*`
+// 命名空间，和应用其他部分共享 i18n 切换路径。每个子组件自己 useTranslation()，
+// 不再通过 `lang: Lang` prop 链式传递。
 import { useCallback, useEffect, useRef, useState } from "react";
-
-const T = {
-  title:          { zh: "代理流量", en: "Proxy Traffic" },
-  live:           { zh: "实时", en: "Live" },
-  paused:         { zh: "已暂停", en: "Paused" },
-  noData:         { zh: "暂无流量记录", en: "No traffic yet" },
-  category:       { zh: "类别", en: "Category" },
-  method:         { zh: "方法", en: "Method" },
-  status:         { zh: "状态", en: "Status" },
-  path:           { zh: "路径", en: "Path" },
-  duration:       { zh: "耗时", en: "Duration" },
-  size:           { zh: "大小", en: "Size" },
-  reqHeaders:     { zh: "请求头", en: "Request Headers" },
-  resHeaders:     { zh: "响应头", en: "Response Headers" },
-  reqBody:        { zh: "请求体（明文）", en: "Request Body (plaintext)" },
-  resBody:        { zh: "响应体（明文）", en: "Response Body (plaintext)" },
-  loading:        { zh: "加载中…", en: "Loading…" },
-  loadBody:       { zh: "点击展开", en: "Click to expand" },
-  sync:           { zh: "同步", en: "Sync" },
-  syncing:        { zh: "同步中…", en: "Syncing…" },
-  filterAll:      { zh: "全部", en: "All" },
-  captureTargets: { zh: "拦截目标", en: "Capture Targets" },
-  addHost:        { zh: "添加主机", en: "Add Host" },
-  removeHost:     { zh: "移除", en: "Remove" },
-  saveTargets:    { zh: "保存", en: "Save" },
-  targetsSaved:   { zh: "已生效，无需重启", en: "Applied, no restart needed" },
-  parseCol:       { zh: "解析", en: "Parse" },
-  loadMore:       { zh: "加载更多", en: "Load more" },
-  loadingMore:    { zh: "加载中…", en: "Loading…" },
-  noMore:         { zh: "已加载全部", en: "All loaded" },
-};
-
-type Lang = "zh" | "en";
-function getLang(): Lang { return localStorage.getItem("lang") === "en" ? "en" : "zh"; }
-function t(key: keyof typeof T, lang: Lang): string { return T[key][lang]; }
+import { useTranslation } from "react-i18next";
 
 // ── 请求分类 ──────────────────────────────────────────────────────────────────
 
 type Category = "llm" | "auth" | "telemetry" | "mcp" | "other";
 
 interface CategoryMeta {
-  label: { zh: string; en: string };
+  /** i18n key suffix under `proxyTraffic.categories.*` — caller resolves via t(). */
+  labelKey: Category;
   color: string;
   bg: string;
 }
 
 const CATEGORY_META: Record<Category, CategoryMeta> = {
-  llm:       { label: { zh: "LLM 推理", en: "LLM"       }, color: "#7c3aed", bg: "#f5f0ff" },
-  auth:      { label: { zh: "认证",     en: "Auth"      }, color: "#0369a1", bg: "#e0f2fe" },
-  telemetry: { label: { zh: "遥测",     en: "Telemetry" }, color: "#92400e", bg: "#fef3c7" },
-  mcp:       { label: { zh: "MCP",      en: "MCP"       }, color: "#065f46", bg: "#d1fae5" },
-  other:     { label: { zh: "其他",     en: "Other"     }, color: "#374151",    bg: "#f3f4f6" },
+  llm:       { labelKey: "llm",       color: "#7c3aed", bg: "#f5f0ff" },
+  auth:      { labelKey: "auth",      color: "#0369a1", bg: "#e0f2fe" },
+  telemetry: { labelKey: "telemetry", color: "#92400e", bg: "#fef3c7" },
+  mcp:       { labelKey: "mcp",       color: "#065f46", bg: "#d1fae5" },
+  other:     { labelKey: "other",     color: "#374151", bg: "#f3f4f6" },
 };
+
+/** Resolve a category's display label via i18n. Centralized so call sites
+ *  don't need to know about the key path. */
+function categoryLabel(t: (k: string) => string, cat: Category): string {
+  return t(`proxyTraffic.categories.${CATEGORY_META[cat].labelKey}`);
+}
 
 function classifyRequest(url: string, sni: string): Category {
   const u = url.toLowerCase();
@@ -145,7 +123,8 @@ function decodeBase64ToText(b64: string): { text: string; isBinary: boolean; byt
   }
 }
 
-function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | "res"; lang: Lang }) {
+function LazyBody({ requestId, kind }: { requestId: number; kind: "req" | "res" }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState<{ value: string; encoding: "utf8" | "base64" } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -159,18 +138,12 @@ function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | 
         const res = await fetch(`/api/proxy/requests/${requestId}/body`);
         const data = await res.json();
         if (data.error === "file_deleted") {
-          setError(lang === "zh" ? "原始日志文件已被删除" : "Original log file has been deleted");
+          setError(t("proxyTraffic.bodyFileDeleted"));
         } else if (data.error) {
-          // 之前直接显示 data.error 裸 token（例如 "parse_error"），用户看不到
-          // 实际失败原因。这里把 server 透传的 message 一起 surface 出来，
-          // 并对 parse_error 这一最常见错误码加一条简短解读。
+          // server 透传的 data.message + 对常见 parse_error 的额外解读。
           const reason = data.message ? `${data.error} · ${data.message}` : data.error;
-          const hint = data.error === "parse_error"
-            ? (lang === "zh"
-                ? "（无法解析 proxy 日志该行 JSON —— 可能日志被截断 / rotate 后 byte offset 不对齐 / gzip 冷文件读到半行）"
-                : " (failed to parse the proxy log line — possibly truncated, offset stale after rotation, or partial gzip read)")
-            : "";
-          setError((lang === "zh" ? "读取原始数据失败：" : "Failed to read raw body: ") + reason + hint);
+          const hint = data.error === "parse_error" ? t("proxyTraffic.bodyParseErrorHint") : "";
+          setError(t("proxyTraffic.bodyReadFailedPrefix") + reason + hint);
         } else {
           const value = kind === "req" ? (data.req_body ?? "") : (data.res_body ?? "");
           const encoding = kind === "req" ? (data.req_body_encoding ?? "utf8") : (data.res_body_encoding ?? "utf8");
@@ -189,13 +162,13 @@ function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | 
         onClick={handleOpen}
         style={{ background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
       >
-        <span style={{ fontSize: 10, color: "#6366f1" }}>{t("loadBody", lang)}</span>
+        <span style={{ fontSize: 10, color: "#6366f1" }}>{t("proxyTraffic.loadBody")}</span>
       </button>
     );
   }
 
   if (loading) {
-    return <span style={{ color: "#9ca3af", fontSize: 12 }}>{t("loading", lang)}</span>;
+    return <span style={{ color: "#9ca3af", fontSize: 12 }}>{t("proxyTraffic.loading")}</span>;
   }
 
   if (error) {
@@ -211,9 +184,7 @@ function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | 
   if (sseMatch) {
     const events = Number(sseMatch[1]);
     const bytes = Number(sseMatch[2]);
-    const msg = lang === "zh"
-      ? `[SSE 流式响应，${events} 个事件，${formatBytes(bytes)}]`
-      : `[SSE stream, ${events} events, ${formatBytes(bytes)}]`;
+    const msg = t("proxyTraffic.ssePlaceholder", { events, size: formatBytes(bytes) });
     return <span style={{ color: "#9ca3af", fontSize: 12, fontStyle: "italic" }}>{msg}</span>;
   }
 
@@ -221,9 +192,7 @@ function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | 
   if (body.encoding === "base64") {
     const decoded = decodeBase64ToText(body.value);
     if (decoded.isBinary) {
-      const msg = lang === "zh"
-        ? `[二进制内容，${formatBytes(decoded.bytes)}（已 base64 落盘，原文完整）]`
-        : `[Binary payload, ${formatBytes(decoded.bytes)} (stored as base64, original intact)]`;
+      const msg = t("proxyTraffic.binaryPlaceholder", { size: formatBytes(decoded.bytes) });
       return <span style={{ color: "#9ca3af", fontSize: 12, fontStyle: "italic" }}>{msg}</span>;
     }
     displayValue = decoded.text;
@@ -235,7 +204,7 @@ function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | 
   return (
     <div>
       <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "#9ca3af", marginBottom: 4, padding: 0 }}>
-        ▲ 收起
+        {t("proxyTraffic.foldBody")}
       </button>
       <pre style={{
         background: "#1f2937", color: "#e8e8e8", borderRadius: 6,
@@ -251,7 +220,8 @@ function LazyBody({ requestId, kind, lang }: { requestId: number; kind: "req" | 
 
 // ── 单请求详情抽屉 ────────────────────────────────────────────────────────────
 
-function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; onClose: () => void }) {
+function RequestDetail({ req, onClose }: { req: ProxyRequest; onClose: () => void }) {
+  const { t } = useTranslation();
   const reqHeaders = parseHeaders(req.req_headers);
   const resHeaders = parseHeaders(req.res_headers);
   const cat = classifyRequest(req.url, req.sni);
@@ -274,7 +244,7 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
                 fontSize: 11, padding: "2px 7px", borderRadius: 8,
                 background: catMeta.bg, color: catMeta.color, fontWeight: 600,
               }}>
-                {catMeta.label[lang]}
+                {categoryLabel(t, cat)}
               </span>
               {(req.is_stream === 1 || req.is_stream === true) && (
                 <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 8, background: "#f3f4f6", color: "#6b7280" }}>SSE</span>
@@ -283,7 +253,7 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
             <div style={{ fontSize: 12, color: "#6b7280", wordBreak: "break-all" }}>{req.url}</div>
             <div style={{ fontSize: 11, color: "#9ca3af" }}>
               {requestStartedAt(req)} · {req.duration_ms != null ? `${req.duration_ms}ms` : "—"} · {formatBytes(req.bytes_out || req.bytes_in)}
-              {req.sse_event_count > 0 && ` · ${req.sse_event_count} SSE events`}
+              {req.sse_event_count > 0 && ` · ${req.sse_event_count} ${t("proxyTraffic.sseEventsSuffix")}`}
             </div>
           </div>
           <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 22, color: "#9ca3af", flexShrink: 0, marginLeft: 12 }}>✕</button>
@@ -292,20 +262,20 @@ function RequestDetail({ req, lang, onClose }: { req: ProxyRequest; lang: Lang; 
 
       {/* 滚动内容区 */}
       <div style={{ flex: 1, overflow: "auto", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
-        <DetailSection title={t("reqHeaders", lang)}>
+        <DetailSection title={t("proxyTraffic.reqHeaders")}>
           <HeaderTable headers={reqHeaders} />
         </DetailSection>
 
-        <DetailSection title={t("reqBody", lang)}>
-          <LazyBody requestId={req.id} kind="req" lang={lang} />
+        <DetailSection title={t("proxyTraffic.reqBody")}>
+          <LazyBody requestId={req.id} kind="req" />
         </DetailSection>
 
-        <DetailSection title={t("resHeaders", lang)}>
+        <DetailSection title={t("proxyTraffic.resHeaders")}>
           <HeaderTable headers={resHeaders} />
         </DetailSection>
 
-        <DetailSection title={t("resBody", lang)}>
-          <LazyBody requestId={req.id} kind="res" lang={lang} />
+        <DetailSection title={t("proxyTraffic.resBody")}>
+          <LazyBody requestId={req.id} kind="res" />
         </DetailSection>
       </div>
     </div>
@@ -340,7 +310,8 @@ function HeaderTable({ headers }: { headers: Record<string, string> }) {
 
 // ── Capture Targets ───────────────────────────────────────────────────────────
 
-function CaptureTargets({ lang, onSaved }: { lang: Lang; onSaved: () => void }) {
+function CaptureTargets({ onSaved }: { onSaved: () => void }) {
+  const { t } = useTranslation();
   const [hosts, setHosts] = useState<string[]>([]);
   const [newHost, setNewHost] = useState("");
   const [saving, setSaving] = useState(false);
@@ -370,7 +341,7 @@ function CaptureTargets({ lang, onSaved }: { lang: Lang; onSaved: () => void }) 
 
   return (
     <div style={{ background: "#fff", borderRadius: 8, padding: "14px 18px", border: "1px solid #e5e7eb" }}>
-      <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 14 }}>{t("captureTargets", lang)}</div>
+      <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 14 }}>{t("proxyTraffic.captureTargets")}</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
         <HostChip label="api.anthropic.com" removable={false} />
         {hosts.map((h) => (
@@ -385,13 +356,13 @@ function CaptureTargets({ lang, onSaved }: { lang: Lang; onSaved: () => void }) 
           style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid #e5e7eb", fontSize: 13 }}
         />
         <button onClick={addHost} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#f3f4f6", cursor: "pointer", fontSize: 13 }}>
-          {t("addHost", lang)}
+          {t("proxyTraffic.addHost")}
         </button>
         <button onClick={save} disabled={saving} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#6366f1", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-          {saving ? "…" : t("saveTargets", lang)}
+          {saving ? "…" : t("proxyTraffic.saveTargets")}
         </button>
       </div>
-      {saved && <div style={{ marginTop: 6, fontSize: 12, color: "#10b981" }}>{t("targetsSaved", lang)}</div>}
+      {saved && <div style={{ marginTop: 6, fontSize: 12, color: "#10b981" }}>{t("proxyTraffic.targetsSaved")}</div>}
     </div>
   );
 }
@@ -415,19 +386,19 @@ function HostChip({ label, removable, onRemove }: { label: string; removable: bo
 
 // ── 分类过滤 tab ──────────────────────────────────────────────────────────────
 
-function CategoryTabs({ active, counts, lang, onChange }: {
+function CategoryTabs({ active, counts, onChange }: {
   active: Category | "all";
   counts: Record<string, number>;
-  lang: Lang;
   onChange: (c: Category | "all") => void;
 }) {
+  const { t } = useTranslation();
   const tabs: Array<{ id: Category | "all"; label: string; color?: string }> = [
-    { id: "all",       label: t("filterAll", lang) },
-    { id: "llm",       label: CATEGORY_META.llm.label[lang],       color: CATEGORY_META.llm.color },
-    { id: "auth",      label: CATEGORY_META.auth.label[lang],      color: CATEGORY_META.auth.color },
-    { id: "telemetry", label: CATEGORY_META.telemetry.label[lang], color: CATEGORY_META.telemetry.color },
-    { id: "mcp",       label: CATEGORY_META.mcp.label[lang],       color: CATEGORY_META.mcp.color },
-    { id: "other",     label: CATEGORY_META.other.label[lang],     color: CATEGORY_META.other.color },
+    { id: "all",       label: t("proxyTraffic.filterAll") },
+    { id: "llm",       label: categoryLabel(t, "llm"),       color: CATEGORY_META.llm.color },
+    { id: "auth",      label: categoryLabel(t, "auth"),      color: CATEGORY_META.auth.color },
+    { id: "telemetry", label: categoryLabel(t, "telemetry"), color: CATEGORY_META.telemetry.color },
+    { id: "mcp",       label: categoryLabel(t, "mcp"),       color: CATEGORY_META.mcp.color },
+    { id: "other",     label: categoryLabel(t, "other"),     color: CATEGORY_META.other.color },
   ];
 
   return (
@@ -464,7 +435,7 @@ function CategoryTabs({ active, counts, lang, onChange }: {
 const PAGE_SIZE = 50;
 
 export function ProxyTraffic() {
-  const lang = getLang();
+  const { t } = useTranslation();
   const [requests, setRequests] = useState<ProxyRequest[]>([]);
   const [selected, setSelected] = useState<ProxyRequest | null>(null);
   const [live, setLive] = useState(true);
@@ -586,14 +557,14 @@ export function ProxyTraffic() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <CaptureTargets lang={lang} onSaved={() => {}} />
+      <CaptureTargets onSaved={() => {}} />
 
       <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb", overflow: "hidden" }}>
         {/* 工具栏 */}
         <div style={{ padding: "12px 16px", borderBottom: "1px solid #f3f4f6", display: "flex", flexDirection: "column", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontWeight: 600, fontSize: 15, flex: 1 }}>
-              {t("title", lang)}
+              {t("proxyTraffic.title")}
               {serverTotal > 0 && (
                 <span style={{ marginLeft: 6, fontSize: 12, color: "#9ca3af", fontWeight: 400 }}>
                   {requests.length < serverTotal ? `${requests.length} / ${serverTotal}` : serverTotal}
@@ -606,31 +577,31 @@ export function ProxyTraffic() {
               background: live ? "#f0fff4" : "#f3f4f6",
               color: live ? "#10b981" : "#666", cursor: "pointer", fontSize: 12,
             }}>
-              {live ? `● ${t("live", lang)}` : t("paused", lang)}
+              {live ? `● ${t("proxyTraffic.live")}` : t("proxyTraffic.paused")}
             </button>
             <button onClick={handleSync} disabled={syncing} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#f3f4f6", cursor: "pointer", fontSize: 12 }}>
-              {syncing ? t("syncing", lang) : t("sync", lang)}
+              {syncing ? t("proxyTraffic.syncing") : t("proxyTraffic.sync")}
             </button>
           </div>
           {/* 分类过滤 */}
-          <CategoryTabs active={catFilter} counts={counts} lang={lang} onChange={setCatFilter} />
+          <CategoryTabs active={catFilter} counts={counts} onChange={setCatFilter} />
         </div>
 
         {/* 列表 */}
         {filtered.length === 0 ? (
-          <div style={{ padding: 32, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>{t("noData", lang)}</div>
+          <div style={{ padding: 32, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>{t("proxyTraffic.noData")}</div>
         ) : (
           <>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ background: "#fafafa" }}>
-                  <th style={thStyle}>{t("category", lang)}</th>
-                  <th style={thStyle}>{t("method", lang)}</th>
-                  <th style={thStyle}>{t("status", lang)}</th>
-                  <th style={{ ...thStyle, width: "99%" }}>{t("path", lang)}</th>
-                  <th style={thStyle}>{t("duration", lang)}</th>
-                  <th style={thStyle}>{t("size", lang)}</th>
-                  <th style={thStyle}>{t("parseCol", lang)}</th>
+                  <th style={thStyle}>{t("proxyTraffic.category")}</th>
+                  <th style={thStyle}>{t("proxyTraffic.method")}</th>
+                  <th style={thStyle}>{t("proxyTraffic.status")}</th>
+                  <th style={{ ...thStyle, width: "99%" }}>{t("proxyTraffic.path")}</th>
+                  <th style={thStyle}>{t("proxyTraffic.duration")}</th>
+                  <th style={thStyle}>{t("proxyTraffic.size")}</th>
+                  <th style={thStyle}>{t("proxyTraffic.parseCol")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -650,7 +621,7 @@ export function ProxyTraffic() {
                           fontSize: 10, padding: "2px 7px", borderRadius: 8,
                           background: meta.bg, color: meta.color, fontWeight: 600, whiteSpace: "nowrap",
                         }}>
-                          {meta.label[lang]}
+                          {categoryLabel(t, cat)}
                         </span>
                       </td>
                       <td style={tdStyle}>
@@ -671,8 +642,7 @@ export function ProxyTraffic() {
                       <td style={tdStyle}>
                         {/* SSE 响应但事件数为 0：解析不完备，可能连接提前断开或格式非标准 */}
                         {(r.is_stream === 1 || r.is_stream === true) && r.sse_event_count === 0 ? (
-                          <span title={lang === "zh" ? "SSE 响应未解析到完整事件，可能连接提前断开或格式非标准" : "SSE response has no parsed events; possibly closed early or non-standard format"}
-                            style={{ fontSize: 13, cursor: "default" }}>
+                          <span title={t("proxyTraffic.sseWarningTip")} style={{ fontSize: 13, cursor: "default" }}>
                             ⚠️
                           </span>
                         ) : null}
@@ -686,18 +656,18 @@ export function ProxyTraffic() {
             {/* 无限滚动哨兵 + 加载状态 */}
             <div ref={sentinelRef} style={{ padding: "12px 16px", textAlign: "center", fontSize: 12, color: "#9ca3af" }}>
               {loadingMore
-                ? t("loadingMore", lang)
+                ? t("proxyTraffic.loadingMore")
                 : hasMore
-                  ? <button onClick={loadMore} style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", fontSize: 12 }}>{t("loadMore", lang)}</button>
+                  ? <button onClick={loadMore} style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", fontSize: 12 }}>{t("proxyTraffic.loadMore")}</button>
                   : requests.length > PAGE_SIZE
-                    ? t("noMore", lang)
+                    ? t("proxyTraffic.noMore")
                     : null}
             </div>
           </>
         )}
       </div>
 
-      {selected && <RequestDetail req={selected} lang={lang} onClose={() => setSelected(null)} />}
+      {selected && <RequestDetail req={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 }

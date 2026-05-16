@@ -508,23 +508,36 @@ export function SelectedDetail({ leaf, onLinkSource }: {
   leaf: LeafLite;
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
 }) {
-  // Back-link: when this leaf's payload was emitted by a previous LLM call
-  // (tool_use / tool_result / assistant_text linked via jsonl), expose the
-  // header jump chip that opens that source call.
+  // Back-link target: the call that first inserted this leaf's underlying
+  // jsonl event into a prompt. Read directly from origin (server-filled
+  // when attribution-tree is requested with `graphLastN`); fall back to
+  // `sourceCallId` if graph enrichment is absent.
   //
-  // Two backends are available; prefer the AttributionGraph-aware one when
-  // it's wired up (Session detail mounted under AttributionGraphProvider),
-  // because it opens a single-call detail panel + scrolls + flashes the
-  // main timeline — visually consistent with forward jumps. Fall back to
-  // the legacy onLinkSource (turn-excerpt opening) when context is missing
-  // or when the caller explicitly didn't provide attribution-graph wiring.
-  const { onJumpToCall } = useAttributionGraph();
-  const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;
+  // Action: open the Turn view (legacy onLinkSource path → turn-excerpt),
+  // *not* the per-call detail. User explicitly wants the surrounding turn
+  // context — sibling calls + jsonl event flow — and to land on the
+  // specific event row, not on a single call attribution panel.
+  //
+  // Side effect: flashEvent(jsonlLineIdx) scrolls the freshly-opened Turn
+  // view to this jsonl row and outlines it amber for ~2s.
+  const { flashEvent } = useAttributionGraph();
   const sourceTurnId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceTurnId : undefined;
-  const handleJumpSource = sourceCallId !== undefined
-    ? (onJumpToCall
-        ? () => onJumpToCall(sourceCallId)
-        : (onLinkSource ? () => onLinkSource(sourceCallId, sourceTurnId) : undefined))
+  const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;
+  const firstSeenInCall = leaf.origin.kind === "jsonl" ? leaf.origin.firstSeenInCall : undefined;
+  const jsonlLineIdx = leaf.origin.kind === "jsonl" ? leaf.origin.jsonlLineIdx : undefined;
+  const isWindowBounded = leaf.origin.kind === "jsonl"
+    ? !!leaf.origin.firstSeenIsWindowBounded
+    : false;
+  const jumpTarget = firstSeenInCall ?? sourceCallId;
+  const handleJumpSource = (jumpTarget !== undefined && onLinkSource)
+    ? () => {
+        onLinkSource(jumpTarget, sourceTurnId);
+        // Defer flashEvent past the panel mount so the IntervalEventRow
+        // exists in the DOM when we scroll to it.
+        if (jsonlLineIdx != null) {
+          requestAnimationFrame(() => flashEvent(jsonlLineIdx));
+        }
+      }
     : undefined;
 
   // Translate the leaf's origin into EventUnitCard params so this detail view
@@ -563,9 +576,13 @@ export function SelectedDetail({ leaf, onLinkSource }: {
         expandable={false}
         defaultExpanded={true}
         onJump={handleJumpSource}
-        jumpLabel={sourceCallId !== undefined ? `call #${sourceCallId}` : undefined}
-        jumpTooltip={sourceCallId !== undefined
-          ? `打开 call #${sourceCallId} 详情（产生这一段内容的源 call）`
+        jumpLabel={jumpTarget !== undefined ? `call #${jumpTarget}` : undefined}
+        jumpTooltip={jumpTarget !== undefined
+          ? `打开 call #${jumpTarget}（首次把这一段内容写进 prompt 的 call）${
+              isWindowBounded
+                ? "\n\n注意：当前是 audit 窗口内最早；真实首次可能更早，点顶部 'load full ›' 获取全 session 归因。"
+                : ""
+            }`
           : undefined}
       />
 
@@ -743,6 +760,17 @@ function AuditBadge({
   );
 }
 
+// TODO(remove-after-tab-refactor): the AttributionTreePanel *component* (the
+// "经典" view that only filters by Audit) has been retired. Call detail now
+// always renders AttributionTreeLensPanel, which exposes the full lens
+// catalog (来源 / 缓存 / Audit / Diff) — the legacy Audit-only filter is one
+// of those lenses.
+//
+// This file still exports utilities (SECTION_META / computeSectionStats /
+// flattenLeaves / shortSlot / fmtK / LeafStrip / LeafTable / SelectedDetail
+// / leafFill / originLabel) that AttributionTreeLensPanel imports. Those
+// stay. Only the panel function below should be removed once we're sure no
+// stray import survives.
 export function AttributionTreePanel({
   sessionId, callId, onLinkSource,
 }: {
@@ -763,7 +791,9 @@ export function AttributionTreePanel({
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError(null); setSelectedSection(null); setSelectedNodeId(null);
-    apiV2.attributionTree(sessionId, callId)
+    // graphLastN=20 → server enriches jsonl-origin leaves with
+    // firstSeenInCall, so SelectedDetail can use it directly for jumps.
+    apiV2.attributionTree(sessionId, callId, { graphLastN: 20 })
       .then((r) => { if (!cancelled) setResult(r); })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });

@@ -20,10 +20,10 @@ export function loadUpstream(): UpstreamProxy | null {
   try {
     url = new URL(raw);
   } catch {
-    throw new Error(`API_DASHBOARD_PROXY_UPSTREAM 无法解析: ${raw}`);
+    throw new Error(`API_DASHBOARD_PROXY_UPSTREAM unparseable: ${raw}`);
   }
   if (url.protocol !== "http:") {
-    throw new Error(`API_DASHBOARD_PROXY_UPSTREAM scheme 不支持: ${url.protocol} (仅支持 http://)`);
+    throw new Error(`API_DASHBOARD_PROXY_UPSTREAM scheme unsupported: ${url.protocol} (only http:// is supported)`);
   }
   const host = url.hostname;
   const port = Number(url.port || 80);

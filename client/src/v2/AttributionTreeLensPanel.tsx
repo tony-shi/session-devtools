@@ -39,6 +39,16 @@ import {
   type Lens,
   type LensBucket,
 } from "./lens-framework";
+import { DiffPanel } from "./DiffPanel";
+
+// "Diff vs Previous" is folded into the lens switcher as a virtual lens —
+// it's a special-case view (前后两个 call 的对比) that doesn't fit the
+// regular "leaf 分桶" pattern, so when this id is active we replace the
+// section/leaf rendering with <DiffPanel> entirely. The id lives only in
+// this file (not in LENSES, which is the bucketing registry).
+const DIFF_LENS_ID = "__diff__";
+const DIFF_LENS_LABEL = "Diff vs Previous";
+const DIFF_LENS_DESCRIPTION = "与前一次 call 的 prompt 差异 — 增/删/改的段";
 
 const BAR_HEIGHT = 44;
 
@@ -132,6 +142,13 @@ function LensSwitcher({
   activeLensId: string;
   onChange: (id: string) => void;
 }) {
+  // Build chip list: real lenses (Provenance / Cache / Audit) + virtual
+  // "Diff" lens (special-case rendering, see DIFF_LENS_ID note). Visual
+  // treatment is identical so the user sees a single coherent "视角" row.
+  const chips: Array<{ id: string; label: string; description: string }> = [
+    ...LENSES.map(l => ({ id: l.id, label: l.label, description: l.description ?? "" })),
+    { id: DIFF_LENS_ID, label: DIFF_LENS_LABEL, description: DIFF_LENS_DESCRIPTION },
+  ];
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 6,
@@ -140,7 +157,7 @@ function LensSwitcher({
       <span style={{ fontWeight: 600, color: "#4b5563", letterSpacing: "0.04em", textTransform: "uppercase", fontSize: 10 }}>
         视角
       </span>
-      {LENSES.map((lens) => {
+      {chips.map((lens) => {
         const active = lens.id === activeLensId;
         return (
           <button
@@ -399,10 +416,15 @@ function LensSectionTable({
 // ─── 顶层 Panel ─────────────────────────────────────────────────────────────
 
 export function AttributionTreeLensPanel({
-  sessionId, callId, onLinkSource,
+  sessionId, callId, prevCallId, onLinkSource,
 }: {
   sessionId: string;
   callId: number;
+  /** Optional previous-call id — required for the Diff lens (special case
+   *  that delegates rendering to DiffPanel). When null/undefined the Diff
+   *  chip is shown disabled-ish (still selectable but DiffPanel will show
+   *  its own empty state). */
+  prevCallId?: number | null;
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
 }) {
   const [result, setResult] = useState<AttributionTreeResult | null>(null);
@@ -425,7 +447,7 @@ export function AttributionTreeLensPanel({
     let cancelled = false;
     setLoading(true); setError(null);
     setSelectedSection(null); setSelectedNodeId(null); setSelectedBucketId(null);
-    apiV2.attributionTree(sessionId, callId)
+    apiV2.attributionTree(sessionId, callId, { graphLastN: 20 })
       .then((r) => { if (!cancelled) setResult(r); })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -492,6 +514,18 @@ export function AttributionTreeLensPanel({
     return (
       <div style={{ padding: 16, fontSize: 11, color: "#9ca3af", background: "#fafafa", borderRadius: 6, border: "1px dashed #e5e7eb" }}>
         {result?.error ?? "Attribution tree unavailable — proxy data may be missing for this call."}
+      </div>
+    );
+  }
+
+  // The Diff lens is a virtual chip — when selected, swap the entire lens
+  // surface for DiffPanel. We keep the LensSwitcher on top so the user can
+  // bounce back to a regular lens without leaving this tab.
+  if (lensId === DIFF_LENS_ID) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <LensSwitcher activeLensId={lensId} onChange={setLensId} />
+        <DiffPanel sessionId={sessionId} callId={callId} prevCallId={prevCallId ?? undefined} />
       </div>
     );
   }

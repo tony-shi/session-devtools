@@ -22,6 +22,7 @@
 
 import React from "react";
 import { TOKEN_METRICS } from "../metricRegistry";
+import { LedgerHoverWrapper } from "./LedgerExplainer";
 
 function fmtK(n: number): string {
   const abs = Math.abs(n);
@@ -34,19 +35,8 @@ function fmtPct(n: number): string {
   return n.toFixed(1) + "%";
 }
 
-function ratioTooltip(freshIn: number, cacheRead: number, cacheWrite: number, ratio: number | null): string {
-  if (ratio == null) return "无 input 数据";
-  return [
-    `公式  cache_read / (fresh_in + cache_read + cache_write)`,
-    `     = ${fmtK(cacheRead)} / (${fmtK(freshIn)} + ${fmtK(cacheRead)} + ${fmtK(cacheWrite)})`,
-    `     = ${fmtPct(ratio)}`,
-    ``,
-    `单价档位`,
-    `  历史复用   cache_read   ≈ 0.1×   折扣（从过往 call 沿用）`,
-    `  本轮新处理 cache_write  ≈ 1.25×  写入溢价（本 call 第一次写入缓存）`,
-    `             fresh_in     ≈ 1.0×   标准价（本 call 未缓存部分）`,
-  ].join("\n");
-}
+// ratioTooltip 已被 LedgerExplainer (popover) 取代；旧的 native title=
+// 字符串已经下线，不再需要这个函数。删除避免遗留死代码。
 
 export interface CallLedgerFullProps {
   size: "full";
@@ -97,10 +87,16 @@ function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding 
   const M = TOKEN_METRICS;
 
   return (
-    <div style={{
-      paddingTop: noTopPadding ? 0 : 10,
-      display: "flex", flexDirection: "column", gap: 6,
-    }}>
+    <LedgerHoverWrapper
+      variant="call"
+      freshIn={freshIn} cacheRead={cacheRead} cacheWrite={cacheWrite}
+      output={output} ratio={ratio}
+      anchor="below-right"
+      style={{
+        paddingTop: noTopPadding ? 0 : 10,
+        display: "flex", flexDirection: "column", gap: 6,
+      }}
+    >
       {/* Top: labels + values, INPUT and OUTPUT regions split by a 1px line
           (description only — the bar below stays unified). */}
       <div style={{ display: "flex", alignItems: "stretch", gap: 16 }}>
@@ -113,14 +109,13 @@ function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding 
             {ratio != null && (
               <>
                 <div style={{ width: 1, height: 12, background: "#e5e7eb" }} />
-                <span
-                  title={ratioTooltip(freshIn, cacheRead, cacheWrite, ratio)}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 4,
-                    fontSize: 9, fontWeight: 700, color: M.cache_ratio.color,
-                    cursor: "help",
-                  }}
-                >
+                {/* Cache ratio chip — native `title=` tooltip removed; the
+                    whole ledger is wrapped in LedgerHoverWrapper which gives
+                    a properly styled popover with the same content (and more). */}
+                <span style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  fontSize: 9, fontWeight: 700, color: M.cache_ratio.color,
+                }}>
                   CACHE RATIO
                   <InfoIcon />
                   <span>{fmtPct(ratio)}</span>
@@ -182,7 +177,7 @@ function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding 
           { value: output,     color: M.output.color },
         ]}
       />
-    </div>
+    </LedgerHoverWrapper>
   );
 }
 
@@ -208,8 +203,13 @@ function CompactView({ freshIn, cacheRead, cacheWrite, output, ratio, inputTotal
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}
-         title={ratioTooltip(freshIn, cacheRead, cacheWrite, ratio)}>
+    <LedgerHoverWrapper
+      variant="call"
+      freshIn={freshIn} cacheRead={cacheRead} cacheWrite={cacheWrite}
+      output={output} ratio={ratio}
+      anchor="below-right"
+      style={{ display: "flex", flexDirection: "column", gap: 4 }}
+    >
       <div style={{
         display: "grid",
         gridTemplateColumns: "60px 64px 52px 56px 52px",
@@ -246,7 +246,7 @@ function CompactView({ freshIn, cacheRead, cacheWrite, output, ratio, inputTotal
           </div>
         </div>
       )}
-    </div>
+    </LedgerHoverWrapper>
   );
 }
 

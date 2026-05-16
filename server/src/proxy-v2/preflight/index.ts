@@ -65,8 +65,8 @@ function effectiveVal(layers: EnvLayers, key: string): { value: string | undefin
 const P1_os: CheckFn = () => {
   const platform = process.platform;
   if (platform === "darwin" || platform === "linux") return ok("P1", "OS", `${platform} ${os.release()}`, "system");
-  if (platform === "win32") return ok("P1", "OS", "win32（v1 Windows 安装器待补，但代理本身可运行）", "system");
-  return block("P1", "OS", `不支持的平台: ${platform}`, undefined, "system");
+  if (platform === "win32") return ok("P1", "OS", "win32 (v1 Windows installer pending; proxy itself runs)", "system");
+  return block("P1", "OS", `unsupported platform: ${platform}`, undefined, "system");
 };
 
 // ── P3 NODE_EXTRA_CA_CERTS ────────────────────────────────────────────────────
@@ -77,8 +77,8 @@ const P3_nodeExtraCa: CheckFn = ({ layers }) => {
   const managedVal = layers.managed.NODE_EXTRA_CA_CERTS;
   if (managedVal && managedVal !== PATHS.caCert) {
     return block("P3", "NODE_EXTRA_CA_CERTS",
-      `managed 层已锁定为: ${managedVal}`,
-      `企业 managed-settings.json 钉死了此变量，安装器无法覆盖。请联系 IT 放行或排除。`,
+      `managed layer pinned to: ${managedVal}`,
+      `Enterprise managed-settings.json has pinned this variable; installer cannot override. Ask IT to allow or exclude it.`,
       "managed");
   }
 
@@ -86,16 +86,16 @@ const P3_nodeExtraCa: CheckFn = ({ layers }) => {
   const shellVal = layers.shell.NODE_EXTRA_CA_CERTS ?? layers.shell.node_extra_ca_certs;
   if (shellVal && shellVal !== PATHS.caCert) {
     return block("P3", "NODE_EXTRA_CA_CERTS",
-      `shell 层已被占用: ${shellVal}`,
-      `其它工具（zscaler / netskope 等）在 shell 里设置了此变量。安装后 settings 层会覆盖它，但重启终端后可能冲突。建议先 unset 或合并 CA bundle。`,
+      `shell layer already occupied: ${shellVal}`,
+      `Another tool (zscaler / netskope, etc.) set this variable in shell. The settings layer will override it after install, but the conflict may resurface after a terminal restart. Consider unsetting first, or merging your CA bundle.`,
       "shell");
   }
 
   // settings 层已是我们的值（重装路径）
   const settingsVal = layers.settings.NODE_EXTRA_CA_CERTS;
-  if (settingsVal === PATHS.caCert) return ok("P3", "NODE_EXTRA_CA_CERTS", `settings 层已指向我们（重装路径）`, "settings");
+  if (settingsVal === PATHS.caCert) return ok("P3", "NODE_EXTRA_CA_CERTS", `settings layer already points to us (reinstall path)`, "settings");
 
-  return ok("P3", "NODE_EXTRA_CA_CERTS", "未被占用，安装器将写入 settings 层");
+  return ok("P3", "NODE_EXTRA_CA_CERTS", "unoccupied; installer will write to settings layer");
 };
 
 // ── P4 ANTHROPIC_BASE_URL ─────────────────────────────────────────────────────
@@ -103,16 +103,16 @@ const P3_nodeExtraCa: CheckFn = ({ layers }) => {
 
 const P4_baseUrl: CheckFn = ({ layers }) => {
   const { value, source } = effectiveVal(layers, "ANTHROPIC_BASE_URL");
-  if (!value) return ok("P4", "ANTHROPIC_BASE_URL", "未设置");
+  if (!value) return ok("P4", "ANTHROPIC_BASE_URL", "not set");
   try {
     const hostname = new URL(value).hostname;
     return ok("P4", "ANTHROPIC_BASE_URL",
-      `${source} 层: ${value}，将一并 MITM ${hostname}`,
+      `${source} layer: ${value}; will also MITM ${hostname}`,
       source);
   } catch {
     return warn("P4", "ANTHROPIC_BASE_URL",
-      `${source} 层已设置但无法解析: ${value}`,
-      "格式应为 https://hostname[:port]，自定义 host 无法自动并入白名单。",
+      `${source} layer is set but unparseable: ${value}`,
+      "Expected https://hostname[:port]; custom hosts cannot be auto-added to the whitelist.",
       source);
   }
 };
@@ -121,10 +121,10 @@ const P4_baseUrl: CheckFn = ({ layers }) => {
 
 const P5_authToken: CheckFn = ({ layers }) => {
   const { value, source } = effectiveVal(layers, "ANTHROPIC_AUTH_TOKEN");
-  if (!value) return ok("P5", "ANTHROPIC_AUTH_TOKEN", "未设置");
+  if (!value) return ok("P5", "ANTHROPIC_AUTH_TOKEN", "not set");
   return warn("P5", "ANTHROPIC_AUTH_TOKEN",
-    `${source} 层已设置（绕过 OAuth）`,
-    "仍会经过我们，可继续；只是用户登录态不同。",
+    `${source} layer is set (bypasses OAuth)`,
+    "Traffic still routes through us; safe to continue — login state just differs.",
     source);
 };
 
@@ -144,16 +144,16 @@ const P6_httpsProxyScheme: CheckFn = ({ layers, ourPort }) => {
   const managedProxy = layers.managed.HTTPS_PROXY ?? layers.managed.https_proxy;
   if (managedProxy) {
     const url = parseProxyUrl(managedProxy);
-    if (!url) return warn("P6", "HTTPS_PROXY scheme", `managed 层设置了无法解析的值: ${managedProxy}`, undefined, "managed");
+    if (!url) return warn("P6", "HTTPS_PROXY scheme", `managed layer has an unparseable value: ${managedProxy}`, undefined, "managed");
     if (url.hostname === "127.0.0.1" && Number(url.port) === ourPort)
-      return ok("P6", "HTTPS_PROXY scheme", "managed 层已指向我们（重装路径）", "managed");
+      return ok("P6", "HTTPS_PROXY scheme", "managed layer already points to us (reinstall path)", "managed");
     if (BLOCKED_PROXY_SCHEMES.has(url.protocol))
       return block("P6", "HTTPS_PROXY scheme",
-        `managed 层锁定了不支持的 scheme: ${url.protocol} (${managedProxy})`,
-        "企业 managed-settings.json 钉死了此代理，安装器无法覆盖。请联系 IT 改为 http:// scheme。",
+        `managed layer pinned unsupported scheme: ${url.protocol} (${managedProxy})`,
+        "Enterprise managed-settings.json pinned this proxy; installer cannot override. Ask IT to switch to http:// scheme.",
         "managed");
     if (SUPPORTED_PROXY_SCHEMES.has(url.protocol))
-      return ok("P6", "HTTPS_PROXY scheme", `managed 层: ${url.protocol}//${url.hostname}:${url.port || 80}（将被迁移为上游）`, "managed");
+      return ok("P6", "HTTPS_PROXY scheme", `managed layer: ${url.protocol}//${url.hostname}:${url.port || 80} (will be migrated as upstream)`, "managed");
   }
 
   // settings 层（安装器已写入的状态）
@@ -161,34 +161,34 @@ const P6_httpsProxyScheme: CheckFn = ({ layers, ourPort }) => {
   if (settingsProxy) {
     const url = parseProxyUrl(settingsProxy);
     if (url?.hostname === "127.0.0.1" && Number(url.port) === ourPort)
-      return ok("P6", "HTTPS_PROXY scheme", "settings 层已指向我们（重装路径）", "settings");
+      return ok("P6", "HTTPS_PROXY scheme", "settings layer already points to us (reinstall path)", "settings");
     if (url && BLOCKED_PROXY_SCHEMES.has(url.protocol))
       return block("P6", "HTTPS_PROXY scheme",
-        `settings 层有不支持的 scheme: ${url.protocol} (${settingsProxy})`,
-        "请手动修改 ~/.claude/settings.json 改为 http:// scheme，或删除该 key 后重装。",
+        `settings layer has unsupported scheme: ${url.protocol} (${settingsProxy})`,
+        "Manually edit ~/.claude/settings.json to use http:// scheme, or remove the key and reinstall.",
         "settings");
     if (url && SUPPORTED_PROXY_SCHEMES.has(url.protocol))
-      return ok("P6", "HTTPS_PROXY scheme", `settings 层: ${url.protocol}//${url.hostname}:${url.port || 80}`, "settings");
+      return ok("P6", "HTTPS_PROXY scheme", `settings layer: ${url.protocol}//${url.hostname}:${url.port || 80}`, "settings");
   }
 
   // shell 层（安装后会被 settings 层覆盖，但现在要检查是否可迁移）
   const shellProxy = layers.shell.HTTPS_PROXY ?? layers.shell.https_proxy;
   if (shellProxy) {
     const url = parseProxyUrl(shellProxy);
-    if (!url) return warn("P6", "HTTPS_PROXY scheme", `shell 层设置了无法解析的值: ${shellProxy}`, undefined, "shell");
+    if (!url) return warn("P6", "HTTPS_PROXY scheme", `shell layer has an unparseable value: ${shellProxy}`, undefined, "shell");
     if (url.hostname === "127.0.0.1" && Number(url.port) === ourPort)
-      return ok("P6", "HTTPS_PROXY scheme", "shell 层已指向我们（重装路径）", "shell");
+      return ok("P6", "HTTPS_PROXY scheme", "shell layer already points to us (reinstall path)", "shell");
     if (BLOCKED_PROXY_SCHEMES.has(url.protocol))
       return block("P6", "HTTPS_PROXY scheme",
-        `shell 层有不支持的 scheme: ${url.protocol} (${shellProxy})`,
-        "请改成 http:// scheme 的代理，或临时 unset 后重试。socks/quic/https 上游 v2 再支持。",
+        `shell layer has unsupported scheme: ${url.protocol} (${shellProxy})`,
+        "Switch to an http:// scheme proxy, or unset temporarily and retry. socks/quic/https upstreams will be supported in v2.",
         "shell");
     if (SUPPORTED_PROXY_SCHEMES.has(url.protocol))
-      return ok("P6", "HTTPS_PROXY scheme", `shell 层: ${url.protocol}//${url.hostname}:${url.port || 80}（将被迁移为上游）`, "shell");
-    return warn("P6", "HTTPS_PROXY scheme", `shell 层未识别的 scheme: ${url.protocol}`, undefined, "shell");
+      return ok("P6", "HTTPS_PROXY scheme", `shell layer: ${url.protocol}//${url.hostname}:${url.port || 80} (will be migrated as upstream)`, "shell");
+    return warn("P6", "HTTPS_PROXY scheme", `shell layer unrecognized scheme: ${url.protocol}`, undefined, "shell");
   }
 
-  return ok("P6", "HTTPS_PROXY scheme", "各层均未设置，安装后直连");
+  return ok("P6", "HTTPS_PROXY scheme", "all layers unset; will connect directly after install");
 };
 
 // ── P7 HTTP/HTTPS_PROXY 一致性 ────────────────────────────────────────────────
@@ -197,14 +197,14 @@ const P6_httpsProxyScheme: CheckFn = ({ layers, ourPort }) => {
 const P7_httpVsHttps: CheckFn = ({ layers }) => {
   const { value: h, source: hs } = effectiveVal(layers, "HTTPS_PROXY");
   const { value: p, source: ps } = effectiveVal(layers, "HTTP_PROXY");
-  if (!h && !p) return ok("P7", "HTTP/HTTPS_PROXY 一致性", "各层均未设置");
-  if (!h && p)  return warn("P7", "HTTP/HTTPS_PROXY 一致性",
-    `仅 HTTP_PROXY 设置（${ps} 层: ${p}）`,
-    "LLM 流量是 HTTPS，会被丢弃。建议同时设置 HTTPS_PROXY。", ps);
-  if (h && p && h !== p) return warn("P7", "HTTP/HTTPS_PROXY 一致性",
-    `两者不同 — HTTPS(${hs}): ${h} / HTTP(${ps}): ${p}`,
-    "我们仅迁移 HTTPS_PROXY 作为上游；HTTP_PROXY 那一条会被丢弃。", hs);
-  return ok("P7", "HTTP/HTTPS_PROXY 一致性", `一致（${hs} 层: ${h}）`, hs);
+  if (!h && !p) return ok("P7", "HTTP/HTTPS_PROXY consistency", "all layers unset");
+  if (!h && p)  return warn("P7", "HTTP/HTTPS_PROXY consistency",
+    `only HTTP_PROXY set (${ps} layer: ${p})`,
+    "LLM traffic is HTTPS and would be dropped. Set HTTPS_PROXY too.", ps);
+  if (h && p && h !== p) return warn("P7", "HTTP/HTTPS_PROXY consistency",
+    `values differ — HTTPS(${hs}): ${h} / HTTP(${ps}): ${p}`,
+    "Only HTTPS_PROXY is migrated as upstream; HTTP_PROXY is dropped.", hs);
+  return ok("P7", "HTTP/HTTPS_PROXY consistency", `consistent (${hs} layer: ${h})`, hs);
 };
 
 // ── P8 ALL_PROXY ──────────────────────────────────────────────────────────────
@@ -212,13 +212,13 @@ const P7_httpVsHttps: CheckFn = ({ layers }) => {
 const P8_allProxy: CheckFn = ({ layers }) => {
   const { value, source } = effectiveVal(layers, "ALL_PROXY");
   const url = parseProxyUrl(value);
-  if (!url) return ok("P8", "ALL_PROXY", "各层均未设置");
+  if (!url) return ok("P8", "ALL_PROXY", "all layers unset");
   if (BLOCKED_PROXY_SCHEMES.has(url.protocol))
     return block("P8", "ALL_PROXY",
-      `${source} 层有不支持的 scheme: ${url.protocol} (${value})`,
-      "ALL_PROXY 在 undici 里有特殊优先级，会绕过我们。请 unset 后重试，或换 http:// scheme。",
+      `${source} layer has unsupported scheme: ${url.protocol} (${value})`,
+      "ALL_PROXY has special precedence in undici and would bypass us. Unset it and retry, or switch to http:// scheme.",
       source);
-  return ok("P8", "ALL_PROXY", `${source} 层: ${url.protocol}//${url.hostname}:${url.port || 80}`, source);
+  return ok("P8", "ALL_PROXY", `${source} layer: ${url.protocol}//${url.hostname}:${url.port || 80}`, source);
 };
 
 // ── P9 上游可达性 ─────────────────────────────────────────────────────────────
@@ -229,14 +229,14 @@ async function probeUpstreamCanReachAnthropic(
   timeoutMs = 5000,
 ): Promise<{ ok: boolean; reason: string }> {
   const url = parseProxyUrl(proxyUrl);
-  if (!url || !SUPPORTED_PROXY_SCHEMES.has(url.protocol)) return { ok: true, reason: "无上游 / 不被纳入" };
+  if (!url || !SUPPORTED_PROXY_SCHEMES.has(url.protocol)) return { ok: true, reason: "no upstream / not applicable" };
   return new Promise((resolve) => {
     const sock = net.connect({ host: url.hostname, port: Number(url.port || 80) });
     const t = setTimeout(() => {
       sock.destroy();
-      resolve({ ok: false, reason: `上游 ${url.hostname}:${url.port} 建链超时` });
+      resolve({ ok: false, reason: `upstream ${url.hostname}:${url.port} connect timed out` });
     }, timeoutMs);
-    sock.once("error", (e) => { clearTimeout(t); resolve({ ok: false, reason: `上游连接失败: ${e.message}` }); });
+    sock.once("error", (e) => { clearTimeout(t); resolve({ ok: false, reason: `upstream connect failed: ${e.message}` }); });
     sock.once("connect", () => {
       const auth = url.username
         ? `Proxy-Authorization: Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString("base64")}\r\n`
@@ -251,8 +251,8 @@ async function probeUpstreamCanReachAnthropic(
         const status = buf.match(/^HTTP\/\d\.\d\s+(\d{3})/)?.[1];
         sock.destroy();
         resolve(status === "200"
-          ? { ok: true,  reason: "上游 CONNECT 200" }
-          : { ok: false, reason: `上游 CONNECT 非 200: ${status ?? "unknown"}` });
+          ? { ok: true,  reason: "upstream CONNECT 200" }
+          : { ok: false, reason: `upstream CONNECT non-200: ${status ?? "unknown"}` });
       });
     });
   });
@@ -261,9 +261,9 @@ async function probeUpstreamCanReachAnthropic(
 const P9_upstreamReach: CheckFn = async ({ layers }) => {
   const { value, source } = effectiveVal(layers, "HTTPS_PROXY");
   const r = await probeUpstreamCanReachAnthropic(value);
-  if (r.ok) return ok("P9", "上游可达性", source ? `${r.reason}（来自 ${source} 层）` : r.reason, source);
-  return block("P9", "上游可达性", r.reason,
-    "请先修复你原本的代理（试 `curl -x $HTTPS_PROXY https://api.anthropic.com/`）。", source);
+  if (r.ok) return ok("P9", "upstream reachability", source ? `${r.reason} (from ${source} layer)` : r.reason, source);
+  return block("P9", "upstream reachability", r.reason,
+    "Fix your existing proxy first (try `curl -x $HTTPS_PROXY https://api.anthropic.com/`).", source);
 };
 
 // ── P11 端口可用性 ────────────────────────────────────────────────────────────
@@ -295,13 +295,13 @@ const P11_portFree: CheckFn = ({ layers, ourPort }) => {
     const s: any = net.createServer();
     s.once("error", () => {
       if (isOurs) {
-        resolve(ok("P11", "端口可用性", `127.0.0.1:${ourPort} 已被我们的 daemon 占用（重装路径，正常）`, "system"));
+        resolve(ok("P11", "port availability", `127.0.0.1:${ourPort} already held by our daemon (reinstall path, OK)`, "system"));
       } else {
-        resolve(block("P11", "端口可用性", `127.0.0.1:${ourPort} 已被其它进程占用`, "改用 API_DASHBOARD_PROXY_PORT=<其它端口>", "system"));
+        resolve(block("P11", "port availability", `127.0.0.1:${ourPort} held by another process`, "Set API_DASHBOARD_PROXY_PORT=<another port>", "system"));
       }
     });
     s.listen(ourPort, "127.0.0.1", () => {
-      s.close(() => resolve(ok("P11", "端口可用性", `127.0.0.1:${ourPort} 可绑定`, "system")));
+      s.close(() => resolve(ok("P11", "port availability", `127.0.0.1:${ourPort} bindable`, "system")));
     });
   });
 };
@@ -315,16 +315,16 @@ const P12_fsPerms: CheckFn = () => {
       if (existsSync(dir)) accessSync(dir, FS.W_OK);
       else accessSync(nearestExistingParent(dir), FS.W_OK);
     } catch {
-      return block("P12", "文件权限", `${dir} 不可写`, undefined, "system");
+      return block("P12", "file permissions", `${dir} not writable`, undefined, "system");
     }
   }
   try {
     if (existsSync(settings)) accessSync(settings, FS.W_OK);
     else accessSync(join(homedir(), ".claude"), FS.W_OK);
   } catch {
-    return block("P12", "文件权限", `${settings} 不可写`, undefined, "system");
+    return block("P12", "file permissions", `${settings} not writable`, undefined, "system");
   }
-  return ok("P12", "文件权限", "proxy/ + backups/ + settings.json 均可写", "system");
+  return ok("P12", "file permissions", "proxy/ + backups/ + settings.json all writable", "system");
 };
 
 function nearestExistingParent(p: string): string {
@@ -343,11 +343,11 @@ const P13_reinstallLoop: CheckFn = ({ layers, ourPort }) => {
   const settingsProxy = layers.settings.HTTPS_PROXY ?? layers.settings.https_proxy;
   const url = parseProxyUrl(settingsProxy);
   if (url && url.hostname === "127.0.0.1" && Number(url.port) === ourPort) {
-    return warn("P13", "重装回环防御",
-      "settings 层 HTTPS_PROXY 已指向我们自己；迁移时会跳过避免死循环",
+    return warn("P13", "reinstall loop guard",
+      "settings layer HTTPS_PROXY already points to us; migration will skip it to avoid a loop",
       undefined, "settings");
   }
-  return ok("P13", "重装回环防御", "无回环", "settings");
+  return ok("P13", "reinstall loop guard", "no loop", "settings");
 };
 
 // ── P14 managed-settings 冲突检测 ────────────────────────────────────────────
@@ -364,21 +364,21 @@ const P14_managed: CheckFn = ({ layers }) => {
         : ["C:\\ProgramData\\ClaudeCode\\managed-settings.json"];
 
   const foundPath = managedPaths.find(existsSync);
-  if (!foundPath) return ok("P14", "managed-settings", "无企业 managed 配置", "system");
+  if (!foundPath) return ok("P14", "managed-settings", "no enterprise managed config", "system");
 
   // 检查是否有我们关心的 key 被锁定
   const lockedKeys = OUR_KEYS.filter((k) => layers.managed[k] !== undefined);
   if (lockedKeys.length > 0) {
     const detail = lockedKeys.map((k) => `${k}=${layers.managed[k]}`).join(", ");
     return block("P14", "managed-settings",
-      `企业 managed 锁定了冲突 key: ${detail}`,
-      `${foundPath} 中钉死了这些变量，安装器无法覆盖。请联系 IT 放行，或在 managed 里直接配置代理。`,
+      `enterprise managed pinned conflicting keys: ${detail}`,
+      `${foundPath} has pinned these variables; installer cannot override. Ask IT to allow them, or configure the proxy directly inside managed.`,
       "managed");
   }
 
   return warn("P14", "managed-settings",
-    `检测到企业 managed: ${foundPath}（未锁定我们的 key，可继续）`,
-    "如后续安装失败，请检查 managed-settings.json 是否有其它约束。",
+    `enterprise managed detected: ${foundPath} (no conflicting keys, OK to continue)`,
+    "If install fails later, inspect managed-settings.json for other constraints.",
     "managed");
 };
 
@@ -450,7 +450,7 @@ export async function runPreflight(opts: {
     try {
       results.push(await fn(ctx));
     } catch (err) {
-      results.push({ id: "??", name: fn.name, severity: "BLOCK", message: `检查自身崩溃: ${(err as Error).message}` });
+      results.push({ id: "??", name: fn.name, severity: "BLOCK", message: `check itself crashed: ${(err as Error).message}` });
     }
   }
   return { results, blocked: results.some((r) => r.severity === "BLOCK") };
