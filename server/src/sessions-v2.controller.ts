@@ -2,7 +2,6 @@ import { Controller, Get, Param, Query } from "@nestjs/common";
 import { getDb } from "./db.ts";
 import { runSyncV2 } from "./sync-v2.ts";
 import { parseJsonField } from "./parser-utils.ts";
-import { buildMockDrilldown } from "./session-drilldown-mock.ts";
 import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
 import { loadCallDetail, readProxyRecord, findProxyRowForCall } from "./call-detail.ts";
 import { loadAttributionTree, readSessionEventsForLinker } from "./attribution-service.ts";
@@ -203,10 +202,8 @@ export class SessionsV2Controller {
     try {
       return parseSessionDrilldown(sourceFile, id, row, db);
     } catch (err: unknown) {
-      // Fallback to mock if JSONL is missing/corrupt — surface the error in response
       const msg = err instanceof Error ? err.message : String(err);
-      const mock = buildMockDrilldown(id);
-      return { ...mock, _parseError: msg };
+      throw Object.assign(new Error(`Failed to parse session: ${msg}`), { status: 500 });
     }
   }
 

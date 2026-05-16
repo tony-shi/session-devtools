@@ -10,10 +10,6 @@ import type { DiffEntry, IntervalEvent, IntervalEventKind, LlmCall, ModelStats, 
 import { apiV2 } from "./api";
 import proxyMissingUrl from "../assets/proxy-missing.png";
 import {
-  buildMockAttributedDiff,
-  buildMockPayloadSegments,
-  buildMockCallResponse,
-  buildMockBridgeEvents, buildTrustMode,
   attachMockSubAgents,
   type AttributedDiffRange, type PayloadSegment,
   type MockBridgeEvent, type BridgeEventKind, type ChangeType, type ConfidenceLevel,
@@ -4607,8 +4603,6 @@ function LlmCallDetailPanel({
     confidence: (d.confidence === "High" ? "high" : d.confidence === "Medium" ? "medium" : d.confidence === "Low" ? "low" : "unknown") as ConfidenceLevel,
     evidenceRefs: d.evidence ? [{ kind: "jsonl" as const, label: d.evidence, detail: d.evidence }] : [],
   }));
-
-  const response = buildMockCallResponse(call);
 
   const TAB_DEFS: Array<{ id: CallTab; label: string }> = [
     { id: "request",   label: t("callTab.request") },
