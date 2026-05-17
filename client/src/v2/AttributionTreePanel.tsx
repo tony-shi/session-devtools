@@ -544,6 +544,7 @@ export function SelectedDetail({ leaf, onLinkSource }: {
   // jumpTarget prefers `firstSeenInCall` (the graph's "first-prompt" call)
   // over `sourceCallId` (the parser's call ownership) — for tool_result
   // these differ; for tool_use they coincide.
+  const { t } = useTranslation();
   const { flashEvent, flashCall, flashToolUse } = useAttributionGraph();
   const sourceTurnId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceTurnId : undefined;
   const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;

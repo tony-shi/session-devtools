@@ -2811,6 +2811,7 @@ function ToolCallRow({
   onHoverToolUse: (id: string | null) => void;
 }) {
   const chip = toolChip(tc.name);
+  const { t } = useTranslation();
   const { onJumpToCall, highlightedToolUseId } = useAttributionGraph();
   // Amber flash outline when an Attribution-leaf back-link targets this
   // specific tool_use row. Mirrors `IntervalEventRow`'s `isFlashing` /
