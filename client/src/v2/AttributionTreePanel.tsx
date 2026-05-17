@@ -627,12 +627,12 @@ export function SelectedDetail({ leaf, onLinkSource }: {
         defaultExpanded={true}
         onJump={handleJumpSource}
         jumpLabel={jumpTarget !== undefined
-          ? (isToolUseLeaf ? `查看来源 call #${jumpTarget}` : `查看来源 call #${jumpTarget}`)
+          ? t("terms.viewSourceCall", { callId: jumpTarget })
           : undefined}
         jumpTooltip={jumpTarget !== undefined
           ? (isToolUseLeaf
-              ? `跳到 Turn 视图里 call #${jumpTarget} 的卡片（这条 tool_use 来自该 call 的响应）`
-              : `跳到 Turn 视图里这条 jsonl event 的行（首次把这一段内容写进 prompt 的 call 是 #${jumpTarget}）`)
+              ? t("terms.jumpToCallCardTooltip", { callId: jumpTarget })
+              : t("terms.jumpToCallLineTooltip", { callId: jumpTarget }))
           : undefined}
       />
 
@@ -843,6 +843,7 @@ export function AttributionTreePanel({
    *  parent 决定要不要展示 link 按钮（main 模式提供，panel 模式留空避免嵌套）。*/
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
 }) {
+  const { t } = useTranslation();
   const [result, setResult] = useState<AttributionTreeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -895,17 +896,17 @@ export function AttributionTreePanel({
   );
 
   if (loading) {
-    return <div style={{ padding: "32px 0", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>Loading attribution tree…</div>;
+    return <div style={{ padding: "32px 0", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>{t("attribution.loading")}</div>;
   }
   if (error) {
     return <div style={{ padding: 16, fontSize: 11, color: "#b91c1c", background: "#fef2f2", borderRadius: 6, border: "1px solid #fecaca" }}>
-      Failed to load attribution tree: {error}
+      {t("attribution.loadFailed", { error })}
     </div>;
   }
   if (!result?.snapshot) {
     return (
       <div style={{ padding: 16, fontSize: 11, color: "#9ca3af", background: "#fafafa", borderRadius: 6, border: "1px dashed #e5e7eb" }}>
-        {result?.error ?? "Attribution tree unavailable — proxy data may be missing for this call."}
+        {result?.error ?? t("attribution.unavailable")}
       </div>
     );
   }

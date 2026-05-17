@@ -21,6 +21,7 @@
 // 压成 1 字宽 4 行高的竖条 —— 现在改为叙事卡片固定结构，比例完全由 bar 承担。
 
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { TOKEN_METRICS } from "../metricRegistry";
 import { LedgerHoverWrapper, LedgerInfoIcon } from "./LedgerExplainer";
 
@@ -85,6 +86,7 @@ interface ViewBase {
 function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding }:
                   ViewBase & { noTopPadding?: boolean }) {
   const M = TOKEN_METRICS;
+  const { t } = useTranslation();
 
   return (
     <LedgerHoverWrapper
@@ -133,11 +135,11 @@ function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding 
 
           {/* Two equal-width groups inside INPUT */}
           <div style={{ display: "flex", gap: 24, alignItems: "stretch" }}>
-            <Group title="历史复用" subtitle="从过往 call 沿用">
+            <Group title={t("callLedger.historicalReuse")} subtitle={t("callLedger.historicalReuseSubtitle")}>
               <Stat label={M.cache_read.label} value={cacheRead} color={M.cache_read.color} />
             </Group>
             <div style={{ width: 1, background: "#f3f4f6", alignSelf: "stretch" }} />
-            <Group title="本轮新处理" subtitle="这一轮第一次给模型">
+            <Group title={t("callLedger.newThisRound")} subtitle={t("callLedger.newThisRoundSubtitle")}>
               <div style={{ display: "flex", gap: 16 }}>
                 <Stat label={M.cache_write.label} value={cacheWrite} color={M.cache_write.color} />
                 <Stat label={M.fresh_input.label} value={freshIn}    color={M.fresh_input.color} />
@@ -169,7 +171,7 @@ function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding 
                 {output > 0 ? fmtK(output) : "—"}
               </div>
             </div>
-            <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 2 }}>模型生成</div>
+            <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 2 }}>{t("callLedger.modelGenerated")}</div>
           </div>
         </div>
       </div>

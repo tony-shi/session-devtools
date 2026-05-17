@@ -251,7 +251,17 @@
     "layoutProportionalTitle": "按 char 数比例分配宽度",
     "layoutEqualTitle": "所有段等宽（忽略大小）",
     "request": "请求",
-    "response": "响应"
+    "response": "响应",
+    "loading": "归因加载中…",
+    "loadFailed": "归因树加载失败：{{error}}",
+    "unavailable": "归因数据不可用——此 call 可能缺少代理数据。"
+  },
+  "callLedger": {
+    "historicalReuse": "历史复用",
+    "historicalReuseSubtitle": "从过往 call 沿用",
+    "newThisRound": "本轮新处理",
+    "newThisRoundSubtitle": "这一轮第一次给模型",
+    "modelGenerated": "模型生成"
   },
   "callTab": {
     "request": "请求",
@@ -316,10 +326,41 @@
     "foldSubAgentResults": "折叠子 Agent 结果",
     "showFoldedSubAgentResults": "显示 {{n}} 条折叠的子 Agent 结果",
     "callLabel": "LLM 调用",
-    "callsSuffix": "calls",
-    "toolsSuffix": "tools",
+    "callsSuffix": "次调用",
+    "toolsSuffix": "个工具",
     "ledgerInterpretation": "本轮新增 {{freshIn}}（其中 {{cacheWrite}} 写入缓存供后续复用）· 从缓存读回 {{cacheRead}} · 模型输出 {{output}}{{ratio}}",
-    "ledgerInterpretationRatio": " · 缓存命中率 {{pct}}"
+    "ledgerInterpretationRatio": " · 缓存命中率 {{pct}}",
+    "viewDetails": "查看详情",
+    "openAsMain": "展开为主视图",
+    "turnExpand": "展开 ▾",
+    "subAgentsSuffix": "个子 Agent",
+    "cacheSuffix": "缓存",
+    "ctxSuffix": "上下文",
+    "returnedByCall": "由LLM调用#{{callId}}返回",
+    "openCallResponseTooltip": "打开 call #{{callId}} 的 Response 视图，自动定位这条 tool_use 块",
+    "viewSourceCall": "查看来源 call #{{callId}}",
+    "jumpToCallCardTooltip": "跳到 Turn 视图里 call #{{callId}} 的卡片（这条 tool_use 来自该 call 的响应）",
+    "jumpToCallLineTooltip": "跳到 Turn 视图里这条 jsonl event 的行（首次把这一段内容写进 prompt 的 call 是 #{{callId}}）",
+    "openAttributionAtLine": "打开 call #{{callId}} 的归因视图，自动定位这条 jsonl 行对应的 leaf",
+    "firstInjectedAtCall": "首次注入于 LLM 调用 #{{callId}}"
+  },
+  "eventKinds": {
+    "user_human": "用户输入",
+    "user_tool_result": "工具结果",
+    "user_command": "命令",
+    "system_api_error": "API 错误",
+    "system_local_command": "本地命令",
+    "system_turn_duration": "轮次时长",
+    "system_stop_hook_summary": "Stop Hook 摘要",
+    "system_away_summary": "离开摘要",
+    "attachment_skill_listing": "技能列表",
+    "attachment_task_reminder": "任务提醒",
+    "attachment_queued_command": "排队消息",
+    "attachment_edited_text_file": "文件修改",
+    "attachment_file": "文件附件",
+    "file_history_snapshot": "文件快照",
+    "last_prompt": "上一个 Prompt",
+    "unknown": "未知"
   },
   "ledgerExplainer": {
     "title": "Token 账本 · 计算说明",

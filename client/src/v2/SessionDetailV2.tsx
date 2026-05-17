@@ -2722,6 +2722,7 @@ function ChainNarrativeNode({
   lineIdx?: number | null;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const { t } = useTranslation();
   const { getEventAnnotation, onJumpToCall } = useAttributionGraph();
   const limit = kind === "final" ? 420 : 300;
   const needsExpand = text.length > limit;
@@ -2776,7 +2777,7 @@ function ChainNarrativeNode({
                 }}
               >
                 <LinkIcon />
-                首次注入于LLM调用#{jumpTarget}
+                {t("terms.firstInjectedAtCall", { callId: jumpTarget })}
               </button>
             )}
           </div>
@@ -2874,8 +2875,8 @@ function ToolCallRow({
         onMouseEnter={() => onHoverToolUse(tc.toolUseId)}
         onMouseLeave={() => onHoverToolUse(null)}
         onJump={onJumpToCall ? () => onJumpToCall(callId, "response", { toolUseId: tc.toolUseId }) : undefined}
-        jumpLabel={`由LLM调用#${callId}返回`}
-        jumpTooltip={`打开 call #${callId} 的 Response 视图，自动定位这条 tool_use 块`}
+        jumpLabel={t("terms.returnedByCall", { callId })}
+        jumpTooltip={t("terms.openCallResponseTooltip", { callId })}
       />
     </div>
   );
@@ -2918,7 +2919,7 @@ function IntervalEventRow({
   // other kinds keep their static KIND_LABEL string.
   const kindLabel = ev.kind === "user:tool_result"
     ? t("terms.toolResultLabel")
-    : KIND_LABEL[ev.kind];
+    : t(`eventKinds.${ev.kind.replace(/[:-]/g, "_")}`, { defaultValue: KIND_LABEL[ev.kind] });
   // tool_result is the *output* fed back to the LLM; other kinds don't fit
   // input/output framing — leave bare bytes (direction undefined).
   const direction: "in" | "out" | undefined = ev.kind === "user:tool_result" ? "out" : undefined;
@@ -2950,10 +2951,10 @@ function IntervalEventRow({
     ? () => onJumpToCall(consumerJumpTarget, "request", { lineIdx: ev.lineIdx })
     : undefined;
   const jumpLabel = consumerJumpTarget != null
-    ? `首次注入于LLM调用#${consumerJumpTarget}`
+    ? t("terms.firstInjectedAtCall", { callId: consumerJumpTarget })
     : undefined;
   const jumpTooltip = consumerJumpTarget != null
-    ? `打开 call #${consumerJumpTarget} 的归因视图，自动定位这条 jsonl 行对应的 leaf`
+    ? t("terms.openAttributionAtLine", { callId: consumerJumpTarget })
     : undefined;
 
   return (
@@ -3139,7 +3140,7 @@ function JsonlCallChain({
                   textDecoration: hidden ? "line-through" : "none",
                 }}
               >
-                {KIND_LABEL[k]}
+                {t(`eventKinds.${k.replace(/[:-]/g, "_")}`, { defaultValue: KIND_LABEL[k] })}
               </button>
             );
           })}
@@ -3290,7 +3291,7 @@ function JsonlCallChain({
                         }}
                       >
                         <LinkIcon />
-                        查看详情
+                        {t("terms.viewDetails")}
                       </button>
                     )}
                   </div>
@@ -3651,33 +3652,33 @@ function UserTurnDetailPanel({
           fontSize: 11, color: "#6b7280",
         }}>
           <span style={{ fontWeight: 700, color: "#374151" }}>{t("sessionOverview.turn.label")} {turn.id}</span>
-          <span>{turn.llmCallCount} calls</span>
-          <span>{turn.toolCallCount} tools</span>
-          {turnSubAgents.length > 0 && <span style={{ color: "#a855f7" }}>{turnSubAgents.length} sub-agents</span>}
+          <span>{turn.llmCallCount} {t("terms.callsSuffix")}</span>
+          <span>{turn.toolCallCount} {t("terms.toolsSuffix")}</span>
+          {turnSubAgents.length > 0 && <span style={{ color: "#a855f7" }}>{turnSubAgents.length} {t("terms.subAgentsSuffix")}</span>}
           {dur && <span>{dur}</span>}
-          {cacheRatio != null && <span>cache <strong style={{ color: "#374151" }}>{cacheRatio.toFixed(0)}%</strong></span>}
+          {cacheRatio != null && <span>{t("terms.cacheSuffix")} <strong style={{ color: "#374151" }}>{cacheRatio.toFixed(0)}%</strong></span>}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
             {onOpenAsMain && (
               <button
                 type="button"
                 onClick={onOpenAsMain}
-                title="Promote linked content into the main view"
+                title={t("terms.openAsMain")}
                 style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
               >
-                Open as main
+                {t("terms.openAsMain")}
               </button>
             )}
             <button
               type="button"
               onClick={() => setSummaryCollapsed(false)}
-              title="展开 turn 概览"
+              title={t("terms.turnExpand")}
               style={{
                 background: "transparent", border: "none",
                 cursor: "pointer", fontSize: 11, color: "#6366f1", fontWeight: 600,
                 padding: "0 4px",
               }}
             >
-              展开 ▾
+              {t("terms.turnExpand")}
             </button>
             {onClose && (
               <button
@@ -3733,7 +3734,7 @@ function UserTurnDetailPanel({
                   title="Promote linked content into the main view"
                   style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
                 >
-                  Open as main
+                  {t("terms.openAsMain")}
                 </button>
               )}
               {linkedPanelMode && (
@@ -5058,9 +5059,9 @@ function LlmCallDetailPanel({
               <button
                 onClick={onOpenAsMain}
                 style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
-                title="Promote linked content into the main view"
+                title={t("terms.openAsMain")}
               >
-                Open as main
+                {t("terms.openAsMain")}
               </button>
             ) : onShowTurnContext && (
               <button onClick={onShowTurnContext} style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#6366f1", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
@@ -5144,12 +5145,12 @@ function LlmCallDetailPanel({
                 borderBottom: "1px solid #f3f4f6",
                 fontSize: 11, color: "#6b7280",
               }}>
-                <span>ctx <strong style={{ color: "#374151" }}>{fmtK(call.contextSize)}</strong></span>
+                <span>{t("terms.ctxSuffix")} <strong style={{ color: "#374151" }}>{fmtK(call.contextSize)}</strong></span>
                 {!isFirstCall && (
                   <span>Δ <strong style={{ color: "#374151" }}>{call.significantDelta >= 0 ? "+" : ""}{fmtK(call.significantDelta)}</strong></span>
                 )}
-                <span>tools <strong style={{ color: "#374151" }}>{call.toolCalls?.length ?? 0}</strong></span>
-                <span>cache <strong style={{ color: "#374151" }}>{cacheRatio != null ? `${cacheRatio.toFixed(0)}%` : "—"}</strong></span>
+                <span>{t("terms.toolsSuffix")} <strong style={{ color: "#374151" }}>{call.toolCalls?.length ?? 0}</strong></span>
+                <span>{t("terms.cacheSuffix")} <strong style={{ color: "#374151" }}>{cacheRatio != null ? `${cacheRatio.toFixed(0)}%` : "—"}</strong></span>
               </div>
             );
           }
@@ -5976,9 +5977,13 @@ export function SessionDetailV2({ session, onClose }: Props) {
                   // detail again. The user can still pin/open-as-main from
                   // the Turn excerpt to drill deeper.
                   const srcCall = turns.flatMap(t => t.calls).find(c => c.id === srcCallId);
-                  const srcTurn = srcTurnId != null
-                    ? turns.find(t => t.id === srcTurnId) ?? null
-                    : srcCall ? turns.find(t => t.calls.some(c => c.id === srcCallId)) ?? null : null;
+                  // Derive turn from the call itself first — srcTurnId belongs to
+                  // sourceCallId, not firstSeenInCall, so it can point to the wrong turn.
+                  const srcTurn = srcCall
+                    ? turns.find(t => t.calls.some(c => c.id === srcCallId)) ?? null
+                    : srcTurnId != null
+                      ? turns.find(t => t.id === srcTurnId) ?? null
+                      : null;
                   if (!srcTurn) return;
                   openLinkedTurnExcerpt(srcTurn, srcCall ?? null);
                 }}

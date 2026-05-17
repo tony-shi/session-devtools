@@ -255,7 +255,17 @@
     "layoutProportionalTitle": "Sized by char count",
     "layoutEqualTitle": "All segments equal width",
     "request": "Request",
-    "response": "Response"
+    "response": "Response",
+    "loading": "Loading attribution…",
+    "loadFailed": "Failed to load attribution: {{error}}",
+    "unavailable": "Attribution unavailable — proxy data may be missing for this call."
+  },
+  "callLedger": {
+    "historicalReuse": "Historical Reuse",
+    "historicalReuseSubtitle": "Carried over from past calls",
+    "newThisRound": "New This Round",
+    "newThisRoundSubtitle": "First time sent to model",
+    "modelGenerated": "Model output"
   },
   "callTab": {
     "request": "Request",
@@ -323,7 +333,38 @@
     "callsSuffix": "calls",
     "toolsSuffix": "tools",
     "ledgerInterpretation": "New input this round: {{freshIn}} ({{cacheWrite}} written to cache for reuse) · loaded from cache: {{cacheRead}} · model output: {{output}}{{ratio}}",
-    "ledgerInterpretationRatio": " · cache hit rate {{pct}}"
+    "ledgerInterpretationRatio": " · cache hit rate {{pct}}",
+    "viewDetails": "View details",
+    "openAsMain": "Open as main",
+    "turnExpand": "Expand ▾",
+    "subAgentsSuffix": "sub-agents",
+    "cacheSuffix": "cache",
+    "ctxSuffix": "ctx",
+    "returnedByCall": "Returned by Call #{{callId}}",
+    "openCallResponseTooltip": "Open Call #{{callId}} Response view and jump to this tool_use block",
+    "viewSourceCall": "View source call #{{callId}}",
+    "jumpToCallCardTooltip": "Jump to call #{{callId}} card in Turn view (this tool_use came from that call's response)",
+    "jumpToCallLineTooltip": "Jump to this JSONL event's line in Turn view (first injected into prompt by call #{{callId}})",
+    "openAttributionAtLine": "Open attribution for call #{{callId}} and jump to the matching leaf",
+    "firstInjectedAtCall": "First injected at Call #{{callId}}"
+  },
+  "eventKinds": {
+    "user_human": "User input",
+    "user_tool_result": "Tool result",
+    "user_command": "Command",
+    "system_api_error": "API error",
+    "system_local_command": "Local cmd",
+    "system_turn_duration": "Turn duration",
+    "system_stop_hook_summary": "Stop hook",
+    "system_away_summary": "Away summary",
+    "attachment_skill_listing": "Skills",
+    "attachment_task_reminder": "Task reminder",
+    "attachment_queued_command": "Queued msg",
+    "attachment_edited_text_file": "File edited",
+    "attachment_file": "File attach",
+    "file_history_snapshot": "File snapshot",
+    "last_prompt": "Last prompt",
+    "unknown": "Unknown"
   },
   "ledgerExplainer": {
     "title": "Token Ledger · How it's computed",

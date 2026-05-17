@@ -1,2 +1,35 @@
 title: session-devtools
 description: Local devtools UI for AI coding sessions.
+remote_theme: just-the-docs/just-the-docs
+
+color_scheme: dark
+search_enabled: true
+heading_anchors: true
+
+aux_links:
+  "GitHub":
+    - "https://github.com/tony-shi/session-devtools"
+  "npm":
+    - "https://www.npmjs.com/package/session-devtools"
+aux_links_new_tab: true
+
+footer_content: "MIT License · session-devtools"
+
+# Hide internal docs from sidebar nav
+defaults:
+  - scope:
+      path: "inner"
+    values:
+      nav_exclude: true
+  - scope:
+      path: "pr"
+    values:
+      nav_exclude: true
+  - scope:
+      path: "session-badges.md"
+    values:
+      nav_exclude: true
+  - scope:
+      path: "walkthrough.md"
+    values:
+      nav_exclude: true
