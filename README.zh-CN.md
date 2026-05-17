@@ -85,11 +85,9 @@ session-devtools
 先把 `session-devtools` 跑起来。然后在任意你想分析的仓库里打开 Claude Code，输入：
 
 ```text
-Use a subagent to inspect this repository and answer one question:
-What are the three most important files in this codebase, and why?
-
-Do not edit files. The subagent should return file paths and one-sentence reasons.
-After it returns, summarize the answer in a short table.
+先计算当前仓库下，ls后多少文件？
+之后，分析仓库，回答以下问题：最重要的三个文件是什么？分别完成什么？
+不要进行代码修改！只输出结论
 ```
 
 跑完后切回 `session-devtools`，依次看：

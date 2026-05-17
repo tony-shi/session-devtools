@@ -551,7 +551,48 @@ export function TurnMinimap({ turn, onSelectCall, onHoverCall }: TurnMinimapProp
     // cell, or the splitArea between cells. We convert pixel → category index
     // via the x-axis, and use containPixel to ignore clicks outside the grids
     // (legend, padding, zoom slider).
+    // Two-layer click handling:
+    //
+    //   (1) echarts series-level click — fires when the user lands ON a
+    //       drawn data element. For the line series we get `params.dataIndex`
+    //       directly; for the custom heatmap series the cell's data tuple
+    //       is `[callIdx, rowIdx, inputSize, outputSize, count]`, so we
+    //       read `params.data[0]`. This is the more reliable path because
+    //       echarts owns the hit-testing for the custom-series children.
+    //
+    //   (2) zr-level click — covers clicks that miss every drawn element
+    //       but still land inside a grid (axis padding, splitArea between
+    //       cells, blank line-area fill). We convert pixel → category via
+    //       the x-axis and look up the call by index.
+    //
+    // Earlier the zr handler alone was enough, but on some echarts builds
+    // the custom-series `group` returned by renderItem swallowed the zr
+    // event before it bubbled, so direct cell clicks no-op'd while line
+    // clicks worked. Adding (1) makes cells reliably clickable.
+    // De-dupe guard: both handlers below can fire for the same click on a
+    // drawn element. We set a flag in the series-level handler and consume
+    // it in the zr-level handler to prevent double-navigate.
+    let handledThisClick = false;
+    chart.on("click", (params: { seriesId?: string; dataIndex?: number; data?: unknown }) => {
+      const cb = onSelectCallRef.current;
+      if (!cb) return;
+      let callIdx: number | null = null;
+      if (params.seriesId === "tool-dual" && Array.isArray(params.data)) {
+        const c = (params.data as number[])[0];
+        if (typeof c === "number") callIdx = c;
+      } else if (typeof params.dataIndex === "number") {
+        callIdx = params.dataIndex;
+      }
+      if (callIdx == null || callIdx < 0) return;
+      const call = turnRef.current.calls[callIdx];
+      if (call) {
+        handledThisClick = true;
+        cb(call.id);
+      }
+    });
+
     chart.getZr().on("click", (e) => {
+      if (handledThisClick) { handledThisClick = false; return; }
       const cb = onSelectCallRef.current;
       if (!cb) return;
       const px: [number, number] = [e.offsetX, e.offsetY];

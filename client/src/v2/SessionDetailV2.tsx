@@ -4,6 +4,7 @@ import * as echarts from "echarts";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { scaleLinear, scaleSqrt, line as d3line, curveCatmullRom } from "d3";
+import { TurnMinimap } from "./TurnMinimap";
 import type { SessionV2 } from "./types";
 import type { DiffEntry, IntervalEvent, IntervalEventKind, LlmCall, ModelStats, SessionDrilldown, ToolCallSlot, UserTurn, InterTurnBlock, CallDetail } from "./drilldown-types";
 import { apiV2 } from "./api";
@@ -33,7 +34,7 @@ import {
   type StatusBadgeKind,
 } from "./shared/HeaderStats";
 import { CallLedger } from "./shared/CallLedger";
-import { EventUnitCard, LinkIcon } from "./shared/EventUnitCard";
+import { EventUnitCard, ForwardArrowIcon, LinkIcon } from "./shared/EventUnitCard";
 import { AttributionGraphProvider, AuditBoundaryStatus, LinkedPanelScope, useAttributionGraph } from "./attribution-graph-context";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { getToolPalette } from "./shared/toolRegistry";
@@ -2773,7 +2774,7 @@ function ChainNarrativeNode({
                 }}
               >
                 <LinkIcon />
-                首次注入 call #{jumpTarget} Request
+                首次注入于LLM调用#{jumpTarget}
               </button>
             )}
           </div>
@@ -2807,7 +2808,11 @@ function ToolCallRow({
   onHoverToolUse: (id: string | null) => void;
 }) {
   const chip = toolChip(tc.name);
-  const { onJumpToCall } = useAttributionGraph();
+  const { onJumpToCall, highlightedToolUseId } = useAttributionGraph();
+  // Amber flash outline when an Attribution-leaf back-link targets this
+  // specific tool_use row. Mirrors `IntervalEventRow`'s `isFlashing` /
+  // boxShadow pattern. Cleared automatically after ~2s by the context.
+  const isFlashing = highlightedToolUseId !== null && highlightedToolUseId === tc.toolUseId;
 
   // Extract the tool_use's `description` field (the human intent label
   // Claude Code attaches to most tool calls — "List top-level entries",
@@ -2832,7 +2837,15 @@ function ToolCallRow({
   })();
 
   return (
-    <div style={{ marginBottom: 3 }}>
+    <div
+      data-tool-use-id={tc.toolUseId}
+      style={{
+        marginBottom: 3,
+        borderRadius: 6,
+        boxShadow: isFlashing ? "0 0 0 3px rgba(245,158,11,0.45)" : "none",
+        transition: "box-shadow 350ms ease",
+      }}
+    >
       <EventUnitCard
         // dot color is the *event type* (Tool Use = orange), not the tool's
         // individual chip color — tool identity is conveyed by the `title`
@@ -2859,18 +2872,38 @@ function ToolCallRow({
         onMouseEnter={() => onHoverToolUse(tc.toolUseId)}
         onMouseLeave={() => onHoverToolUse(null)}
         onJump={onJumpToCall ? () => onJumpToCall(callId, "response", { toolUseId: tc.toolUseId }) : undefined}
-        jumpLabel={`返回 call #${callId}`}
+        jumpLabel={`由LLM调用#${callId}返回`}
         jumpTooltip={`打开 call #${callId} 的 Response 视图，自动定位这条 tool_use 块`}
       />
     </div>
   );
 }
 
+// Kinds where `contentPreview` is just `JSON.stringify(...)` of the same
+// payload the JSON tree shows. Rendering a "渲染|原始 JSON" toggle on those
+// is misleading — both views would carry the same info, the text one just
+// less readable. For `unknown` the preview is the truncated raw JSON itself,
+// so the toggle is even more confusing. These rows default to the JSON tree
+// view and hide the toggle entirely.
+const RAW_ONLY_KINDS: ReadonlySet<IntervalEventKind> = new Set([
+  "unknown",
+  "system:api_error",
+  "system:stop_hook_summary",
+]);
+
 // ── IntervalEventRow: non-tool JSONL events between calls ─────────────────────
 function IntervalEventRow({
-  ev, activeToolUseId, onHoverToolUse,
+  ev, producingCallId, activeToolUseId, onHoverToolUse,
 }: {
   ev: IntervalEvent;
+  /**
+   * The call this event belongs to in the JSONL stream (i.e. the call whose
+   * `intervalEvents` array contains it). For `user:tool_result` rows this
+   * is the call that *emitted* the tool_use → its response holds the block
+   * we want to back-link to. Undefined for events without a parent call
+   * scope (e.g. inter-turn renders).
+   */
+  producingCallId?: number;
   activeToolUseId: string | null;
   onHoverToolUse: (id: string | null) => void;
 }) {
@@ -2907,9 +2940,18 @@ function IntervalEventRow({
     // call.
     firstSeenIsAfterAuditGap: annotation.firstSeenIsAfterAuditGap,
   } : undefined;
-  const jumpTarget = annotation?.firstSeenInCall ?? null;
-  const handleJump = (onJumpToCall && jumpTarget != null)
-    ? () => onJumpToCall(jumpTarget, "request", { lineIdx: ev.lineIdx })
+  // All event kinds (including tool_result) forward-jump to the first call
+  // that consumed this jsonl line — opens the Attribution tab and auto-selects
+  // the matching leaf so the user can see exactly where in the request it landed.
+  const consumerJumpTarget = annotation?.firstSeenInCall ?? null;
+  const handleJump = onJumpToCall && consumerJumpTarget != null
+    ? () => onJumpToCall(consumerJumpTarget, "request", { lineIdx: ev.lineIdx })
+    : undefined;
+  const jumpLabel = consumerJumpTarget != null
+    ? `首次注入于LLM调用#${consumerJumpTarget}`
+    : undefined;
+  const jumpTooltip = consumerJumpTarget != null
+    ? `打开 call #${consumerJumpTarget} 的归因视图，自动定位这条 jsonl 行对应的 leaf`
     : undefined;
 
   return (
@@ -2943,6 +2985,10 @@ function IntervalEventRow({
             // users drill into structural fields without parsing the
             // truncated text mentally.
             rawJson: tryParseJson(ev.rawJson),
+            // unknown / api_error / stop_hook_summary: preview is a
+            // truncated stringify of the same payload → skip the misleading
+            // "渲染" tab, go straight to the JSON tree.
+            rawOnly: RAW_ONLY_KINDS.has(ev.kind),
           },
         ]}
         coordinate={{ kind: "jsonl", line: ev.lineIdx + 1 }}
@@ -2951,10 +2997,8 @@ function IntervalEventRow({
         onMouseEnter={() => { if (hoverLinkedId) onHoverToolUse(hoverLinkedId); }}
         onMouseLeave={() => { if (hoverLinkedId) onHoverToolUse(null); }}
         onJump={handleJump}
-        jumpLabel={jumpTarget != null ? `注入 call #${jumpTarget} Request` : undefined}
-        jumpTooltip={jumpTarget != null
-          ? `打开 call #${jumpTarget} 的 Request 视图，自动定位这条 jsonl event 对应的 leaf`
-          : undefined}
+        jumpLabel={jumpLabel}
+        jumpTooltip={jumpTooltip}
       />
     </div>
   );
@@ -2974,6 +3018,18 @@ function JsonlCallChain({
   const [filterOpen, setFilterOpen] = useState(false);
   const [showFoldedSubAgentResults, setShowFoldedSubAgentResults] = useState(false);
   const [activeToolUseId, setActiveToolUseId] = useState<string | null>(null);
+  // Per-sub-agent expanded state. Default = collapsed (one-line preview);
+  // toggling via the header chevron shows full description / full result
+  // (no truncation, no maxHeight cap). Keyed by toolUseId.
+  const [expandedSubAgentIds, setExpandedSubAgentIds] = useState<Set<string>>(new Set());
+  const toggleSubAgentExpanded = useCallback((toolUseId: string) => {
+    setExpandedSubAgentIds(prev => {
+      const next = new Set(prev);
+      if (next.has(toolUseId)) next.delete(toolUseId);
+      else next.add(toolUseId);
+      return next;
+    });
+  }, []);
 
   // When `onJumpToCall` fires from anywhere, the Provider sets
   // highlightedCallId. The matching call card flashes an amber outline so
@@ -2983,7 +3039,7 @@ function JsonlCallChain({
   // popups) suppresses forward-jump UI inside this Turn render so a click
   // here never spawns another right-side panel — strict one-direction
   // (left → right) flow.
-  const { highlightedCallId, linkedPanelMode } = useAttributionGraph();
+  const { highlightedCallId, linkedPanelMode, onJumpToCall } = useAttributionGraph();
 
   if (!turn.calls.length) return null;
 
@@ -3116,7 +3172,31 @@ function JsonlCallChain({
             );
           })}
 
-        {turn.calls.map((call) => {
+        {turn.calls.map((call, callArrIdx) => {
+          // Consumer-call lookup for sub-agent results.
+          // Anthropic API flow: assistant call N emits tool_use → tool_result
+          // for the sub-agent is bundled into call N+1's user-side input.
+          // So "the call that received this sub-agent's result" = the next
+          // call in the same turn. If `call` is the last call of the turn,
+          // the result wasn't consumed (no follow-up assistant call) and
+          // we hide the jump-to-consumer button.
+          const consumerCall = turn.calls[callArrIdx + 1] ?? null;
+          // Look up the JSONL lineIdx of each sub-agent's tool_result so the
+          // jump can auto-locate the matching leaf inside the consumer call's
+          // Attribution Tree (request lens). Mirrors how IntervalEventRow
+          // passes `{ lineIdx }` to onJumpToCall — same mechanism, just
+          // wired in from the sub-agent card. Build a Map once per call,
+          // keyed by toolUseId, so each sub-agent renders without rescanning.
+          const toolResultLineIdxByToolUseId = (() => {
+            const m = new Map<string, number>();
+            for (const ev of call.intervalEvents) {
+              if (ev.kind !== "user:tool_result") continue;
+              for (const tuid of toolUseIdsFromIntervalEvent(ev)) {
+                if (!m.has(tuid)) m.set(tuid, ev.lineIdx);
+              }
+            }
+            return m;
+          })();
           const delta    = call.significantDelta;
           // jsonlLines is shown only in the #id tooltip now; the proportional
           // context bar was replaced by the shared CallLedger (rendered below
@@ -3267,14 +3347,16 @@ function JsonlCallChain({
 
 	              {/* ── Sub-agent JSONL events derived from Agent tool_use ───
 	                  Block aligns flush with the LLM call card above (both at
-	                  marginLeft: 32 from the spine container). Emphasis comes
-	                  from the button's own purple border (slightly thicker on
-	                  the LEFT to suggest the branch) + a "↳" cue prefix on the
-	                  section label — NOT from an external L-connector spacer.
-	                  Earlier version added a 16px L-connector before the button,
-	                  which pushed the box 16px to the right of the call card
-	                  and left the label hanging in the gap; that visual offset
-	                  is what we're removing here. */}
+	                  marginLeft: 32 from the spine container). Each row has:
+	                    · Body (left, flex:1): stats + description + result
+	                      preview. Truncated by default; click `▾ 展开` at the
+	                      bottom to inline-expand into full text + extra stats.
+	                    · Two consistent action chips (right column):
+	                        - Purple `查看完整` → opens sub-agent detail
+	                        - Blue `🔗 #N`     → jumps to consumer call's
+	                          request in the right-side LinkedPanel
+	                      Both chips use the same shape / LinkIcon / typography;
+	                      only the color differentiates intent. */}
 		              {call.subAgents.length > 0 && (
 	                <div style={{ marginLeft: 32, marginTop: 3 }}>
                     <div style={{ fontSize: 9, color: "#818cf8", fontWeight: 800, letterSpacing: "0.04em", margin: "0 0 3px 0" }}>
@@ -3283,44 +3365,150 @@ function JsonlCallChain({
 	                  {call.subAgents.map(sa => {
                       const active = activeToolUseId === sa.toolUseId;
                       const branchColor = active ? "#f59e0b" : "#6366f1";
+                      const handleHoverEnter = () => setActiveToolUseId(sa.toolUseId);
+                      const handleHoverLeave = () => setActiveToolUseId(null);
+                      const expanded = expandedSubAgentIds.has(sa.toolUseId);
+                      // Show the toggle whenever there's actual body content
+                      // (description or result preview). Even short content
+                      // benefits from the toggle so users can fold large
+                      // sub-agent rows back down once they've read them.
+                      const hasBodyContent = !!sa.description || !!sa.resultPreview;
                       return (
-                      <button
+                      <div
                         key={sa.agentFileId}
-                        onClick={() => onSubAgentClick?.(sa)}
-                        onMouseEnter={e => {
-                          setActiveToolUseId(sa.toolUseId);
-                          if (onSubAgentClick) e.currentTarget.style.background = "#fff7ed";
-                        }}
-                        onMouseLeave={e => {
-                          setActiveToolUseId(null);
-                          e.currentTarget.style.background = "#fafafe";
-                        }}
+                        onMouseEnter={handleHoverEnter}
+                        onMouseLeave={handleHoverLeave}
                         style={{
-                          display: "flex",
                           width: "100%",
                           marginBottom: 4,
                           border: `1px solid ${branchColor}`,
                           borderLeftWidth: 3,
                           borderRadius: 6,
                           background: active ? "#fff7ed" : "#fafafe",
-                          padding: "5px 9px",
-                          cursor: onSubAgentClick ? "pointer" : "default",
-                          textAlign: "left",
-                          flexDirection: "column",
-                          gap: 2,
                           boxShadow: active ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
+                          overflow: "hidden",
                         }}
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        {/* Header row — stats on the left, two consistent
+                            action chips on the right. No collapse/expand —
+                            content below is always fully shown. */}
+                        <div style={{
+                          display: "flex", alignItems: "center", gap: 6,
+                          padding: "5px 9px",
+                          borderBottom: (sa.description || sa.resultPreview) ? "1px solid #f3f4f6" : "none",
+                        }}>
                           <span style={{ fontSize: 10, fontWeight: 700, color: "#4338ca" }}>{sa.agentType}</span>
                           <span style={{ fontSize: 9, color: "#6366f1" }}>{sa.llmCallCount}c · {sa.toolCallCount}t · {fmtDuration(sa.durationMs)}</span>
                           <span style={{ fontSize: 9, color: "#6366f1", background: "#eff6ff", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
-                          <span style={{ fontSize: 9, color: active ? "#d97706" : "#c4c9d4", marginLeft: "auto" }}>{shortToolUseId(sa.toolUseId)}</span>
-                          {onSubAgentClick && <span style={{ fontSize: 9, color: "#a5b4fc" }}>›</span>}
+                          <span style={{ fontSize: 9, color: active ? "#d97706" : "#c4c9d4" }}>{shortToolUseId(sa.toolUseId)}</span>
+                          <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                            {/* Expand / collapse toggle — plain text + arrow,
+                                same shape as the CALL MINIMAP "▾ show / ▴ hide"
+                                pattern. Default = collapsed; user toggles to
+                                see full description + full result. */}
+                            {hasBodyContent && (
+                              <button
+                                type="button"
+                                onClick={() => toggleSubAgentExpanded(sa.toolUseId)}
+                                style={{
+                                  fontSize: 10, color: "#9ca3af",
+                                  background: "none", border: "none", cursor: "pointer",
+                                  padding: "0 4px", lineHeight: 1,
+                                }}
+                              >
+                                {expanded ? t("terms.hide") : t("terms.show")}
+                              </button>
+                            )}
+                            {/* Chip 1: 紫色 "查看完整" — opens sub-agent drawer.
+                                Uses a forward-jump arrow icon (↗) rather than
+                                the chain LinkIcon, since this is a "navigate
+                                INTO another scope" action rather than a
+                                "cross-reference link". */}
+                            {onSubAgentClick && (
+                              <button
+                                type="button"
+                                onClick={() => onSubAgentClick(sa)}
+                                title={t("sessionOverview.subAgent.viewSubAgentDetailTooltip", { agentType: sa.agentType })}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = "#6d28d9"; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = "#7c3aed"; }}
+                                style={{
+                                  display: "inline-flex", alignItems: "center", gap: 5,
+                                  border: "none", background: "#7c3aed", color: "#fff",
+                                  borderRadius: 4, padding: "3px 9px",
+                                  fontSize: 10, fontWeight: 700, lineHeight: 1.3,
+                                  letterSpacing: "0.02em",
+                                  cursor: "pointer", whiteSpace: "nowrap",
+                                  boxShadow: "0 1px 2px rgba(124,58,237,0.25)",
+                                  transition: "background 0.12s",
+                                }}
+                              >
+                                <ForwardArrowIcon />
+                                {t("sessionOverview.subAgent.viewFullSubAgent")}
+                              </button>
+                            )}
+                            {/* Chip 2: 蓝色 "首次注入于 Call #N" — opens
+                                consumer call in right-side LinkedPanel. Uses
+                                the chain LinkIcon (cross-reference semantics),
+                                matching the JSONL event "首次注入于" pattern. */}
+                            {consumerCall && onJumpToCall && !linkedPanelMode && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const lineIdx = toolResultLineIdxByToolUseId.get(sa.toolUseId);
+                                  onJumpToCall(consumerCall.id, "request",
+                                    lineIdx != null ? { lineIdx } : undefined);
+                                }}
+                                title={t("sessionOverview.subAgent.jumpToConsumerTooltip", { callId: consumerCall.id })}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = "#1d4ed8"; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = "#2563eb"; }}
+                                style={{
+                                  display: "inline-flex", alignItems: "center", gap: 5,
+                                  border: "none", background: "#2563eb", color: "#fff",
+                                  borderRadius: 4, padding: "3px 9px",
+                                  fontSize: 10, fontWeight: 700, lineHeight: 1.3,
+                                  letterSpacing: "0.02em",
+                                  cursor: "pointer", whiteSpace: "nowrap",
+                                  boxShadow: "0 1px 2px rgba(37,99,235,0.25)",
+                                  transition: "background 0.12s",
+                                }}
+                              >
+                                <LinkIcon />
+                                {t("sessionOverview.subAgent.firstInjectedAt", { callId: consumerCall.id })}
+                              </button>
+                            )}
+                          </div>
                         </div>
-                        {sa.description && <div style={{ fontSize: 10, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.description}</div>}
-                        {sa.resultPreview && <div style={{ fontSize: 10, color: "#374151", background: "#f5f3ff", borderRadius: 4, padding: "1px 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sa.resultPreview.slice(0, 100)}{sa.resultPreview.length > 100 ? "…" : ""}</div>}
-                      </button>
+
+                        {/* Body — description + result.
+                            Collapsed (default): each block is one-line ellipsis.
+                            Expanded: full text, no maxHeight cap, no slice. */}
+                        {hasBodyContent && (
+                          <div style={{ padding: "5px 9px", display: "flex", flexDirection: "column", gap: 3 }}>
+                            {sa.description && (
+                              <div style={{
+                                fontSize: 10, color: "#6b7280",
+                                ...(expanded
+                                  ? { whiteSpace: "pre-wrap", wordBreak: "break-word" }
+                                  : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }),
+                              }}>
+                                {sa.description}
+                              </div>
+                            )}
+                            {sa.resultPreview && (
+                              <div style={{
+                                fontSize: 10, color: "#374151",
+                                background: "#f5f3ff", borderRadius: 4, padding: "4px 7px",
+                                ...(expanded
+                                  ? { whiteSpace: "pre-wrap", wordBreak: "break-word" }
+                                  : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }),
+                              }}>
+                                {expanded ? (sa.result ?? sa.resultPreview) : sa.resultPreview}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                       );
                     })}
                 </div>
@@ -3336,6 +3524,7 @@ function JsonlCallChain({
 	                    <IntervalEventRow
 	                      key={`${ev.lineIdx}-${ei}`}
 	                      ev={ev}
+	                      producingCallId={call.id}
 	                      activeToolUseId={activeToolUseId}
 	                      onHoverToolUse={setActiveToolUseId}
 	                    />
@@ -3406,6 +3595,14 @@ function UserTurnDetailPanel({
   // feel. Either mode: chevron toggles.
   const { linkedPanelMode } = useAttributionGraph();
   const [summaryCollapsed, setSummaryCollapsed] = useState(linkedPanelMode);
+  // Minimap default-state: expanded in the main Turn view (overview-first
+  // feel — you want the heat map without an extra click), collapsed when
+  // the Turn is opened as a linked panel from a Call detail (the call list
+  // is already in focus; the bird's-eye nav would just steal vertical
+  // space). Tool-less turns also collapse since there's nothing to map.
+  const noTools = turn.toolCallCount === 0;
+  const [minimapOpen, setMinimapOpen] = useState(!linkedPanelMode && !noTools);
+  const minimapAnchorId = `turn-${turn.id}-call-minimap`;
 
   const turnSubAgents = callsWithSubAgents.flatMap(c => c.subAgents);
 
@@ -3570,11 +3767,42 @@ function UserTurnDetailPanel({
         </div>
       )}
 
-      {/* ── Semantic call chain + raw JSONL event graph ──────────────
-          Minimap + "↑ back to minimap" sticky button removed: with the
-          consolidated single-row header above and reduced visual chrome,
-          the turn list is short enough that an additional bird's-eye
-          navigator is more noise than help. Direct scroll works fine. */}
+      {/* ── Call Minimap (heat map) ──────────────────────────────────
+          Bird's-eye view: context step line + per-call tool heatmap.
+          Default-state computed at mount: expanded in main view, collapsed
+          when this Turn is rendered as a linked panel (linkedPanelMode).
+          Toggle hide/show is sticky for this Turn's mount lifetime.
+          Click on any cell or line marker jumps to the corresponding Call
+          card via the anchor `turn-${turn.id}-call-${callId}`. */}
+      {!noTools && (
+        <div id={minimapAnchorId} style={{ marginBottom: 16, scrollMarginTop: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: minimapOpen ? 8 : 0 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+              {t("terms.callMinimap")}
+            </span>
+            <button
+              onClick={() => setMinimapOpen(v => !v)}
+              style={{ fontSize: 10, color: "#9ca3af", background: "none", border: "none", cursor: "pointer", padding: "0 4px", lineHeight: 1 }}
+            >
+              {minimapOpen ? t("terms.hide") : t("terms.show")}
+            </button>
+          </div>
+          {minimapOpen && (
+            <TurnMinimap
+              turn={enrichedTurn}
+              onSelectCall={id => {
+                // Click on a heatmap cell / context line column → scroll the
+                // corresponding LLM Call card into view. The anchor id is
+                // produced by ChainView when rendering each call row.
+                const anchor = document.getElementById(`turn-${turn.id}-call-${id}`);
+                anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            />
+          )}
+        </div>
+      )}
+
+      {/* ── Semantic call chain + raw JSONL event graph ────────────── */}
       <div style={{ marginBottom: 20 }}>
         <JsonlCallChain
           turn={enrichedTurn}
@@ -4156,13 +4384,10 @@ function PayloadSegmentEvidenceDrawer({ seg, onClear }: { seg: PayloadSegment; o
 
 // ─── LLM Call Detail Panel ────────────────────────────────────────────────────
 
-// Three-tab top-level structure for Call detail. The legacy ordering
-// (attribution / diff / raw) put Request and Response under a sub-tab inside
-// "attribution"; the new ordering flattens them to top-level since they're
-// the user's primary navigation axis ("what came in" vs "what came out").
-// Diff is folded into the request tab as a lens (see AttributionTreeLensPanel),
-// and "raw" is renamed to "structure" since it's the wire-format viewer.
-type CallTab = "request" | "response" | "raw";
+// Four-tab top-level structure for Call detail. Attribution and diff are
+// surfaced as the first two tabs so they're immediately reachable — they're
+// the most-used analytical views. Response and raw structure follow.
+type CallTab = "attribution" | "diff" | "response" | "raw";
 type DiffMode = "segment" | "range" | "raw";
 
 // ─── Attribution Tab ──────────────────────────────────────────────────────────
@@ -4738,7 +4963,7 @@ function LlmCallDetailPanel({
   onOpenAsMain?: () => void;
 }) {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<CallTab>(requestedTab ?? "request");
+  const [tab, setTab] = useState<CallTab>(requestedTab ?? "attribution");
   const [callDetail, setCallDetail] = useState<CallDetail | null>(null);
   const [callDetailLoading, setCallDetailLoading] = useState(true);
   // Top ledger summary: in main mode it starts expanded for the at-a-glance
@@ -4748,6 +4973,7 @@ function LlmCallDetailPanel({
   // click the chevron to toggle.
   const [summaryCollapsed, setSummaryCollapsed] = useState(mode === "panel");
   const collapseSummary = () => { if (!summaryCollapsed) setSummaryCollapsed(true); };
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Load eagerly on mount — needed for Attribution (real segments) from first render
   useEffect(() => {
@@ -4773,6 +4999,12 @@ function LlmCallDetailPanel({
     if (requestedTab && jumpVersion != null) setTab(requestedTab);
   }, [jumpVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Scroll to top whenever the displayed call changes (call switch or fresh
+  // jump) so the header is always visible and the user doesn't land mid-page.
+  useEffect(() => {
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+  }, [call.id, jumpVersion]);
+
   const hasProxy = !!callDetail?.proxyRequestId;
   const freshIn  = call.contextSize - call.cacheRead - call.cacheWrite;
   const nearLimit = false;
@@ -4791,13 +5023,14 @@ function LlmCallDetailPanel({
   }));
 
   const TAB_DEFS: Array<{ id: CallTab; label: string }> = [
-    { id: "request",   label: t("callTab.request") },
-    { id: "response",  label: t("callTab.response") },
-    { id: "raw",       label: t("callTab.structure") },
+    { id: "attribution", label: t("callTab.attribution") },
+    { id: "diff",        label: t("callTab.diff") },
+    { id: "response",    label: t("callTab.response") },
+    { id: "raw",         label: t("callTab.structure") },
   ];
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", padding: mode === "panel" ? "12px 14px" : "16px 22px", minWidth: 0 }}>
+    <div ref={scrollContainerRef} style={{ flex: 1, overflowY: "auto", padding: mode === "panel" ? "12px 14px" : "16px 22px", minWidth: 0 }}>
 
       {/* ── Header ──────────────────────────────── */}
       {/* No outer paddingBottom/border here — UnifiedHeader below provides
@@ -4979,17 +5212,23 @@ function LlmCallDetailPanel({
             ))}
           </div>
 
-          {/* ══ Request — attribution of the prompt sent to the model ═══
-              Lens framework (来源 / 缓存 / Audit / Diff vs Previous) is the
-              only view here now; legacy "经典" sub-toggle and the deprecated
-              AttributionSection wrapper are dropped (see TODO above
-              `AttributionSection`). */}
-          {tab === "request" && (
+          {/* ══ Attribution — prompt 来源 / 缓存 / Audit lens ════════════ */}
+          {tab === "attribution" && (
             <AttributionTreeLensPanel
               sessionId={sessionId}
               callId={call.id}
               prevCallId={prevCallId}
+              hideDiff
               onLinkSource={onLinkSource}
+            />
+          )}
+
+          {/* ══ Diff — 与前次 call 的 prompt 差异 ═══════════════════════ */}
+          {tab === "diff" && (
+            <DiffPanel
+              sessionId={sessionId}
+              callId={call.id}
+              prevCallId={prevCallId ?? undefined}
             />
           )}
 
@@ -5052,9 +5291,11 @@ function SubAgentSessionPanel({
   onReturnToParent?: () => void; // closes sub-turn, returns to parent turn detail
 }) {
   const { t } = useTranslation();
-  // Default-select the sub agent's first turn — a sub agent is conceptually one
-  // turn of work, so the Turn detail view (not the Session overview) is the
-  // right landing surface. Multi-turn agents still get a mini nav to switch.
+
+  // Internal nav state mirrors the main session's pattern: turn ↔ call.
+  // Sub-agents skip the "session overview" level — we land directly on
+  // the first turn, since a sub-agent is conceptually one (or a few) turns
+  // of focused work. Multi-turn agents get the same left-rail switcher.
   const firstTurn = drilldown?.turns[0] ?? null;
   const [innerTurn, setInnerTurn] = useState<UserTurn | null>(firstTurn);
   const [innerCall, setInnerCall] = useState<LlmCall | null>(null);
@@ -5063,6 +5304,7 @@ function SubAgentSessionPanel({
   useEffect(() => {
     setInnerTurn(drilldown?.turns[0] ?? null);
     setInnerCall(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drilldown?.sessionId]);
 
   if (loadState === "loading") {
@@ -5081,134 +5323,191 @@ function SubAgentSessionPanel({
   }
 
   const turns = drilldown.turns;
-  const multiTurn = turns.length > 1;
+  const turnPrefix = t("sessionOverview.turn.label");
+  const callPrefix = t("terms.callLabel");
 
-  // Cross-link kill-switch for the sub-agent scope.
-  //
-  // The whole drilldown sits inside the parent's <AttributionGraphProvider>,
-  // whose `onJumpToCall` resolves callIds against the PARENT session's calls.
-  // Inside a sub-agent the call ids belong to the sub-agent's own turns —
-  // so clicking a "↗ jump to call #N" link inside a sub-agent call would
-  // either jump to the wrong parent call or silently no-op. The annotation
-  // chips (audit boundary, JSONL leaf back-link) have the same problem:
-  // the parent's attribution graph has no events for the sub-agent's lineIdx.
-  //
-  // We override the context with a nested provider whose sessionId is empty
-  // (skips the API fetch — see attribution-graph-context.tsx:79) and whose
-  // onJumpToCall is null. All `useAttributionGraph()` consumers below this
-  // boundary get the safe defaults: getEventAnnotation → null, onJumpToCall
-  // → null. Components already guard on these (e.g. `onJump={onJumpToCall ? ...
-  // : undefined}`) so jump buttons / chips vanish without any further wiring.
-  //
-  // Re-enabling cross-links is Phase 2 of the sub-agent proxy work (notice
-  // banner above already declares this).
+  function handleSelectTurn(turn: UserTurn) {
+    setInnerTurn(turn);
+    setInnerCall(null);
+  }
+  function handleSelectCall(call: LlmCall) {
+    setInnerCall(call);
+  }
+
+  // Cross-link kill-switch for the sub-agent scope (see earlier comment):
+  // empty sessionId skips the attribution-graph API fetch; null onJumpToCall
+  // suppresses every "↗ jump to call #N" UI inside descendant components.
+  // Re-enabling is Phase 2 (banner explains).
   return (
     <AttributionGraphProvider sessionId="" onJumpToCall={null}>
-    <div style={{ display: "flex", flex: 1, overflow: "hidden", flexDirection: "column" }}>
-      {/* Back-to-parent bar — closes the loop so the user always knows the way home */}
-      {onReturnToParent && parentLabel && (
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8,
-          padding: "6px 16px", background: "#faf5ff",
-          borderBottom: "1px dashed #c4b5fd", flexShrink: 0,
-        }}>
-          <button
-            onClick={onReturnToParent}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              fontSize: 11, fontWeight: 600, color: "#5b21b6",
-              background: "#ede9fe", border: "1px solid #c4b5fd",
-              borderRadius: 4, padding: "2px 8px", cursor: "pointer",
-            }}
-          >
-            <span style={{ fontSize: 12, lineHeight: 1 }}>↩</span>
-            {t("sessionOverview.subAgent.backTo", { name: parentLabel })}
-          </button>
-          <span style={{ fontSize: 10, color: "#7c3aed", letterSpacing: "0.04em" }}>
-            <ForkIcon size={10} color="#7c3aed" /> {t("sessionOverview.subAgent.sideBranch")} · {turns.length} · {drilldown.subAgents.length > 0 ? t("sessionOverview.subAgent.nested", { n: drilldown.subAgents.length }) : t("sessionOverview.subAgent.leaf")}
-          </span>
-        </div>
-      )}
-
-      {/* Sub-agent scope notice —— Phase 1: parse + display sub-agent JSONL
-          (Turns / Calls / Tools / Context ledger all reuse the main panels).
-          Phase 2 (TODO): wire sub-agent requestIds into the proxy DB so the
-          Raw / Proxy / Attribution tabs light up the same way as the parent
-          session. Until then, those tabs are intentionally empty for any
-          call rendered under this banner. */}
-      <div style={{
-        display: "flex", alignItems: "flex-start", gap: 8,
-        padding: "8px 16px", background: "#fffbeb",
-        borderBottom: "1px solid #fde68a", flexShrink: 0,
-        fontSize: 11, color: "#78350f", lineHeight: 1.5,
-      }}>
-        <span style={{ fontSize: 12, marginTop: 1 }}>ℹ️</span>
-        <div style={{ flex: 1 }}>
-          <strong style={{ color: "#92400e" }}>
-            {t("sessionOverview.subAgent.proxyNoticeTitle")}
-          </strong>
-          {" — "}
-          {t("sessionOverview.subAgent.proxyNoticeBody")}
-        </div>
-      </div>
-
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* Mini left nav — only shown when the sub agent has multiple turns */}
-        {multiTurn && (
-          <div style={{ width: 160, borderRight: "1px solid #f3f4f6", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
-            <div style={{ padding: "10px 10px 4px", fontSize: 9, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>
-              {t("sessionOverview.subAgent.turnsHeader")}
-            </div>
-            {turns.map(turnRow => (
-              <div
-                key={turnRow.id}
-                onClick={() => { setInnerTurn(turnRow); setInnerCall(null); }}
-                style={{
-                  padding: "6px 10px", cursor: "pointer",
-                  background: innerTurn?.id === turnRow.id ? "#ede9fe" : "transparent",
-                  borderLeft: innerTurn?.id === turnRow.id ? "2px solid #7c3aed" : "2px solid transparent",
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", flexDirection: "column" }}>
+        {/* ── Top breadcrumb-style bar: back-to-parent + side-branch meta ── */}
+        {onReturnToParent && parentLabel && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8,
+            padding: "6px 16px", background: "#faf5ff",
+            borderBottom: "1px dashed #c4b5fd", flexShrink: 0,
+          }}>
+            <button
+              onClick={onReturnToParent}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                fontSize: 11, fontWeight: 600, color: "#5b21b6",
+                background: "#ede9fe", border: "1px solid #c4b5fd",
+                borderRadius: 4, padding: "2px 8px", cursor: "pointer",
+              }}
+            >
+              <span style={{ fontSize: 12, lineHeight: 1 }}>↩</span>
+              {t("sessionOverview.subAgent.backTo", { name: parentLabel })}
+            </button>
+            <span style={{ fontSize: 10, color: "#7c3aed", letterSpacing: "0.04em" }}>
+              <ForkIcon size={10} color="#7c3aed" /> {t("sessionOverview.subAgent.sideBranch")} · {turns.length} · {drilldown.subAgents.length > 0 ? t("sessionOverview.subAgent.nested", { n: drilldown.subAgents.length }) : t("sessionOverview.subAgent.leaf")}
+            </span>
+            {/* Mini inline breadcrumb so the position inside the sub-agent
+                is always visible — parallels the main session's header. */}
+            {innerTurn && (
+              <>
+                <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
+                <span style={{
+                  fontSize: 11, fontWeight: 600,
+                  color: !innerCall ? "#6366f1" : "#374151",
+                  cursor: innerCall ? "pointer" : "default",
                 }}
-                onMouseEnter={e => { if (innerTurn?.id !== turnRow.id) e.currentTarget.style.background = "#f9fafb"; }}
-                onMouseLeave={e => { if (innerTurn?.id !== turnRow.id) e.currentTarget.style.background = "transparent"; }}
-              >
-                <div style={{ fontSize: 11, fontWeight: 600, color: "#374151" }}>
-                  {t("sessionOverview.turn.label")} {turnRow.id}
-                </div>
-                <div style={{ fontSize: 10, color: "#9ca3af" }}>
-                  {t("sessionOverview.subAgent.turnRowMeta", {
-                    count: turnRow.llmCallCount,
-                    delta: (turnRow.netContextDelta > 0 ? "+" : "") + fmtK(turnRow.netContextDelta),
-                  })}
-                </div>
-              </div>
-            ))}
+                  onClick={() => { if (innerCall) setInnerCall(null); }}
+                >
+                  {turnPrefix} {innerTurn.id}
+                </span>
+              </>
+            )}
+            {innerCall && (
+              <>
+                <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#6366f1" }}>
+                  {callPrefix} {innerCall.id}
+                </span>
+              </>
+            )}
           </div>
         )}
 
-        {/* Main content — default lands on Turn detail (reuses Turn page) */}
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          {innerTurn && !innerCall && (
-            <UserTurnDetailPanel
-              turn={innerTurn}
-              onSelectCall={c => setInnerCall(c)}
-              isMockSession={false}
-            />
-          )}
-          {innerCall && (
-            <LlmCallDetailPanel
-              call={innerCall}
-              onSelectEntry={() => {}}
-              sessionId={drilldown.sessionId}
-            />
-          )}
-          {!innerTurn && (
-            <div style={{ padding: 40, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
-              {t("sessionOverview.subAgent.empty")}
+        {/* ── Amber proxy-not-supported notice ── */}
+        <div style={{
+          display: "flex", alignItems: "flex-start", gap: 8,
+          padding: "8px 16px", background: "#fffbeb",
+          borderBottom: "1px solid #fde68a", flexShrink: 0,
+          fontSize: 11, color: "#78350f", lineHeight: 1.5,
+        }}>
+          <span style={{ fontSize: 12, marginTop: 1 }}>ℹ️</span>
+          <div style={{ flex: 1 }}>
+            <strong style={{ color: "#92400e" }}>
+              {t("sessionOverview.subAgent.proxyNoticeTitle")}
+            </strong>
+            {" — "}
+            {t("sessionOverview.subAgent.proxyNoticeBody")}
+          </div>
+        </div>
+
+        {/* ── Body: 200px left nav + Main Canvas — same structure as main session ── */}
+        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+          {/* Left nav — NavItem rows, one per sub-agent turn, with badges +
+              indented Call sub-rows under the currently selected turn.
+              Mirrors SessionDetailV2's left rail (lines ~5495+) but scoped
+              to this sub-agent's drilldown. */}
+          <div style={{ width: 200, borderRight: "1px solid #e5e7eb", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
+            <div style={{ padding: "12px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>
+              {t("sessionOverview.subAgent.turnsHeader")}
             </div>
-          )}
+            {turns.map(turn => {
+              const isThisTurnSelected = innerTurn?.id === turn.id;
+              const turnInput = turn.userInput.trim();
+              const preview = turnInput.slice(0, 16).trimEnd() + (turnInput.length > 16 ? "…" : "");
+              const turnLabel = (
+                <>
+                  <strong style={{ fontWeight: 700, color: isThisTurnSelected ? "#4338ca" : "#111827" }}>
+                    {turnPrefix} {turn.id}
+                  </strong>
+                  {preview && (
+                    <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 6 }}>
+                      {preview}
+                    </span>
+                  )}
+                </>
+              );
+              const subAgentCount = turn.calls.reduce((s, c) => s + (c.subAgents?.length ?? 0), 0);
+              const commandCount = turn.calls.reduce(
+                (s, c) => s + c.intervalEvents.filter(e => e.kind === "user:command").length, 0);
+              const unknownCount = turn.calls.reduce(
+                (s, c) => s + c.intervalEvents.filter(e => e.kind === "unknown").length, 0);
+              const navBadgeItems: StatusBadge[] = [];
+              if (turn.hasCompaction)   navBadgeItems.push({ kind: "compaction", count: 1,              tooltip: t("sessionOverview.badges.compaction") });
+              if (turn.errorCount > 0)  navBadgeItems.push({ kind: "error",      count: turn.errorCount,tooltip: t("sessionOverview.badges.errors") });
+              if (subAgentCount > 0)    navBadgeItems.push({ kind: "subAgent",   count: subAgentCount,  tooltip: t("sessionOverview.badges.subAgents") });
+              if (commandCount > 0)     navBadgeItems.push({ kind: "command",    count: commandCount,   tooltip: t("sessionOverview.badges.commands") });
+              if (unknownCount > 0)     navBadgeItems.push({ kind: "unknown",    count: unknownCount,   tooltip: t("sessionOverview.badges.unknown") });
+              const turnBadges = (
+                <StatusBadgeStrip badges={navBadgeItems} size="compact" renderIcon={renderStatusIcon} />
+              );
+              return (
+                <React.Fragment key={`sa-turn-${turn.id}`}>
+                  <NavItem
+                    label={turnLabel}
+                    sublabel={`${turn.netContextDelta > 0 ? "+" : ""}${fmtK(turn.netContextDelta)} · ${turn.llmCallCount} ${t("terms.callsSuffix")}${turn.toolCallCount > 0 ? ` · ${turn.toolCallCount} ${t("terms.toolsSuffix")}` : ""}`}
+                    active={isThisTurnSelected && !innerCall}
+                    badges={turnBadges}
+                    onClick={() => handleSelectTurn(turn)}
+                  />
+                  {isThisTurnSelected && turn.calls.map(call => {
+                    const toolCount = call.toolCalls?.length ?? 0;
+                    const deltaTxt = call.isSignificant && call.significantDelta !== 0
+                      ? ` · ${call.significantDelta > 0 ? "+" : ""}${fmtK(call.significantDelta)}`
+                      : "";
+                    const toolsTxt = toolCount > 0
+                      ? ` · ${toolCount} ${t("terms.toolsSuffix")}`
+                      : "";
+                    return (
+                      <NavItem
+                        key={`sa-call-${call.id}`}
+                        indent
+                        label={call.isCompaction ? `${callPrefix} ${call.id} ◆` : `${callPrefix} ${call.id}`}
+                        sublabel={`${fmtK(call.contextSize)}${deltaTxt}${toolsTxt}`}
+                        active={innerCall?.id === call.id}
+                        onClick={() => handleSelectCall(call)}
+                      />
+                    );
+                  })}
+                </React.Fragment>
+              );
+            })}
+          </div>
+
+          {/* Main Canvas — reuses the exact same Turn/Call panels as the
+              main session, so all interactions (Token ledger hover, Diff vs
+              prev, sub-agent fork, etc.) work identically. */}
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", minWidth: 0 }}>
+            {innerTurn && !innerCall && (
+              <UserTurnDetailPanel
+                turn={innerTurn}
+                onSelectCall={handleSelectCall}
+                isMockSession={false}
+                sessionId={drilldown.sessionId}
+              />
+            )}
+            {innerCall && (
+              <LlmCallDetailPanel
+                call={innerCall}
+                onSelectEntry={() => {}}
+                sessionId={drilldown.sessionId}
+                onClose={() => setInnerCall(null)}
+              />
+            )}
+            {!innerTurn && (
+              <div style={{ padding: 40, textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
+                {t("sessionOverview.subAgent.empty")}
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
     </AttributionGraphProvider>
   );
 }
@@ -5412,12 +5711,11 @@ export function SessionDetailV2({ session, onClose }: Props) {
     const call = callById.get(callId);
     if (!call) return;
     // Map the lens hint to a Call detail tab. We translate "request" → the
-    // request attribution lens panel (the canonical "first-prompt" view)
-    // and "response" → ResponseTreePanel. No hint defaults to whatever the
-    // panel was already showing (and "request" on a fresh open).
+    // attribution tab (the canonical "first-prompt" view) and "response" →
+    // ResponseTreePanel. No hint defaults to whatever the panel was showing.
     const tab: CallTab | undefined =
       lens === "response" ? "response"
-      : lens === "request" ? "request"
+      : lens === "request" ? "attribution"
       : undefined;
     openLinkedCall(call, undefined, tab);
   }, [callById]); // openLinkedCall is closure-stable enough at this scope; turns flow through callById
@@ -5430,8 +5728,25 @@ export function SessionDetailV2({ session, onClose }: Props) {
     >
       <div
         style={{
-          width: linkedPanel ? "calc(100vw - 64px)" : "calc(100vw - 200px)",
-          maxWidth: linkedPanel ? 1560 : 1200,
+          // Drawer width is responsive to "how much canvas does this state
+          // need":
+          //   · linkedPanel open → widest (1560px) since right panel eats
+          //     a big chunk
+          //   · subagent open → also widen (1480px) because the sub-agent
+          //     view now has its own 200px left nav + breadcrumb + amber
+          //     notice on top of the main canvas; with the default 1200px
+          //     cap, both the parent's left nav and the sub-agent's left
+          //     nav (400px combined) leave the call cards squeezed
+          //   · default (session / turn / call) → 1200px
+          // The viewport-relative form (calc(100vw - Npx)) is the lower
+          // bound when the screen is narrow; the maxWidth caps it on a
+          // wide screen so the drawer doesn't stretch to absurd widths.
+          width: linkedPanel
+            ? "calc(100vw - 64px)"
+            : navLevel === "subagent"
+              ? "calc(100vw - 96px)"
+              : "calc(100vw - 200px)",
+          maxWidth: linkedPanel ? 1560 : navLevel === "subagent" ? 1480 : 1200,
           height: "100%",
           background: "#fff",
           boxShadow: "-4px 0 24px rgba(0,0,0,0.12)",

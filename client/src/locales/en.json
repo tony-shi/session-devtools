@@ -207,7 +207,12 @@
       "loadFailed": "Failed to load sub-agent session.",
       "empty": "This sub-agent recorded no turns.",
       "turnsHeader": "SUB-AGENT TURNS",
-      "turnRowMeta": "{{count}} calls · {{delta}}"
+      "turnRowMeta": "{{count}} calls · {{delta}}",
+      "jumpToConsumerTooltip": "This sub-agent's tool_result was first injected into Call #{{callId}}'s request — open the right-side panel to see the exact location in that request.",
+      "viewComplete": "View full #{{callId}}",
+      "viewFullSubAgent": "View full",
+      "viewSubAgentDetailTooltip": "Open this {{agentType}} sub-agent's full inner conversation (turns / calls / tools)",
+      "firstInjectedAt": "First injected at Call #{{callId}}"
     },
     "status": {
       "loading": "loading…",

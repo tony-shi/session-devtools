@@ -64,6 +64,7 @@ export interface SubAgentSummary {
 
   // The text returned in the tool_result to the parent session
   resultPreview: string;      // first 300 chars of tool_result content
+  result?: string;            // full tool_result text (verbatim, no truncation)
 }
 
 export type IntervalEventKind =

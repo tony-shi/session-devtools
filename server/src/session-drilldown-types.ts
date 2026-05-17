@@ -48,6 +48,12 @@ export interface SubAgentSummary {
   endedAt: string;
   durationMs: number;
   resultPreview: string;
+  // Full sub-agent tool_result text (markdown report typically) — verbatim
+  // from the parent JSONL's tool_result block, no truncation. Powers the
+  // sub-agent card's expanded view; `resultPreview` (300-char head) is kept
+  // for compact contexts (mock lists / collapsed card). Optional so older
+  // payloads stay shape-compatible.
+  result?: string;
 }
 
 // ─── Interval events: all raw JSONL events between two LLM calls ─────────────

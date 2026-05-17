@@ -121,6 +121,13 @@ export interface LeafLite {
   origin: SegmentOrigin;
   rawText?: string;
   messageRole?: "user" | "assistant" | "system";
+  /**
+   * The wire tool_use_id for `messages.tool_use@N` leaves. Carried into
+   * LeafLite so the back-link in `SelectedDetail` can land on the exact
+   * `ToolCallRow` in the Turn view (`flashToolUse`) rather than just the
+   * enclosing call card. Absent for non-tool_use leaves.
+   */
+  toolUseId?: string;
   // Cache 视角需要：节点缓存策略。来自 SerializedNode.cachePolicy（可选）。
   cachePolicy?: { ttl: "5m" | "1h"; scope: "org" | "global" };
 }
@@ -139,6 +146,7 @@ export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
         origin: node.origin,
         rawText: node.rawText,
         ...(node.wireMeta?.messageRole && { messageRole: node.wireMeta.messageRole }),
+        ...(node.wireMeta?.toolUseId && { toolUseId: node.wireMeta.toolUseId }),
         ...(node.cachePolicy && { cachePolicy: node.cachePolicy }),
       });
       return;
@@ -533,7 +541,7 @@ export function SelectedDetail({ leaf, onLinkSource }: {
   // jumpTarget prefers `firstSeenInCall` (the graph's "first-prompt" call)
   // over `sourceCallId` (the parser's call ownership) — for tool_result
   // these differ; for tool_use they coincide.
-  const { flashEvent, flashCall } = useAttributionGraph();
+  const { flashEvent, flashCall, flashToolUse } = useAttributionGraph();
   const sourceTurnId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceTurnId : undefined;
   const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;
   const firstSeenInCall = leaf.origin.kind === "jsonl" ? leaf.origin.firstSeenInCall : undefined;
@@ -552,7 +560,15 @@ export function SelectedDetail({ leaf, onLinkSource }: {
         // Defer past panel mount so the target node exists in the DOM
         // when we try to scroll to it.
         if (isToolUseLeaf) {
-          requestAnimationFrame(() => flashCall(jumpTarget));
+          // Prefer landing on the specific `ToolCallRow` keyed by
+          // `data-tool-use-id` (more precise than just the call card).
+          // Fall back to `flashCall` when wireMeta didn't carry a
+          // toolUseId (e.g. older snapshots, structural rendering).
+          if (leaf.toolUseId) {
+            requestAnimationFrame(() => flashToolUse(leaf.toolUseId!));
+          } else {
+            requestAnimationFrame(() => flashCall(jumpTarget));
+          }
         } else if (jsonlLineIdx != null) {
           requestAnimationFrame(() => flashEvent(jsonlLineIdx));
         }
@@ -573,7 +589,15 @@ export function SelectedDetail({ leaf, onLinkSource }: {
     leaf.origin.kind === "rule" || leaf.origin.kind === "jsonl"
       ? leaf.origin.confidence
       : undefined;
-  const isJsonContent = leaf.origin.kind === "jsonl";
+  // Always attempt to parse — `tryParseSegmentJson` gates on the first
+  // non-whitespace char being `{` or `[`, so prose leaves return undefined
+  // and stay text-only. This catches both the jsonl wire payloads (where
+  // `origin.kind === "jsonl"`) AND rule-origin leaves whose rawText is a
+  // JSON schema/blob (tools.* especially — its rawText is a serialized
+  // tool definition that previously had no toggle because we only gated
+  // on `origin.kind === "jsonl"`).
+  const parsedRawJson = tryParseSegmentJson(leaf.rawText ?? leaf.preview);
+  const hasJsonContent = parsedRawJson !== undefined;
 
   return (
     <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -587,11 +611,11 @@ export function SelectedDetail({ leaf, onLinkSource }: {
           {
             label: "CONTENT",
             content: leaf.rawText ?? leaf.preview,
-            monospace: isJsonContent,
-            // JSON-tree toggle when the leaf's content parses as JSON
-            // (tool_result wire / tool_use input / structured payloads).
-            // Plain prose leaves get undefined → no toggle shown.
-            rawJson: isJsonContent ? tryParseSegmentJson(leaf.rawText ?? leaf.preview) : undefined,
+            // Monospace for either: explicit jsonl wire payloads, or
+            // anything that parses as JSON. Prose rule/structural leaves
+            // stay proportional.
+            monospace: leaf.origin.kind === "jsonl" || hasJsonContent,
+            rawJson: parsedRawJson,
           },
         ]}
         coordinate={coordinate}
@@ -657,14 +681,24 @@ function leafOriginToCardHeader(leaf: LeafLite): {
   if (o.kind === "jsonl") {
     const src = o.eventKind.source;
     const ct = o.eventKind.contentType;
-    // Map jsonl event source → IntervalEventKind so we can reuse the
-    // existing palette. The mapping mirrors the parser's own taxonomy.
-    const ikind: IntervalEventKind = jsonlSourceToIntervalKind(src);
-    const palette = EVENT_PALETTES[ikind] ?? { fg: "#64748b" };
+    // Three assistant-side sources (`tool_use` / `assistant_text` /
+    // `thinking`) don't correspond to any `IntervalEventKind` — they
+    // aren't free-floating jsonl events in the Turn view, they're blocks
+    // inside an assistant message. Color them to match the Response tab's
+    // `SLOT_META` palette so the same concept reads with the same color
+    // wherever it appears.
+    const responseSideColor: Record<string, string> = {
+      tool_use:       "#f59e0b",  // response.tool_use marker
+      assistant_text: "#22c55e",  // response.text marker
+      thinking:       "#a78bfa",  // response.thinking marker
+    };
+    const color = responseSideColor[src]
+      ?? EVENT_PALETTES[jsonlSourceToIntervalKind(src)]?.fg
+      ?? "#64748b";
     const titleParts = [src];
     if (ct && ct !== "text") titleParts.push(`:${ct}`);
     return {
-      color: palette.fg,
+      color,
       kindLabel: "JSONL",
       title: titleParts.join(""),
       shortId: o.sourceCallId !== undefined ? `call #${o.sourceCallId}` : undefined,

@@ -199,12 +199,17 @@
       "nested": "{{n}} 层嵌套",
       "backTo": "返回 {{name}}",
       "proxyNoticeTitle": "你正在查看 sub-agent",
-      "proxyNoticeBody": "Turns / Calls / Tools / Context 是基于 sub-agent 自身的 JSONL 重建的。proxy 归因（Raw / Proxy / 单 call 归因 tab）暂未对 sub-agent 接通，相关面板会是空的。后续会把 sub-agent 的 requestId 关联到 proxy 数据库。",
+      "proxyNoticeBody": "proxy 归因（Raw / Proxy / 单 call 归因 tab）暂未对 sub-agent 接通，相关面板会是空的。后续会把 sub-agent 的 requestId 关联到 proxy 数据库。",
       "loading": "正在加载 sub-agent 会话…",
       "loadFailed": "加载 sub-agent 会话失败。",
       "empty": "该 sub-agent 没有记录任何轮次。",
       "turnsHeader": "SUB-AGENT 轮次",
-      "turnRowMeta": "{{count}} 次调用 · {{delta}}"
+      "turnRowMeta": "{{count}} 次调用 · {{delta}}",
+      "jumpToConsumerTooltip": "这个 sub-agent 的 tool_result 首次被注入到 Call #{{callId}} 的 request —— 打开右侧面板查看在 request 中的具体位置。",
+      "viewComplete": "查看完整 #{{callId}}",
+      "viewFullSubAgent": "查看完整",
+      "viewSubAgentDetailTooltip": "打开这个 {{agentType}} sub-agent 的完整内部对话（turns / calls / tools）",
+      "firstInjectedAt": "首次注入于 LLM 调用 #{{callId}}"
     },
     "status": {
       "loading": "加载中…",

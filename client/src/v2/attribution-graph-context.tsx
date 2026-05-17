@@ -69,6 +69,15 @@ export interface AttributionGraphContextValue {
    */
   highlightedLineIdx: number | null;
   /**
+   * The tool_use_id currently flashing from a recent reverse-jump
+   * (Attribution leaf detail → Turn view). ToolCallRow reads this and
+   * adds an amber outline when its `tc.toolUseId` matches. Cleared
+   * after ~2s. Allows back-links from `tool_use` Attribution leaves to
+   * land directly on the specific ToolCallRow rather than just the
+   * enclosing call card.
+   */
+  highlightedToolUseId: string | null;
+  /**
    * Reverse-direction navigation: open the Turn view (linked panel) and
    * scroll+flash the IntervalEventRow at this jsonl line. Called by
    * Attribution leaf detail when its underlying event is a tool_result /
@@ -83,6 +92,15 @@ export interface AttributionGraphContextValue {
    * than a specific jsonl row).
    */
   flashCall: (callId: number) => void;
+  /**
+   * Reverse-direction navigation: scroll to and flash the specific
+   * ToolCallRow keyed by tool_use_id (`[data-tool-use-id="..."]`) in
+   * the Turn view. More precise than `flashCall` for `tool_use`
+   * Attribution leaves — instead of just outlining the whole call
+   * card, lands on the exact tool_use row whose input the leaf was
+   * derived from.
+   */
+  flashToolUse: (toolUseId: string) => void;
 }
 
 const Ctx = createContext<AttributionGraphContextValue>({
@@ -96,8 +114,10 @@ const Ctx = createContext<AttributionGraphContextValue>({
   clearPendingFocus: () => {},
   highlightedCallId: null,
   highlightedLineIdx: null,
+  highlightedToolUseId: null,
   flashEvent: () => {},
   flashCall: () => {},
+  flashToolUse: () => {},
 });
 
 const FLASH_DURATION_MS = 2000;
@@ -115,6 +135,7 @@ export function AttributionGraphProvider({
   const [error, setError] = useState<string | null>(null);
   const [highlightedCallId, setHighlightedCallId] = useState<number | null>(null);
   const [highlightedLineIdx, setHighlightedLineIdx] = useState<number | null>(null);
+  const [highlightedToolUseId, setHighlightedToolUseId] = useState<string | null>(null);
   const [pendingFocus, setPendingFocus] = useState<PendingFocus | null>(null);
 
   // Single full-session load. Server caches the result for 5min, so opening
@@ -192,6 +213,15 @@ export function AttributionGraphProvider({
     return () => clearTimeout(t);
   }, [highlightedLineIdx]);
 
+  // Same lifecycle for highlightedToolUseId.
+  useEffect(() => {
+    if (highlightedToolUseId == null) return;
+    const t = setTimeout(() => {
+      setHighlightedToolUseId(prev => prev === highlightedToolUseId ? null : prev);
+    }, FLASH_DURATION_MS);
+    return () => clearTimeout(t);
+  }, [highlightedToolUseId]);
+
   // flashEvent / flashCall — reverse-link scroll helpers.
   //
   // Race condition fix: when these are invoked right after onLinkSource(...)
@@ -232,6 +262,14 @@ export function AttributionGraphProvider({
     scrollWithRetry(`[id$="-call-${callId}"]`, 8);
   }, []);
 
+  const flashToolUse = useCallback((toolUseId: string) => {
+    setHighlightedToolUseId(toolUseId);
+    // CSS attribute selectors don't escape quotes — toolUseId tokens come
+    // from the wire (`toolu_…`) and contain only ASCII alphanumerics +
+    // underscores in practice, but CSS.escape covers the edge case.
+    scrollWithRetry(`[data-tool-use-id="${CSS.escape(toolUseId)}"]`, 8);
+  }, []);
+
   const value: AttributionGraphContextValue = {
     linkedPanelMode: false,
     graph,
@@ -243,8 +281,10 @@ export function AttributionGraphProvider({
     clearPendingFocus,
     highlightedCallId,
     highlightedLineIdx,
+    highlightedToolUseId,
     flashEvent,
     flashCall,
+    flashToolUse,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -273,6 +313,7 @@ export function LinkedPanelScope({ children }: { children: React.ReactNode }) {
     onJumpToCall: null,
     flashEvent: () => {},
     flashCall: () => {},
+    flashToolUse: () => {},
   }), [parent]);
   return <Ctx.Provider value={masked}>{children}</Ctx.Provider>;
 }

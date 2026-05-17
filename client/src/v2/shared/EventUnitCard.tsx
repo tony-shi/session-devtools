@@ -42,6 +42,15 @@ export interface EventSegment {
    * structured payload.
    */
   rawJson?: unknown;
+  /**
+   * When true (requires `rawJson` to be set), the segment defaults to the
+   * JSON tree view and hides the "渲染|原始 JSON" toggle entirely. Use this
+   * for events where the rendered text is just `JSON.stringify(...)` of the
+   * same object (unknown / system:api_error / system:stop_hook_summary) —
+   * showing a "渲染" tab there is misleading because both tabs would
+   * essentially show the same content.
+   */
+  rawOnly?: boolean;
 }
 
 export interface EventUnitCardProps {
@@ -439,22 +448,42 @@ export function LinkIcon() {
   );
 }
 
+export function ForwardArrowIcon() {
+  // Up-right diagonal arrow — visually signals "navigate INTO another scope"
+  // (e.g. open a sub-agent's own detail view), distinct from the chain
+  // LinkIcon which means "cross-reference inside the same scope".
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8"
+         strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+      <path d="M5 11 L11 5" />
+      <path d="M6 5 L11 5 L11 10" />
+    </svg>
+  );
+}
+
 function SegmentView({ seg }: { seg: EventSegment }) {
   const { t } = useTranslation();
   const truncateAt = seg.truncateAt ?? 1000;
   const tooLong = seg.content.length > truncateAt;
   const [showFull, setShowFull] = useState(false);
+  const hasRaw = seg.rawJson !== undefined && seg.rawJson !== null;
+  // `rawOnly` collapses the toggle and forces the JSON tree view. Only
+  // honored when raw JSON is actually present — otherwise we silently fall
+  // through to the standard preview path so we never end up with both
+  // views disabled.
+  const rawOnly = !!seg.rawOnly && hasRaw;
   // "preview" = rendered/truncated content (default); "raw" = JSON tree
   // viewer over `seg.rawJson`. Toggle only available when rawJson is
   // present — segments without structured backing stay text-only.
-  const [viewMode, setViewMode] = useState<"preview" | "raw">("preview");
-  const hasRaw = seg.rawJson !== undefined && seg.rawJson !== null;
+  const [viewMode, setViewMode] = useState<"preview" | "raw">(rawOnly ? "raw" : "preview");
+  const effectiveMode = rawOnly ? "raw" : viewMode;
+  const showToggle = hasRaw && !rawOnly;
   const shown = !tooLong || showFull ? seg.content : seg.content.slice(0, truncateAt);
   const monospace = seg.monospace ?? true;
 
   return (
     <div style={{ marginTop: 6 }}>
-      {(seg.label || hasRaw) && (
+      {(seg.label || showToggle) && (
         <div style={{
           display: "flex", alignItems: "center", gap: 6,
           marginBottom: 3,
@@ -466,7 +495,7 @@ function SegmentView({ seg }: { seg: EventSegment }) {
               {seg.label}
             </span>
           )}
-          {hasRaw && (
+          {showToggle && (
             <div style={{
               marginLeft: "auto",
               display: "inline-flex",
@@ -490,7 +519,7 @@ function SegmentView({ seg }: { seg: EventSegment }) {
         </div>
       )}
 
-      {viewMode === "raw" && hasRaw ? (
+      {effectiveMode === "raw" && hasRaw ? (
         <div style={{
           padding: "6px 8px",
           background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4,

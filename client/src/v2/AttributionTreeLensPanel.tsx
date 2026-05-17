@@ -422,15 +422,14 @@ function LensSectionTable({
 // ─── 顶层 Panel ─────────────────────────────────────────────────────────────
 
 export function AttributionTreeLensPanel({
-  sessionId, callId, prevCallId, onLinkSource,
+  sessionId, callId, prevCallId, hideDiff, onLinkSource,
 }: {
   sessionId: string;
   callId: number;
-  /** Optional previous-call id — required for the Diff lens (special case
-   *  that delegates rendering to DiffPanel). When null/undefined the Diff
-   *  chip is shown disabled-ish (still selectable but DiffPanel will show
-   *  its own empty state). */
+  /** Optional previous-call id — required for the Diff lens. */
   prevCallId?: number | null;
+  /** When true, always hide the Diff chip (e.g. Diff is its own top-level tab). */
+  hideDiff?: boolean;
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
 }) {
   const [result, setResult] = useState<AttributionTreeResult | null>(null);
@@ -558,9 +557,9 @@ export function AttributionTreeLensPanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {/* Layer 0: Lens 切换. Diff chip hidden for first-of-session
-          calls — nothing to diff against. */}
-      <LensSwitcher activeLensId={lensId} onChange={setLensId} hideDiff={prevCallId == null} />
+      {/* Layer 0: Lens 切换. Diff chip hidden when hideDiff prop is set
+          (Diff has its own top-level tab) or when there's no previous call. */}
+      <LensSwitcher activeLensId={lensId} onChange={setLensId} hideDiff={hideDiff || prevCallId == null} />
 
       {/* Layer 0.1: 开发者可见的 TODO 列表 —— 直接挂在视图上，方便迭代时
           一眼看到该 lens 还有哪些限制 / 下一步要做的事。每个 chip 鼠标

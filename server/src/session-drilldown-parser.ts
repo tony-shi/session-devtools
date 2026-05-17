@@ -244,7 +244,24 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
       preview = ((iev as { content?: string }).content ?? "").slice(0, 300);
     } else if (sub === "turn_duration") {
       kind = "system:turn_duration";
-      preview = `durationMs: ${(iev as { durationMs?: number }).durationMs ?? 0}`;
+      // Format duration into a human-readable string + include messageCount
+      // (raw `durationMs: 47430` was technically accurate but unreadable at a
+      // glance). Falls through to `0ms` if both fields are absent.
+      const ms = (iev as { durationMs?: number }).durationMs ?? 0;
+      const msgCount = (iev as { messageCount?: number }).messageCount;
+      let durStr: string;
+      if (ms >= 60_000) {
+        const min = Math.floor(ms / 60_000);
+        const sec = Math.round((ms % 60_000) / 1000);
+        durStr = `${min}m ${sec}s`;
+      } else if (ms >= 1000) {
+        durStr = `${(ms / 1000).toFixed(1)}s`;
+      } else {
+        durStr = `${ms}ms`;
+      }
+      preview = msgCount !== undefined
+        ? `Duration: ${durStr} · Messages: ${msgCount}`
+        : `Duration: ${durStr}`;
     } else if (sub === "stop_hook_summary") {
       kind = "system:stop_hook_summary";
       preview = JSON.stringify((iev as { hookInfos?: unknown }).hookInfos ?? {}).slice(0, 300);
@@ -259,7 +276,34 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
     const att = (iev as { attachment?: { type?: string; content?: unknown; itemCount?: number } }).attachment ?? {};
     const attType = att.type ?? "";
     if (attType === "skill_listing") { kind = "attachment:skill_listing"; preview = String(att.content ?? "").slice(0, 300); }
-    else if (attType === "task_reminder") { kind = "attachment:task_reminder"; preview = `itemCount: ${att.itemCount ?? 0}`; }
+    else if (attType === "task_reminder") {
+      kind = "attachment:task_reminder";
+      // Render the actual task list as a checklist string so the row's
+      // CONTENT segment is useful at a glance. Older behavior dropped to
+      // just `itemCount: N`, which hid every task entirely. Falls back to
+      // a count summary when `content` isn't a parsable list (defensive
+      // against schema drift in upstream JSONL).
+      const tasks = Array.isArray((att as { content?: unknown }).content)
+        ? (att as { content: unknown[] }).content
+        : null;
+      if (!tasks || tasks.length === 0) {
+        preview = `(empty task list, itemCount: ${(att as { itemCount?: number }).itemCount ?? 0})`;
+      } else {
+        const lines = tasks
+          .filter((t): t is { status?: unknown; subject?: unknown } => Boolean(t) && typeof t === "object")
+          .map((t) => {
+            const status = typeof t.status === "string" ? t.status : "pending";
+            const subject = typeof t.subject === "string" ? t.subject : "(no subject)";
+            // Markdown-style checkbox: [ ] pending, [x] completed, [>] in_progress.
+            // Aligned to render correctly under EventUnitCard's monospace `<pre>`.
+            const mark = status === "completed" ? "[x]"
+                       : status === "in_progress" ? "[>]"
+                       : "[ ]";
+            return `${mark} ${subject}`;
+          });
+        preview = lines.join("\n").slice(0, 1500);
+      }
+    }
     else if (attType === "queued_command") {
       // attachment.prompt 是用户排队的消息文本（可能为 string 或 text-block array）
       const att2 = att as { prompt?: unknown };
@@ -274,14 +318,39 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
     else if (attType === "edited_text_file") {
       const att2 = att as { filename?: string; snippet?: string };
       kind = "attachment:edited_text_file";
-      preview = `${att2.filename ?? "(unknown)"} — ${(att2.snippet ?? "").slice(0, 200)}`;
+      // Two-line layout: filename header + snippet body. Easier to scan than
+      // a single em-dashed joined line, and lets the snippet take a longer
+      // truncation budget (~800 chars) so the surrounding context is visible
+      // — the snippet already carries leading line numbers from the harness.
+      const fname = att2.filename ?? "(unknown file)";
+      const snippet = (att2.snippet ?? "").slice(0, 800);
+      preview = snippet ? `${fname}\n──────\n${snippet}` : fname;
     }
     else if (attType === "file") { kind = "attachment:file"; preview = String(att.content ?? "").slice(0, 300); }
     else { kind = "unknown"; preview = raw.slice(0, 300); }
   } else if (iev.type === "file-history-snapshot") {
     kind = "file-history-snapshot";
-    const snap = (iev as { snapshot?: { timestamp?: string } }).snapshot ?? {};
-    preview = `snapshot timestamp: ${snap.timestamp ?? ""}`;
+    // Surface the snapshotted file paths so users can see *what* was
+    // captured, not just the timestamp. trackedFileBackups is a record keyed
+    // by absolute file path; iterate the keys and render them as a list.
+    // Empty snapshots are a legitimate "initial baseline" event — call that
+    // out explicitly rather than hiding it behind a bare timestamp.
+    const snap = (iev as {
+      snapshot?: { timestamp?: string; trackedFileBackups?: Record<string, unknown> };
+      isSnapshotUpdate?: boolean;
+    }).snapshot ?? {};
+    const backups = snap.trackedFileBackups ?? {};
+    const files = Object.keys(backups);
+    const ts = snap.timestamp ?? "";
+    const isUpdate = (iev as { isSnapshotUpdate?: boolean }).isSnapshotUpdate ?? false;
+    const header = isUpdate ? "Snapshot update" : "Snapshot";
+    if (files.length === 0) {
+      preview = `${header} (empty / initial baseline) — ${ts}`;
+    } else {
+      const list = files.slice(0, 20).join("\n");
+      const overflow = files.length > 20 ? `\n… +${files.length - 20} more` : "";
+      preview = `${header} of ${files.length} file${files.length > 1 ? "s" : ""} — ${ts}\n${list}${overflow}`;
+    }
   } else if (iev.type === "last-prompt") {
     kind = "last-prompt";
     preview = ((iev as { lastPrompt?: string }).lastPrompt ?? "").slice(0, 300);
@@ -309,17 +378,20 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
   // We match by order: the Nth Agent tool_result in the main chain corresponds
   // to the Nth sub agent (by start time, since ordering is not always guaranteed).
   // Better approach: use subagent file start time to order, and match sequentially.
-  const agentToolUses: Array<{ id: string; name: string; resultPreview: string }> = [];
+  const agentToolUses: Array<{ id: string; name: string; resultPreview: string; result: string }> = [];
   for (const ev of mainEvents) {
     if (ev.type !== "assistant") continue;
     const aev = ev as JAssistantEvent;
     for (const b of aev.message?.content ?? []) {
       if (b.type === "tool_use" && (b as { name?: string }).name === "Agent") {
-        agentToolUses.push({ id: (b as { id?: string }).id ?? "", name: "Agent", resultPreview: "" });
+        agentToolUses.push({ id: (b as { id?: string }).id ?? "", name: "Agent", resultPreview: "", result: "" });
       }
     }
   }
-  // Collect tool_results for Agent calls
+  // Collect tool_results for Agent calls. We keep BOTH the full text (for
+  // the sub-agent card's expanded view) and the 300-char preview (for
+  // compact list contexts). Without the full text the sub-agent's final
+  // report ends mid-sentence in the dashboard.
   let agentResultIdx = 0;
   for (const ev of mainEvents) {
     if (ev.type !== "user") continue;
@@ -329,17 +401,17 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
     for (const b of content) {
       const bc = b as { type?: string; tool_use_id?: string; content?: unknown };
       if (bc.type !== "tool_result") continue;
-      // Check if this tool_result matches one of the Agent tool_use ids
       const matchIdx = agentToolUses.findIndex(tu => tu.id === bc.tool_use_id);
-      if (matchIdx !== -1 && agentToolUses[matchIdx].resultPreview === "") {
+      if (matchIdx !== -1 && agentToolUses[matchIdx].result === "") {
         const rawContent = bc.content;
-        let preview = "";
+        let full = "";
         if (typeof rawContent === "string") {
-          preview = rawContent.slice(0, 300);
+          full = rawContent;
         } else if (Array.isArray(rawContent)) {
-          preview = rawContent.map((c: { text?: string }) => c?.text ?? "").join("").slice(0, 300);
+          full = rawContent.map((c: { text?: string }) => c?.text ?? "").join("");
         }
-        agentToolUses[matchIdx].resultPreview = preview;
+        agentToolUses[matchIdx].result = full;
+        agentToolUses[matchIdx].resultPreview = full.slice(0, 300);
       }
     }
   }
@@ -437,7 +509,7 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
       : 0;
 
     // Try to match to an Agent tool_use in the parent
-    const tu = agentToolUses[agentIdx] ?? { id: "", name: "Agent", resultPreview: "" };
+    const tu = agentToolUses[agentIdx] ?? { id: "", name: "Agent", resultPreview: "", result: "" };
     agentIdx++;
 
     summaries.push({
@@ -458,6 +530,7 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
       endedAt,
       durationMs,
       resultPreview: tu.resultPreview,
+      result: tu.result,
     });
   }
 
