@@ -119,6 +119,10 @@ export interface LlmCall {
   isSignificant: boolean;
   significantDelta: number;
   proxy: ProxyCallData | null;
+  // Quality of this call's proxy ↔ JSONL link. See call-detail.ts ProxyMatchMode.
+  // Populated by sessionDrilldown after computeCallProxyMatchModes runs;
+  // defaults to 'unmatched' in code paths that don't enrich (e.g. sub-agent stubs).
+  proxyMatchMode: "exact" | "fallback" | "unmatched";
   // All sub-agents spawned by this call (one per Agent tool_use block; usually 0-1, rarely >1)
   subAgents: SubAgentSummary[];
   incomingDiff: DiffEntry[];
@@ -142,6 +146,15 @@ export interface MidTurnInjection {
 export interface UserTurn {
   id: number;
   userInput: string;
+  /**
+   * Index of the turn-opener user event in the post-filter `events` array.
+   * Matches the same `lineIdx` scheme used by IntervalEvent / LinkableJsonlEvent
+   * so the client can call `getEventAnnotation(userInputLineIdx)` to fetch
+   * reverse-attribution (firstSeenInCall / consumedByCallIds) for the
+   * human input — same UX as any other jsonl event in the Turn view.
+   * Null if the parser somehow didn't capture a line for this turn (defensive).
+   */
+  userInputLineIdx: number | null;
   finalOutput: string | null;
   midTurnInjections: MidTurnInjection[];
   startedAt: string;

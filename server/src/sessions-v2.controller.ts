@@ -3,7 +3,7 @@ import { getDb } from "./db.ts";
 import { runSyncV2 } from "./sync-v2.ts";
 import { parseJsonField } from "./parser-utils.ts";
 import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
-import { loadCallDetail, readProxyRecord, findProxyRowForCall } from "./call-detail.ts";
+import { loadCallDetail, readProxyRecord, findProxyRowForCall, computeCallProxyMatchModes } from "./call-detail.ts";
 import { loadAttributionTree, readSessionEventsForLinker } from "./attribution-service.ts";
 import { computeSessionAttributionGraph, type JsonlEventAnnotation, type SessionAttributionGraph } from "./session-attribution-graph.ts";
 import { enrichTreeWithGraph } from "./attribution-tree-enrich.ts";
@@ -104,7 +104,8 @@ export class SessionsV2Controller {
 
     const rows = db.prepare(
       `SELECT s.*,
-         (SELECT COUNT(*) FROM proxy_requests p WHERE p.session_id = s.session_id) AS proxy_count
+         (SELECT COUNT(*) FROM proxy_requests p WHERE p.session_id = s.session_id) AS proxy_count,
+         (SELECT COUNT(*) FROM proxy_requests p WHERE p.session_id = s.session_id AND p.request_id IS NOT NULL) AS proxy_request_id_count
        FROM sessions_meta_v2 s ${where} ORDER BY last_event_at DESC LIMIT ? OFFSET ?`,
     ).all([...params, limit, offset]) as Record<string, unknown>[];
 
@@ -178,12 +179,30 @@ export class SessionsV2Controller {
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
 
     const sourceFile = row.source_file as string;
+    let drilldown;
     try {
-      return parseSessionDrilldown(sourceFile, id, row, db);
+      drilldown = parseSessionDrilldown(sourceFile, id, row, db);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       throw Object.assign(new Error(`Failed to parse session: ${msg}`), { status: 500 });
     }
+
+    // Enrich each call with proxyMatchMode (single batch query, not N+1).
+    // The drilldown parser leaves matchMode = "unmatched" by default; we
+    // overwrite here so the front-end nav can show per-call status dots
+    // without an extra round-trip per call.
+    const flatCalls = drilldown.turns.flatMap((t) =>
+      t.calls.map((c) => ({ id: c.id, apiRequestId: c.apiRequestId, timestamp: c.timestamp }))
+    );
+    const modes = computeCallProxyMatchModes(db, id, flatCalls);
+    for (const turn of drilldown.turns) {
+      for (const call of turn.calls) {
+        const m = modes.get(call.id);
+        if (m) call.proxyMatchMode = m;
+      }
+    }
+
+    return drilldown;
   }
 
   @Get("sessions/:id/subagent/:agentFileId/drilldown")
@@ -191,7 +210,26 @@ export class SessionsV2Controller {
     const db = getDb();
     const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
-    return parseSubAgentDrilldown(row.source_file, agentFileId);
+    const drilldown = parseSubAgentDrilldown(row.source_file, agentFileId);
+
+    // Sub-agent jsonl events have their own Anthropic request-ids, but the
+    // proxy_requests rows landed under the *parent* session_id. So we match
+    // against the parent id, not the synthetic "subagent:..." id the parser
+    // assigned. Without this, every sub-agent call defaults to "unmatched"
+    // and the UI fills the left nav with gray dots — falsely implying the
+    // session's proxy coverage is broken.
+    const flatCalls = drilldown.turns.flatMap((t) =>
+      t.calls.map((c) => ({ id: c.id, apiRequestId: c.apiRequestId, timestamp: c.timestamp }))
+    );
+    const modes = computeCallProxyMatchModes(db, id, flatCalls);
+    for (const turn of drilldown.turns) {
+      for (const call of turn.calls) {
+        const m = modes.get(call.id);
+        if (m) call.proxyMatchMode = m;
+      }
+    }
+
+    return drilldown;
   }
 
   @Get("sessions/:id/calls/:callId/detail")
@@ -290,8 +328,9 @@ export class SessionsV2Controller {
       proxyRequestId: number | null;
       startedAt: string;
     } | null> => {
-      const proxyRow = findProxyRowForCall(db, sid, apiRequestId ?? undefined, ts, excludeProxyId);
-      if (!proxyRow) return null;
+      const match = findProxyRowForCall(db, sid, apiRequestId ?? undefined, ts, excludeProxyId);
+      if (!match) return null;
+      const { row: proxyRow } = match;
       const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
       const reqBodyStr = rec?.reqBody as string | undefined;
       if (typeof reqBodyStr !== "string") return null;
@@ -394,8 +433,9 @@ export class SessionsV2Controller {
           };
         },
         fetchProxyReqBodyAt: async (sid, ts, excludeProxyId, apiRequestId) => {
-          const proxyRow = findProxyRowForCall(db, sid, apiRequestId, ts, excludeProxyId);
-          if (!proxyRow) return null;
+          const match = findProxyRowForCall(db, sid, apiRequestId, ts, excludeProxyId);
+          if (!match) return null;
+          const { row: proxyRow } = match;
           const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
           const reqBodyStr = rec?.reqBody as string | undefined;
           if (typeof reqBodyStr !== "string") return null;
@@ -452,8 +492,9 @@ export class SessionsV2Controller {
         };
       },
       fetchProxyReqBodyAt: async (sid, ts, excludeProxyId, apiRequestId) => {
-        const proxyRow = findProxyRowForCall(db, sid, apiRequestId, ts, excludeProxyId);
-        if (!proxyRow) return null;
+        const match = findProxyRowForCall(db, sid, apiRequestId, ts, excludeProxyId);
+        if (!match) return null;
+        const { row: proxyRow } = match;
 
         const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
         const reqBodyStr = rec?.reqBody as string | undefined;

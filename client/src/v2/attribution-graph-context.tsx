@@ -12,7 +12,21 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { apiV2 } from "./api";
 import type { JsonlEventAnnotation, SessionAttributionGraph } from "./attribution-graph-types";
 
+/** Hint passed to a destination Call detail panel to auto-select a leaf. */
+export type PendingFocus =
+  | { lineIdx: number }
+  | { toolUseId: string };
+
 export interface AttributionGraphContextValue {
+  /**
+   * True iff this subtree is rendering inside a *linked panel* (the right-
+   * side popup that opens when a leaf back-jumps to a Turn). Components
+   * inspect this and hide their own forward-jump affordances so we don't
+   * spawn another linked panel from within one (anti-recursion). Combined
+   * with `LinkedPanelScope` which also nulls out `onJumpToCall` /
+   * `flashEvent` / `flashCall` so any leftover click sites are inert.
+   */
+  linkedPanelMode: boolean;
   graph: SessionAttributionGraph | null;
   /** Quick O(1) lookup by jsonl lineIdx. */
   getEventAnnotation: (lineIdx: number) => JsonlEventAnnotation | null;
@@ -22,8 +36,26 @@ export interface AttributionGraphContextValue {
    * Jump-to-Call navigation callback — auto-wraps the parent-provided
    * dispatcher to also scroll the main timeline to that call and flash
    * its border for ~2s, so jumps land somewhere the eye can confirm.
+   *
+   * `focus` (optional) requests that the destination panel auto-select a
+   * specific leaf:
+   *   - `{ lineIdx }`   → AttributionTreeLensPanel matches a jsonl-origin
+   *                       leaf by `origin.jsonlLineIdx === lineIdx`.
+   *   - `{ toolUseId }` → ResponseTreePanel matches a tool_use block by
+   *                       `wireMeta.toolUseId === toolUseId`.
+   * Consumed once by the panel via `pendingFocus` + `clearPendingFocus`.
    */
-  onJumpToCall: ((callId: number, lens?: "request" | "response") => void) | null;
+  onJumpToCall:
+    | ((callId: number, lens?: "request" | "response", focus?: PendingFocus) => void)
+    | null;
+  /**
+   * One-shot focus hint set by `onJumpToCall(callId, lens, focus)`.
+   * Call detail panels read it on mount + when the value changes, apply
+   * the matching selection, then call `clearPendingFocus`. Returns to null
+   * after consumption.
+   */
+  pendingFocus: PendingFocus | null;
+  clearPendingFocus: () => void;
   /**
    * The call currently flashing from a recent jump. Call cards in the
    * main timeline read this and add an amber outline when their id
@@ -43,17 +75,29 @@ export interface AttributionGraphContextValue {
    * user_input / etc that has a known jsonlLineIdx.
    */
   flashEvent: (lineIdx: number) => void;
+  /**
+   * Reverse-direction navigation: scroll to and flash the Call card
+   * anchor (`[id$="-call-N"]`) in the Turn view. Used as the back-link
+   * target for `tool_use` leaves (their "source" is the call that
+   * emitted them, so the natural landing is the call card itself rather
+   * than a specific jsonl row).
+   */
+  flashCall: (callId: number) => void;
 }
 
 const Ctx = createContext<AttributionGraphContextValue>({
+  linkedPanelMode: false,
   graph: null,
   getEventAnnotation: () => null,
   loading: false,
   error: null,
   onJumpToCall: null,
+  pendingFocus: null,
+  clearPendingFocus: () => {},
   highlightedCallId: null,
   highlightedLineIdx: null,
   flashEvent: () => {},
+  flashCall: () => {},
 });
 
 const FLASH_DURATION_MS = 2000;
@@ -71,6 +115,7 @@ export function AttributionGraphProvider({
   const [error, setError] = useState<string | null>(null);
   const [highlightedCallId, setHighlightedCallId] = useState<number | null>(null);
   const [highlightedLineIdx, setHighlightedLineIdx] = useState<number | null>(null);
+  const [pendingFocus, setPendingFocus] = useState<PendingFocus | null>(null);
 
   // Single full-session load. Server caches the result for 5min, so opening
   // a session you've already visited is near-instant; the cold path runs
@@ -100,20 +145,29 @@ export function AttributionGraphProvider({
     [byLine],
   );
 
+  const clearPendingFocus = useCallback(() => setPendingFocus(null), []);
+
   // Wrap the parent-provided onJumpToCall so every jump also:
-  //   (a) scrolls the main timeline to the call's anchor `[id$="-call-N"]`
-  //   (b) sets highlightedCallId for ~2s so the target card flashes amber
-  // Both are no-ops when the parent didn't provide a dispatcher.
+  //   (a) stashes `focus` (one-shot) for the destination panel to
+  //       auto-select the matching leaf
+  //   (b) sets highlightedCallId so any call card currently in the
+  //       timeline viewport flashes amber as a visual confirmation
+  //
+  // Intentionally NOT scrolling the main timeline to the target call:
+  // every dispatched jump opens a right-side panel which IS the
+  // user-facing destination. A timeline-scroll on the left would yank
+  // the page out from under the user while they're already reading the
+  // freshly-opened panel on the right. If a future use case ever needs
+  // "jump within the timeline only" we'll add an explicit affordance
+  // for that — don't conflate it with the panel-jump path.
   const wrappedJumpToCall = useMemo(() => {
     if (!onJumpToCall) return null;
-    return (callId: number, lens?: "request" | "response") => {
+    return (callId: number, lens?: "request" | "response", focus?: PendingFocus) => {
+      // Stash focus BEFORE the panel mounts/re-renders so its first paint
+      // already has the hint available. Cleared by the panel itself when
+      // it applies the selection.
+      setPendingFocus(focus ?? null);
       onJumpToCall(callId, lens);
-      // Defer scroll until after parent's state updates (e.g. opening linked
-      // panel) have a chance to land, so the layout reflows once.
-      requestAnimationFrame(() => {
-        const el = document.querySelector<HTMLElement>(`[id$="-call-${callId}"]`);
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-      });
       setHighlightedCallId(callId);
     };
   }, [onJumpToCall]);
@@ -138,30 +192,59 @@ export function AttributionGraphProvider({
     return () => clearTimeout(t);
   }, [highlightedLineIdx]);
 
-  // flashEvent: scroll to and amber-outline the IntervalEventRow at this
-  // jsonl line. Used by Attribution leaf back-link to focus the source
-  // event in the Turn view that the legacy onLinkSource just opened.
+  // flashEvent / flashCall — reverse-link scroll helpers.
+  //
+  // Race condition fix: when these are invoked right after onLinkSource(...)
+  // opens a fresh linked panel, the target DOM element doesn't exist yet
+  // (React still has to render the panel subtree + paint). A single
+  // requestAnimationFrame isn't always enough — the panel may mount across
+  // multiple frames depending on what state updates triggered. Previously
+  // users had to click the back-link twice: the first click opened the
+  // panel but missed the scroll, the second click scrolled into the now-
+  // mounted DOM.
+  //
+  // Fix: retry the DOM query a few times (every 50ms) until we find the
+  // element OR run out of attempts. Each attempt is cheap (one selector
+  // lookup), and stops as soon as the target shows up so we never wait
+  // longer than necessary.
+  function scrollWithRetry(selector: string, maxAttempts: number) {
+    let attempts = maxAttempts;
+    const tryScroll = () => {
+      const el = document.querySelector<HTMLElement>(selector);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+      if (--attempts > 0) setTimeout(tryScroll, 50);
+    };
+    // First attempt on the next frame (covers the common "panel paints in
+    // a single frame" case at zero cost). Subsequent attempts on a timer.
+    requestAnimationFrame(tryScroll);
+  }
+
   const flashEvent = useCallback((lineIdx: number) => {
     setHighlightedLineIdx(lineIdx);
-    // Defer a frame so any newly mounted linked panel has time to paint
-    // its IntervalEventRow into the DOM before we try to scroll to it.
-    requestAnimationFrame(() => {
-      // Try linked panel first (most common: reverse-jump from Call detail
-      // opens turn-excerpt in the right panel). Fall back to main view.
-      const el = document.querySelector<HTMLElement>(`[data-jsonl-line="${lineIdx}"]`);
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
+    scrollWithRetry(`[data-jsonl-line="${lineIdx}"]`, 8); // 8 × 50ms ≈ 400ms max
+  }, []);
+
+  const flashCall = useCallback((callId: number) => {
+    setHighlightedCallId(callId);
+    scrollWithRetry(`[id$="-call-${callId}"]`, 8);
   }, []);
 
   const value: AttributionGraphContextValue = {
+    linkedPanelMode: false,
     graph,
     getEventAnnotation,
     loading,
     error,
     onJumpToCall: wrappedJumpToCall,
+    pendingFocus,
+    clearPendingFocus,
     highlightedCallId,
     highlightedLineIdx,
     flashEvent,
+    flashCall,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
@@ -169,6 +252,29 @@ export function AttributionGraphProvider({
 
 export function useAttributionGraph(): AttributionGraphContextValue {
   return useContext(Ctx);
+}
+
+/**
+ * Wrap any subtree to render in "linked-panel mode" — Turn / Call rendering
+ * components see `linkedPanelMode: true` (so they hide forward-jump
+ * affordances) AND the jump dispatcher + flash helpers are nulled out (so
+ * any leftover click sites are inert). The parent context's read-only data
+ * (graph / annotations / highlight state) passes through unchanged so the
+ * panel can still render annotations.
+ *
+ * Anti-recursion: prevents the right-side linked panel from spawning
+ * another right-side panel when the user clicks something inside it.
+ */
+export function LinkedPanelScope({ children }: { children: React.ReactNode }) {
+  const parent = useContext(Ctx);
+  const masked = useMemo<AttributionGraphContextValue>(() => ({
+    ...parent,
+    linkedPanelMode: true,
+    onJumpToCall: null,
+    flashEvent: () => {},
+    flashCall: () => {},
+  }), [parent]);
+  return <Ctx.Provider value={masked}>{children}</Ctx.Provider>;
 }
 
 /**

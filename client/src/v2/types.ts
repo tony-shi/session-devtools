@@ -27,6 +27,12 @@ export interface SessionV2 {
   claude_code_api_error_count: number;
   parser_warnings: string[];
   proxy_count: number;
+  // Proxy rows for this session that carry an Anthropic `request-id` header.
+  // Rows without one (e.g. captured behind gateways like mcli that strip the
+  // header) can only be linked via the fallback time-window heuristic, which
+  // is not 100% trustworthy. UI badges the session as "proxy partial" when
+  // proxy_request_id_count < proxy_count.
+  proxy_request_id_count: number;
   away_summary: string | null;
   last_assistant_text: string | null;
 }

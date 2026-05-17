@@ -305,36 +305,61 @@ export interface LedgerHoverWrapperProps extends Omit<LedgerExplainerProps, "anc
   anchor?: "above-right" | "below-right";
 }
 
+/**
+ * @deprecated Use a plain wrapper `<div>` + `<LedgerInfoIcon>` placed inline
+ * where you want the info trigger to appear. This wrapper is kept as a
+ * pass-through so old callers don't break, but it no longer renders an icon.
+ */
 export function LedgerHoverWrapper({
-  children, style, anchor, preferredAnchor, ...explainerProps
+  children, style,
 }: LedgerHoverWrapperProps) {
-  const wrapperRef = useRef<HTMLDivElement | null>(null);
+  return <div style={style}>{children}</div>;
+}
+
+/**
+ * Inline info trigger that pops the LedgerExplainer when hovered. Place
+ * wherever the icon makes semantic sense (e.g. just after the CACHE RATIO
+ * chip). Owns its own ref + portal lifecycle.
+ */
+export function LedgerInfoIcon({
+  preferredAnchor = "below",
+  ...explainerProps
+}: Omit<LedgerExplainerProps, "anchorRect">) {
+  const iconRef = useRef<HTMLSpanElement | null>(null);
   const [rect, setRect] = useState<DOMRect | null>(null);
 
-  // 把旧 anchor 写法映射到新 preferredAnchor；显式 preferredAnchor 优先
-  const effectivePreferred: "above" | "below" =
-    preferredAnchor ?? (anchor === "above-right" ? "above" : "below");
-
   const open = () => {
-    if (wrapperRef.current) setRect(wrapperRef.current.getBoundingClientRect());
+    if (iconRef.current) setRect(iconRef.current.getBoundingClientRect());
   };
   const close = () => setRect(null);
 
   return (
-    <div
-      ref={wrapperRef}
-      onMouseEnter={open}
-      onMouseLeave={close}
-      style={style}
-    >
-      {children}
+    <>
+      <span
+        ref={iconRef}
+        onMouseEnter={open}
+        onMouseLeave={close}
+        title="hover 查看 token ledger 公式"
+        style={{
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          width: 16, height: 16, borderRadius: "50%",
+          background: "#eef2ff", color: "#4338ca",
+          border: "1px solid #c7d2fe",
+          fontSize: 11, fontWeight: 700, fontStyle: "italic",
+          fontFamily: "'Georgia', 'Times New Roman', serif",
+          lineHeight: 1, cursor: "help", userSelect: "none",
+          flexShrink: 0,
+        }}
+      >
+        i
+      </span>
       {rect && (
         <LedgerExplainer
           {...explainerProps}
           anchorRect={rect}
-          preferredAnchor={effectivePreferred}
+          preferredAnchor={preferredAnchor}
         />
       )}
-    </div>
+    </>
   );
 }

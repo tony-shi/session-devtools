@@ -17,6 +17,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { apiV2 } from "./api";
+import { useAttributionGraph } from "./attribution-graph-context";
 import type { AttributionTreeResult } from "./attribution-tree-types";
 import {
   SECTION_META,
@@ -86,9 +87,9 @@ const DEV_TODOS: DevTodo[] = [
   },
   // Provenance 视角专属
   {
-    id: "dev-todo-provenance-skill-mcp",
-    label: "Skill / MCP 细分",
-    detail: "Harness 静态目前只按「有无 dynamicFields」粗分。要再细到 skill / mcp / system_reminder / tool_definition 等子桶，需要 server 端给 slotType 一套规范命名空间（skill.* / mcp.*），或在 client 端维护本地映射表。",
+    id: "dev-todo-provenance-harness-submech",
+    label: "Skill vs 摘要细分",
+    detail: "harness_injection 桶目前把 skill_invocation 和 compaction_summary 合并显示。若要再细分，需要在前端 SegmentOrigin 加 harness?: { mechanism; payload } 字段（后端已序列化），然后在 bucketOf 里分桶。当前粒度够用。",
     showForLensId: "provenance",
   },
   // Cache 视角专属
@@ -137,17 +138,21 @@ function DevTodoStrip({ activeLensId }: { activeLensId: string }) {
 // ─── LensSwitcher ────────────────────────────────────────────────────────────
 
 function LensSwitcher({
-  activeLensId, onChange,
+  activeLensId, onChange, hideDiff,
 }: {
   activeLensId: string;
   onChange: (id: string) => void;
+  /** Skip the virtual Diff lens chip when there's no previous call to
+   *  compare against (first call of session, fork start, etc.) — showing
+   *  the chip with nothing to diff is just confusing. */
+  hideDiff?: boolean;
 }) {
   // Build chip list: real lenses (Provenance / Cache / Audit) + virtual
   // "Diff" lens (special-case rendering, see DIFF_LENS_ID note). Visual
   // treatment is identical so the user sees a single coherent "视角" row.
   const chips: Array<{ id: string; label: string; description: string }> = [
     ...LENSES.map(l => ({ id: l.id, label: l.label, description: l.description ?? "" })),
-    { id: DIFF_LENS_ID, label: DIFF_LENS_LABEL, description: DIFF_LENS_DESCRIPTION },
+    ...(hideDiff ? [] : [{ id: DIFF_LENS_ID, label: DIFF_LENS_LABEL, description: DIFF_LENS_DESCRIPTION }]),
   ];
   return (
     <div style={{
@@ -188,7 +193,8 @@ function LensSwitcher({
 // ─── BucketPillRow ──────────────────────────────────────────────────────────
 //
 // 当前 lens 的桶 pill 行。点击 pill = 把那个桶设为过滤；再点一次取消。
-// 空桶（leafCount === 0）也保留位置，但灰色 + disable，避免布局跳动。
+// 空桶（leafCount === 0）直接不渲染：本 call 没数据的分类不应该占视觉空间，
+// 即使是为了"展示完整 lens 字典"。用户问的是这个 call 的数据。
 
 function BucketPillRow({
   lens, selectedBucketId, onSelect, leaves,
@@ -199,20 +205,22 @@ function BucketPillRow({
   leaves: LeafLite[];
 }) {
   const stats = useMemo(() => bucketStatsOf(lens, leaves), [lens, leaves]);
+  // 过滤掉本 call 没有命中的桶。如果全部为空（罕见 — 一般是 leaves 全跑空），
+  // 整个 pill 行不渲染，避免留个空 row。
+  const nonEmptyStats = stats.filter(s => s.leafCount > 0);
+  if (nonEmptyStats.length === 0) return null;
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 6,
       flexWrap: "wrap",  // 桶过多时换行（前端样式处理布局问题）
       padding: "2px 0",
     }}>
-      {stats.map(({ bucket, leafCount, totalChars }) => {
+      {nonEmptyStats.map(({ bucket, leafCount, totalChars }) => {
         const isActive = selectedBucketId === bucket.id;
-        const isEmpty = leafCount === 0;
         return (
           <button
             key={bucket.id}
             type="button"
-            disabled={isEmpty}
             onClick={() => onSelect(isActive ? null : bucket.id)}
             title={`${bucket.label}${bucket.description ? "：" + bucket.description : ""}\n${leafCount} 个 leaf · ${fmtK(totalChars)} chars`}
             style={{
@@ -220,20 +228,18 @@ function BucketPillRow({
               padding: "3px 8px", borderRadius: 4,
               border: isActive ? `1px solid ${bucket.color}` : "1px solid transparent",
               background: isActive ? `${bucket.color}1a` : "transparent",
-              color: isEmpty ? "#d1d5db" : "#374151",
+              color: "#374151",
               fontSize: 11,
-              cursor: isEmpty ? "not-allowed" : "pointer",
-              opacity: isEmpty ? 0.5 : 1,
+              cursor: "pointer",
               transition: "background 0.1s, border-color 0.1s",
             }}
           >
             <span style={{
               width: 6, height: 6, borderRadius: 1,
               background: bucket.color, alignSelf: "center",
-              opacity: isEmpty ? 0.4 : 1,
             }} />
-            <span style={{ fontWeight: 600, color: isEmpty ? "#9ca3af" : "#1f2937" }}>{leafCount}</span>
-            <span style={{ color: isEmpty ? "#9ca3af" : "#6b7280" }}>{bucket.label}</span>
+            <span style={{ fontWeight: 600, color: "#1f2937" }}>{leafCount}</span>
+            <span style={{ color: "#6b7280" }}>{bucket.label}</span>
           </button>
         );
       })}
@@ -457,6 +463,26 @@ export function AttributionTreeLensPanel({
   const lens = useMemo(() => getLens(lensId), [lensId]);
   const allLeaves = useMemo(() => result ? flattenLeaves(result) : [], [result]);
 
+  // Pending-focus consumption: when a Turn-view event jump lands here with a
+  // `{ lineIdx }` focus, find the leaf whose jsonl origin matches and
+  // select it. Also drills into its containing section so the leaf
+  // actually renders (top-level table starts in section overview, not
+  // leaf detail).
+  const { pendingFocus, clearPendingFocus } = useAttributionGraph();
+  useEffect(() => {
+    if (!pendingFocus || !("lineIdx" in pendingFocus) || allLeaves.length === 0) return;
+    const target = pendingFocus.lineIdx;
+    const match = allLeaves.find(
+      (l) => l.origin.kind === "jsonl" && l.origin.jsonlLineIdx === target,
+    );
+    if (match) {
+      setSelectedSection(sectionOf(match.rootSlotType));
+      setSelectedNodeId(match.nodeId);
+      setSelectedBucketId(null);
+    }
+    clearPendingFocus();
+  }, [pendingFocus, allLeaves, clearPendingFocus]);
+
   // Bucket filtering — 选了桶就只留命中桶的 leaf；否则全集。
   const leaves = useMemo(() => {
     if (!selectedBucketId) return allLeaves;
@@ -532,8 +558,9 @@ export function AttributionTreeLensPanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {/* Layer 0: Lens 切换 */}
-      <LensSwitcher activeLensId={lensId} onChange={setLensId} />
+      {/* Layer 0: Lens 切换. Diff chip hidden for first-of-session
+          calls — nothing to diff against. */}
+      <LensSwitcher activeLensId={lensId} onChange={setLensId} hideDiff={prevCallId == null} />
 
       {/* Layer 0.1: 开发者可见的 TODO 列表 —— 直接挂在视图上，方便迭代时
           一眼看到该 lens 还有哪些限制 / 下一步要做的事。每个 chip 鼠标

@@ -16,6 +16,7 @@
 
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
+import JsonView from "@uiw/react-json-view";
 
 export type EventDirection = "in" | "out";
 
@@ -32,6 +33,15 @@ export interface EventSegment {
   monospace?: boolean;
   /** Default 1000. Pass Infinity to disable truncation. */
   truncateAt?: number;
+  /**
+   * When present, the segment shows a "渲染 | 原始 JSON" toggle next to the
+   * label. The user can flip between the rendered `content` (truncated text)
+   * and the underlying structured object rendered via a collapsible JSON
+   * tree viewer. Useful for jsonl events / wire blocks where the rendered
+   * form is a lossy preview and the user occasionally wants the full
+   * structured payload.
+   */
+  rawJson?: unknown;
 }
 
 export interface EventUnitCardProps {
@@ -46,6 +56,15 @@ export interface EventUnitCardProps {
   // === Collapsed preview ===
   /** Shown only when card is collapsed (single-line summary). */
   preview?: string;
+  /**
+   * Always-visible subtitle below the header strip. Used for short,
+   * human-readable intent labels — e.g. tool_use cards surface the
+   * `description` field that Claude Code attaches to most tool calls
+   * ("List top-level entries", "Read package.json"). Visible in both
+   * collapsed and expanded state so it's there when the user is scanning
+   * AND when they've drilled in.
+   */
+  description?: string;
 
   // === Expanded content ===
   segments?: EventSegment[];
@@ -122,7 +141,7 @@ function shortenId(id: string): string {
 export function EventUnitCard(props: EventUnitCardProps) {
   const {
     color, kindLabel, title, shortId, size, timestamp,
-    preview, segments = [], coordinate, confidence, impact,
+    preview, description, segments = [], coordinate, confidence, impact,
     expandable = true, defaultExpanded = false,
     active = false,
     onMouseEnter, onMouseLeave, onClick, onJump, jumpLabel, jumpTooltip,
@@ -169,16 +188,20 @@ export function EventUnitCard(props: EventUnitCardProps) {
         transition: "background 0.1s, border-color 0.1s, opacity 0.1s",
       }}
     >
-      {/* === Header === */}
+      {/* === Header ===
+          Click target is intentionally just the chevron toggle, NOT the
+          whole header strip. Clicking the body anywhere else used to expand
+          the card and shift surrounding rows — visually identical to a
+          "scroll" the user didn't request. Now the body is inert; only the
+          jump chip (right side) and the chevron (far right) take clicks.
+          When the caller wants whole-body click behavior they can still
+          pass `onClick` — that fires without touching expansion state. */}
       <div
-        onClick={() => {
-          if (onClick) onClick();
-          if (expandable) setExpanded(v => !v);
-        }}
+        onClick={onClick ? () => onClick() : undefined}
         style={{
           display: "flex", alignItems: "center", gap: 8,
           padding: headerPadding,
-          cursor: (expandable || onClick) ? "pointer" : "default",
+          cursor: onClick ? "pointer" : "default",
         }}
       >
         {/* color dot */}
@@ -277,13 +300,40 @@ export function EventUnitCard(props: EventUnitCardProps) {
           </button>
         )}
 
-        {/* expand toggle */}
+        {/* expand toggle — the only element in the header that toggles
+            expansion. stopPropagation so it doesn't double-fire onClick. */}
         {expandable && (
-          <span style={{ fontSize: 9, color: "#d1d5db", flexShrink: 0 }}>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setExpanded(v => !v); }}
+            title={expanded ? "折叠" : "展开"}
+            style={{
+              background: "transparent", border: "none",
+              cursor: "pointer", padding: "0 2px",
+              fontSize: 11, color: "#9ca3af", lineHeight: 1,
+              flexShrink: 0,
+            }}
+          >
             {expanded ? "▲" : "▼"}
-          </span>
+          </button>
         )}
       </div>
+
+      {/* === Description subtitle ===
+          Always-visible (collapsed and expanded). For tool_use cards this
+          carries the human intent string ("List top-level entries") which
+          is much more scannable than the raw input JSON. Indented to align
+          with the kind label. */}
+      {description && (
+        <div style={{
+          padding: compact ? "0 8px 4px 8px" : "0 10px 5px 10px",
+          fontSize: 11, color: "#6b7280",
+          fontStyle: "italic", lineHeight: 1.4,
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {description}
+        </div>
+      )}
 
       {/* === Content === */}
       {showExpanded && segments.length > 0 && (
@@ -377,7 +427,7 @@ function WarningIcon() {
   );
 }
 
-function LinkIcon() {
+export function LinkIcon() {
   // Outline link/chain icon — visually signals "navigate" without text.
   return (
     <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -394,44 +444,127 @@ function SegmentView({ seg }: { seg: EventSegment }) {
   const truncateAt = seg.truncateAt ?? 1000;
   const tooLong = seg.content.length > truncateAt;
   const [showFull, setShowFull] = useState(false);
+  // "preview" = rendered/truncated content (default); "raw" = JSON tree
+  // viewer over `seg.rawJson`. Toggle only available when rawJson is
+  // present — segments without structured backing stay text-only.
+  const [viewMode, setViewMode] = useState<"preview" | "raw">("preview");
+  const hasRaw = seg.rawJson !== undefined && seg.rawJson !== null;
   const shown = !tooLong || showFull ? seg.content : seg.content.slice(0, truncateAt);
   const monospace = seg.monospace ?? true;
 
   return (
     <div style={{ marginTop: 6 }}>
-      {seg.label && (
+      {(seg.label || hasRaw) && (
         <div style={{
-          fontSize: 9, color: "#64748b", fontWeight: 700, letterSpacing: "0.05em",
+          display: "flex", alignItems: "center", gap: 6,
           marginBottom: 3,
         }}>
-          {seg.label}
+          {seg.label && (
+            <span style={{
+              fontSize: 9, color: "#64748b", fontWeight: 700, letterSpacing: "0.05em",
+            }}>
+              {seg.label}
+            </span>
+          )}
+          {hasRaw && (
+            <div style={{
+              marginLeft: "auto",
+              display: "inline-flex",
+              border: "1px solid #e5e7eb", borderRadius: 4,
+              overflow: "hidden",
+            }}>
+              <SegmentModeButton
+                active={viewMode === "preview"}
+                onClick={(e) => { e.stopPropagation(); setViewMode("preview"); }}
+              >
+                渲染
+              </SegmentModeButton>
+              <SegmentModeButton
+                active={viewMode === "raw"}
+                onClick={(e) => { e.stopPropagation(); setViewMode("raw"); }}
+              >
+                原始 JSON
+              </SegmentModeButton>
+            </div>
+          )}
         </div>
       )}
-      <pre style={{
-        margin: 0, padding: "6px 8px",
-        fontSize: 11, lineHeight: 1.5,
-        background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4,
-        color: "#334155",
-        whiteSpace: "pre-wrap", wordBreak: "break-word",
-        maxHeight: showFull ? 480 : 200, overflow: "auto",
-        fontFamily: monospace ? "ui-monospace, SFMono-Regular, monospace" : "inherit",
-      }}>
-        {shown}
-      </pre>
-      {tooLong && (
-        <button
-          onClick={(e) => { e.stopPropagation(); setShowFull(v => !v); }}
-          style={{
-            marginTop: 3, fontSize: 10, color: "#6366f1",
-            background: "none", border: "none", cursor: "pointer", padding: 0,
-            fontWeight: 600,
-          }}
-        >
-          {showFull
-            ? t("terms.showLess")
-            : t("terms.showMore", { n: seg.content.length - truncateAt })}
-        </button>
+
+      {viewMode === "raw" && hasRaw ? (
+        <div style={{
+          padding: "6px 8px",
+          background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4,
+          maxHeight: 480, overflow: "auto",
+          fontSize: 11,
+        }}>
+          <JsonView
+            value={seg.rawJson as object}
+            collapsed={2}
+            displayDataTypes={false}
+            displayObjectSize={false}
+            enableClipboard
+            style={{
+              backgroundColor: "transparent",
+              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+              fontSize: 11,
+              lineHeight: 1.55,
+            }}
+          />
+        </div>
+      ) : (
+        <>
+          <pre style={{
+            margin: 0, padding: "6px 8px",
+            fontSize: 11, lineHeight: 1.5,
+            background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4,
+            color: "#334155",
+            whiteSpace: "pre-wrap", wordBreak: "break-word",
+            maxHeight: showFull ? 480 : 200, overflow: "auto",
+            fontFamily: monospace ? "ui-monospace, SFMono-Regular, monospace" : "inherit",
+          }}>
+            {shown}
+          </pre>
+          {tooLong && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowFull(v => !v); }}
+              style={{
+                marginTop: 3, fontSize: 10, color: "#6366f1",
+                background: "none", border: "none", cursor: "pointer", padding: 0,
+                fontWeight: 600,
+              }}
+            >
+              {showFull
+                ? t("terms.showLess")
+                : t("terms.showMore", { n: seg.content.length - truncateAt })}
+            </button>
+          )}
+        </>
       )}
     </div>
+  );
+}
+
+function SegmentModeButton({
+  active, onClick, children,
+}: {
+  active: boolean;
+  onClick: (e: React.MouseEvent) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        background: active ? "#eef2ff" : "transparent",
+        color: active ? "#4338ca" : "#9ca3af",
+        border: "none",
+        padding: "2px 8px",
+        fontSize: 9, fontWeight: 700, letterSpacing: "0.04em",
+        cursor: "pointer", lineHeight: 1.3,
+      }}
+    >
+      {children}
+    </button>
   );
 }

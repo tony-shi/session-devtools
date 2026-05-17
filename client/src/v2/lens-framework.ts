@@ -45,44 +45,54 @@ export interface Lens {
 
 // ─── Provenance Lens（来源）──────────────────────────────────────────────────
 //
-// 把每个 leaf 归类到「这段内容从哪儿来」：
-//   harness 写死  /  harness 动态注入  /  用户输入  /  tool_use  /  tool_result
-//   /  assistant 文本（含 thinking）  /  附件 / 系统注入事件  /  未识别
+// 把每个 leaf 归类到「这段内容从哪儿来」，按原子 source 一一对应：
 //
-// 取数：
-//   - origin.kind === "rule" 且 dynamicFields 空 → harness-static
-//   - origin.kind === "rule" 且 dynamicFields 非空 → harness-dynamic
-//   - origin.kind === "jsonl" → 看 eventKind（兼容 server 端两种序列化形态：
-//       * string 字面量 "tool_result"
-//       * 对象 { source: "tool_result", contentType?: "text" }
-//     ）
-//   - origin.kind === "structural" / "unknown" → unknown
+//   rule origin（任意 dynamicFields）→ 系统提示词
+//   jsonl user_input                 → 用户输入
+//   jsonl tool_use                   → 工具调用
+//   jsonl tool_result                → 工具结果
+//   jsonl thinking                   → Claude 思考
+//   jsonl assistant_text             → Claude 回复
+//   jsonl attachment                 → 文件附件
+//   jsonl system_local_command       → 命令输出
+//   jsonl harness_injection          → Skill / 摘要注入
+//   structural / unknown / 其他      → 未识别
+//
+// 设计原则：每个桶对应 JsonlEventSource 中的一个实际产出值，互斥且完全覆盖。
+// rule origin 不再按 dynamicFields 拆分——那是 parser 实现细节，不是内容来源。
+// harness_injection 单独成桶（原先遗漏→落入"未识别"，现已修正）。
 
-const PROV_HARNESS_STATIC  = "harness-static";
-const PROV_HARNESS_DYNAMIC = "harness-dynamic";
+const PROV_SYSTEM_PROMPT   = "system-prompt";
 const PROV_USER_INPUT      = "user-input";
 const PROV_TOOL_USE        = "tool-use";
 const PROV_TOOL_RESULT     = "tool-result";
-const PROV_ASSISTANT_TEXT  = "assistant-text";
-const PROV_ATTACHMENT      = "attachment";
+const PROV_CLAUDE_THINKING = "claude-thinking";
+const PROV_CLAUDE_TEXT     = "claude-text";
+const PROV_FILE_ATTACHMENT = "file-attachment";
+const PROV_COMMAND_OUTPUT  = "command-output";
+const PROV_HARNESS_INJECT  = "harness-injection";
 const PROV_UNKNOWN         = "unknown";
 
 const PROVENANCE_BUCKETS: LensBucket[] = [
-  { id: PROV_HARNESS_STATIC,  label: "Harness 静态",  color: "#3b82f6",
-    description: "硬编码的 system prompt 文本（rule 命中且无动态字段注入）" },
-  { id: PROV_HARNESS_DYNAMIC, label: "Harness 动态",  color: "#8b5cf6",
-    description: "模板规则命中，但包含来自 env / runtime / memory / user 的动态字段注入" },
-  { id: PROV_USER_INPUT,      label: "用户输入",      color: "#10b981",
+  { id: PROV_SYSTEM_PROMPT,   label: "系统提示词",   color: "#3b82f6",
+    description: "Claude Code 内置系统 prompt（规则匹配段，含静态模板与动态字段注入）" },
+  { id: PROV_USER_INPUT,      label: "用户输入",     color: "#10b981",
     description: "原始用户输入消息（jsonl user_input 事件）" },
-  { id: PROV_TOOL_USE,        label: "工具调用",      color: "#f59e0b",
+  { id: PROV_TOOL_USE,        label: "工具调用",     color: "#f59e0b",
     description: "Agent 发起的 tool_use block（assistant 响应中的工具调用请求）" },
-  { id: PROV_TOOL_RESULT,     label: "工具结果",      color: "#ec4899",
+  { id: PROV_TOOL_RESULT,     label: "工具结果",     color: "#ec4899",
     description: "工具执行结果回灌（jsonl tool_result 事件）" },
-  { id: PROV_ASSISTANT_TEXT,  label: "Agent 文本",    color: "#06b6d4",
-    description: "Assistant 文本响应、thinking 等" },
-  { id: PROV_ATTACHMENT,      label: "附件 / 系统",   color: "#a78bfa",
-    description: "附件 / 本地命令 / stop hook / away summary 等系统注入事件" },
-  { id: PROV_UNKNOWN,         label: "未识别",        color: "#9ca3af",
+  { id: PROV_CLAUDE_THINKING, label: "AI 思考",      color: "#8b5cf6",
+    description: "Extended thinking 块（AI 内部推理过程，不直接输出给用户）" },
+  { id: PROV_CLAUDE_TEXT,     label: "AI 回复",      color: "#06b6d4",
+    description: "Assistant 文本响应（直接输出给用户的回复内容）" },
+  { id: PROV_FILE_ATTACHMENT, label: "文件附件",     color: "#a78bfa",
+    description: "用户上传的文件或 attachment 事件（task_reminder / queued_command / edited_text_file 等）" },
+  { id: PROV_COMMAND_OUTPUT,  label: "命令输出",     color: "#f97316",
+    description: "Bash / 本地命令输出（<bash-stdout> / <local-command-*> 等）" },
+  { id: PROV_HARNESS_INJECT,  label: "Skill / 摘要", color: "#64748b",
+    description: "Skill 工具加载的 SKILL.md 内容，或 compaction 压缩后注入的对话摘要" },
+  { id: PROV_UNKNOWN,         label: "未识别",       color: "#9ca3af",
     description: "structural 占位 / 未匹配规则 / 未知 origin" },
 ];
 
@@ -98,27 +108,24 @@ function jsonlEventSource(eventKind: unknown): string | null {
 export const provenanceLens: Lens = {
   id: "provenance",
   label: "来源",
-  description: "按内容来源分类：harness 静态 / 动态、用户、tool_use、tool_result、Agent 文本、附件、未识别",
+  description: "按内容来源分类：系统提示词、用户输入、工具调用/结果、Claude 思考/回复、文件附件、命令输出、Skill/摘要注入、未识别",
   buckets: PROVENANCE_BUCKETS,
   bucketOf(leaf) {
     const o = leaf.origin;
-    if (o.kind === "rule") {
-      const hasDynamic = !!(o.dynamicFields && o.dynamicFields.length > 0);
-      return hasDynamic ? PROV_HARNESS_DYNAMIC : PROV_HARNESS_STATIC;
-    }
+    // rule origin 统一归入系统提示词，不再按 dynamicFields 区分静/动态
+    if (o.kind === "rule") return PROV_SYSTEM_PROMPT;
     if (o.kind === "jsonl") {
       const src = jsonlEventSource(o.eventKind);
       switch (src) {
-        case "user_input":             return PROV_USER_INPUT;
-        case "tool_use":               return PROV_TOOL_USE;
-        case "tool_result":            return PROV_TOOL_RESULT;
-        case "assistant_text":
-        case "thinking":               return PROV_ASSISTANT_TEXT;
-        case "attachment":
-        case "system_local_command":
-        case "stop_hook":
-        case "away_summary":           return PROV_ATTACHMENT;
-        default:                       return PROV_UNKNOWN;
+        case "user_input":           return PROV_USER_INPUT;
+        case "tool_use":             return PROV_TOOL_USE;
+        case "tool_result":          return PROV_TOOL_RESULT;
+        case "thinking":             return PROV_CLAUDE_THINKING;
+        case "assistant_text":       return PROV_CLAUDE_TEXT;
+        case "attachment":           return PROV_FILE_ATTACHMENT;
+        case "system_local_command": return PROV_COMMAND_OUTPUT;
+        case "harness_injection":    return PROV_HARNESS_INJECT;
+        default:                     return PROV_UNKNOWN;
       }
     }
     return PROV_UNKNOWN;

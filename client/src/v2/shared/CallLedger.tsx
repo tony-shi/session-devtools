@@ -22,7 +22,7 @@
 
 import React from "react";
 import { TOKEN_METRICS } from "../metricRegistry";
-import { LedgerHoverWrapper } from "./LedgerExplainer";
+import { LedgerHoverWrapper, LedgerInfoIcon } from "./LedgerExplainer";
 
 function fmtK(n: number): string {
   const abs = Math.abs(n);
@@ -109,17 +109,24 @@ function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding 
             {ratio != null && (
               <>
                 <div style={{ width: 1, height: 12, background: "#e5e7eb" }} />
-                {/* Cache ratio chip — native `title=` tooltip removed; the
-                    whole ledger is wrapped in LedgerHoverWrapper which gives
-                    a properly styled popover with the same content (and more). */}
+                {/* Cache ratio chip + inline info trigger. Vertical
+                    separator visually disconnects the trigger from the
+                    ratio number so users read it as "tap here to learn
+                    more" rather than as part of the metric. */}
                 <span style={{
                   display: "inline-flex", alignItems: "center", gap: 4,
                   fontSize: 9, fontWeight: 700, color: M.cache_ratio.color,
                 }}>
                   CACHE RATIO
-                  <InfoIcon />
                   <span>{fmtPct(ratio)}</span>
                 </span>
+                <div style={{ width: 1, height: 12, background: "#e5e7eb" }} />
+                <LedgerInfoIcon
+                  variant="call"
+                  freshIn={freshIn} cacheRead={cacheRead} cacheWrite={cacheWrite}
+                  output={output} ratio={ratio}
+                  preferredAnchor="below"
+                />
               </>
             )}
           </div>
@@ -311,11 +318,3 @@ const sectionHeaderStyle: React.CSSProperties = {
   whiteSpace: "nowrap",
 };
 
-function InfoIcon() {
-  return (
-    <svg width="9" height="9" viewBox="0 0 16 16" style={{ display: "inline-block", verticalAlign: "middle" }}>
-      <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <text x="8" y="11.5" textAnchor="middle" fontSize="10" fontWeight="700" fill="currentColor">i</text>
-    </svg>
-  );
-}

@@ -124,6 +124,11 @@ export interface LlmCall {
   // null when no proxy record matches this call
   proxy: ProxyCallData | null;
 
+  // Quality of this call's proxy ↔ JSONL link. 'exact' = matched on
+  // Anthropic request-id; 'fallback' = time-window heuristic (may be wrong);
+  // 'unmatched' = no proxy row found. UI surfaces non-exact as a status dot.
+  proxyMatchMode: "exact" | "fallback" | "unmatched";
+
   // Sub-agents spawned by this call (one per Agent tool_use; usually 0-1, rarely >1)
   subAgents: SubAgentSummary[];
 
@@ -151,6 +156,10 @@ export interface UserTurn {
   // 1-based index within the session
   id: number;
   userInput: string;
+  /** Jsonl event index for the turn-opener user event. Use with
+   *  `useAttributionGraph().getEventAnnotation(lineIdx)` to surface a
+   *  jump chip on the human-input card. */
+  userInputLineIdx: number | null;
   // Full text of the model's final end_turn response (null if not available)
   finalOutput: string | null;
   // User messages injected while LLM was executing tool calls within this turn
@@ -249,6 +258,10 @@ export interface CallDetail {
   callId: number;
   sessionId: string;
   proxyRequestId: number | null;
+  // 'unmatched' when proxyRequestId is null; otherwise reflects whether the
+  // row was found via Anthropic request-id (exact) or the time-window
+  // fallback (less trustworthy).
+  proxyMatchMode: "exact" | "fallback" | "unmatched";
 
   model: string;
   stopReason: string | null;

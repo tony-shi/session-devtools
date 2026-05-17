@@ -471,6 +471,7 @@ export function parseSessionDrilldown(
   sessionId: string,
   sessionRow: Record<string, unknown>,
   db: Database,
+  opts: { treatSidechainAsMain?: boolean } = {},
 ): SessionDrilldown {
   // ── 1. Title (same multi-fallback as SessionListV2) ──────────────────────
   const title = (sessionRow.custom_title as string | null)
@@ -486,6 +487,20 @@ export function parseSessionDrilldown(
   const events: JEvent[] = [];
   for (const line of lines) {
     try { events.push(JSON.parse(line)); } catch { /* skip malformed */ }
+  }
+
+  // Sub-agent JSONL re-use path: every event carries `isSidechain: true`
+  // because the file represents a sidechain branch from the parent's POV.
+  // For the sub-agent's *own* timeline we want it to behave like a normal
+  // session — promote sidechain to main so all five `if (ev.isSidechain) skip`
+  // gates below stop short-circuiting (turns segmentation, assistant frame
+  // collection, etc.). See parseSubAgentDrilldown for the only caller.
+  if (opts.treatSidechainAsMain) {
+    for (const ev of events) {
+      if ((ev as { isSidechain?: boolean }).isSidechain) {
+        (ev as { isSidechain?: boolean }).isSidechain = false;
+      }
+    }
   }
 
   // ── 3. Build logical assistant calls from streaming JSONL frames ─────────
@@ -585,6 +600,11 @@ export function parseSessionDrilldown(
     const userEv = ev as JUserEvent;
     const userText = extractUserText(userEv.message?.content);
     const turnStartTs = tsOf(ev);
+    // Position of the turn-opener user event in the events array. Used by
+    // the client to look up reverse-attribution for the human input
+    // (firstSeenInCall / consumedByCallIds) so the Turn card's blue "USER
+    // INPUT" node can render a jump chip just like other jsonl events.
+    const userInputLineIdx = i;
 
     // Collect deduplicated assistant events until end_turn.
     // Also capture any human-input user events that arrive mid-turn
@@ -840,6 +860,7 @@ export function parseSessionDrilldown(
         isSignificant: Math.abs(significantDelta) > 2000,
         significantDelta,
         proxy: null,
+        proxyMatchMode: "unmatched", // overwritten by sessionDrilldown via computeCallProxyMatchModes
         subAgents: [], // filled below after parsing sub agents
         incomingDiff: [],
         toolNames,
@@ -891,6 +912,7 @@ export function parseSessionDrilldown(
     turns.push({
       id: turns.length + 1,
       userInput: userText,
+      userInputLineIdx,
       finalOutput,
       midTurnInjections,
       startedAt: turnStartTs,
@@ -1188,5 +1210,7 @@ export function parseSubAgentDrilldown(
     prepare: () => ({ all: () => [], get: () => undefined }),
   } as unknown as import("better-sqlite3").Database;
 
-  return parseSessionDrilldown(agentPath, `subagent:${agentFileId}`, fakeRow, stubDb);
+  return parseSessionDrilldown(agentPath, `subagent:${agentFileId}`, fakeRow, stubDb, {
+    treatSidechainAsMain: true,
+  });
 }

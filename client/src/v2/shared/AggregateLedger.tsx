@@ -18,7 +18,7 @@
 
 import React from "react";
 import { TOKEN_METRICS } from "../metricRegistry";
-import { LedgerHoverWrapper } from "./LedgerExplainer";
+import { LedgerHoverWrapper, LedgerInfoIcon } from "./LedgerExplainer";
 
 const SIGMA = "∑";
 
@@ -119,19 +119,24 @@ function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, inputTotal, n
             {ratio != null && (
               <>
                 <div style={{ width: 1, height: 12, background: "#e5e7eb" }} />
-                {/* Cache ratio chip — native title= 已下线，外层 LedgerHoverWrapper
-                    会用 styled popover 渲染同样的解释（结构化、多行、可视化）。 */}
+                {/* Cache ratio chip + inline info trigger. Vertical
+                    separator visually disconnects the trigger from the
+                    ratio number. */}
                 <span style={{
                   display: "inline-flex", alignItems: "baseline", gap: 4,
                 }}>
                   <span style={metricLabelStyle}>{M.cache_ratio.label}</span>
-                  <span style={{ alignSelf: "center", color: "#9ca3af", display: "inline-flex" }}>
-                    <InfoIcon />
-                  </span>
                   <span style={{ ...metricValueStyle, color: M.cache_ratio.color }}>
                     {fmtPct(ratio)}
                   </span>
                 </span>
+                <div style={{ width: 1, height: 12, background: "#e5e7eb" }} />
+                <LedgerInfoIcon
+                  variant="aggregate"
+                  freshIn={freshIn} cacheRead={cacheRead} cacheWrite={cacheWrite}
+                  output={output} ratio={ratio}
+                  preferredAnchor="below"
+                />
               </>
             )}
           </div>
@@ -294,11 +299,3 @@ const metricValueStyle: React.CSSProperties = {
   fontSize: 11, fontWeight: 700, lineHeight: 1,
 };
 
-function InfoIcon() {
-  return (
-    <svg width="9" height="9" viewBox="0 0 16 16" style={{ display: "inline-block", verticalAlign: "middle" }}>
-      <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" strokeWidth="1.5" />
-      <text x="8" y="11.5" textAnchor="middle" fontSize="10" fontWeight="700" fill="currentColor">i</text>
-    </svg>
-  );
-}

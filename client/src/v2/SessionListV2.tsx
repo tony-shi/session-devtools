@@ -62,11 +62,28 @@ function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onCl
       onMouseLeave={() => setHovered(false)}
       style={{ cursor: "pointer", background: hovered ? "#f9fafb" : "#fff", transition: "background 0.1s" }}
     >
-      {/* 工具徽标 */}
+      {/* 工具徽标 + proxy 链接质量小角标 */}
       <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
-        <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 20, fontWeight: 600, background: badge.bg, color: badge.color }}>
-          {session.tool}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 20, fontWeight: 600, background: badge.bg, color: badge.color }}>
+            {session.tool}
+          </span>
+          {/* 只在"有 proxy 数据但并非全部能精确匹配"时显示，提示用户该会话
+              的 proxy ↔ jsonl 关联可能不可靠（fallback 路径）。全部 exact 时
+              不展示，避免视觉噪声。 */}
+          {session.proxy_count > 0 && session.proxy_request_id_count < session.proxy_count && (
+            <span
+              title={`${session.proxy_request_id_count}/${session.proxy_count} proxy requests carry an Anthropic request-id; the rest fall back to time-window matching and may be wrong.`}
+              style={{
+                fontSize: 10, padding: "1px 5px", borderRadius: 4,
+                background: "#fef3c7", color: "#92400e", fontWeight: 600,
+                lineHeight: 1.4,
+              }}
+            >
+              proxy {Math.round((session.proxy_request_id_count / session.proxy_count) * 100)}%
+            </span>
+          )}
+        </div>
       </td>
 
       {/* 状态点 + 会话名 + 首条消息预览 */}

@@ -76,6 +76,16 @@ export function fmtK(n: number): string {
   return Math.round(n / 1000) + "k";
 }
 
+// Best-effort JSON parse for the "原始 JSON" segment toggle. Returns
+// `undefined` when the content isn't valid JSON so the toggle stays
+// hidden instead of showing an error.
+function tryParseSegmentJson(s: string): unknown {
+  if (!s) return undefined;
+  const trimmed = s.trim();
+  if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) return undefined;
+  try { return JSON.parse(trimmed); } catch { return undefined; }
+}
+
 export function shortSlot(slotType: string): string {
   return slotType
     .replace("system.main-prompt.section.", "sys.")
@@ -508,29 +518,42 @@ export function SelectedDetail({ leaf, onLinkSource }: {
   leaf: LeafLite;
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
 }) {
-  // Back-link target: the call that first inserted this leaf's underlying
-  // jsonl event into a prompt. Read directly from origin (server-filled);
-  // fall back to `sourceCallId` if graph enrichment is absent.
+  // Back-link target: open the Turn view (onLinkSource), then scroll to a
+  // landing point that depends on the leaf's underlying event kind:
   //
-  // Action: open the Turn view (legacy onLinkSource path → turn-excerpt),
-  // *not* the per-call detail. User explicitly wants the surrounding turn
-  // context — sibling calls + jsonl event flow — and to land on the
-  // specific event row, not on a single call attribution panel.
+  //   • tool_use leaf — the "source" is the Call that *emitted* this
+  //     tool_use. Landing = the Call card anchor (`#turn-N-call-K`), not
+  //     a specific jsonl row. Multiple tool_uses can share the same jsonl
+  //     line (assistant message), so a row-level scroll wouldn't pick
+  //     this one out anyway.
   //
-  // Side effect: flashEvent(jsonlLineIdx) scrolls the freshly-opened Turn
-  // view to this jsonl row and outlines it amber for ~2s.
-  const { flashEvent } = useAttributionGraph();
+  //   • other jsonl leaves (tool_result / user_input / harness) — landing
+  //     = the IntervalEventRow at `data-jsonl-line="${jsonlLineIdx}"`.
+  //
+  // jumpTarget prefers `firstSeenInCall` (the graph's "first-prompt" call)
+  // over `sourceCallId` (the parser's call ownership) — for tool_result
+  // these differ; for tool_use they coincide.
+  const { flashEvent, flashCall } = useAttributionGraph();
   const sourceTurnId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceTurnId : undefined;
   const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;
   const firstSeenInCall = leaf.origin.kind === "jsonl" ? leaf.origin.firstSeenInCall : undefined;
   const jsonlLineIdx = leaf.origin.kind === "jsonl" ? leaf.origin.jsonlLineIdx : undefined;
+  // eventKind comes from server as `{ source, contentType }` but older
+  // serializations / tests may carry just a string — handle both.
+  const isToolUseLeaf = leaf.origin.kind === "jsonl" && (() => {
+    const ek = leaf.origin.eventKind;
+    if (typeof ek === "string") return ek === "tool_use";
+    return ek?.source === "tool_use";
+  })();
   const jumpTarget = firstSeenInCall ?? sourceCallId;
   const handleJumpSource = (jumpTarget !== undefined && onLinkSource)
     ? () => {
         onLinkSource(jumpTarget, sourceTurnId);
-        // Defer flashEvent past the panel mount so the IntervalEventRow
-        // exists in the DOM when we scroll to it.
-        if (jsonlLineIdx != null) {
+        // Defer past panel mount so the target node exists in the DOM
+        // when we try to scroll to it.
+        if (isToolUseLeaf) {
+          requestAnimationFrame(() => flashCall(jumpTarget));
+        } else if (jsonlLineIdx != null) {
           requestAnimationFrame(() => flashEvent(jsonlLineIdx));
         }
       }
@@ -565,6 +588,10 @@ export function SelectedDetail({ leaf, onLinkSource }: {
             label: "CONTENT",
             content: leaf.rawText ?? leaf.preview,
             monospace: isJsonContent,
+            // JSON-tree toggle when the leaf's content parses as JSON
+            // (tool_result wire / tool_use input / structured payloads).
+            // Plain prose leaves get undefined → no toggle shown.
+            rawJson: isJsonContent ? tryParseSegmentJson(leaf.rawText ?? leaf.preview) : undefined,
           },
         ]}
         coordinate={coordinate}
@@ -572,9 +599,13 @@ export function SelectedDetail({ leaf, onLinkSource }: {
         expandable={false}
         defaultExpanded={true}
         onJump={handleJumpSource}
-        jumpLabel={jumpTarget !== undefined ? `call #${jumpTarget}` : undefined}
+        jumpLabel={jumpTarget !== undefined
+          ? (isToolUseLeaf ? `查看来源 call #${jumpTarget}` : `查看来源 call #${jumpTarget}`)
+          : undefined}
         jumpTooltip={jumpTarget !== undefined
-          ? `打开 call #${jumpTarget}（首次把这一段内容写进 prompt 的 call）`
+          ? (isToolUseLeaf
+              ? `跳到 Turn 视图里 call #${jumpTarget} 的卡片（这条 tool_use 来自该 call 的响应）`
+              : `跳到 Turn 视图里这条 jsonl event 的行（首次把这一段内容写进 prompt 的 call 是 #${jumpTarget}）`)
           : undefined}
       />
 

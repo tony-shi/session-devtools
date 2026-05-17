@@ -1,6 +1,7 @@
 import { Controller, Get, Param, Post, Query, Req, Res } from "@nestjs/common";
 import { createReadStream, existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { createGunzip } from "node:zlib";
+import { StringDecoder } from "node:string_decoder";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { getDb } from "./db.ts";
 import { getColdIndexProgress } from "./proxy-v2/log/cold-indexer.ts";
@@ -12,6 +13,7 @@ function parseJsonField<T>(value: string | null | undefined, fallback: T): T {
 
 async function readLineFromGzip(filePath: string, offset: number): Promise<string> {
   const stream = createReadStream(filePath).pipe(createGunzip());
+  const decoder = new StringDecoder("utf8");
   let consumed = 0;
   let buffer = "";
   for await (const chunk of stream as AsyncIterable<Buffer>) {
@@ -21,12 +23,12 @@ async function readLineFromGzip(filePath: string, offset: number): Promise<strin
       continue;
     }
     const skipInChunk = Math.max(0, offset - consumed);
-    buffer += chunk.slice(skipInChunk).toString("utf8");
+    buffer += decoder.write(chunk.slice(skipInChunk));
     const newlineIdx = buffer.indexOf("\n");
     if (newlineIdx >= 0) return buffer.slice(0, newlineIdx);
     consumed += chunkLen;
   }
-  return buffer;
+  return buffer + decoder.end();
 }
 
 async function readLineFromPlain(filePath: string, offset: number): Promise<string> {

@@ -9,13 +9,13 @@
 
 import { useEffect, useState } from "react";
 import { apiV2 } from "./api";
+import { useAttributionGraph } from "./attribution-graph-context";
 import { FisheyeStrip } from "./fisheye-strip";
 import { EventUnitCard } from "./shared/EventUnitCard";
 import type {
   ResponseTreeResult,
   ResponseNode,
   ResponseSlotType,
-  LinkedToolResult,
 } from "./response-tree-types";
 
 // ─── 配色 ─────────────────────────────────────────────────────────────────────
@@ -46,6 +46,28 @@ function fmtK(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(1) + "k";
   return String(n);
+}
+
+function tryParseJson(s: string): unknown {
+  if (!s) return undefined;
+  try { return JSON.parse(s); } catch { return undefined; }
+}
+
+// Same description-extraction logic as Turn ToolCallRow — keeps the
+// description subtitle aligned across the four tool_use views.
+function extractToolDescription(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof obj.description === "string" && obj.description.trim()) {
+      return obj.description.trim();
+    }
+    for (const key of ["command", "file_path", "pattern", "query", "prompt", "url"]) {
+      const v = obj[key];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  } catch { /* not JSON */ }
+  return undefined;
 }
 
 // ─── 顶部 stacked bar — 消费 fisheye-strip 模块 ──────────────────────────────
@@ -157,11 +179,10 @@ function BlockTable({
 // ─── 叶子详情视图 ─────────────────────────────────────────────────────────────
 
 function NodeDetail({
-  node, onClose, onLinkCall,
+  node, onClose,
 }: {
   node: ResponseNode;
   onClose: () => void;
-  onLinkCall?: (callId: number) => void;
 }) {
   const meta = slotMeta(node.slotType);
   const isToolUse = node.slotType === "response.tool_use";
@@ -192,11 +213,16 @@ function NodeDetail({
         title={node.wireMeta?.toolName}
         shortId={node.wireMeta?.toolUseId}
         size={{ bytes: node.charCount, direction: "out" }}
+        description={isToolUse ? extractToolDescription(node.rawText ?? node.preview) : undefined}
         segments={[
           {
             label: isToolUse ? "INPUT" : "CONTENT",
             content: node.rawText ?? node.preview,
             monospace: isToolUse,
+            // For tool_use, the rendered content is a JSON string of the
+            // wire input — make it tree-toggleable. For text/thinking the
+            // content is prose; raw mode adds no value, leave undefined.
+            rawJson: isToolUse ? tryParseJson(node.rawText ?? node.preview) : undefined,
           },
         ]}
         coordinate={{ kind: "structured", path, source: "jsonl" }}
@@ -204,55 +230,15 @@ function NodeDetail({
         defaultExpanded={true}
       />
 
-      {/* Linked tool_result forwarding — rendered as a sibling EventUnitCard
-          so the "tool_use → tool_result" pair reads as two same-shell units. */}
-      {node.linkedToolResult && (
-        <LinkedResultBlock
-          linked={node.linkedToolResult}
-          onLinkCall={onLinkCall}
-        />
-      )}
+      {/* tool_result intentionally NOT rendered here. The Response tab
+          shows what THIS call returned — only text / thinking / tool_use
+          blocks. The matching tool_result was emitted by the harness in a
+          later jsonl event and entered the NEXT call's request — that's
+          where it lives. Showing it inside Response misleads users into
+          thinking the LLM "returned" a result. To follow the chain, the
+          tool_use card's jump chip + the Request tab of the consumer call
+          provide the navigation. */}
     </div>
-  );
-}
-
-function LinkedResultBlock({
-  linked, onLinkCall,
-}: {
-  linked: LinkedToolResult;
-  onLinkCall?: (callId: number) => void;
-}) {
-  const color = linked.isError ? "#dc2626" : "#16a34a";
-  const bg    = linked.isError ? "#fef2f2" : "#f0fdf4";
-  const border = linked.isError ? "#fecaca" : "#bbf7d0";
-
-  return (
-    <EventUnitCard
-      color={color}
-      bg={bg}
-      border={border}
-      kindLabel={linked.isError ? "Tool Result · error" : "Tool Result"}
-      shortId={linked.toolUseId}
-      size={{ bytes: linked.charCount, direction: "in" }}
-      segments={linked.preview ? [
-        { content: linked.preview, monospace: true, truncateAt: 1000 },
-      ] : []}
-      coordinate={linked.nextCallId != null ? {
-        kind: "structured",
-        path: "request.messages[…].tool_result",
-        callIndex: linked.nextCallId,
-        source: "jsonl",
-      } : undefined}
-      expandable={false}
-      defaultExpanded={true}
-      onJump={linked.nextCallId != null && onLinkCall
-        ? () => onLinkCall(linked.nextCallId!)
-        : undefined}
-      jumpLabel={linked.nextCallId != null ? `call #${linked.nextCallId}` : undefined}
-      jumpTooltip={linked.nextCallId != null
-        ? `打开 call #${linked.nextCallId}（消费这条 tool_result 的下一次 LLM 调用）`
-        : undefined}
-    />
   );
 }
 
@@ -276,6 +262,18 @@ export function ResponseTreePanel({ sessionId, callId, onLinkCall }: Props) {
       .then((d) => { setData(d); setLoading(false); })
       .catch(() => { setData(null); setLoading(false); });
   }, [sessionId, callId]);
+
+  // Pending-focus consumption: when a Turn-view tool_use jump lands here
+  // with `{ toolUseId }`, find the matching response block and select it.
+  const { pendingFocus, clearPendingFocus } = useAttributionGraph();
+  useEffect(() => {
+    if (!pendingFocus || !("toolUseId" in pendingFocus) || !data?.snapshot) return;
+    const target = pendingFocus.toolUseId;
+    const blocks = data.snapshot.roots[0]?.children ?? [];
+    const match = blocks.find((b) => b.wireMeta?.toolUseId === target);
+    if (match) setSelectedId(match.id);
+    clearPendingFocus();
+  }, [pendingFocus, data, clearPendingFocus]);
 
   if (loading) {
     return <div style={{ fontSize: 11, color: "#9ca3af", padding: "32px 0", textAlign: "center" }}>Loading response…</div>;
@@ -329,7 +327,6 @@ export function ResponseTreePanel({ sessionId, callId, onLinkCall }: Props) {
         <NodeDetail
           node={selected}
           onClose={() => setSelectedId(null)}
-          onLinkCall={onLinkCall}
         />
       ) : (
         <BlockTable

@@ -200,7 +200,14 @@
       "sideBranch": "Side branch",
       "leaf": "leaf",
       "nested": "{{n}} nested",
-      "backTo": "Back to {{name}}"
+      "backTo": "Back to {{name}}",
+      "proxyNoticeTitle": "You're viewing a sub-agent",
+      "proxyNoticeBody": "Turns / Calls / Tools / Context are reconstructed from the sub-agent's own JSONL. Proxy attribution (Raw / Proxy / per-call Attribution tabs) isn't wired up for sub-agents yet — those panels will appear empty. Cross-linking sub-agent requestIds to the proxy DB is on the roadmap.",
+      "loading": "Loading sub-agent session…",
+      "loadFailed": "Failed to load sub-agent session.",
+      "empty": "This sub-agent recorded no turns.",
+      "turnsHeader": "SUB-AGENT TURNS",
+      "turnRowMeta": "{{count}} calls · {{delta}}"
     },
     "status": {
       "loading": "loading…",

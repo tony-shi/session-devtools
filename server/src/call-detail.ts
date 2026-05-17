@@ -10,6 +10,7 @@
 
 import { createReadStream, existsSync } from "node:fs";
 import { createGunzip } from "node:zlib";
+import { StringDecoder } from "node:string_decoder";
 import type { Database } from "better-sqlite3";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -22,10 +23,20 @@ export interface CallDetailTokens {
   outputTokens: number;
 }
 
+// Per-call proxy linking quality.
+//   'exact'     — JSONL.requestId matched proxy_requests.request_id (1:1, trustworthy)
+//   'fallback'  — degraded time-window match (see findProxyRowForCall block comment)
+//   'unmatched' — no proxy row found for this call at all
+export type ProxyMatchMode = "exact" | "fallback" | "unmatched";
+
 export interface CallDetail {
   callId: number;
   sessionId: string;
   proxyRequestId: number | null;
+  // 'unmatched' when proxyRequestId is null; otherwise reflects how the row
+  // was located. Front-end uses this to badge calls whose proxy data is not
+  // 100% trustworthy.
+  proxyMatchMode: ProxyMatchMode;
 
   // Phase 1: always available from JSONL
   model: string;
@@ -39,20 +50,31 @@ export interface CallDetail {
 
 // ─── JSONL read helpers (copied from proxy-traffic.controller.ts) ─────────────
 
+// CORNER CASE: gzip decompression streams produce chunks whose boundaries can
+// fall in the middle of a multi-byte UTF-8 sequence (e.g. a 3-byte CJK char
+// like "下" = E4 B8 8B). Calling chunk.toString("utf8") on each chunk
+// independently replaces the split bytes with U+FFFD, corrupting the string.
+// Two proxy records at different offsets in different .gz files may hit the
+// boundary differently → same content produces different rawText → different
+// rawHash → computeTreeDiff marks the node "added/removed" instead of
+// "unchanged", surfacing as a spurious "modified" leaf in the diff view.
+// Fix: use StringDecoder, which buffers incomplete multi-byte sequences across
+// chunk boundaries and flushes them when the next chunk arrives.
 async function readLineFromGzip(filePath: string, offset: number): Promise<string> {
   const stream = createReadStream(filePath).pipe(createGunzip());
+  const decoder = new StringDecoder("utf8");
   let consumed = 0;
   let buffer = "";
   for await (const chunk of stream as AsyncIterable<Buffer>) {
     const chunkLen = chunk.length;
     if (consumed + chunkLen <= offset) { consumed += chunkLen; continue; }
     const skipInChunk = Math.max(0, offset - consumed);
-    buffer += chunk.slice(skipInChunk).toString("utf8");
+    buffer += decoder.write(chunk.slice(skipInChunk));
     const newlineIdx = buffer.indexOf("\n");
     if (newlineIdx >= 0) return buffer.slice(0, newlineIdx);
     consumed += chunkLen;
   }
-  return buffer;
+  return buffer + decoder.end();
 }
 
 async function readLineFromPlain(filePath: string, offset: number): Promise<string> {
@@ -122,13 +144,18 @@ interface ProxyRow {
 //   补出来；走 Anthropic 直连的 session 不受影响，精确路径已 100% 命中。
 //   如果哪天 mcli 路径的误判频率高了，需要从上游网关层根治，而不是在这里
 //   加更复杂的启发式（model / max_tokens / content 黑名单 等只是绕回老路）。
+export interface ProxyRowMatch {
+  row: ProxyRow;
+  mode: "exact" | "fallback";
+}
+
 export function findProxyRowForCall(
   db: Database,
   sessionId: string,
   apiRequestId: string | null | undefined,
   fallbackTimestamp: string,
   excludeProxyId?: number,
-): ProxyRow | null {
+): ProxyRowMatch | null {
   if (apiRequestId) {
     const row = db.prepare(`
       SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
@@ -141,7 +168,7 @@ export function findProxyRowForCall(
         ? [sessionId, apiRequestId, excludeProxyId]
         : [sessionId, apiRequestId])
     ) as ProxyRow | undefined;
-    if (row) return row;
+    if (row) return { row, mode: "exact" };
   }
   // ⚠️ HACK fallback — see block comment above. Not robust; only correct
   // when the closest preceding proxy request happens to be the right one.
@@ -158,7 +185,51 @@ export function findProxyRowForCall(
       ? [sessionId, fallbackTimestamp, excludeProxyId]
       : [sessionId, fallbackTimestamp])
   ) as ProxyRow | undefined;
-  return fallback ?? null;
+  return fallback ? { row: fallback, mode: "fallback" } : null;
+}
+
+// Batch classifier for the session drilldown. One SQL query loads every
+// proxy row for the session; per-call matching is then resolved in memory.
+// Avoids N+1 lookups across a session with hundreds of calls.
+export function computeCallProxyMatchModes(
+  db: Database,
+  sessionId: string,
+  calls: ReadonlyArray<{ id: number; apiRequestId: string | null; timestamp: string }>,
+): Map<number, ProxyMatchMode> {
+  const result = new Map<number, ProxyMatchMode>();
+  if (calls.length === 0) return result;
+
+  const rows = db.prepare(`
+    SELECT request_id, COALESCE(started_at, ts) AS ts
+    FROM proxy_requests
+    WHERE session_id = ?
+  `).all(sessionId) as Array<{ request_id: string | null; ts: string | null }>;
+
+  if (rows.length === 0) {
+    for (const c of calls) result.set(c.id, "unmatched");
+    return result;
+  }
+
+  const byRequestId = new Set<string>();
+  let minTs: string | null = null;
+  for (const r of rows) {
+    if (r.request_id) byRequestId.add(r.request_id);
+    if (r.ts && (minTs === null || r.ts < minTs)) minTs = r.ts;
+  }
+
+  for (const c of calls) {
+    if (c.apiRequestId && byRequestId.has(c.apiRequestId)) {
+      result.set(c.id, "exact");
+    } else if (minTs !== null && minTs <= c.timestamp) {
+      // Some proxy row started at or before this call → fallback path
+      // would have picked one. We don't replay the picker; existence is
+      // enough to distinguish "fallback-matched" from "no proxy at all".
+      result.set(c.id, "fallback");
+    } else {
+      result.set(c.id, "unmatched");
+    }
+  }
+  return result;
 }
 
 export async function loadCallDetail(
@@ -178,11 +249,12 @@ export async function loadCallDetail(
     model: callModel, stopReason: callStopReason, timestamp: callTimestamp,
     tokens: callTokens,
   };
-  const proxyRow = findProxyRowForCall(db, sessionId, apiRequestId, callTimestamp);
-  if (!proxyRow) return { ...base, proxyRequestId: null, rawRequestJson: null };
+  const match = findProxyRowForCall(db, sessionId, apiRequestId, callTimestamp);
+  if (!match) return { ...base, proxyRequestId: null, proxyMatchMode: "unmatched", rawRequestJson: null };
 
+  const { row: proxyRow, mode } = match;
   const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
-  if (!rec) return { ...base, proxyRequestId: proxyRow.id, rawRequestJson: null };
+  if (!rec) return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: mode, rawRequestJson: null };
 
   const reqBody = rec.reqBody as string | undefined;
   let rawReqParsed: Record<string, unknown> | null = null;
@@ -190,5 +262,5 @@ export async function loadCallDetail(
     try { rawReqParsed = JSON.parse(reqBody) as Record<string, unknown>; }
     catch { /* not JSON */ }
   }
-  return { ...base, proxyRequestId: proxyRow.id, rawRequestJson: rawReqParsed };
+  return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: mode, rawRequestJson: rawReqParsed };
 }

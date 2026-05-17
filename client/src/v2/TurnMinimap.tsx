@@ -518,9 +518,10 @@ function buildOption(data: MinimapData, tFn: (key: string, fallback?: string) =>
 export interface TurnMinimapProps {
   turn: UserTurn;
   onSelectCall?: (callId: number) => void;
+  onHoverCall?: (callId: number) => void;
 }
 
-export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
+export function TurnMinimap({ turn, onSelectCall, onHoverCall }: TurnMinimapProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
@@ -531,8 +532,10 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
   // races with the setOption effect and leaves the chart data-less → all
   // clicks silently no-op). The click handler reads these refs at call time.
   const onSelectCallRef = useRef(onSelectCall);
+  const onHoverCallRef = useRef(onHoverCall);
   const turnRef = useRef(turn);
   useEffect(() => { onSelectCallRef.current = onSelectCall; }, [onSelectCall]);
+  useEffect(() => { onHoverCallRef.current = onHoverCall; }, [onHoverCall]);
   useEffect(() => { turnRef.current = turn; }, [turn]);
 
   useEffect(() => {
@@ -563,9 +566,33 @@ export function TurnMinimap({ turn, onSelectCall }: TurnMinimapProps) {
       if (call) cb(call.id);
     });
 
+    // Hover navigation: dwell 300ms on a column to scroll its call card into view.
+    let hoverTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearHover = () => { if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; } };
+
+    chart.getZr().on("mousemove", (e) => {
+      const cb = onHoverCallRef.current;
+      if (!cb) return;
+      const px: [number, number] = [e.offsetX, e.offsetY];
+      const inCtx = chart.containPixel({ gridIndex: 0 }, px);
+      const inMatrix = chart.containPixel({ gridIndex: 1 }, px);
+      if (!inCtx && !inMatrix) { clearHover(); return; }
+      const axisIndex = inCtx ? 0 : 1;
+      const raw = chart.convertFromPixel({ xAxisIndex: axisIndex }, px) as unknown as number | null;
+      if (typeof raw !== "number" || raw < 0) { clearHover(); return; }
+      const idx = Math.round(raw);
+      clearHover();
+      hoverTimer = setTimeout(() => {
+        const call = turnRef.current.calls[idx];
+        if (call) onHoverCallRef.current?.(call.id);
+      }, 300);
+    });
+
+    chart.getZr().on("mouseout", clearHover);
+
     const ro = new ResizeObserver(() => chart.resize());
     ro.observe(el);
-    return () => { ro.disconnect(); chart.dispose(); chartRef.current = null; };
+    return () => { clearHover(); ro.disconnect(); chart.dispose(); chartRef.current = null; };
   }, []);
 
   useEffect(() => {

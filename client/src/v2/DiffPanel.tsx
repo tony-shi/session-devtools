@@ -208,6 +208,14 @@ export function DiffView({ sections, summary }: DiffViewProps) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {/* Kind pill row — same visual language as the Provenance / Cache /
+          Audit lens "BucketPillRow" so the diff view reads as another
+          lens-style view (not a separate UI tradition). Each pill counts
+          leaves of that kind across all sections. Empty kinds are dropped
+          (added=0 → hide the chip), matching how empty buckets are now
+          dropped in the attribution lens. */}
+      {summary && <DiffKindPillRow summary={summary} />}
+
       <SectionDiffBar
         sections={sections}
         grandTotal={grandNewTotal}
@@ -238,6 +246,60 @@ export function DiffView({ sections, summary }: DiffViewProps) {
           setExpandedBins={setExpandedBins}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Layer 0: DiffKindPillRow ───────────────────────────────────────────────
+//
+// Mirrors AttributionTreeLensPanel's BucketPillRow visually: each "kind"
+// (added / removed / modified) shows as a small pill with a colored dot,
+// count, and label. Read-only — clicking doesn't filter (yet) — so the
+// row functions as a quick scannable summary aligned with the rest of the
+// attribution UI.
+
+function DiffKindPillRow({ summary }: { summary: NonNullable<DiffTreeResult["summary"]> }) {
+  const pills: Array<{ kind: DiffKind; count: number }> = [
+    { kind: "added",    count: summary.addedCount },
+    { kind: "modified", count: summary.modifiedCount },
+    { kind: "removed",  count: summary.removedCount },
+  ].filter(p => p.count > 0) as Array<{ kind: DiffKind; count: number }>;
+
+  if (pills.length === 0) return null;
+
+  const labelOf: Record<DiffKind, string> = {
+    added:    "added",
+    removed:  "removed",
+    modified: "modified",
+    kept:     "kept",
+  };
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 6,
+      flexWrap: "wrap",
+      padding: "2px 0",
+    }}>
+      {pills.map(({ kind, count }) => (
+        <span
+          key={kind}
+          title={`${count} ${labelOf[kind]} leaves`}
+          style={{
+            display: "inline-flex", alignItems: "baseline", gap: 6,
+            padding: "3px 8px", borderRadius: 4,
+            border: "1px solid transparent",
+            color: "#374151",
+            fontSize: 11,
+          }}
+        >
+          <span style={{
+            width: 6, height: 6, borderRadius: 1,
+            background: DIFF_TEXT_COLOR[kind], alignSelf: "center",
+          }} />
+          <span style={{ fontWeight: 600, color: "#1f2937" }}>{count}</span>
+          <span style={{ color: "#6b7280" }}>{labelOf[kind]}</span>
+        </span>
+      ))}
     </div>
   );
 }

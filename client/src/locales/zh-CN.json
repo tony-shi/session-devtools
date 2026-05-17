@@ -197,7 +197,14 @@
       "sideBranch": "子分支",
       "leaf": "叶节点",
       "nested": "{{n}} 层嵌套",
-      "backTo": "返回 {{name}}"
+      "backTo": "返回 {{name}}",
+      "proxyNoticeTitle": "你正在查看 sub-agent",
+      "proxyNoticeBody": "Turns / Calls / Tools / Context 是基于 sub-agent 自身的 JSONL 重建的。proxy 归因（Raw / Proxy / 单 call 归因 tab）暂未对 sub-agent 接通，相关面板会是空的。后续会把 sub-agent 的 requestId 关联到 proxy 数据库。",
+      "loading": "正在加载 sub-agent 会话…",
+      "loadFailed": "加载 sub-agent 会话失败。",
+      "empty": "该 sub-agent 没有记录任何轮次。",
+      "turnsHeader": "SUB-AGENT 轮次",
+      "turnRowMeta": "{{count}} 次调用 · {{delta}}"
     },
     "status": {
       "loading": "加载中…",
@@ -293,7 +300,7 @@
     "showLess": "收起 ↑",
     "jsonlMetadata": "JSONL 元数据",
     "proxyRequestBody": "代理请求体",
-    "showInTurn": "在 Turn 中查看",
+    "showInTurn": "查看所在轮次",
     "hide": "▲ 折叠",
     "show": "▼ 展开",
     "userInput": "用户输入",
@@ -312,24 +319,24 @@
   "ledgerExplainer": {
     "title": "Token 账本 · 计算说明",
     "variantAggregate": "Σ 聚合",
-    "variantCall": "单 call",
-    "inputSection": "{{sigma}}输入（喂给模型的内容）",
-    "outputSection": "{{sigma}}输出（模型生成的内容）",
+    "variantCall": "单次LLM调用",
+    "inputSection": "{{sigma}}输入（传递给模型的内容）",
+    "outputSection": "{{sigma}}输出（由模型生成的内容）",
     "ratioLabel": "Cache Ratio",
     "ratioFormulaCall": "cache_read / (cache_read + cache_write + fresh_in)",
-    "ratioFormulaAgg": "Σcache_read / Σ(input 三件套)",
+    "ratioFormulaAgg": "Σcache_read / Σ(cache_read + cache_write + fresh_in)",
     "ratioFormulaEquals": "= {{formula}}",
     "emptyInput": "本次没有 input —— 三个 input 桶都为 0，Cache Ratio 无意义。",
-    "footer": "以上 <strong>四个桶互不重叠</strong>，对应 Anthropic API 的真实计费档位：cache_read ≈ 0.1× 折扣 · cache_write ≈ 1.25× 溢价 · fresh_in ≈ 1.0× 标准 · output 独立计费。",
+    "footer": "以上 <strong>四个桶互不重叠</strong>，对应 Anthropic API 的真实计费档位：cache_read ≈ 0.1（折扣）× 基础单价 · cache_write ≈ 1.25（溢价）× 基础单价 · fresh_in ≈ 1.0（标准）× 基础单价 · output 独立计费。",
     "footerAggSuffix": " 聚合视图下，每个桶的数值都是 session/turn 范围内的累加。",
     "rows": {
-      "cacheReadCall": "历史复用：从过往 call 的缓存读回，不需要重新过模型",
-      "cacheReadAgg": "累计历史复用：从过往 call 的缓存命中读回",
+      "cacheReadCall": "历史复用：从过往LLM调用的缓存读回，不需要重新过模型",
+      "cacheReadAgg": "累计历史复用：从过往LLM调用的缓存命中读回",
       "cacheWriteCall": "本轮写入缓存：第一次给模型、且被打了 cache breakpoint 供下次复用",
       "cacheWriteAgg": "累计写入缓存：被打了 cache breakpoint 的本轮新内容",
       "freshInCall": "本轮未缓存：第一次给模型、且没被 cache breakpoint 拦下的部分",
       "freshInAgg": "累计未缓存输入：本轮新内容中未被打 cache breakpoint 的部分",
-      "outputCall": "LLM 这一 call 生成的 token",
+      "outputCall": "单次LLM调用生成的 token",
       "outputAgg": "累计模型生成 token"
     }
   }

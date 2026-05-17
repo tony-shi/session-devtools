@@ -15,8 +15,21 @@ export interface DynamicField {
   evidence?: Evidence;
 }
 
+/**
+ * Mirrors server's `JsonlEventKind` (source × contentType). Older serialized
+ * payloads sometimes carried just the source string — code that reads this
+ * should handle both via the lens-framework helper.
+ */
+export type JsonlEventKindObject = {
+  source:
+    | "harness_injection" | "system_local_command" | "attachment"
+    | "tool_use" | "tool_result"
+    | "assistant_text" | "user_input" | "thinking" | "unknown";
+  contentType?: string;
+};
+
 export type Evidence =
-  | { kind: "jsonl"; jsonlLineIdx: number; sourceCallId?: number; sourceTurnId?: number; eventKind?: string }
+  | { kind: "jsonl"; jsonlLineIdx: number; sourceCallId?: number; sourceTurnId?: number; eventKind?: JsonlEventKindObject | string }
   | { kind: "runtime"; key: string }
   | { kind: "file"; path: string; section?: string }
   | { kind: "memory"; memoryFile: string; memoryName?: string }
@@ -26,7 +39,7 @@ export type SegmentOrigin =
   | { kind: "rule"; ruleId: string; matchMode: "exact" | "regex" | "prefix"; confidence: Confidence; fullyCovered: boolean; dynamicFields?: DynamicField[] }
   | {
       kind: "jsonl";
-      eventKind: string;
+      eventKind: JsonlEventKindObject | string;
       jsonlLineIdx: number;
       sourceCallId?: number;
       sourceTurnId?: number;
