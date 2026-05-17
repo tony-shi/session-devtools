@@ -149,8 +149,28 @@ async function startBackgroundServices() {
     const { proxyV2Controller } = await import("./src/proxy-v2/controller.ts");
     await proxyV2Controller.reconcileOnBoot();
     if (!process.env.SESSION_DEVTOOLS_NO_PROXY) {
-      console.log("[proxy-v2] auto-starting proxy (use --no-proxy to disable)");
-      await proxyV2Controller.setTarget("RUNNING");
+      console.log("");
+      console.log("─────────────────────────────────────────────────────");
+      console.log("  Enabling context attribution (local MITM proxy)");
+      console.log("  → Modifying ~/.claude/settings.json to route");
+      console.log("    Claude Code traffic through a local proxy.");
+      console.log("  → No data leaves your machine.");
+      console.log("  → Your original settings are backed up and will");
+      console.log("    be restored automatically on exit (Ctrl+C).");
+      console.log("─────────────────────────────────────────────────────");
+      const snap = await proxyV2Controller.setTarget("RUNNING");
+      if (snap.phase === "running") {
+        console.log("");
+        console.log("  ✓ Proxy running.");
+        console.log("  Next steps:");
+        console.log("    1. Start a NEW Claude Code session in your project.");
+        console.log("       (Existing sessions won't be captured.)");
+        console.log("    2. Open the dashboard and inspect your session.");
+        console.log("    3. Press Ctrl+C here to stop and restore settings.");
+        console.log("");
+      }
+    } else {
+      console.log("[proxy] Proxy disabled (--no-proxy). Context attribution unavailable.");
     }
   } catch (err) {
     console.error("[proxy-v2] boot reconcile fatal:", err);
@@ -162,14 +182,17 @@ let stopping = false;
 async function shutdown(signal: string) {
   if (stopping) return;
   stopping = true;
-  console.log(`[server] received ${signal}, shutting down...`);
+  console.log("");
+  console.log("[session-devtools] Shutting down...");
   try {
     const { proxyV2Controller } = await import("./src/proxy-v2/controller.ts");
     await proxyV2Controller.shutdown();
+    console.log("  ✓ Proxy stopped. ~/.claude/settings.json restored.");
   } catch (err) {
-    console.error("[server] proxy-v2 shutdown error:", err);
+    console.error("[session-devtools] proxy shutdown error:", err);
   }
   await app.close();
+  console.log("  ✓ Done. Goodbye.");
   process.exit(0);
 }
 
