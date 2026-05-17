@@ -48,15 +48,15 @@ type MockDiffEntry = DiffEntry;
 // data below; normalizeTurns() fills them in.
 type RawMockCall = Omit<LlmCall,
   "indexInTurn" | "messageId" | "apiRequestId" | "jsonlLineIdx" | "jsonlFrameLineIdxs" |
-  "model" | "stopReason" | "proxy" | "subAgents" |
+  "model" | "stopReason" | "proxy" | "proxyMatchMode" | "subAgents" |
   "isCompaction" | "isUnknownHeavy" | "isSignificant" | "significantDelta" | "freshIn" |
   "toolNames" | "toolCalls" | "assistantText" | "intervalEvents"
 > & {
   isCompaction?: boolean; isUnknownHeavy?: boolean; isSignificant?: boolean;
   significantDelta?: number; freshIn?: number; toolNames?: string[];
 };
-type RawMockTurn = Omit<UserTurn, "startedAt" | "endedAt" | "hasCompaction" | "hasUnknownSpike" | "finalOutput" | "durationMs" | "midTurnInjections" | "errorCount" | "calls"> & {
-  hasCompaction?: boolean; hasUnknownSpike?: boolean; errorCount?: number; midTurnInjections?: UserTurn["midTurnInjections"]; calls: RawMockCall[];
+type RawMockTurn = Omit<UserTurn, "startedAt" | "endedAt" | "hasCompaction" | "hasUnknownSpike" | "finalOutput" | "durationMs" | "midTurnInjections" | "errorCount" | "userInputLineIdx" | "calls"> & {
+  hasCompaction?: boolean; hasUnknownSpike?: boolean; errorCount?: number; midTurnInjections?: UserTurn["midTurnInjections"]; userInputLineIdx?: number | null; calls: RawMockCall[];
 };
 type MockLlmCall = LlmCall;
 type MockUserTurn = UserTurn;
@@ -67,6 +67,7 @@ function normalizeTurns(raw: RawMockTurn[]): UserTurn[] {
     endedAt: "",
     finalOutput: null,
     durationMs: 0,
+    userInputLineIdx: t.userInputLineIdx ?? null,
     hasCompaction: t.hasCompaction ?? false,
     hasUnknownSpike: t.hasUnknownSpike ?? false,
     errorCount: t.errorCount ?? 0,
@@ -82,6 +83,7 @@ function normalizeTurns(raw: RawMockTurn[]): UserTurn[] {
       model: "claude-opus-4-7",
       stopReason: "end_turn" as const,
       proxy: null,
+      proxyMatchMode: "unmatched" as const,
       subAgents: [],
       freshIn: c.freshIn ?? 0,
       isCompaction: c.isCompaction ?? false,

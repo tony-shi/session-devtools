@@ -20,6 +20,7 @@ import type {
   SerializedNode,
   SegmentOrigin,
   AuditEnvelope,
+  JsonlEventKindObject,
 } from "./attribution-tree-types";
 import { coverageStateOf } from "./attribution-tree-types";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
@@ -99,7 +100,9 @@ export function originLabel(origin: SegmentOrigin): string {
     return origin.ruleId.startsWith("wire.") ? `wire · ${origin.ruleId.slice(5)}` : origin.ruleId;
   }
   if (origin.kind === "jsonl") {
-    const ek = origin.eventKind;
+    const ek: JsonlEventKindObject = typeof origin.eventKind === "string"
+      ? { source: origin.eventKind as JsonlEventKindObject["source"] }
+      : origin.eventKind;
     const kindStr = ek.contentType && ek.contentType !== "text"
       ? `${ek.source}:${ek.contentType}`
       : ek.source;
@@ -679,8 +682,11 @@ function leafOriginToCardHeader(leaf: LeafLite): {
     };
   }
   if (o.kind === "jsonl") {
-    const src = o.eventKind.source;
-    const ct = o.eventKind.contentType;
+    const ek: JsonlEventKindObject = typeof o.eventKind === "string"
+      ? { source: o.eventKind as JsonlEventKindObject["source"] }
+      : o.eventKind;
+    const src = ek.source;
+    const ct = ek.contentType;
     // Three assistant-side sources (`tool_use` / `assistant_text` /
     // `thinking`) don't correspond to any `IntervalEventKind` — they
     // aren't free-floating jsonl events in the Turn view, they're blocks
@@ -695,7 +701,7 @@ function leafOriginToCardHeader(leaf: LeafLite): {
     const color = responseSideColor[src]
       ?? EVENT_PALETTES[jsonlSourceToIntervalKind(src)]?.fg
       ?? "#64748b";
-    const titleParts = [src];
+    const titleParts: string[] = [src];
     if (ct && ct !== "text") titleParts.push(`:${ct}`);
     return {
       color,

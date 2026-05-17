@@ -53,6 +53,11 @@ export async function startProxy(opts: StartOptions): Promise<{ close: () => Pro
   httpServer.on("clientError", (e: Error) => debug("internal clientError:", e.message));
   await new Promise<void>((res) => httpServer.listen(0, "127.0.0.1", () => res()));
 
+  // Track CONNECT-upgraded sockets so they can be destroyed on shutdown.
+  // After the CONNECT handshake the socket leaves the server's tracked pool,
+  // so closeAllConnections() alone won't reach them.
+  const tunnelSockets = new Set<net.Socket>();
+
   // 主入口：标准 HTTP 代理协议。
   const proxy = http.createServer((req, res) => {
     // B3.1: /_health 端点。
@@ -85,6 +90,10 @@ export async function startProxy(opts: StartOptions): Promise<{ close: () => Pro
 
   proxy.on("connect", async (req, clientSock, head) => {
     _requestCount++;
+    const sock = clientSock as net.Socket;
+    tunnelSockets.add(sock);
+    sock.once("close", () => tunnelSockets.delete(sock));
+
     const target = req.url ?? "";
     const m = target.match(/^([^:]+):(\d+)$/);
     if (!m) {
@@ -134,6 +143,14 @@ export async function startProxy(opts: StartOptions): Promise<{ close: () => Pro
       resolve({
         close: () =>
           new Promise<void>((r) => {
+            // Destroy all connections immediately so close() fires its callback
+            // right away instead of waiting for them to naturally drain.
+            // tunnelSockets covers CONNECT-upgraded sockets (deregistered from
+            // server's internal pool after handshake, missed by closeAllConnections).
+            for (const s of tunnelSockets) s.destroy();
+            tunnelSockets.clear();
+            (proxy as any).closeAllConnections?.();
+            (httpServer as any).closeAllConnections?.();
             proxy.close(() => httpServer.close(() => {
               cleanupPidFiles();
               r();

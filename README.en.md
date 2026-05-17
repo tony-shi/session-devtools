@@ -10,11 +10,22 @@
 
 ---
 
-<!-- HERO: 15s autoplay GIF, 800px wide, <5MB. Frames: session list → turn drilldown → sub-agent boundary. -->
-
 ![session-devtools hero demo](./docs/assets/hero.gif)
 
-▶ Watch the full 60s demo → [YouTube](https://youtu.be/REPLACE_ID) · [Bilibili](https://www.bilibili.com/video/REPLACE_ID)
+> **What you are seeing:** A Claude Code session where the parent agent delegates to a sub-agent.
+> Session list (token / call / tool counts) → turn drilldown → sub-agent parent–child boundary → context attribution → call-to-call diff.
+> Every layer is clickable.
+
+▶ Watch the full 60s demo → [YouTube](https://youtu.be/REPLACE_ID) · [Bilibili](https://www.bilibili.com/video/REPLACE_ID)  
+📖 **[Product walkthrough: what each screen means →](https://tony-shi.github.io/session-devtools/walkthrough)**
+
+---
+
+### At a glance
+
+![session list screenshot](./docs/assets/hero.png)
+
+*Session list — every Claude Code session with token usage, LLM call count, tool call count, and sub-agent indicator. Click any row to drill in.*
 
 ---
 

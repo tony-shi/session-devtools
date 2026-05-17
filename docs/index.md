@@ -7,6 +7,8 @@ title: session-devtools
 
 **Local devtools UI for AI coding sessions. Claude Code first.**
 
+→ **[Product Walkthrough / 产品说明](./walkthrough)** — what you are seeing in the demo, feature by feature
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/tony-shi/session-devtools/blob/main/LICENSE)
 [![npm](https://img.shields.io/npm/v/session-devtools)](https://www.npmjs.com/package/session-devtools)
 

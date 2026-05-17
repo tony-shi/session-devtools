@@ -1,6 +1,6 @@
 {
   "name": "session-devtools",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.3",
   "description": "Local devtools for AI coding sessions. Claude Code first.",
   "license": "MIT",
   "author": "tony-shi <realshihuashen@gmail.com>",
@@ -16,7 +16,13 @@
     "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
-  "keywords": ["claude-code", "ai", "devtools", "sessions", "dashboard"],
+  "keywords": [
+    "claude-code",
+    "ai",
+    "devtools",
+    "sessions",
+    "dashboard"
+  ],
   "type": "module",
   "bin": {
     "session-devtools": "bin/session-devtools.js"
@@ -30,7 +36,9 @@
   "engines": {
     "node": ">=22.0.0"
   },
-  "workspaces": ["client"],
+  "workspaces": [
+    "client"
+  ],
   "scripts": {
     "dev": "bash scripts/setup-env.sh && concurrently \"npm run server:dev\" \"npm run client:dev\"",
     "server:dev": "server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json server/main.ts",
@@ -39,6 +47,7 @@
     "build:client": "cd client && npm run build && rm -rf ../dist/public && cp -r ../server/public ../dist/public",
     "build:server": "tsup",
     "prepack": "npm run build",
+    "prepublishOnly": "node -e \"if (process.env.PUBLISH_FROM_SCRIPT !== '1') { console.error('ERROR: Use scripts/publish.sh instead of npm publish directly.'); process.exit(1); }\"",
     "start": "node bin/session-devtools.js",
     "test": "cd server && npm test",
     "env:init": "[ -f .env ] || cp .env.example .env && echo 'Created .env from .env.example'",

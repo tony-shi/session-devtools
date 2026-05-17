@@ -12,7 +12,20 @@
 
 ![session-devtools hero demo](./docs/assets/hero.gif)
 
-▶ 观看完整 60 秒 demo → [Bilibili](https://www.bilibili.com/video/REPLACE_ID) · [YouTube](https://youtu.be/REPLACE_ID)
+> **你在看什么：** 一次含有 sub-agent 委派的 Claude Code session。
+> Session 列表（token / call / tool 计数）→ turn 下钻 → sub-agent 父子边界 → 上下文归因 → call 间 diff。
+> 每一层都可点开。
+
+▶ 观看完整 60 秒 demo → [Bilibili](https://www.bilibili.com/video/REPLACE_ID) · [YouTube](https://youtu.be/REPLACE_ID)  
+📖 **[产品说明：每个界面的含义 →](https://tony-shi.github.io/session-devtools/walkthrough)**
+
+---
+
+### 一眼看产品
+
+![session list screenshot](./docs/assets/hero.png)
+
+*Session 列表 — 每一个 Claude Code session，含 token 使用量、LLM call 数、tool call 数、sub-agent 标记。点击任意行进入详情。*
 
 ---
 
