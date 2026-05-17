@@ -60,7 +60,7 @@ describe("enrichTreeWithGraph", () => {
   it("writes firstSeenInCall when graph value ≤ currentCallId", () => {
     const tree = mkTree([mkJsonlLeaf("a", 5)]);
     const eventByLine = new Map([[5, mkAnnotation(5, 80, [80, 90, 100])]]);
-    const summary = enrichTreeWithGraph(tree, eventByLine, false, 100);
+    const summary = enrichTreeWithGraph(tree, eventByLine, 100);
 
     expect(summary.written).toBe(1);
     expect(summary.droppedByGuard).toBe(0);
@@ -69,52 +69,33 @@ describe("enrichTreeWithGraph", () => {
   });
 
   it("G1: drops firstSeenInCall when graph value > currentCallId", () => {
-    // The pathological case from session 32478a3f / Call 337:
-    // leaf is in call 337's prompt, but audit window only covered later
-    // calls. Graph reports firstSeen=475 — that's logically impossible
-    // (337 already consumes this line), so it must be dropped.
+    // Leaf is in call 337's prompt, but graph reports firstSeen=475 —
+    // logically impossible (337 already consumes this line), so drop.
     const tree = mkTree([mkJsonlLeaf("a", 5)]);
     const eventByLine = new Map([[5, mkAnnotation(5, 475, [475, 476])]]);
-    const summary = enrichTreeWithGraph(tree, eventByLine, true, 337);
+    const summary = enrichTreeWithGraph(tree, eventByLine, 337);
 
     expect(summary.droppedByGuard).toBe(1);
     expect(summary.written).toBe(0);
-    const origin = tree.snapshot!.roots[0].origin as { firstSeenInCall?: number; firstSeenIsWindowBounded?: boolean };
+    const origin = tree.snapshot!.roots[0].origin as { firstSeenInCall?: number };
     expect(origin.firstSeenInCall).toBeUndefined();
-    // Window qualifier must also stay off when we didn't write a value —
-    // otherwise the UI would print "(审计窗口内)" with no chip to qualify.
-    expect(origin.firstSeenIsWindowBounded).toBeUndefined();
   });
 
   it("G2: filters consumedByCallIds to ids ≤ currentCallId", () => {
     const tree = mkTree([mkJsonlLeaf("a", 5)]);
     const eventByLine = new Map([[5, mkAnnotation(5, 80, [80, 100, 200, 337])]]);
-    const summary = enrichTreeWithGraph(tree, eventByLine, false, 150);
+    const summary = enrichTreeWithGraph(tree, eventByLine, 150);
 
     expect(summary.written).toBe(1);
     const origin = tree.snapshot!.roots[0].origin as { consumedByCallIds?: number[] };
     expect(origin.consumedByCallIds).toEqual([80, 100]);  // 200, 337 dropped
   });
 
-  it("writes firstSeenIsWindowBounded only when isWindowBounded AND a value was written", () => {
-    const tree = mkTree([mkJsonlLeaf("a", 5), mkJsonlLeaf("b", 6)]);
-    const eventByLine = new Map([
-      [5, mkAnnotation(5, 80, [80])],     // valid → writes, marks bounded
-      [6, mkAnnotation(6, 999, [999])],   // > current → dropped, no bounded mark
-    ]);
-    enrichTreeWithGraph(tree, eventByLine, true, 100);
-
-    const a = tree.snapshot!.roots[0].origin as { firstSeenIsWindowBounded?: boolean };
-    const b = tree.snapshot!.roots[1].origin as { firstSeenIsWindowBounded?: boolean };
-    expect(a.firstSeenIsWindowBounded).toBe(true);
-    expect(b.firstSeenIsWindowBounded).toBeUndefined();
-  });
-
   it("noAnnotation counter: leaves whose line isn't in the graph at all", () => {
     const tree = mkTree([mkJsonlLeaf("a", 5), mkJsonlLeaf("b", 99)]);
     const eventByLine = new Map([[5, mkAnnotation(5, 80, [80])]]);
     // line 99 has no annotation
-    const summary = enrichTreeWithGraph(tree, eventByLine, false, 100);
+    const summary = enrichTreeWithGraph(tree, eventByLine, 100);
 
     expect(summary.written).toBe(1);
     expect(summary.noAnnotation).toBeGreaterThanOrEqual(1);
@@ -126,7 +107,7 @@ describe("enrichTreeWithGraph", () => {
       origin: { kind: "rule", ruleId: "wire.foo", matchMode: "exact", confidence: "definitive", fullyCovered: true } as SerializedNode["origin"],
     }]);
     const eventByLine = new Map([[5, mkAnnotation(5, 80, [80])]]);
-    const summary = enrichTreeWithGraph(tree, eventByLine, false, 100);
+    const summary = enrichTreeWithGraph(tree, eventByLine, 100);
 
     expect(summary.written).toBe(0);
     expect(summary.droppedByGuard).toBe(0);
@@ -139,7 +120,7 @@ describe("enrichTreeWithGraph", () => {
     // first to "see" it. Must NOT drop.
     const tree = mkTree([mkJsonlLeaf("a", 5)]);
     const eventByLine = new Map([[5, mkAnnotation(5, 100, [100, 101, 102])]]);
-    const summary = enrichTreeWithGraph(tree, eventByLine, false, 100);
+    const summary = enrichTreeWithGraph(tree, eventByLine, 100);
 
     expect(summary.written).toBe(1);
     expect(summary.droppedByGuard).toBe(0);

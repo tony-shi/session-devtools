@@ -35,17 +35,14 @@ export const apiV2 = {
     get<CallDetail>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/detail`),
 
   /**
-   * Per-call attribution tree. When `graphLastN` is passed, the server
-   * enriches every jsonl-origin leaf with `firstSeenInCall` /
-   * `consumedByCallIds` / `firstSeenIsWindowBounded` so the UI can use
+   * Per-call attribution tree. Server enriches every jsonl-origin leaf
+   * with `firstSeenInCall` / `consumedByCallIds` so the UI can use
    * `leaf.origin.firstSeenInCall` directly as a jump target.
    */
-  attributionTree: (sessionId: string, callId: number, opts?: { graphLastN?: number }) => {
-    const qs = opts?.graphLastN ? `?graphLastN=${opts.graphLastN}` : "";
-    return get<AttributionTreeResult>(
-      `/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/attribution-tree${qs}`,
-    );
-  },
+  attributionTree: (sessionId: string, callId: number) =>
+    get<AttributionTreeResult>(
+      `/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/attribution-tree`,
+    ),
 
   responseTree: (sessionId: string, callId: number) =>
     get<ResponseTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/response-tree`),
@@ -54,17 +51,14 @@ export const apiV2 = {
     get<DiffTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/calls/${callId}/diff-tree`),
 
   /**
-   * Reverse attribution graph for the session — every jsonl event annotated
-   * with which calls consumed it. `lastN` limits the audit window (only
-   * the last K calls drive the reverse lookup); omit for full session
-   * (slow on big sessions: ~13s for 149 calls).
+   * Reverse attribution graph for the session — every jsonl event
+   * annotated with which calls consumed it. Always runs over the full
+   * session; server caches the result for 5min.
    */
-  attributionGraph: (sessionId: string, opts?: { lastN?: number }) => {
-    const qs = opts?.lastN ? `?lastN=${opts.lastN}` : "";
-    return get<SessionAttributionGraph>(
-      `/api/v2/sessions/${encodeURIComponent(sessionId)}/attribution-graph${qs}`,
-    );
-  },
+  attributionGraph: (sessionId: string) =>
+    get<SessionAttributionGraph>(
+      `/api/v2/sessions/${encodeURIComponent(sessionId)}/attribution-graph`,
+    ),
 
   subAgentDrilldown: (sessionId: string, agentFileId: string) =>
     get<SessionDrilldown>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/subagent/${encodeURIComponent(agentFileId)}/drilldown`),

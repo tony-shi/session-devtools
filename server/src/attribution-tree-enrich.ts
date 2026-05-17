@@ -1,28 +1,20 @@
 // attribution-tree-enrich — write reverse-attribution facts (firstSeenInCall
-// / consumedByCallIds / firstSeenIsWindowBounded) onto every jsonl-origin
-// leaf in an AttributionTreeResult, in-place.
+// / consumedByCallIds) onto every jsonl-origin leaf in an
+// AttributionTreeResult, in-place.
 //
 // Front-end can then use `leaf.origin.firstSeenInCall` as a direct jump
 // target — no cross-endpoint join.
 //
-// Two correctness guards (logical invariants — violations indicate the
-// leaf's call is outside the audit window and graph data is unreliable):
+// Two correctness guards (logical invariants):
 //
 //   G1. firstSeenInCall ≤ currentCallId — by definition you can't "first see"
-//       content in a *future* call when *this* call already reads it. Real
-//       cause: the leaf's call sits outside the audit lastN window, so the
-//       graph only sees later references and reports the earliest of those.
+//       content in a *future* call when *this* call already reads it. When
+//       this trips we drop firstSeenInCall rather than ship a wrong value;
+//       UI degrades gracefully (no jump chip).
 //
 //   G2. consumedByCallIds is filtered to ids ≤ currentCallId for the same
 //       reason — a call can't be consuming this event "before this call
 //       exists".
-//
-// When G1 trips we drop firstSeenInCall entirely rather than ship a
-// known-wrong value. UI degrades gracefully (no jump chip; the leaf still
-// has all other origin info).
-//
-// Extracted from sessions-v2.controller.ts so it's directly unit-testable
-// without spinning up a Nest controller.
 
 import type { AttributionTreeResult, SerializedNode } from "./attribution-service.ts";
 import type { JsonlEventAnnotation } from "./session-attribution-graph.ts";
@@ -42,7 +34,6 @@ export interface EnrichSummary {
 export function enrichTreeWithGraph(
   tree: AttributionTreeResult,
   eventByLine: Map<number, JsonlEventAnnotation>,
-  isWindowBounded: boolean,
   currentCallId: number,
 ): EnrichSummary {
   const summary: EnrichSummary = { written: 0, droppedByGuard: 0, noAnnotation: 0 };
@@ -72,9 +63,6 @@ export function enrichTreeWithGraph(
     if (ann.consumedByCallIds.length > 0) {
       const past = ann.consumedByCallIds.filter(c => c <= currentCallId);
       if (past.length > 0) origin.consumedByCallIds = past;
-    }
-    if (isWindowBounded && origin.firstSeenInCall != null) {
-      origin.firstSeenIsWindowBounded = true;
     }
   };
 

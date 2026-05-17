@@ -447,7 +447,7 @@ export function AttributionTreeLensPanel({
     let cancelled = false;
     setLoading(true); setError(null);
     setSelectedSection(null); setSelectedNodeId(null); setSelectedBucketId(null);
-    apiV2.attributionTree(sessionId, callId, { graphLastN: 20 })
+    apiV2.attributionTree(sessionId, callId)
       .then((r) => { if (!cancelled) setResult(r); })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });

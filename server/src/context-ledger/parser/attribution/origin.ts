@@ -114,11 +114,6 @@ export interface JsonlOrigin {
    * 引用过该 event 的所有 callId（升序去重）。同 firstSeenInCall 的来源。
    */
   consumedByCallIds?: number[];
-  /**
-   * 当 graph 是 lastN 窗口跑出来的（非全 session），firstSeenInCall 实际是
-   * "窗口内最早"而非真正最早。前端用此字段在 UI 上加 caveat。
-   */
-  firstSeenIsWindowBounded?: boolean;
 }
 
 /** harness 注入路径的子分类。authorship 已由外层 source 表达，这里只描述 how / what。 */

@@ -29,13 +29,17 @@ export const CHART_COLORS = {
   deltaDanger: "#dc2626", // outlier growth
 } as const;
 
-/** Dark tooltip preset — same across all charts. */
+/** Dark tooltip preset — same across all charts.
+ *  `pointer-events: none` is critical: without it, the tooltip DOM element
+ *  sits above the canvas and swallows clicks that should reach the chart's
+ *  zrender click handler (e.g., "click a Call column to jump to that Call").
+ *  Tooltip is purely informational here — no interactive elements live inside. */
 export const TOOLTIP_PRESET = {
   backgroundColor: "#111827",
   borderColor: "#374151",
   borderWidth: 1,
   textStyle: { color: "#f9fafb", fontSize: 11 },
-  extraCssText: "max-width: 520px; white-space: normal;",
+  extraCssText: "max-width: 520px; white-space: normal; pointer-events: none;",
 } as const;
 
 /** Build the linear gradient used as area fill under brand line series. */

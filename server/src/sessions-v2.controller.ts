@@ -10,57 +10,36 @@ import { enrichTreeWithGraph } from "./attribution-tree-enrich.ts";
 import type { LinkableJsonlEvent } from "./context-ledger/parser";
 
 // ─── Session graph cache ────────────────────────────────────────────────────
-// computeSessionAttributionGraph is expensive (~1-2s for lastN=20, ~13s
-// full-session). attribution-tree calls it on every per-call request when
-// the front-end passes graphLastN — without a cache, browsing N calls in a
-// session would cost N × 1.7s. The cache shares the computed graph across:
-//   - subsequent attribution-tree calls in the same session (any callId)
-//   - the standalone attribution-graph endpoint
-// TTL is 5 minutes — long enough to span a typical "open session, click
-// around" workflow, short enough to not staledatasets if the user loads a
-// session that's still being written to.
+// computeSessionAttributionGraph runs over the whole session (~3-15s on
+// large sessions with the incremental algorithm). Both the standalone
+// attribution-graph endpoint and the per-call attribution-tree enrichment
+// path read from this cache, so opening a session and browsing calls only
+// pays the cost once. TTL is 5 minutes.
 interface CachedGraph {
   graph: SessionAttributionGraph;
-  lastN: number | "full";  // "full" = no lastN cap (the whole session)
   computedAt: number;
 }
 const sessionGraphCache = new Map<string, CachedGraph>();
 const GRAPH_CACHE_TTL_MS = 5 * 60 * 1000;
 
-function getCachedGraph(sessionId: string, requestedLastN: number | "full"): SessionAttributionGraph | null {
+function getCachedGraph(sessionId: string): SessionAttributionGraph | null {
   const cached = sessionGraphCache.get(sessionId);
   if (!cached) {
-    console.log(`[graph-cache] MISS session=${sessionId.slice(0, 8)} requested=${requestedLastN} (empty cache)`);
+    console.log(`[graph-cache] MISS session=${sessionId.slice(0, 8)} (empty cache)`);
     return null;
   }
   const ageMs = Date.now() - cached.computedAt;
   if (ageMs > GRAPH_CACHE_TTL_MS) {
-    console.log(`[graph-cache] MISS session=${sessionId.slice(0, 8)} requested=${requestedLastN} (expired ${(ageMs/1000).toFixed(1)}s)`);
+    console.log(`[graph-cache] MISS session=${sessionId.slice(0, 8)} (expired ${(ageMs/1000).toFixed(1)}s)`);
     return null;
   }
-  // A cached "full" graph satisfies any window request; a cached lastN
-  // satisfies only equal-or-tighter windows. We're conservative: serve only
-  // when the cached window is ≥ requested (so the answer is at least as
-  // complete as asked for).
-  if (cached.lastN === "full") {
-    console.log(`[graph-cache] HIT  session=${sessionId.slice(0, 8)} requested=${requestedLastN} (served from full · age=${(ageMs/1000).toFixed(1)}s)`);
-    return cached.graph;
-  }
-  if (requestedLastN === "full") {
-    console.log(`[graph-cache] MISS session=${sessionId.slice(0, 8)} requested=full (cache has only lastN=${cached.lastN})`);
-    return null;
-  }
-  if (cached.lastN >= requestedLastN) {
-    console.log(`[graph-cache] HIT  session=${sessionId.slice(0, 8)} requested=${requestedLastN} (served from lastN=${cached.lastN} · age=${(ageMs/1000).toFixed(1)}s)`);
-    return cached.graph;
-  }
-  console.log(`[graph-cache] MISS session=${sessionId.slice(0, 8)} requested=${requestedLastN} (cache has tighter lastN=${cached.lastN})`);
-  return null;
+  console.log(`[graph-cache] HIT  session=${sessionId.slice(0, 8)} (age=${(ageMs/1000).toFixed(1)}s)`);
+  return cached.graph;
 }
 
-function setCachedGraph(sessionId: string, lastN: number | "full", graph: SessionAttributionGraph) {
-  sessionGraphCache.set(sessionId, { graph, lastN, computedAt: Date.now() });
-  console.log(`[graph-cache] STORE session=${sessionId.slice(0, 8)} lastN=${lastN} events=${graph.events.length} audited=${graph.auditedCallIds.length}`);
+function setCachedGraph(sessionId: string, graph: SessionAttributionGraph) {
+  sessionGraphCache.set(sessionId, { graph, computedAt: Date.now() });
+  console.log(`[graph-cache] STORE session=${sessionId.slice(0, 8)} events=${graph.events.length} audited=${graph.auditedCallIds.length}`);
 }
 import { loadDiffTree } from "./diff-tree-service.ts";
 import { loadResponseTree } from "./response-attribution-service.ts";
@@ -262,16 +241,6 @@ export class SessionsV2Controller {
   async attributionTree(
     @Param("id") id: string,
     @Param("callId") callIdStr: string,
-    /**
-     * Reverse-attribution audit window. When provided, the endpoint also
-     * runs `computeSessionAttributionGraph` on the most recent N calls and
-     * writes the resulting `firstSeenInCall` / `consumedByCallIds` /
-     * `firstSeenIsWindowBounded` into every jsonl-origin leaf — front-end
-     * can then read `leaf.origin.firstSeenInCall` directly as the jump
-     * target without doing its own join. Pass 0 / negative / omitted to
-     * skip enrichment (faster, original behavior).
-     */
-    @Query("graphLastN") graphLastNParam?: string,
   ) {
     const db = getDb();
 
@@ -346,33 +315,27 @@ export class SessionsV2Controller {
       loadJsonlEvents,
     });
 
-    // Optional reverse-attribution enrichment. The graph drives the
-    // jump-target field on every jsonl leaf so the front-end can stay
-    // dumb (no cross-endpoint join). Cache the graph at module level so
-    // browsing multiple calls in a session amortizes the cost (≈1.7s
-    // first call, ≈50ms subsequent calls).
-    const graphLastN = graphLastNParam ? parseInt(graphLastNParam, 10) : NaN;
-    if (Number.isFinite(graphLastN) && graphLastN > 0) {
-      let graph = getCachedGraph(id, graphLastN);
-      if (!graph) {
-        const targetCalls = allCalls.slice(-graphLastN);
-        const t0 = Date.now();
-        console.log(`[attribution-tree] computing graph for enrichment session=${id.slice(0,8)} call=${callId} lastN=${graphLastN} calls=${targetCalls.length}`);
-        graph = await computeSessionAttributionGraph(id, db, {
-          listCalls: () => targetCalls.map((x) => ({ callId: x.call.id, sourceFile })),
-          loadCallHelpers: { resolveCallMeta, fetchProxyReqBodyAt, loadJsonlEvents },
-        });
-        console.log(`[attribution-tree] graph computed session=${id.slice(0,8)} call=${callId} took=${Date.now()-t0}ms events=${graph.events.length}`);
-        setCachedGraph(id, graphLastN, graph);
-      }
-      const eventByLine = new Map<number, JsonlEventAnnotation>();
-      for (const ev of graph.events) eventByLine.set(ev.lineIdx, ev);
-      // The audit window is bounded iff lastN < total session call count.
-      const isWindowBounded = graphLastN < allCalls.length;
-      const summary = enrichTreeWithGraph(treeResult, eventByLine, isWindowBounded, callId);
-      if (summary.droppedByGuard > 0) {
-        console.log(`[enrich-tree] session=${id.slice(0,8)} call=${callId} dropped=${summary.droppedByGuard} firstSeenInCall annotations (>currentCallId) — call is outside audit window`);
-      }
+    // Reverse-attribution enrichment: every jsonl-origin leaf is annotated
+    // with firstSeenInCall / consumedByCallIds so the front-end can use the
+    // leaf directly as a jump target (no cross-endpoint join). Always runs
+    // a full-session graph; the module cache amortizes across calls in the
+    // same session.
+    let graph = getCachedGraph(id);
+    if (!graph) {
+      const t0 = Date.now();
+      console.log(`[attribution-tree] computing graph for enrichment session=${id.slice(0,8)} call=${callId} calls=${allCalls.length}`);
+      graph = await computeSessionAttributionGraph(id, db, {
+        listCalls: () => allCalls.map((x) => ({ callId: x.call.id, sourceFile })),
+        loadCallHelpers: { resolveCallMeta, fetchProxyReqBodyAt, loadJsonlEvents },
+      });
+      console.log(`[attribution-tree] graph computed session=${id.slice(0,8)} call=${callId} took=${Date.now()-t0}ms events=${graph.events.length}`);
+      setCachedGraph(id, graph);
+    }
+    const eventByLine = new Map<number, JsonlEventAnnotation>();
+    for (const ev of graph.events) eventByLine.set(ev.lineIdx, ev);
+    const summary = enrichTreeWithGraph(treeResult, eventByLine, callId);
+    if (summary.droppedByGuard > 0) {
+      console.log(`[enrich-tree] session=${id.slice(0,8)} call=${callId} dropped=${summary.droppedByGuard} firstSeenInCall annotations (>currentCallId)`);
     }
 
     return treeResult;
@@ -383,17 +346,11 @@ export class SessionsV2Controller {
    * 聚合成"每个 jsonl event 在哪些 call 里被消费"。配合 per-call attribution-tree
    * 一起，前端就能做双向归因（leaf → jsonl line ↔ event → consuming calls）。
    *
-   * - 无 query 参数 → 跑整 session 所有 call（大 session 会慢，O(N) call × O(K) leaves）
-   * - `?lastN=K` → 只跑最后 K 个 call（用于 hot path 快速预览；与 audit 脚本同语义）
-   *
-   * 性能：session 内 jsonl events 单次解析，loadAttributionTree 内部走同款缓存；
-   * proxy reqBody 仍按 call 现读（与 attributionTree endpoint 一致，未做 LRU）。
+   * 永远跑全 session，结果按 sessionId 模块级缓存（5min TTL），与 attribution-tree
+   * 的 enrichment 路径共享同一份 cache。
    */
   @Get("sessions/:id/attribution-graph")
-  async attributionGraph(
-    @Param("id") id: string,
-    @Query("lastN") lastNParam?: string,
-  ) {
+  async attributionGraph(@Param("id") id: string) {
     const db = getDb();
     const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
@@ -407,18 +364,11 @@ export class SessionsV2Controller {
     }
 
     const allCalls = drilldown.turns.flatMap((t) => t.calls.map((c) => ({ call: c, turnId: t.id })));
-    const lastN = lastNParam ? Math.max(1, parseInt(lastNParam, 10)) : undefined;
-    const targetCalls = lastN ? allCalls.slice(-lastN) : allCalls;
 
-    // Shared module-level cache: a graph computed for this same window
-    // (or a superset window) gets served without recomputation. attribution
-    // -tree's graphLastN parameter also writes here so the two endpoints
-    // don't double-pay the ~1-2s cost.
-    const cacheKey: number | "full" = lastN ?? "full";
-    const cached = getCachedGraph(id, cacheKey);
+    const cached = getCachedGraph(id);
     if (cached) return cached;
     const tStart = Date.now();
-    console.log(`[attribution-graph] computing session=${id.slice(0,8)} lastN=${cacheKey} calls=${targetCalls.length}`);
+    console.log(`[attribution-graph] computing session=${id.slice(0,8)} calls=${allCalls.length}`);
 
     // session 级 events 缓存：computeSessionAttributionGraph 顶层读一次；
     // 每个 call 的 loadAttributionTree 内部也复用这一份（通过 loadJsonlEvents hook）。
@@ -431,7 +381,7 @@ export class SessionsV2Controller {
     };
 
     const computed = await computeSessionAttributionGraph(id, db, {
-      listCalls: () => targetCalls.map((x) => ({ callId: x.call.id, sourceFile })),
+      listCalls: () => allCalls.map((x) => ({ callId: x.call.id, sourceFile })),
       loadCallHelpers: {
         resolveCallMeta: (_sid, cid) => {
           const cur = allCalls.find((x) => x.call.id === cid);
@@ -465,8 +415,8 @@ export class SessionsV2Controller {
         loadJsonlEvents,
       },
     });
-    console.log(`[attribution-graph] computed session=${id.slice(0,8)} lastN=${cacheKey} took=${Date.now()-tStart}ms events=${computed.events.length} audited=${computed.auditedCallIds.length}`);
-    setCachedGraph(id, cacheKey, computed);
+    console.log(`[attribution-graph] computed session=${id.slice(0,8)} took=${Date.now()-tStart}ms events=${computed.events.length} audited=${computed.auditedCallIds.length}`);
+    setCachedGraph(id, computed);
     return computed;
   }
 

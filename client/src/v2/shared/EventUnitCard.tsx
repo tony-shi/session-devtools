@@ -68,18 +68,11 @@ export interface EventUnitCardProps {
     firstSeenInCall?: number | null;
     consumedByCallIds?: number[];
     /**
-     * True when `firstSeenInCall` is bounded by the current audit window
-     * (i.e. lastN mode and the true first-seen call may live outside).
-     * Shown in META as a "(审计窗口)" qualifier so users don't mistake
-     * the window-local answer for the session-wide answer.
-     */
-    firstSeenIsWindowBounded?: boolean;
-    /**
      * Audit-gap caveat: server detected that firstSeenInCall is the
      * earliest audited call but there are unaudited calls (no proxy data)
      * before it. The true first-seen may be one of those unaudited calls.
-     * UI hides the jump chip + shows a warning instead of misleading the
-     * user to jump to a call hundreds of slots later than the real source.
+     * UI restyles the jump chip with a warning so the user can tell that
+     * the target may not be the real source.
      */
     firstSeenIsAfterAuditGap?: boolean;
   };
@@ -336,16 +329,12 @@ function ImpactChips({ impact }: { impact: NonNullable<EventUnitCardProps["impac
   // indexed
   const fst = impact.firstSeenInCall;
   const usedIn = impact.consumedByCallIds?.length ?? 0;
-  const windowQualifier = impact.firstSeenIsWindowBounded;
   const gapQualifier = impact.firstSeenIsAfterAuditGap;
   return (
     <>
       {fst != null && (
         <span>
           first seen → call #{fst}
-          {windowQualifier && (
-            <span style={{ color: "#b45309", marginLeft: 4 }}>(审计窗口内)</span>
-          )}
           {gapQualifier && (
             <span style={{ color: "#b45309", marginLeft: 4 }}>
               ⚠ 数据可能不准 — 早期 call 未审计

@@ -509,9 +509,8 @@ export function SelectedDetail({ leaf, onLinkSource }: {
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
 }) {
   // Back-link target: the call that first inserted this leaf's underlying
-  // jsonl event into a prompt. Read directly from origin (server-filled
-  // when attribution-tree is requested with `graphLastN`); fall back to
-  // `sourceCallId` if graph enrichment is absent.
+  // jsonl event into a prompt. Read directly from origin (server-filled);
+  // fall back to `sourceCallId` if graph enrichment is absent.
   //
   // Action: open the Turn view (legacy onLinkSource path → turn-excerpt),
   // *not* the per-call detail. User explicitly wants the surrounding turn
@@ -525,9 +524,6 @@ export function SelectedDetail({ leaf, onLinkSource }: {
   const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;
   const firstSeenInCall = leaf.origin.kind === "jsonl" ? leaf.origin.firstSeenInCall : undefined;
   const jsonlLineIdx = leaf.origin.kind === "jsonl" ? leaf.origin.jsonlLineIdx : undefined;
-  const isWindowBounded = leaf.origin.kind === "jsonl"
-    ? !!leaf.origin.firstSeenIsWindowBounded
-    : false;
   const jumpTarget = firstSeenInCall ?? sourceCallId;
   const handleJumpSource = (jumpTarget !== undefined && onLinkSource)
     ? () => {
@@ -578,11 +574,7 @@ export function SelectedDetail({ leaf, onLinkSource }: {
         onJump={handleJumpSource}
         jumpLabel={jumpTarget !== undefined ? `call #${jumpTarget}` : undefined}
         jumpTooltip={jumpTarget !== undefined
-          ? `打开 call #${jumpTarget}（首次把这一段内容写进 prompt 的 call）${
-              isWindowBounded
-                ? "\n\n注意：当前是 audit 窗口内最早；真实首次可能更早，点顶部 'load full ›' 获取全 session 归因。"
-                : ""
-            }`
+          ? `打开 call #${jumpTarget}（首次把这一段内容写进 prompt 的 call）`
           : undefined}
       />
 
@@ -791,9 +783,7 @@ export function AttributionTreePanel({
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError(null); setSelectedSection(null); setSelectedNodeId(null);
-    // graphLastN=20 → server enriches jsonl-origin leaves with
-    // firstSeenInCall, so SelectedDetail can use it directly for jumps.
-    apiV2.attributionTree(sessionId, callId, { graphLastN: 20 })
+    apiV2.attributionTree(sessionId, callId)
       .then((r) => { if (!cancelled) setResult(r); })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });

@@ -1,8 +1,8 @@
 // AttributionGraphContext — session 级 reverse-attribution 数据下发。
 //
 // 设计原则：
-//   - 进入 session 时**渐进加载**：先 lastN=20（hot path，亚秒级），用户主动
-//     需要全量时再调用 `loadFull()` 跑全 session（150-call session ~13s）。
+//   - 进入 session 时**一次性加载**全量 graph（incremental 算法 + 服务端 5min
+//     cache，单次 ~3-15s，后续访问命中 cache 亚秒级）。
 //   - 通过 Context 下发到所有子组件（ToolCallRow / IntervalEventRow /
 //     SelectedDetail / ...），避免 5571 行 SessionDetailV2 内的 prop drilling。
 //   - 缺数据时回退优雅：`getEventAnnotation` 返回 null，调用方按现有行为
@@ -12,18 +12,12 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import { apiV2 } from "./api";
 import type { JsonlEventAnnotation, SessionAttributionGraph } from "./attribution-graph-types";
 
-const DEFAULT_LAST_N = 20;
-
 export interface AttributionGraphContextValue {
   graph: SessionAttributionGraph | null;
   /** Quick O(1) lookup by jsonl lineIdx. */
   getEventAnnotation: (lineIdx: number) => JsonlEventAnnotation | null;
-  /** Currently loaded window: number = lastN, null = full session. */
-  loadedLastN: number | null;
   loading: boolean;
   error: string | null;
-  /** Promote to full-session load. Idempotent. */
-  loadFull: () => void;
   /**
    * Jump-to-Call navigation callback — auto-wraps the parent-provided
    * dispatcher to also scroll the main timeline to that call and flash
@@ -54,10 +48,8 @@ export interface AttributionGraphContextValue {
 const Ctx = createContext<AttributionGraphContextValue>({
   graph: null,
   getEventAnnotation: () => null,
-  loadedLastN: null,
   loading: false,
   error: null,
-  loadFull: () => {},
   onJumpToCall: null,
   highlightedCallId: null,
   highlightedLineIdx: null,
@@ -67,72 +59,33 @@ const Ctx = createContext<AttributionGraphContextValue>({
 const FLASH_DURATION_MS = 2000;
 
 export function AttributionGraphProvider({
-  sessionId, initialLastN = DEFAULT_LAST_N, onJumpToCall = null, children,
+  sessionId, onJumpToCall = null, children,
 }: {
   sessionId: string;
-  /** Default last-N window for the initial fetch. Pass null to skip initial
-   *  load and require explicit `loadFull()`. */
-  initialLastN?: number | null;
   /** Jump-to-Call dispatcher (see AttributionGraphContextValue.onJumpToCall). */
   onJumpToCall?: ((callId: number, lens?: "request" | "response") => void) | null;
   children: React.ReactNode;
 }) {
   const [graph, setGraph] = useState<SessionAttributionGraph | null>(null);
-  const [loadedLastN, setLoadedLastN] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [fullRequested, setFullRequested] = useState(false);
   const [highlightedCallId, setHighlightedCallId] = useState<number | null>(null);
   const [highlightedLineIdx, setHighlightedLineIdx] = useState<number | null>(null);
 
-  // Accuracy-first two-stage load:
-  //   stage 1 — fast `lastN` window so the UI is interactive in ~1s with
-  //             approximately-correct firstSeenInCall (window-bounded)
-  //   stage 2 — full-session promotion fires automatically on the heels of
-  //             stage 1; when it lands the impact qualifier disappears and
-  //             every jump target becomes session-truthful.
-  // The user no longer has to click "load full ›" — promotion is implicit.
-  // setFullRequested(true) is idempotent, so this auto-trigger composes
-  // with the manual loadFull() entry on AuditBoundaryStatus.
+  // Single full-session load. Server caches the result for 5min, so opening
+  // a session you've already visited is near-instant; the cold path runs
+  // the incremental algorithm (~3-15s depending on session size).
   useEffect(() => {
-    if (!sessionId || initialLastN == null) return;
+    if (!sessionId) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
-    apiV2.attributionGraph(sessionId, { lastN: initialLastN })
-      .then(g => {
-        if (cancelled) return;
-        setGraph(g);
-        setLoadedLastN(initialLastN);
-        // Kick off the full-session audit immediately. Server-side cache
-        // dedups concurrent requests; if the user opens session detail and
-        // immediately clicks "load full ›" we won't double-pay.
-        setFullRequested(true);
-      })
+    apiV2.attributionGraph(sessionId)
+      .then(g => { if (!cancelled) setGraph(g); })
       .catch(err => { if (!cancelled) setError(String(err)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sessionId, initialLastN]);
-
-  // Full session load. Triggered both manually (chip button) and
-  // automatically (right after stage-1 lastN graph lands). Computes ~13s
-  // on a 149-call session; when it lands every Origin / IntervalEventRow
-  // META re-renders with truthful firstSeenInCall.
-  useEffect(() => {
-    if (!fullRequested || !sessionId) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    apiV2.attributionGraph(sessionId, {})
-      .then(g => {
-        if (cancelled) return;
-        setGraph(g);
-        setLoadedLastN(null);
-      })
-      .catch(err => { if (!cancelled) setError(String(err)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [fullRequested, sessionId]);
+  }, [sessionId]);
 
   // Map index for O(1) lookup by lineIdx.
   const byLine = useMemo(() => {
@@ -146,8 +99,6 @@ export function AttributionGraphProvider({
     (lineIdx: number) => byLine?.get(lineIdx) ?? null,
     [byLine],
   );
-
-  const loadFull = useCallback(() => setFullRequested(true), []);
 
   // Wrap the parent-provided onJumpToCall so every jump also:
   //   (a) scrolls the main timeline to the call's anchor `[id$="-call-N"]`
@@ -205,10 +156,8 @@ export function AttributionGraphProvider({
   const value: AttributionGraphContextValue = {
     graph,
     getEventAnnotation,
-    loadedLastN,
     loading,
     error,
-    loadFull,
     onJumpToCall: wrappedJumpToCall,
     highlightedCallId,
     highlightedLineIdx,
@@ -223,22 +172,17 @@ export function useAttributionGraph(): AttributionGraphContextValue {
 }
 
 /**
- * Inline chip rendered in modal/page headers — surfaces the *current
- * accuracy* of the attribution graph the UI is reading from. Three states:
+ * Inline chip rendered in modal/page headers — surfaces graph load status:
  *
- *   归因加载中…         — first paint, no data yet
- *   归因 last N · 升级 full 中…  — stage-1 lastN graph is live, stage-2 full
- *                                  audit is computing in the background
- *   归因 full           — full session audit landed; firstSeenInCall is
- *                         session-truthful
+ *   归因加载中…   — request in flight
+ *   归因 ✓        — full session graph live
+ *   归因加载失败  — error
  *
- * Auto-promotion to full happens implicitly (Provider triggers it after the
- * lastN stage); no manual "load full" button needed anymore. We still keep
- * one as a defensive fallback for the unlikely "stage-1 succeeded but
- * stage-2 was cancelled" case — currently impossible but cheap to preserve.
+ * Also shows a "K skipped" indicator when any calls were unaudited (no
+ * proxy data); hover to see per-call reasons.
  */
 export function AuditBoundaryStatus() {
-  const { graph, loadedLastN, loading, error, loadFull } = useAttributionGraph();
+  const { graph, loading, error } = useAttributionGraph();
   if (error) {
     return (
       <span
@@ -269,51 +213,21 @@ export function AuditBoundaryStatus() {
   const reasonSummary = unaudited > 0
     ? graph.unauditedCallIds.map(u => `#${u.callId}: ${u.reason}`).join("\n")
     : "";
-  const isFull = loadedLastN == null;
-  const isUpgrading = !isFull && loading;
   return (
     <span
       style={{
         display: "inline-flex", alignItems: "center", gap: 6,
         fontSize: 10, color: "#374151",
-        background: isUpgrading ? "#fffbeb" : (isFull ? "#f0fdf4" : "#f9fafb"),
-        border: `1px solid ${isUpgrading ? "#fde68a" : (isFull ? "#bbf7d0" : "#e5e7eb")}`,
+        background: "#f0fdf4", border: "1px solid #bbf7d0",
         borderRadius: 4, padding: "2px 8px",
       }}
       title={
-        (isFull
-          ? "audit 已覆盖整 session — firstSeenInCall 准确"
-          : isUpgrading
-            ? `当前显示 last ${loadedLastN} 窗口数据（firstSeenInCall 可能受窗口限制）；正在后台跑全 session audit，完成后会自动替换为准确数据`
-            : `当前 audit 窗口：最近 ${loadedLastN} 个 call`) +
+        "audit 已覆盖整 session — firstSeenInCall 准确" +
         (reasonSummary ? `\n\n以下 call 因边界条件被跳过：\n${reasonSummary}` : "")
       }
     >
       <span style={{ fontWeight: 700, color: "#6b7280", letterSpacing: "0.04em" }}>归因</span>
-      {isFull ? (
-        <span style={{ color: "#15803d", fontWeight: 600 }}>full ✓</span>
-      ) : isUpgrading ? (
-        <>
-          <span>last {loadedLastN}</span>
-          <span style={{ color: "#b45309" }}>· 升级 full 中…</span>
-        </>
-      ) : (
-        // Defensive: lastN data live but no stage-2 in flight (shouldn't
-        // occur under the auto-promotion flow, but keep a manual escape).
-        <>
-          <span>last {loadedLastN}</span>
-          <button
-            type="button"
-            onClick={loadFull}
-            style={{
-              border: "none", background: "transparent", cursor: "pointer",
-              fontSize: 10, color: "#6366f1", fontWeight: 600, padding: 0,
-            }}
-          >
-            load full ›
-          </button>
-        </>
-      )}
+      <span style={{ color: "#15803d", fontWeight: 600 }}>✓</span>
       {unaudited > 0 && (
         <span style={{ color: "#b45309" }}>{unaudited} skipped</span>
       )}

@@ -2842,39 +2842,24 @@ function IntervalEventRow({
   //   - indexed → render normal + jump to firstSeenInCall
   //   - pending → yellow tint + "暂未消费"
   //   - skipped → dim + "仅元数据"
-  // When the graph hasn't loaded yet (or this lineIdx is outside the
-  // current lastN window), annotation === null and the card renders without
-  // any impact treatment (back-compat with pre-Phase-1 visuals).
-  //
-  // IMPORTANT caveat on `firstSeenInCall`: it is "earliest reference within
-  // the *audited window*", not "earliest reference in the whole session".
-  // When loadedLastN != null and the true first call sits outside the
-  // window, the server's `firstSeenInCall` will point to whichever in-window
-  // call referenced this event earliest — which can be much later than the
-  // user expects. We surface this honestly in the jump tooltip so users
-  // know to click "load full ›" if the target looks suspicious.
-  const { getEventAnnotation, onJumpToCall, loadedLastN, highlightedLineIdx } = useAttributionGraph();
+  // When the graph hasn't loaded yet annotation === null and the card
+  // renders without any impact treatment.
+  const { getEventAnnotation, onJumpToCall, highlightedLineIdx } = useAttributionGraph();
   const annotation = getEventAnnotation(ev.lineIdx);
   const isFlashing = highlightedLineIdx === ev.lineIdx;
   const impact = annotation ? {
     state: annotation.contextImpact,
     firstSeenInCall: annotation.firstSeenInCall,
     consumedByCallIds: annotation.consumedByCallIds,
-    // In lastN mode the server's firstSeenInCall is "earliest reference
-    // *within the audit window*" — surface that caveat directly in META so
-    // users don't misread a window-local answer as session-wide.
-    firstSeenIsWindowBounded: loadedLastN != null,
     // Audit-gap caveat from server: firstSeen value here is unreliable
-    // because unaudited calls (no proxy) exist before the audit window.
+    // because unaudited calls (no proxy) exist before the earliest audited
+    // call.
     firstSeenIsAfterAuditGap: annotation.firstSeenIsAfterAuditGap,
   } : undefined;
   const jumpTarget = annotation?.firstSeenInCall ?? null;
   const handleJump = (onJumpToCall && jumpTarget != null)
     ? () => onJumpToCall(jumpTarget, "request")
     : undefined;
-  const auditCaveat = loadedLastN != null
-    ? `\n\n注意：当前是 last-${loadedLastN} 审计窗口，跳转目标是窗口内最早引用 —— 若实际首次消费在窗口之外，请先点顶部"load full ›"获取全 session 归因。`
-    : "";
 
   return (
     <div
@@ -2908,7 +2893,7 @@ function IntervalEventRow({
         onJump={handleJump}
         jumpLabel={jumpTarget != null ? `call #${jumpTarget}` : undefined}
         jumpTooltip={jumpTarget != null
-          ? `在 call #${jumpTarget} 的 request 里查看（首次进入 prompt 的 call）${auditCaveat}`
+          ? `在 call #${jumpTarget} 的 request 里查看（首次进入 prompt 的 call）`
           : undefined}
       />
     </div>

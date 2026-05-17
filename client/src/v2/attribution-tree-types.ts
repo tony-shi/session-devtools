@@ -35,20 +35,13 @@ export type SegmentOrigin =
       fullyCovered: boolean;
       /**
        * Reverse-attribution: first call that put this jsonl event into a
-       * prompt. Populated by the server's attribution-tree endpoint when
-       * called with `?graphLastN=K`. UI uses this directly as a jump target
-       * — no front-end cross-lookup needed.
+       * prompt. Populated by the server's attribution-tree endpoint. UI
+       * uses this directly as a jump target — no front-end cross-lookup
+       * needed.
        */
       firstSeenInCall?: number;
       /** All callIds that referenced this event (sorted ascending). */
       consumedByCallIds?: number[];
-      /**
-       * True iff `firstSeenInCall` was resolved against a bounded audit
-       * window (lastN < total session calls). UI adds a "(审计窗口内)"
-       * qualifier in that case so users don't mistake window-local for
-       * session-wide answers.
-       */
-      firstSeenIsWindowBounded?: boolean;
     }
   | { kind: "structural"; slotId: string; reason: "container_node" | "no_rule_matched" }
   | { kind: "unknown"; reason: string };
