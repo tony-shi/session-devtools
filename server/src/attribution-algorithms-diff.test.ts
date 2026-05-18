@@ -77,9 +77,8 @@ maybeDescribe(`attribution algorithms diff: ${FIXTURE_SESSION_ID ?? "(skipped)"}
           };
         },
         fetchProxyReqBodyAt: async (sid: string, ts: string, excludeProxyId?: number, apiRequestId?: string | null) => {
-          const match = findProxyRowForCall(db, sid, apiRequestId ?? undefined, ts, excludeProxyId);
-          if (!match) return null;
-          const { row: proxyRow } = match;
+          const proxyRow = findProxyRowForCall(db, sid, apiRequestId ?? undefined, excludeProxyId);
+          if (!proxyRow) return null;
           const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
           const reqBodyStr = rec?.reqBody as string | undefined;
           if (typeof reqBodyStr !== "string") return null;

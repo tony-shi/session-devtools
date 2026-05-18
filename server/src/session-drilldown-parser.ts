@@ -365,34 +365,64 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
 // ─── Sub agent parser ─────────────────────────────────────────────────────────
 // Scans the subagents/ directory next to the session JSONL.
 // Each agent-{hash}.jsonl is an independent conversation; .meta.json has type+description.
-// The linkage to the parent session is: subagents/ is a sibling directory of the session file,
-// named after the session file (without .jsonl extension).
+//
+// Sub-agent ↔ parent tool_use linkage:
+//   The parent JSONL has Agent tool_use blocks (assistant.message.content[]
+//   with name="Agent"). The sub-agent JSONL's first event is a user event
+//   carrying the exact prompt text that was passed in tool_use.input.prompt,
+//   plus a promptId scoping it to a specific parent turn. We match
+//   (promptId, prompt-text) → tool_use_id. This is deterministic even when a
+//   single turn spawns multiple parallel sub-agents.
+//
+//   When the match fails (older format, truncated prompt, etc.) we leave
+//   toolUseId empty and parentLineIdx=-1 — better to surface "unknown parent"
+//   than the positional/dictionary-order guess the prior implementation made.
+
+interface ParentAgentToolUse {
+  id: string;
+  lineIdx: number;           // index into mainEvents of the containing assistant event
+  promptId: string | null;   // promptId of the enclosing turn (from the turn-opener user event)
+  prompt: string;            // tool_use.input.prompt verbatim
+  resultPreview: string;
+  result: string;
+}
 
 function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSummary[] {
   const sessionBase = basename(sourceFile, ".jsonl");
   const subagentsDir = join(dirname(sourceFile), sessionBase, "subagents");
   if (!existsSync(subagentsDir)) return [];
 
-  // Build a map: tool_use_id → tool_result content (from main JSONL)
-  // so we can attach the result preview to each sub agent.
-  // We match by order: the Nth Agent tool_result in the main chain corresponds
-  // to the Nth sub agent (by start time, since ordering is not always guaranteed).
-  // Better approach: use subagent file start time to order, and match sequentially.
-  const agentToolUses: Array<{ id: string; name: string; resultPreview: string; result: string }> = [];
-  for (const ev of mainEvents) {
-    if (ev.type !== "assistant") continue;
-    const aev = ev as JAssistantEvent;
-    for (const b of aev.message?.content ?? []) {
-      if (b.type === "tool_use" && (b as { name?: string }).name === "Agent") {
-        agentToolUses.push({ id: (b as { id?: string }).id ?? "", name: "Agent", resultPreview: "", result: "" });
+  // Walk main events, tracking the "current turn promptId" via the last seen
+  // user event that has a promptId. Collect every Agent tool_use with its
+  // enclosing turn's promptId and its prompt text.
+  const agentToolUses: ParentAgentToolUse[] = [];
+  let currentPromptId: string | null = null;
+  for (let i = 0; i < mainEvents.length; i++) {
+    const ev = mainEvents[i];
+    if (ev.type === "user") {
+      const pid = (ev as JUserEvent & { promptId?: string }).promptId;
+      if (typeof pid === "string" && pid.length > 0) currentPromptId = pid;
+    } else if (ev.type === "assistant") {
+      const aev = ev as JAssistantEvent;
+      for (const b of aev.message?.content ?? []) {
+        const bc = b as { type?: string; name?: string; id?: string; input?: { prompt?: unknown } };
+        if (bc.type === "tool_use" && bc.name === "Agent") {
+          const promptText = typeof bc.input?.prompt === "string" ? bc.input.prompt : "";
+          agentToolUses.push({
+            id: bc.id ?? "",
+            lineIdx: i,
+            promptId: currentPromptId,
+            prompt: promptText,
+            resultPreview: "",
+            result: "",
+          });
+        }
       }
     }
   }
-  // Collect tool_results for Agent calls. We keep BOTH the full text (for
-  // the sub-agent card's expanded view) and the 300-char preview (for
-  // compact list contexts). Without the full text the sub-agent's final
-  // report ends mid-sentence in the dashboard.
-  let agentResultIdx = 0;
+  // Collect tool_results for Agent calls. Keep the full text (for the
+  // sub-agent card's expanded view) AND the 300-char preview (for compact
+  // list contexts). Match strictly on tool_use_id (deterministic).
   for (const ev of mainEvents) {
     if (ev.type !== "user") continue;
     const uev = ev as JUserEvent;
@@ -423,7 +453,11 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
   } catch { return []; }
 
   const summaries: SubAgentSummary[] = [];
-  let agentIdx = 0;
+  // Track which parent tool_use each sub-agent claimed, so two sub-agents
+  // sharing identical (promptId, prompt) (extremely rare — would mean the
+  // same prompt was dispatched twice in one turn) still get distinct parents
+  // by claim order.
+  const claimedToolUseIds = new Set<string>();
 
   for (const entry of entries.sort()) {
     const agentFileId = entry.replace(".jsonl", "").replace("agent-", "");
@@ -508,16 +542,42 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
       ? Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime())
       : 0;
 
-    // Try to match to an Agent tool_use in the parent
-    const tu = agentToolUses[agentIdx] ?? { id: "", name: "Agent", resultPreview: "", result: "" };
-    agentIdx++;
+    // Match to a parent Agent tool_use via (promptId, prompt-text). The first
+    // event of the sub-agent JSONL is a user event whose message.content is
+    // the verbatim prompt that was passed to the Task tool. Its promptId
+    // scopes which parent turn this belongs to.
+    let subFirstPromptId: string | null = null;
+    let subFirstPrompt = "";
+    if (agentEvents.length > 0) {
+      const first = agentEvents[0] as JEvent & { promptId?: string };
+      if (first.type === "user") {
+        const pid = first.promptId;
+        if (typeof pid === "string") subFirstPromptId = pid;
+        const c = (first as JUserEvent).message?.content;
+        if (typeof c === "string") subFirstPrompt = c;
+        else if (Array.isArray(c)) {
+          // older format: content could be a list of text blocks
+          subFirstPrompt = c.map((b) => (b as { text?: string })?.text ?? "").join("");
+        }
+      }
+    }
+
+    const candidate = agentToolUses.find((tu) =>
+      !claimedToolUseIds.has(tu.id)
+      && tu.prompt === subFirstPrompt
+      && (subFirstPromptId === null || tu.promptId === null || tu.promptId === subFirstPromptId),
+    );
+    const tu = candidate ?? { id: "", lineIdx: -1, promptId: null, prompt: "", resultPreview: "", result: "" };
+    if (candidate) claimedToolUseIds.add(candidate.id);
 
     summaries.push({
       agentFileId,
       agentType,
       description,
       toolUseId: tu.id,
-      toolUseName: tu.name,
+      toolUseName: "Agent",
+      parentLineIdx: tu.lineIdx,
+      parentCallId: 0,
       llmCallCount,
       toolCallCount,
       totalCacheRead,
@@ -887,15 +947,12 @@ export function parseSessionDrilldown(
         }
       }
 
-      // Context size = total tokens in the context window at this call.
-      // = input_tokens (non-cached) + cache_read + cache_write
-      // Note: freshIn = inputTokens + cacheWrite, so we use inputTokens here to
-      // avoid double-counting cacheWrite.
+      // contextSize = total prompt size this call (NOT the model's context
+      // window capacity — that's a separate thing). = input + cacheRead + cacheWrite.
       const contextSize = inputTokens + cacheRead + cacheWrite;
-      // Delta vs previous call — *session-wide*, not just within turn.
-      // Within a turn, fall back to the in-turn predecessor; at turn boundary
-      // (callIdx === 0), use prevCallEvAcrossTurns set by the previous turn's
-      // last call. Only the very first call of the session has no prev.
+      // significantDelta = this call's prompt size − previous call's prompt size.
+      // A measure of how much the prompt grew (or shrank, on compaction) call-to-call.
+      // Used by the UI to flag big jumps.
       const prevCall = callIdx > 0
         ? rawCalls[callIdx - 1].ev
         : prevCallEvAcrossTurns;
@@ -904,14 +961,10 @@ export function parseSessionDrilldown(
         + (prevUsage.cache_read_input_tokens ?? 0)
         + (prevUsage.cache_creation_input_tokens ?? 0);
       const significantDelta = contextSize - prevContext;
-      // freshIn per-call = context growth since previous call.
-      // Only the absolute first call of the session has no prev; for that
-      // single case, treat the entire contextSize as "fresh" (nothing to
-      // compare against). All other turn boundaries chain through
-      // prevCallEvAcrossTurns and get a real delta.
-      const callFreshIn = prevCall === null
-        ? contextSize
-        : Math.max(0, contextSize - prevContext);
+      // freshIn ≡ usage.input_tokens — the non-cached fresh input portion,
+      // billed at 1x rate. Matches Claude /cost's "X input" per model.
+      // Independent from significantDelta (prompt-size delta).
+      const callFreshIn = inputTokens;
 
       return {
         id: globalCallIndex,
@@ -1143,13 +1196,17 @@ export function parseSessionDrilldown(
   for (const sa of subAgents) {
     if (sa.toolUseId) subAgentByToolUseId.set(sa.toolUseId, sa);
   }
-  // Attach sub agents to matching LlmCalls, then strip temp field
+  // Attach sub agents to matching LlmCalls, then strip temp field. Also
+  // back-fill SubAgentSummary.parentCallId now that we know each call's id.
   for (const turn of turns) {
     for (const call of turn.calls) {
       const c = call as LlmCall & { _agentToolUseIds?: string[] };
       for (const id of c._agentToolUseIds ?? []) {
         const sa = subAgentByToolUseId.get(id);
-        if (sa) c.subAgents.push(sa);
+        if (sa) {
+          sa.parentCallId = call.id;
+          c.subAgents.push(sa);
+        }
       }
       delete c._agentToolUseIds;
     }

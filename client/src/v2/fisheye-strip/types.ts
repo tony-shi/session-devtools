@@ -53,6 +53,9 @@ export interface FisheyeStripProps<T extends FisheyeItem> {
   getLabel?: (item: T) => string;
   /** 可选：tooltip 文本 */
   getTitle?: (item: T) => string;
+  /** 可选：对应 item 上叠加的特殊标记色（如 cache_control pin → 红框）。
+   *  返回 null 不画。用 boxShadow inset 渲染，不影响 layout / 鱼眼计算。 */
+  getMarker?: (item: T) => string | null;
 
   // ─── 容器外观 ─────────────────────────────────────
   height?: number;

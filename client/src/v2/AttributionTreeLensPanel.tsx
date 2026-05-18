@@ -135,53 +135,61 @@ function DevTodoStrip({ activeLensId }: { activeLensId: string }) {
   );
 }
 
-// ─── LensSwitcher ────────────────────────────────────────────────────────────
+// ─── LensSwitcher（多 lens toggle）────────────────────────────────────────────
 
 function LensSwitcher({
-  activeLensId, onChange, hideDiff,
+  lenses, activeLenses, baseLensId, onToggle,
 }: {
-  activeLensId: string;
-  onChange: (id: string) => void;
-  /** Skip the virtual Diff lens chip when there's no previous call to
-   *  compare against (first call of session, fork start, etc.) — showing
-   *  the chip with nothing to diff is just confusing. */
-  hideDiff?: boolean;
+  lenses: Lens[];
+  activeLenses: Set<string>;
+  /** 永远 active、不能关闭的基底 lens（一般是 Provenance）。 */
+  baseLensId: string;
+  onToggle: (id: string) => void;
 }) {
-  // Build chip list: real lenses (Provenance / Cache / Audit) + virtual
-  // "Diff" lens (special-case rendering, see DIFF_LENS_ID note). Visual
-  // treatment is identical so the user sees a single coherent "视角" row.
-  const chips: Array<{ id: string; label: string; description: string }> = [
-    ...LENSES.map(l => ({ id: l.id, label: l.label, description: l.description ?? "" })),
-    ...(hideDiff ? [] : [{ id: DIFF_LENS_ID, label: DIFF_LENS_LABEL, description: DIFF_LENS_DESCRIPTION }]),
-  ];
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 6,
-      padding: "2px 0",
+      padding: "2px 0", flexWrap: "wrap",
     }}>
       <span style={{ fontWeight: 600, color: "#4b5563", letterSpacing: "0.04em", textTransform: "uppercase", fontSize: 10 }}>
         视角
       </span>
-      {chips.map((lens) => {
-        const active = lens.id === activeLensId;
+      {lenses.map((lens) => {
+        const isActive = activeLenses.has(lens.id);
+        const isBase = lens.id === baseLensId;
+        const description = isBase
+          ? (lens.description ?? "") + "（基底视角，不能关闭）"
+          : lens.description ?? "";
         return (
           <button
             key={lens.id}
             type="button"
-            onClick={() => onChange(lens.id)}
-            title={lens.description}
+            onClick={() => onToggle(lens.id)}
+            disabled={isBase}
+            title={description}
             style={{
               display: "inline-flex", alignItems: "center", gap: 5,
               padding: "3px 9px", borderRadius: 6,
-              border: active ? "1px solid #6366f1" : "1px solid #e5e7eb",
-              background: active ? "#eef2ff" : "transparent",
-              color: active ? "#4338ca" : "#6b7280",
-              fontWeight: active ? 700 : 500,
+              border: isActive ? "1px solid #6366f1" : "1px solid #e5e7eb",
+              background: isActive ? "#eef2ff" : "transparent",
+              color: isActive ? "#4338ca" : "#6b7280",
+              fontWeight: isActive ? 700 : 500,
               fontSize: 11,
-              cursor: "pointer",
+              cursor: isBase ? "default" : "pointer",
+              opacity: isBase && !isActive ? 0.5 : 1,
               transition: "background 0.1s, border-color 0.1s",
             }}
           >
+            <span style={{
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              width: 10, height: 10, borderRadius: 2,
+              border: `1px solid ${isActive ? "#6366f1" : "#cbd5e1"}`,
+              background: isActive ? "#6366f1" : "transparent",
+              color: "#fff",
+              fontSize: 8, fontWeight: 700, lineHeight: 1,
+            }}>
+              {isActive ? "✓" : ""}
+            </span>
             {lens.label}
           </button>
         );
@@ -422,45 +430,113 @@ function LensSectionTable({
 // ─── 顶层 Panel ─────────────────────────────────────────────────────────────
 
 export function AttributionTreeLensPanel({
-  sessionId, callId, prevCallId, hideDiff, onLinkSource,
+  sessionId, agentFileId, callId, prevCallId, hideDiff, onLinkSource, onLeafSelect, prelude,
 }: {
   sessionId: string;
+  /** Present iff rendering a sub-agent call — routes to sub-agent endpoint. */
+  agentFileId?: string;
   callId: number;
   /** Optional previous-call id — required for the Diff lens. */
   prevCallId?: number | null;
   /** When true, always hide the Diff chip (e.g. Diff is its own top-level tab). */
   hideDiff?: boolean;
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
+  /** 选中 leaf 时回调（取消选中传 null）。供外层（如 CachePanel）联动高亮。
+   *  注意：传入的是 SegmentNode.id（与 diff-tree leaves 同一套 id 体系）。 */
+  onLeafSelect?: (nodeId: string | null) => void;
+  /** 在 LensSectionBar 之上额外渲染的节点。CachePanel 用此插入 L1/L2/L3 紧凑行，
+   *  让它们与下方 LensSectionBar 在同一容器内自然对齐（同宽 / 同 padding）。 */
+  prelude?: React.ReactNode;
 }) {
   const [result, setResult] = useState<AttributionTreeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [lensId, setLensId] = useState<string>(LENSES[0].id);
-  const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
+  // 多 lens 同时激活：来源默认锁定 active，Diff/Cache/Audit 可独立 toggle on/off。
+  // bucketFilters 是「每个 lens 选中的桶」的 map；过滤是各 lens 选择的 AND 合取。
+  const [activeLenses, setActiveLenses] = useState<Set<string>>(new Set([LENSES[0].id]));
+  const [bucketFilters, setBucketFilters] = useState<Record<string, string | null>>({});
   const [selectedSection, setSelectedSection] = useState<SectionId | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
-  // 切 lens 时清空桶选择 + leaf 选择，避免 stale state（不同 lens 的 bucketId
-  // 不能直接复用）。Section drill-in 保留 —— Section 维度和 Lens 正交。
+  // 把选中状态外露给父组件（如 CachePanel），用于上方 bar 联动高亮。
   useEffect(() => {
-    setSelectedBucketId(null);
+    onLeafSelect?.(selectedNodeId);
+  }, [selectedNodeId, onLeafSelect]);
+
+  // toggle 某 lens：开启则加入 activeLenses；关闭则移除并清空它对应的 bucket。
+  // Provenance（默认 LENSES[0]）锁定 active，禁止关闭。
+  function toggleLens(id: string) {
+    if (id === LENSES[0].id) return;
+    setActiveLenses((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+    setBucketFilters((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     setSelectedNodeId(null);
-  }, [lensId]);
+  }
+
+  // 选/取消选 lens 的某个桶。bucketId 传 null 取消该 lens 的过滤。
+  function setBucketFilter(lensId: string, bucketId: string | null) {
+    setBucketFilters((prev) => {
+      const next = { ...prev };
+      if (bucketId === null) delete next[lensId];
+      else next[lensId] = bucketId;
+      return next;
+    });
+    setSelectedNodeId(null);
+  }
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError(null);
-    setSelectedSection(null); setSelectedNodeId(null); setSelectedBucketId(null);
-    apiV2.attributionTree(sessionId, callId)
+    setSelectedSection(null); setSelectedNodeId(null); setBucketFilters({});
+    const fetcher = agentFileId
+      ? apiV2.subAgentAttributionTree(sessionId, agentFileId, callId)
+      : apiV2.attributionTree(sessionId, callId);
+    fetcher
       .then((r) => { if (!cancelled) setResult(r); })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sessionId, callId]);
+  }, [sessionId, agentFileId, callId]);
 
-  const lens = useMemo(() => getLens(lensId), [lensId]);
-  const allLeaves = useMemo(() => result ? flattenLeaves(result) : [], [result]);
+  // 并行拉 diff-tree，用 leafId 把 diffKind 合并到 attribution leaves 上。
+  // Diff lens / Diff 视角的双层 bar / Removed footer 都依赖这份数据。
+  const [diffData, setDiffData] = useState<import("./diff-tree-types").DiffTreeResult | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const fetcher = agentFileId
+      ? apiV2.subAgentDiffTree(sessionId, agentFileId, callId)
+      : apiV2.diffTree(sessionId, callId);
+    fetcher
+      .then((r) => { if (!cancelled) setDiffData(r); })
+      .catch(() => { if (!cancelled) setDiffData(null); }); // diff 失败不阻塞 attribution
+    return () => { cancelled = true; };
+  }, [sessionId, agentFileId, callId]);
+
+  const allLeaves = useMemo(() => {
+    if (!result) return [];
+    const base = flattenLeaves(result);
+    // 合并 diff-tree 的 diffKind 信息
+    if (!diffData) return base;
+    const kindById = new Map<string, "added" | "removed" | "modified" | "kept">();
+    for (const sec of diffData.sections) {
+      for (const l of sec.leaves) {
+        kindById.set(l.id, l.kind);
+      }
+    }
+    return base.map((leaf) => {
+      const k = kindById.get(leaf.nodeId);
+      return k ? { ...leaf, diffKind: k } : leaf;
+    });
+  }, [result, diffData]);
 
   // Pending-focus consumption: when a Turn-view event jump lands here with a
   // `{ lineIdx }` focus, find the leaf whose jsonl origin matches and
@@ -477,53 +553,82 @@ export function AttributionTreeLensPanel({
     if (match) {
       setSelectedSection(sectionOf(match.rootSlotType));
       setSelectedNodeId(match.nodeId);
-      setSelectedBucketId(null);
     }
     clearPendingFocus();
   }, [pendingFocus, allLeaves, clearPendingFocus]);
 
-  // Bucket filtering — 选了桶就只留命中桶的 leaf；否则全集。
+  // 把"任意 active lens 的桶选择"合并成一个谓词，AND 联合过滤。
+  const passesAllFilters = useMemo(() => {
+    const filters = Object.entries(bucketFilters).filter(([, b]) => !!b);
+    if (filters.length === 0) return null;
+    return (leaf: LeafLite): boolean => {
+      for (const [lid, bid] of filters) {
+        const ln = getLens(lid);
+        if (ln.bucketOf(leaf) !== bid) return false;
+      }
+      return true;
+    };
+  }, [bucketFilters]);
+
   const leaves = useMemo(() => {
-    if (!selectedBucketId) return allLeaves;
-    return allLeaves.filter((l) => lens.bucketOf(l) === selectedBucketId);
-  }, [allLeaves, lens, selectedBucketId]);
+    if (!passesAllFilters) return allLeaves;
+    return allLeaves.filter(passesAllFilters);
+  }, [allLeaves, passesAllFilters]);
 
   const stats = useMemo(() => computeSectionStats(allLeaves), [allLeaves]);
   const totalChars = useMemo(() => allLeaves.reduce((s, l) => s + l.charCount, 0), [allLeaves]);
 
+  // 过滤激活时给 section 大柱里也染上"通过过滤的部分"作为内嵌细条。
   const filteredStats = useMemo(
-    () => selectedBucketId ? computeSectionStats(leaves) : null,
-    [leaves, selectedBucketId],
+    () => passesAllFilters ? computeSectionStats(leaves) : null,
+    [leaves, passesAllFilters],
   );
-  const activeBucket: LensBucket | null = useMemo(
-    () => getBucket(lens, selectedBucketId),
-    [lens, selectedBucketId],
-  );
-  const bucketColor = activeBucket?.color ?? null;
+  // 用第一个有 bucket 过滤的 lens 的颜色作为过滤色（视觉一致性，避免多色混叠）。
+  const filterAccentColor: string | null = useMemo(() => {
+    for (const [lid, bid] of Object.entries(bucketFilters)) {
+      if (!bid) continue;
+      const ln = getLens(lid);
+      const b = getBucket(ln, bid);
+      if (b) return b.color;
+    }
+    return null;
+  }, [bucketFilters]);
 
   const selectedStat = useMemo(() => {
     if (!selectedSection) return null;
     const stat = stats.find((s) => s.id === selectedSection);
     if (!stat) return null;
-    if (!selectedBucketId) return stat;
-    const filteredLeaves = stat.leaves.filter((l) => lens.bucketOf(l) === selectedBucketId);
+    if (!passesAllFilters) return stat;
+    const filteredLeaves = stat.leaves.filter(passesAllFilters);
     return { ...stat, leaves: filteredLeaves };
-  }, [selectedSection, stats, selectedBucketId, lens]);
+  }, [selectedSection, stats, passesAllFilters]);
 
   const selectedLeaf = useMemo(
     () => selectedNodeId ? leaves.find((l) => l.nodeId === selectedNodeId) ?? null : null,
     [selectedNodeId, leaves],
   );
 
-  // Leaf 着色：按当前 lens 把 leaf 分桶 → 取桶颜色。这样 leaf strip / table
-  // 的颜色和顶部 pill 行的色方块完全对得上。
+  // Leaf 着色：永远用 Provenance lens（来源是基底视角）。其他 lens 的信息通过
+  // 行尾 badge 表达，而不是抢主色。
   const leafColor = useMemo(() => {
+    const provLens = getLens(LENSES[0].id);
     return (leaf: LeafLite) => {
-      const bid = lens.bucketOf(leaf);
-      const b = bid ? lens.buckets.find((x) => x.id === bid) : null;
+      const bid = provLens.bucketOf(leaf);
+      const b = bid ? provLens.buckets.find((x) => x.id === bid) : null;
       return b?.color ?? "#d1d5db";
     };
-  }, [lens]);
+  }, []);
+
+  // 决定哪些 lens 出现在 toggle 行 + bucket pill 区。Provenance 永远出现；
+  // Diff lens 在没有 prevCall 时无意义，隐藏。
+  // 注意：useMemo 必须在所有 early return 之上，避免 hook 顺序变化。
+  const visibleLenses = useMemo(
+    () => LENSES.filter((l) => {
+      if (l.id === "diff" && (hideDiff || prevCallId == null)) return false;
+      return true;
+    }),
+    [hideDiff, prevCallId],
+  );
 
   if (loading) {
     return <div style={{ padding: "32px 0", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>Loading attribution tree…</div>;
@@ -543,36 +648,33 @@ export function AttributionTreeLensPanel({
     );
   }
 
-  // The Diff lens is a virtual chip — when selected, swap the entire lens
-  // surface for DiffPanel. We keep the LensSwitcher on top so the user can
-  // bounce back to a regular lens without leaving this tab.
-  if (lensId === DIFF_LENS_ID) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <LensSwitcher activeLensId={lensId} onChange={setLensId} />
-        <DiffPanel sessionId={sessionId} callId={callId} prevCallId={prevCallId ?? undefined} />
-      </div>
-    );
-  }
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {/* Layer 0: Lens 切换. Diff chip hidden when hideDiff prop is set
-          (Diff has its own top-level tab) or when there's no previous call. */}
-      <LensSwitcher activeLensId={lensId} onChange={setLensId} hideDiff={hideDiff || prevCallId == null} />
-
-      {/* Layer 0.1: 开发者可见的 TODO 列表 —— 直接挂在视图上，方便迭代时
-          一眼看到该 lens 还有哪些限制 / 下一步要做的事。每个 chip 鼠标
-          悬停看完整描述。要去掉这一行只需删除 <DevTodoStrip /> 即可。 */}
-      <DevTodoStrip activeLensId={lensId} />
-
-      {/* Layer 0.5: 当前 lens 的桶 pill 行（点击过滤） */}
-      <BucketPillRow
-        lens={lens}
-        selectedBucketId={selectedBucketId}
-        onSelect={setSelectedBucketId}
-        leaves={allLeaves}
+      {/* Layer 0: 多 lens toggle。来源永远 active（chip 显示禁用样式）；
+          其他 lens 点击 toggle on/off。 */}
+      <LensSwitcher
+        lenses={visibleLenses}
+        activeLenses={activeLenses}
+        baseLensId={LENSES[0].id}
+        onToggle={toggleLens}
       />
+
+      {/* Layer 0.1: 开发者可见的 TODO 列表 —— 仅 Provenance（基底 lens）的 todo */}
+      <DevTodoStrip activeLensId={LENSES[0].id} />
+
+      {/* Prelude（CachePanel 旧路径用过；统一后由 cache lens 自管） */}
+      {prelude}
+
+      {/* Layer 0.5: 每个 active lens 一行 bucket pill */}
+      {visibleLenses.filter((l) => activeLenses.has(l.id)).map((l) => (
+        <BucketPillRow
+          key={l.id}
+          lens={l}
+          selectedBucketId={bucketFilters[l.id] ?? null}
+          onSelect={(bid) => setBucketFilter(l.id, bid)}
+          leaves={allLeaves}
+        />
+      ))}
 
       {/* Layer 1: section 大柱 */}
       <LensSectionBar
@@ -584,7 +686,7 @@ export function AttributionTreeLensPanel({
           setSelectedNodeId(null);
         }}
         filteredStats={filteredStats}
-        bucketColor={bucketColor}
+        bucketColor={filterAccentColor}
       />
 
       {selectedStat === null ? (
@@ -593,7 +695,7 @@ export function AttributionTreeLensPanel({
           totalChars={totalChars}
           onSelect={(s) => setSelectedSection(s)}
           filteredStats={filteredStats}
-          bucketColor={bucketColor}
+          bucketColor={filterAccentColor}
         />
       ) : (
         <>

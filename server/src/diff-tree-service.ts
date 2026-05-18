@@ -58,6 +58,39 @@ export interface DiffLeaf {
   wireMeta?: SegmentNode["wireMeta"];
 }
 
+/**
+ * Cache breakpoint declared on the wire via `cache_control: ephemeral`.
+ * Surface every top-level block whose `cachePolicy` is set — these are the
+ * positions the client *asked* Anthropic to write a cache entry at.
+ * Pure declarative — does NOT claim whether the cache was actually hit;
+ * the server-side resolution lives in response.usage (see CacheImpactRow).
+ */
+export interface PinInfo {
+  /** SegmentNode.slotType — e.g. "system.main-prompt-block", "messages.tool_result" */
+  slotType: string;
+  /** TTL declared on the wire; default "5m" when omitted, "1h" when extended */
+  ttl: "5m" | "1h";
+  /** scope=global → cross-org cache pool */
+  scope: "org" | "global";
+  /** Char count of the block this pin sits on. Visual cue for "how much of
+   *  the bar this pin represents". Not the cumulative prefix size. */
+  charCount: number;
+  /** Chars from the start of the **Anthropic cache prefix** (tools → system →
+   *  messages, regardless of JSON field order) up to and including this pin's
+   *  block. Drives the absolute X position of the pin marker over a continuous
+   *  bar in the UI. */
+  cumulativePrefixChars: number;
+  /** Chars from the start of **this section** (within the section's own root
+   *  ordering) up to and including this pin's block. Used by drill-in views
+   *  to render a pin marker at the precise within-section position. */
+  cumulativeSectionChars: number;
+  /** Wire jsonPath of the pinned block — e.g. "reqBody.system[3]" or
+   *  "reqBody.messages[4].content[1]". UI shortens it to a label like
+   *  "sys[3]" / "msg[4][1]" so the user sees the exact field that carries
+   *  cache_control. */
+  jsonPath: string;
+}
+
 export interface DiffSection {
   id: DiffSectionId;
   newTotal: number;
@@ -65,6 +98,9 @@ export interface DiffSection {
   delta: number;
   counts: { added: number; removed: number; modified: number; kept: number };
   leaves: DiffLeaf[];
+  /** cache_control markers on top-level blocks belonging to this section in
+   *  the *current* request. Empty array when the section has no pins. */
+  pins: PinInfo[];
 }
 
 export interface DiffTreeResult {
@@ -305,17 +341,46 @@ function buildSections(
     map.get(sid)!.push(l);
   }
 
-  const order: DiffSectionId[] = ["system", "tools", "messages", "other"];
+  // 先按 section 聚合本次请求里所有带 cache_control 的顶级 block —— 这是声明式 pin 信息，
+  // 与 leaf diff 独立（pin 不一定是 leaf，且不一定有变化）。
+  // cumulativePrefixChars 按 Anthropic 实际 cache prefix 顺序（tools → system →
+  // messages）走一遍 roots，给每个 pin 记录其 prefix 末尾的累积字符。matcher 产生
+  // 的 roots 是 [system, tools, messages] 序（按 JSON 字段顺序 push），所以这里需
+  // 要按 sectionOf 重新分桶再拼起来。
+  // cumulativeSectionChars 是 section 内的累积位置，用于 drill-in 视图。
+  const pinPositions = computePinPositions(curSnap);
+  const pinSectionPositions = computeSectionInternalPositions(curSnap);
+  const pinsBySection: Record<DiffSectionId, PinInfo[]> = {
+    system: [], tools: [], messages: [], other: [],
+  };
+  for (const root of curSnap.roots) {
+    if (!root.cachePolicy) continue;
+    const sid = sectionOf(root.slotType);
+    pinsBySection[sid].push({
+      slotType: root.slotType,
+      ttl: root.cachePolicy.ttl,
+      scope: root.cachePolicy.scope,
+      charCount: root.charCount,
+      cumulativePrefixChars: pinPositions.get(root.id) ?? 0,
+      cumulativeSectionChars: pinSectionPositions.get(root.id) ?? 0,
+      jsonPath: root.jsonPath,
+    });
+  }
+
+  // 输出顺序匹配 Anthropic 实际 cache prefix 拼接顺序：tools → system → messages → other
+  const order: DiffSectionId[] = ["tools", "system", "messages", "other"];
   const out: DiffSection[] = [];
   for (const sid of order) {
     const leaves = map.get(sid);
-    if (!leaves || leaves.length === 0) continue;
-    out.push(summarizeSection(sid, leaves));
+    const pins = pinsBySection[sid];
+    // 留存条件：有 leaves 变化 OR 有声明的 pin
+    if ((!leaves || leaves.length === 0) && pins.length === 0) continue;
+    out.push(summarizeSection(sid, leaves ?? [], pins));
   }
   return out;
 }
 
-function summarizeSection(id: DiffSectionId, leaves: DiffLeaf[]): DiffSection {
+function summarizeSection(id: DiffSectionId, leaves: DiffLeaf[], pins: PinInfo[]): DiffSection {
   let newTotal = 0;
   let oldTotal = 0;
   const counts = { added: 0, removed: 0, modified: 0, kept: 0 };
@@ -338,7 +403,7 @@ function summarizeSection(id: DiffSectionId, leaves: DiffLeaf[]): DiffSection {
         break;
     }
   }
-  return { id, newTotal, oldTotal, delta: newTotal - oldTotal, counts, leaves };
+  return { id, newTotal, oldTotal, delta: newTotal - oldTotal, counts, leaves, pins };
 }
 
 // ─── 工具：leaf → DiffLeaf 转换 ───────────────────────────────────────────────
@@ -423,6 +488,52 @@ function sectionOf(slotType: string): DiffSectionId {
   if (slotType.startsWith("tools.")) return "tools";
   if (slotType.startsWith("messages.") || slotType === "side-query.user") return "messages";
   return "other";
+}
+
+// ─── 工具：给每个 pin 计算 cache prefix 累积位置 ─────────────────────────────
+//
+// Anthropic 服务端按 tools → system → messages 顺序拼 cache prefix。每个
+// cache_control pin 的 prefix hash 范围是「从 prefix 起点到该 block 末尾」。
+// UI 想在 bar 上方画箭头时需要这个累积值（按比例转 px）。
+//
+// matcher.ts 产生的 curSnap.roots 是按 JSON 字段顺序 [system, tools, messages]
+// 推入的，所以这里必须按 sectionOf 重新分桶后再按 Anthropic 顺序拼一遍。
+
+function computePinPositions(curSnap: ParsedQuerySnapshot): Map<string, number> {
+  const buckets: Record<DiffSectionId, SegmentNode[]> = {
+    tools: [], system: [], messages: [], other: [],
+  };
+  for (const r of curSnap.roots) {
+    buckets[sectionOf(r.slotType)].push(r);
+  }
+  const ordered = [
+    ...buckets.tools,
+    ...buckets.system,
+    ...buckets.messages,
+    ...buckets.other,
+  ];
+  const positions = new Map<string, number>();
+  let cum = 0;
+  for (const r of ordered) {
+    cum += r.charCount;
+    if (r.cachePolicy) positions.set(r.id, cum);
+  }
+  return positions;
+}
+
+/** 每个 pin 在其 section 内的累积字符位置。drill-in 视图按比例画线。
+ *  与 computePinPositions 不同：这里以 section 起点为 0，section 内 root 顺序累计。 */
+function computeSectionInternalPositions(curSnap: ParsedQuerySnapshot): Map<string, number> {
+  const cumBySection: Record<DiffSectionId, number> = {
+    tools: 0, system: 0, messages: 0, other: 0,
+  };
+  const positions = new Map<string, number>();
+  for (const r of curSnap.roots) {
+    const sid = sectionOf(r.slotType);
+    cumBySection[sid] += r.charCount;
+    if (r.cachePolicy) positions.set(r.id, cumBySection[sid]);
+  }
+  return positions;
 }
 
 // ─── 工具：内容预览 ──────────────────────────────────────────────────────────

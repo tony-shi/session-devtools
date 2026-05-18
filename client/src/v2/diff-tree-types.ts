@@ -24,6 +24,23 @@ export interface DiffLeaf {
   };
 }
 
+/** Wire-declared cache breakpoint (cache_control: ephemeral). Mirrors the
+ *  server PinInfo — pure declarative, no claims about actual hit/miss. */
+export interface PinInfo {
+  slotType: string;
+  ttl: "5m" | "1h";
+  scope: "org" | "global";
+  charCount: number;
+  /** Chars from start of the Anthropic cache prefix (tools→system→messages)
+   *  up to and including this pin's block. UI uses it for absolute positioning. */
+  cumulativePrefixChars: number;
+  /** Chars from start of this section (within section's own root ordering) up
+   *  to and including this pin's block. Used by drill-in views. */
+  cumulativeSectionChars: number;
+  /** Wire jsonPath — e.g. "reqBody.system[3]" / "reqBody.messages[4].content[1]". */
+  jsonPath: string;
+}
+
 export interface DiffSection {
   id: DiffSectionId;
   newTotal: number;
@@ -31,6 +48,8 @@ export interface DiffSection {
   delta: number;
   counts: { added: number; removed: number; modified: number; kept: number };
   leaves: DiffLeaf[];
+  /** cache_control pins declared on top-level blocks in this section. */
+  pins: PinInfo[];
 }
 
 export interface DiffTreeResult {

@@ -25,6 +25,7 @@ import { AttributionTreePanel } from "./AttributionTreePanel";
 import { AttributionTreeLensPanel } from "./AttributionTreeLensPanel";
 import { ResponseTreePanel } from "./ResponseTreePanel";
 import { DiffPanel } from "./DiffPanel";
+import { CachePanel } from "./CachePanel";
 import { TOKEN_METRICS } from "./metricRegistry";
 import {
   HeaderStatRow,
@@ -353,6 +354,12 @@ const BADGE_ICONS = {
   unknown: (size: number, color: string) => (
     <span style={{ fontSize: size, fontWeight: 700, lineHeight: 1, color }}>?</span>
   ),
+  noProxy: (_size: number, color: string) => (
+    <span style={{
+      width: 5, height: 5, borderRadius: "50%",
+      background: color, display: "inline-block", flexShrink: 0,
+    }} />
+  ),
 } as const;
 
 function MockBadge() {
@@ -373,6 +380,7 @@ function renderStatusIcon(kind: StatusBadgeKind, px: number, color: string): Rea
     case "subAgent":   return BADGE_ICONS.subAgent(px, color);
     case "command":    return BADGE_ICONS.command(px, color);
     case "unknown":    return BADGE_ICONS.unknown(px, color);
+    case "noProxy":    return BADGE_ICONS.noProxy(px, color);
   }
 }
 
@@ -419,11 +427,11 @@ function SessionHotspotsPanel({ turns }: { turns: MockUserTurn[] }) {
         {t("sessionOverview.hotspots.title")} <MockBadge />
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <HotspotCard icon="↑" label={t("sessionOverview.hotspots.largestGrowth")} value={`Turn ${biggestTurn.id} · +${fmtK(biggestTurn.netContextDelta)}`} color="#d97706" />
-        <HotspotCard icon="▲" label={t("sessionOverview.hotspots.peakContext")} value={`Turn ${biggestPeak.id} · ${fmtK(biggestPeak.peakContext)}`} color="#6366f1" />
-        <HotspotCard icon="?" label={t("sessionOverview.hotspots.largestUnknown")} value={`Turn ${unknownTurn.id} · +${fmtK(unknownTurn.unknownDelta)}`} color="#94a3b8" />
+        <HotspotCard icon="↑" label={t("sessionOverview.hotspots.largestGrowth")} value={`${t("sessionOverview.turn.label")} ${biggestTurn.id} · +${fmtK(biggestTurn.netContextDelta)}`} color="#d97706" />
+        <HotspotCard icon="▲" label={t("sessionOverview.hotspots.peakContext")} value={`${t("sessionOverview.turn.label")} ${biggestPeak.id} · ${fmtK(biggestPeak.peakContext)}`} color="#6366f1" />
+        <HotspotCard icon="?" label={t("sessionOverview.hotspots.largestUnknown")} value={`${t("sessionOverview.turn.label")} ${unknownTurn.id} · +${fmtK(unknownTurn.unknownDelta)}`} color="#94a3b8" />
         {compactionTurns.length > 0 && (
-          <HotspotCard icon="◆" label={t("sessionOverview.hotspots.compactionTurns")} value={compactionTurns.map(t => `Turn ${t.id}`).join(", ")} color="#ef4444" />
+          <HotspotCard icon="◆" label={t("sessionOverview.hotspots.compactionTurns")} value={compactionTurns.map(turn => `${t("sessionOverview.turn.label")} ${turn.id}`).join(", ")} color="#ef4444" />
         )}
         <div style={{ borderTop: "1px solid #f3f4f6", paddingTop: 10, marginTop: 2 }}>
           <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>Top context contributors <MockBadge /></div>
@@ -597,19 +605,12 @@ function SessionOverviewPanel({
   const peakContext      = sm?.peakContext      ?? (turns.length ? Math.max(...turns.map(t => t.peakContext)) : 0);
   const totalCacheRead   = sm?.totalCacheRead   ?? turns.reduce((s, t) => s + t.cacheRead, 0);
   const totalCacheWrite  = sm?.totalCacheWrite  ?? turns.reduce((s, t) => s + t.cacheWrite, 0);
-  // totalFreshIn — sum of per-call API uncached input_tokens. We compute it
-  // directly from each call's (ctx − cacheRead − cacheWrite) instead of
-  // trusting `sm.totalFreshIn`. The server-side aggregate sums
-  // `call.freshIn` (which is "context growth since previous call", not API
-  // input_tokens), so for long sessions that number balloons to millions —
-  // the same context (~100k+) gets credited every call. Recomputing here
-  // gives a value that's consistent with each Turn header and Call header
-  // (the formula matches `Math.max(0, ctx − cacheRead − cacheWrite)`).
-  const totalFreshIn = turns.reduce(
-    (s, t) => s + t.calls.reduce(
-      (cs, c) => cs + Math.max(0, c.contextSize - c.cacheRead - c.cacheWrite),
-      0,
-    ),
+  // totalFreshIn ≡ SUM of every call's API usage.input_tokens — the
+  // non-cached fresh input (1x billing). The server now sums the actual
+  // usage field directly (post-fix), so we trust sm.totalFreshIn; fallback
+  // computes the same value locally from each call's freshIn field.
+  const totalFreshIn = sm?.totalFreshIn ?? turns.reduce(
+    (s, t) => s + t.calls.reduce((cs, c) => cs + c.freshIn, 0),
     0,
   );
   const totalFreshOut    = sm?.totalFreshOut    ?? null;
@@ -641,7 +642,8 @@ function SessionOverviewPanel({
     const unknownTurns     = turns.filter(t =>
       t.calls.some(c => c.intervalEvents.some(e => e.kind === "unknown"))
     ).length;
-    return { compactionCount, errorCount, subAgentTurns, subAgentTotal, commandTurns, unknownTurns };
+    const noProxyCalls     = turns.reduce((s, t) => s + t.calls.filter(c => c.proxyMatchMode === "unmatched").length, 0);
+    return { compactionCount, errorCount, subAgentTurns, subAgentTotal, commandTurns, unknownTurns, noProxyCalls };
   }, [turns, compactionTurns]);
 
   const [modelsExpanded, setModelsExpanded] = React.useState(false);
@@ -652,13 +654,14 @@ function SessionOverviewPanel({
   // Build status badges (icon + count, unified across Session/Turn/Call/nav)
   const sessionStatusBadges: StatusBadge[] = (() => {
     if (isMock) return [];
-    const { compactionCount, errorCount, subAgentTotal, commandTurns, unknownTurns } = badgeSummary;
+    const { compactionCount, errorCount, subAgentTotal, commandTurns, unknownTurns, noProxyCalls } = badgeSummary;
     const items: StatusBadge[] = [];
     if (compactionCount > 0) items.push({ kind: "compaction", count: compactionCount, tooltip: t("sessionOverview.badges.compaction") });
     if (errorCount > 0)      items.push({ kind: "error",      count: errorCount,      tooltip: t("sessionOverview.badges.errors") });
     if (subAgentTotal > 0)   items.push({ kind: "subAgent",   count: subAgentTotal,   tooltip: t("sessionOverview.badges.subAgents") });
     if (commandTurns > 0)    items.push({ kind: "command",    count: commandTurns,    tooltip: t("sessionOverview.badges.commands") });
     if (unknownTurns > 0)    items.push({ kind: "unknown",    count: unknownTurns,    tooltip: t("sessionOverview.badges.unknown") });
+    if (noProxyCalls > 0)    items.push({ kind: "noProxy",    count: noProxyCalls,    tooltip: t("sessionOverview.badges.noProxyDetail", { count: noProxyCalls }) });
     return items;
   })();
 
@@ -710,6 +713,7 @@ function SessionOverviewPanel({
           </>
         }
       />
+
 
       {/* Models expanded panel — kept outside UnifiedHeader since it spans full width */}
       {multiModel && modelsExpanded && (
@@ -816,7 +820,7 @@ function ModelBreakdownBlock({
   const entries = Object.entries(breakdown).sort((a, b) => b[1].calls - a[1].calls);
   const totalCalls = entries.reduce((s, [, v]) => s + v.calls, 0);
 
-  const COL = "repeat(2, 44px)"; // Calls + Out
+  const COL = "44px"; // Calls only — Output already in token ledger
 
   // Pre-compute per-row ledgers and the global max for proportional bar widths
   const rowData = entries.map(([model, stats]) => {
@@ -837,9 +841,7 @@ function ModelBreakdownBlock({
       {/* header */}
       <div style={{ display: "grid", gridTemplateColumns: `1fr ${COL} 1fr`, alignItems: "end", paddingBottom: 4, borderBottom: "1px solid #f3f4f6" }}>
         <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>Model</span>
-        {[t("sessionOverview.models.calls"), t("sessionOverview.models.output")].map(h => (
-          <span key={h} style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textAlign: "right", textTransform: "uppercase", letterSpacing: "0.05em" }}>{h}</span>
-        ))}
+        <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textAlign: "right", textTransform: "uppercase", letterSpacing: "0.05em" }}>{t("sessionOverview.models.calls")}</span>
         <span style={{ fontSize: 9, fontWeight: 600, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", paddingLeft: 16 }}>{t("dashboard.tokenLedger")}</span>
       </div>
 
@@ -869,8 +871,6 @@ function ModelBreakdownBlock({
 
             {/* Calls */}
             <span style={{ fontSize: 11, color: "#374151", textAlign: "right" }}>{stats.calls}</span>
-            {/* Out */}
-            <span style={{ fontSize: 11, color: M.output.color, textAlign: "right" }}>{fmtK(stats.outputTokens)}</span>
 
             {/* Token Ledger mini */}
             <div style={{ paddingLeft: 16, display: "flex", flexDirection: "column", gap: 3 }}>
@@ -1324,12 +1324,14 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
     (s, c) => s + c.intervalEvents.filter(e => e.kind === "user:command").length, 0);
   const unknownCount = turn.calls.reduce(
     (s, c) => s + c.intervalEvents.filter(e => e.kind === "unknown").length, 0);
+  const noProxyCountCard = turn.calls.filter(c => c.proxyMatchMode === "unmatched").length;
   const turnCardBadges: StatusBadge[] = [];
-  if (turn.hasCompaction)  turnCardBadges.push({ kind: "compaction", count: 1,               tooltip: t("sessionOverview.badges.compaction") });
-  if (turn.errorCount > 0) turnCardBadges.push({ kind: "error",      count: turn.errorCount, tooltip: t("sessionOverview.badges.errors") });
-  if (saCount > 0)         turnCardBadges.push({ kind: "subAgent",   count: saCount,         tooltip: t("sessionOverview.badges.subAgents") });
-  if (commandCount > 0)    turnCardBadges.push({ kind: "command",    count: commandCount,    tooltip: t("sessionOverview.badges.commands") });
-  if (unknownCount > 0)    turnCardBadges.push({ kind: "unknown",    count: unknownCount,    tooltip: t("sessionOverview.badges.unknown") });
+  if (turn.hasCompaction)    turnCardBadges.push({ kind: "compaction", count: 1,               tooltip: t("sessionOverview.badges.compaction") });
+  if (turn.errorCount > 0)   turnCardBadges.push({ kind: "error",      count: turn.errorCount, tooltip: t("sessionOverview.badges.errors") });
+  if (saCount > 0)           turnCardBadges.push({ kind: "subAgent",   count: saCount,         tooltip: t("sessionOverview.badges.subAgents") });
+  if (commandCount > 0)      turnCardBadges.push({ kind: "command",    count: commandCount,    tooltip: t("sessionOverview.badges.commands") });
+  if (unknownCount > 0)      turnCardBadges.push({ kind: "unknown",    count: unknownCount,    tooltip: t("sessionOverview.badges.unknown") });
+  if (noProxyCountCard > 0)  turnCardBadges.push({ kind: "noProxy",    count: noProxyCountCard, tooltip: t("sessionOverview.badges.noProxyDetail", { count: noProxyCountCard }) });
 
   const netDelta = turn.netContextDelta;
   const deltaTxt = netDelta !== 0 ? `${netDelta > 0 ? "+" : ""}${fmtK(netDelta)}` : "";
@@ -1408,7 +1410,7 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
             <div style={{
               fontSize: 12, color: "#1e3a5f", lineHeight: 1.55,
               background: "#eff6ff", border: "1px solid #bfdbfe",
-              borderRadius: "12px 12px 12px 4px",
+              borderRadius: 8,
               padding: "8px 12px",
               whiteSpace: "pre-wrap", wordBreak: "break-word",
             }}>
@@ -1435,7 +1437,7 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
               <div style={{
                 fontSize: 12, color: "#78350f", lineHeight: 1.5,
                 background: "#fffbeb", border: "1px solid #fcd34d",
-                borderRadius: "12px 12px 12px 4px",
+                borderRadius: 8,
                 padding: "7px 11px",
                 whiteSpace: "pre-wrap", wordBreak: "break-word",
               }}>
@@ -1470,7 +1472,7 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
               <div style={{
                 fontSize: 12, color: "#14532d", lineHeight: 1.6,
                 background: "#f0fdf4", border: "1px solid #bbf7d0",
-                borderRadius: "12px 12px 4px 12px",
+                borderRadius: 8,
                 padding: "8px 12px",
               }}>
                 {mdMode ? (
@@ -3636,6 +3638,8 @@ function UserTurnDetailPanel({
     if (subAgentCount > 0)    items.push({ kind: "subAgent",   count: subAgentCount,  tooltip: t("sessionOverview.badges.subAgents") });
     if (commandCount > 0)     items.push({ kind: "command",    count: commandCount,   tooltip: t("sessionOverview.badges.commands") });
     if (unknownCount > 0)     items.push({ kind: "unknown",    count: unknownCount,   tooltip: t("sessionOverview.badges.unknown") });
+    const noProxyCount = turn.calls.filter(c => c.proxyMatchMode === "unmatched").length;
+    if (noProxyCount > 0)     items.push({ kind: "noProxy",    count: noProxyCount,   tooltip: t("sessionOverview.badges.noProxyDetail", { count: noProxyCount })});
     return items;
   })();
 
@@ -4391,7 +4395,7 @@ function PayloadSegmentEvidenceDrawer({ seg, onClear }: { seg: PayloadSegment; o
 // Four-tab top-level structure for Call detail. Attribution and diff are
 // surfaced as the first two tabs so they're immediately reachable — they're
 // the most-used analytical views. Response and raw structure follow.
-type CallTab = "attribution" | "diff" | "response" | "raw";
+type CallTab = "attribution" | "diff" | "cache" | "response" | "raw";
 type DiffMode = "segment" | "range" | "raw";
 
 // ─── Attribution Tab ──────────────────────────────────────────────────────────
@@ -4931,13 +4935,20 @@ function ProxyMissingEmptyState() {
 }
 
 function LlmCallDetailPanel({
-  call, sessionId, mode = "main", requestedTab, jumpVersion,
+  call, prevCall, sessionId, agentFileId, mode = "main", requestedTab, jumpVersion,
   onShowTurnContext, onLinkCall, onLinkSource,
   onClose, onOpenAsMain,
 }: {
   call: MockLlmCall;
+  /** Previous LlmCall (id = call.id − 1). Optional — when present and the
+   *  call has cache token data, DiffPanel renders a cache-impact row. */
+  prevCall?: MockLlmCall | null;
   onSelectEntry: (e: MockDiffEntry) => void;
   sessionId: string;
+  /** Present iff this call belongs to a sub-agent — routes all downstream
+   *  panel API calls (callDetail / attributionTree / responseTree / diffTree)
+   *  through their sub-agent variants. Parent (main) sessions leave undefined. */
+  agentFileId?: string;
   mode?: "main" | "panel";
   /** Initial / forced tab. When `jumpVersion` bumps, this overrides the
    *  user's prior manual tab choice — so a fresh "返回于 call #N Response"
@@ -4983,11 +4994,14 @@ function LlmCallDetailPanel({
   useEffect(() => {
     if (callDetail?.callId === call.id) return;
     setCallDetailLoading(true);
-    apiV2.callDetail(sessionId, call.id)
+    const fetcher = agentFileId
+      ? apiV2.subAgentCallDetail(sessionId, agentFileId, call.id)
+      : apiV2.callDetail(sessionId, call.id);
+    fetcher
       .then(d => setCallDetail(d))
       .catch(() => setCallDetail(null))
       .finally(() => setCallDetailLoading(false));
-  }, [call.id, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [call.id, sessionId, agentFileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset summary state when switching to a different call (panel reuse).
   // Re-initializes per mode (panel = collapsed, main = expanded).
@@ -5027,10 +5041,11 @@ function LlmCallDetailPanel({
   }));
 
   const TAB_DEFS: Array<{ id: CallTab; label: string }> = [
-    { id: "attribution", label: t("callTab.attribution") },
-    { id: "diff",        label: t("callTab.diff") },
-    { id: "response",    label: t("callTab.response") },
-    { id: "raw",         label: t("callTab.structure") },
+    { id: "attribution", label: t("callTab.attribution") },     // 请求归因
+    { id: "diff",        label: t("callTab.diff") },            // 请求对比
+    { id: "cache",       label: t("callTab.cache") },           // 缓存分析（新）
+    { id: "response",    label: t("callTab.responseAnalysis") },// 响应分析
+    { id: "raw",         label: t("callTab.raw") },             // 原始数据
   ];
 
   return (
@@ -5165,12 +5180,12 @@ function LlmCallDetailPanel({
                   label: "Δ vs prev",
                   value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`,
                   color: call.significantDelta > 10000 ? "#dc2626" : call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : undefined,
-                  // The Δ reflects *total context size* change, including
+                  // The Δ reflects *total prompt size* change, including
                   // content loaded from cache. So a first-after-compaction
-                  // call can show a huge Δ (e.g. +130k) even when "Fresh In"
+                  // call can show a huge Δ (e.g. +130k) even when "Input"
                   // is tiny (e.g. 6) — the bulk came from cache_read, not
                   // fresh tokens. This tooltip surfaces that distinction.
-                  tooltip: "Context size delta vs previous call. Includes cache_read + cache_write, so it can be much larger than Fresh In when most context is served from cache (e.g. first call after a compaction).",
+                  tooltip: "Prompt size delta vs previous call. Includes cache_read + cache_write, so it can be much larger than Input when most content is served from cache (e.g. first call after a compaction).",
                 }]),
                 { label: "Tool Calls", value: String(call.toolCalls?.length ?? 0) },
               ]}
@@ -5220,6 +5235,7 @@ function LlmCallDetailPanel({
           {tab === "attribution" && (
             <AttributionTreeLensPanel
               sessionId={sessionId}
+              agentFileId={agentFileId}
               callId={call.id}
               prevCallId={prevCallId}
               hideDiff
@@ -5231,8 +5247,22 @@ function LlmCallDetailPanel({
           {tab === "diff" && (
             <DiffPanel
               sessionId={sessionId}
+              agentFileId={agentFileId}
               callId={call.id}
               prevCallId={prevCallId ?? undefined}
+              currCacheRead={call.cacheRead}
+              currCacheWrite={call.cacheWrite}
+              prevCacheRead={prevCall?.cacheRead}
+              prevCacheWrite={prevCall?.cacheWrite}
+            />
+          )}
+
+          {/* ══ Cache — 本次 call 的 cache_control 分层拓扑 ══════════════ */}
+          {tab === "cache" && (
+            <CachePanel
+              sessionId={sessionId}
+              agentFileId={agentFileId}
+              callId={call.id}
             />
           )}
 
@@ -5240,6 +5270,7 @@ function LlmCallDetailPanel({
           {tab === "response" && (
             <ResponseTreePanel
               sessionId={sessionId}
+              agentFileId={agentFileId}
               callId={call.id}
               onLinkCall={onLinkCall}
             />
@@ -5286,11 +5317,19 @@ function LlmCallDetailPanel({
 function SubAgentSessionPanel({
   drilldown,
   loadState,
+  parentSessionId,
+  agentFileId,
   parentLabel,
   onReturnToParent,
 }: {
   drilldown: SessionDrilldown | null;
   loadState: "loading" | "ok" | "error";
+  /** Parent session id — used for proxy/attribution lookups on sub-agent calls
+   *  (sub-agent proxy rows live under the parent session id). */
+  parentSessionId: string;
+  /** Identifies which sub-agent JSONL the inner panels should route their
+   *  call-detail / attribution-tree / response-tree / diff-tree fetches to. */
+  agentFileId: string;
   parentLabel?: string;          // e.g. "Turn 3"
   onReturnToParent?: () => void; // closes sub-turn, returns to parent turn detail
 }) {
@@ -5394,23 +5433,6 @@ function SubAgentSessionPanel({
           </div>
         )}
 
-        {/* ── Amber proxy-not-supported notice ── */}
-        <div style={{
-          display: "flex", alignItems: "flex-start", gap: 8,
-          padding: "8px 16px", background: "#fffbeb",
-          borderBottom: "1px solid #fde68a", flexShrink: 0,
-          fontSize: 11, color: "#78350f", lineHeight: 1.5,
-        }}>
-          <span style={{ fontSize: 12, marginTop: 1 }}>ℹ️</span>
-          <div style={{ flex: 1 }}>
-            <strong style={{ color: "#92400e" }}>
-              {t("sessionOverview.subAgent.proxyNoticeTitle")}
-            </strong>
-            {" — "}
-            {t("sessionOverview.subAgent.proxyNoticeBody")}
-          </div>
-        </div>
-
         {/* ── Body: 200px left nav + Main Canvas — same structure as main session ── */}
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
           {/* Left nav — NavItem rows, one per sub-agent turn, with badges +
@@ -5493,14 +5515,15 @@ function SubAgentSessionPanel({
                 turn={innerTurn}
                 onSelectCall={handleSelectCall}
                 isMockSession={false}
-                sessionId={drilldown.sessionId}
+                sessionId={parentSessionId}
               />
             )}
             {innerCall && (
               <LlmCallDetailPanel
                 call={innerCall}
                 onSelectEntry={() => {}}
-                sessionId={drilldown.sessionId}
+                sessionId={parentSessionId}
+                agentFileId={agentFileId}
                 onClose={() => setInnerCall(null)}
               />
             )}
@@ -5774,7 +5797,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
                 <button onClick={() => navLevel === "subagent" ? handleReturnFromSubAgent() : handleNavTurn(selectedTurn)}
                   style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: navLevel === "turn" && !selectedCall ? "#6366f1" : "#374151" }}>Turn {selectedTurn.id}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: navLevel === "turn" && !selectedCall ? "#6366f1" : "#374151" }}>{t("sessionOverview.turn.label")} {selectedTurn.id}</span>
                 </button>
               </>
             )}
@@ -5849,12 +5872,14 @@ export function SessionDetailV2({ session, onClose }: Props) {
                   (s, c) => s + c.intervalEvents.filter(e => e.kind === "user:command").length, 0);
                 const unknownCount = turn.calls.reduce(
                   (s, c) => s + c.intervalEvents.filter(e => e.kind === "unknown").length, 0);
+                const noProxyCount = turn.calls.filter(c => c.proxyMatchMode === "unmatched").length;
                 const navBadgeItems: StatusBadge[] = [];
                 if (turn.hasCompaction)   navBadgeItems.push({ kind: "compaction", count: 1,              tooltip: t("sessionOverview.badges.compaction") });
                 if (turn.errorCount > 0)  navBadgeItems.push({ kind: "error",      count: turn.errorCount,tooltip: t("sessionOverview.badges.errors") });
                 if (subAgentCount > 0)    navBadgeItems.push({ kind: "subAgent",   count: subAgentCount,  tooltip: t("sessionOverview.badges.subAgents") });
                 if (commandCount > 0)     navBadgeItems.push({ kind: "command",    count: commandCount,   tooltip: t("sessionOverview.badges.commands") });
                 if (unknownCount > 0)     navBadgeItems.push({ kind: "unknown",    count: unknownCount,   tooltip: t("sessionOverview.badges.unknown") });
+                if (noProxyCount > 0)     navBadgeItems.push({ kind: "noProxy",    count: noProxyCount,   tooltip: t("sessionOverview.badges.noProxyDetail", { count: noProxyCount })});
                 const turnBadges = (
                   <StatusBadgeStrip badges={navBadgeItems} size="compact" renderIcon={renderStatusIcon} />
                 );
@@ -5886,14 +5911,11 @@ export function SessionDetailV2({ session, onClose }: Props) {
                       const callNavBadges: StatusBadge[] = call.isCompaction
                         ? [{ kind: "compaction", count: 1, tooltip: t("sessionOverview.badges.compaction") }]
                         : [];
-                      // Proxy-link quality dot: only render when non-exact, so
-                      // good calls stay visually quiet. Tooltip explains which
-                      // path matched and why it may be wrong.
-                      const proxyDot = call.proxyMatchMode === "fallback"
-                        ? { color: "#f59e0b", title: "Proxy linked via time-window fallback (no Anthropic request-id) — may not be the right request." }
-                        : call.proxyMatchMode === "unmatched"
-                          ? { color: "#9ca3af", title: "No proxy request linked to this call." }
-                          : null;
+                      // Proxy-link quality dot: only render when unmatched, so
+                      // good calls stay visually quiet.
+                      const proxyDot = call.proxyMatchMode === "unmatched"
+                        ? { color: "#9ca3af", title: "No proxy request linked to this call." }
+                        : null;
                       const badgesNode = (proxyDot || callNavBadges.length > 0) ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
                           {proxyDot && (
@@ -5949,6 +5971,10 @@ export function SessionDetailV2({ session, onClose }: Props) {
             {navLevel === "call" && selectedCall && (
               <LlmCallDetailPanel
                 call={selectedCall}
+                prevCall={
+                  turns.flatMap(t => t.calls)
+                       .find(c => c.id === selectedCall.id - 1) ?? null
+                }
                 onSelectEntry={handleSelectEntry}
                 sessionId={session.session_id}
                 onClose={() => {
@@ -5990,11 +6016,13 @@ export function SessionDetailV2({ session, onClose }: Props) {
                 }}
               />
             )}
-            {navLevel === "subagent" && (
+            {navLevel === "subagent" && selectedSubAgent && (
               <SubAgentSessionPanel
                 drilldown={subAgentDrilldown}
                 loadState={subAgentLoadState}
-                parentLabel={selectedTurn ? `Turn ${selectedTurn.id}` : undefined}
+                parentSessionId={session.session_id}
+                agentFileId={selectedSubAgent.agentFileId}
+                parentLabel={selectedTurn ? `${t("sessionOverview.turn.label")} ${selectedTurn.id}` : undefined}
                 onReturnToParent={selectedTurn ? handleReturnFromSubAgent : undefined}
               />
             )}

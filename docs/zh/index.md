@@ -8,6 +8,10 @@ permalink: /zh/
 
 # 中文文档
 
-session-devtools 是一款本地 web 仪表盘，读取 Claude Code 的 session 文件，提供 token 用量、工具调用、子 agent、上下文归因等完整可视性。
+session-devtools是一款本地web仪表盘。他的核心主要为以下两方面：
+
+1. 可视化session文件。帮助用户分析会话、轮次以及LLM调用。
+2. 支持拦截Agent流量，将其同session文件中的Agent事件进行双向关联。
+
 
 [→ 产品能力](./product/)

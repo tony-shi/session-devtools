@@ -25,9 +25,11 @@ export interface CallDetailTokens {
 
 // Per-call proxy linking quality.
 //   'exact'     — JSONL.requestId matched proxy_requests.request_id (1:1, trustworthy)
-//   'fallback'  — degraded time-window match (see findProxyRowForCall block comment)
-//   'unmatched' — no proxy row found for this call at all
-export type ProxyMatchMode = "exact" | "fallback" | "unmatched";
+//   'unmatched' — no proxy row found (either JSONL has no requestId, or proxy has
+//                 no matching row). Time-window heuristics are intentionally NOT
+//                 used: they routinely mis-attribute background probes / parallel
+//                 sub-agent traffic to the wrong call.
+export type ProxyMatchMode = "exact" | "unmatched";
 
 export interface CallDetail {
   callId: number;
@@ -117,75 +119,34 @@ interface ProxyRow {
   started_at: string | null;
 }
 
-// Look up the proxy row for a JSONL call.
+// Look up the proxy row for a JSONL call by exact Anthropic `request-id`.
 //
-// Preferred path — exact match by Anthropic `request-id`:
 //   JSONL assistant event 顶层 `requestId` ⇄ proxy_requests.request_id
-//   （从 resHeaders["request-id"] 抽出）。这是 1:1 的确定性匹配，根治
-//   "quota probe / 后台请求被误挂到真实 call 上" 之类的 false-positive。
+//   （从 resHeaders["request-id"] 抽出）。1:1 确定性匹配。
 //
-// Fallback path — "closest proxy started at or before the JSONL timestamp":
-//   ⚠️ This is a HACK and is NOT robust. It exists only because not every
-//   upstream returns Anthropic's `request-id` header (notably the
-//   `mcli.sankuai.com` gateway behind our local `mcli-proxy.dev`, which
-//   issues its own `M-TraceId` instead). When that happens both sides lose
-//   the exact key and we degrade to:
-//       WHERE session_id = ? AND started_at <= ? ORDER BY ... DESC LIMIT 1
-//
-//   Known failure modes:
-//     - 任何在 JSONL 之前发生、又没有对应 JSONL 记录的 proxy 请求都会"夹塞"
-//       到真实 call 前面（quota probe / haiku 标题探测 / 重试 / 并发其它
-//       会话共用同一 session_id 的请求）。
-//     - 误差随并发度和延迟敏感：upstream 慢响应时 JSONL 时间戳可能晚于
-//       某个无关请求的 started_at，从而被"最近的那个"贪婪地吃掉。
-//     - excludeProxyId 只能避开"上一次刚选过的那一条"，挡不住更早的探测。
-//
-//   不修是因为：上游 `mcli.sankuai.com` 不透传 request-id，本地两层都没法
-//   补出来；走 Anthropic 直连的 session 不受影响，精确路径已 100% 命中。
-//   如果哪天 mcli 路径的误判频率高了，需要从上游网关层根治，而不是在这里
-//   加更复杂的启发式（model / max_tokens / content 黑名单 等只是绕回老路）。
-export interface ProxyRowMatch {
-  row: ProxyRow;
-  mode: "exact" | "fallback";
-}
-
+// 没有 requestId（旧版本 Claude Code 或某些 gateway 不透传 request-id）一律
+// 返回 null —— 不再走 timestamp 兜底，宁可显示"无 proxy"也不接受可能错误
+// 的归因（典型坑：sub-agent 与主会话共用 session_id，时间窗会把并行 sub-agent
+// 的请求错挂到主 call 上）。
 export function findProxyRowForCall(
   db: Database,
   sessionId: string,
   apiRequestId: string | null | undefined,
-  fallbackTimestamp: string,
   excludeProxyId?: number,
-): ProxyRowMatch | null {
-  if (apiRequestId) {
-    const row = db.prepare(`
-      SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
-      FROM proxy_requests
-      WHERE session_id = ? AND request_id = ?
-      ${excludeProxyId !== undefined ? "AND id != ?" : ""}
-      LIMIT 1
-    `).get(
-      ...(excludeProxyId !== undefined
-        ? [sessionId, apiRequestId, excludeProxyId]
-        : [sessionId, apiRequestId])
-    ) as ProxyRow | undefined;
-    if (row) return { row, mode: "exact" };
-  }
-  // ⚠️ HACK fallback — see block comment above. Not robust; only correct
-  // when the closest preceding proxy request happens to be the right one.
-  const fallback = db.prepare(`
+): ProxyRow | null {
+  if (!apiRequestId) return null;
+  const row = db.prepare(`
     SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
     FROM proxy_requests
-    WHERE session_id = ?
-      AND COALESCE(started_at, ts) <= ?
-      ${excludeProxyId !== undefined ? "AND id != ?" : ""}
-    ORDER BY COALESCE(started_at, ts) DESC
+    WHERE session_id = ? AND request_id = ?
+    ${excludeProxyId !== undefined ? "AND id != ?" : ""}
     LIMIT 1
   `).get(
     ...(excludeProxyId !== undefined
-      ? [sessionId, fallbackTimestamp, excludeProxyId]
-      : [sessionId, fallbackTimestamp])
+      ? [sessionId, apiRequestId, excludeProxyId]
+      : [sessionId, apiRequestId])
   ) as ProxyRow | undefined;
-  return fallback ? { row: fallback, mode: "fallback" } : null;
+  return row ?? null;
 }
 
 // Batch classifier for the session drilldown. One SQL query loads every
@@ -200,34 +161,13 @@ export function computeCallProxyMatchModes(
   if (calls.length === 0) return result;
 
   const rows = db.prepare(`
-    SELECT request_id, COALESCE(started_at, ts) AS ts
-    FROM proxy_requests
-    WHERE session_id = ?
-  `).all(sessionId) as Array<{ request_id: string | null; ts: string | null }>;
+    SELECT request_id FROM proxy_requests
+    WHERE session_id = ? AND request_id IS NOT NULL
+  `).all(sessionId) as Array<{ request_id: string }>;
 
-  if (rows.length === 0) {
-    for (const c of calls) result.set(c.id, "unmatched");
-    return result;
-  }
-
-  const byRequestId = new Set<string>();
-  let minTs: string | null = null;
-  for (const r of rows) {
-    if (r.request_id) byRequestId.add(r.request_id);
-    if (r.ts && (minTs === null || r.ts < minTs)) minTs = r.ts;
-  }
-
+  const byRequestId = new Set<string>(rows.map((r) => r.request_id));
   for (const c of calls) {
-    if (c.apiRequestId && byRequestId.has(c.apiRequestId)) {
-      result.set(c.id, "exact");
-    } else if (minTs !== null && minTs <= c.timestamp) {
-      // Some proxy row started at or before this call → fallback path
-      // would have picked one. We don't replay the picker; existence is
-      // enough to distinguish "fallback-matched" from "no proxy at all".
-      result.set(c.id, "fallback");
-    } else {
-      result.set(c.id, "unmatched");
-    }
+    result.set(c.id, c.apiRequestId && byRequestId.has(c.apiRequestId) ? "exact" : "unmatched");
   }
   return result;
 }
@@ -249,12 +189,11 @@ export async function loadCallDetail(
     model: callModel, stopReason: callStopReason, timestamp: callTimestamp,
     tokens: callTokens,
   };
-  const match = findProxyRowForCall(db, sessionId, apiRequestId, callTimestamp);
-  if (!match) return { ...base, proxyRequestId: null, proxyMatchMode: "unmatched", rawRequestJson: null };
+  const proxyRow = findProxyRowForCall(db, sessionId, apiRequestId);
+  if (!proxyRow) return { ...base, proxyRequestId: null, proxyMatchMode: "unmatched", rawRequestJson: null };
 
-  const { row: proxyRow, mode } = match;
   const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
-  if (!rec) return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: mode, rawRequestJson: null };
+  if (!rec) return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: "exact", rawRequestJson: null };
 
   const reqBody = rec.reqBody as string | undefined;
   let rawReqParsed: Record<string, unknown> | null = null;
@@ -262,5 +201,5 @@ export async function loadCallDetail(
     try { rawReqParsed = JSON.parse(reqBody) as Record<string, unknown>; }
     catch { /* not JSON */ }
   }
-  return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: mode, rawRequestJson: rawReqParsed };
+  return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: "exact", rawRequestJson: rawReqParsed };
 }

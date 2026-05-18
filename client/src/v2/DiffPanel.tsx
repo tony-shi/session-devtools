@@ -8,7 +8,7 @@
 //   - 无 Legend（+/-/~ 前缀 + 三色已足够）
 //   - SelectedDetail 扁平展示，无 card 外框
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
 import { FisheyeStrip } from "./fisheye-strip";
@@ -69,15 +69,42 @@ function shortSlot(s: string): string {
   return s.replace("messages.", "msg.").replace("system.", "sys.").replace("tools.builtin.", "tool.");
 }
 
+/** Wire jsonPath → 短显式标签。明确告诉用户 pin 落在哪个具体字段。
+ *  reqBody.system[3]                  → sys[3]
+ *  reqBody.messages[4].content[1]     → msg[4][1]
+ *  reqBody.tools[10]                  → tools[10]
+ *  fallback: 截断尾巴
+ */
+function shortJsonPath(path: string | undefined): string {
+  if (!path) return "?";
+  let s = path.replace(/^reqBody\./, "");
+  s = s.replace(/^system\[/, "sys[");
+  s = s.replace(/^messages\[/, "msg[");
+  s = s.replace(/\.content\[/g, "[");
+  return s;
+}
+
 // ─── 主入口：DiffPanel ───────────────────────────────────────────────────────
 
 interface Props {
   sessionId: string;
+  /** Present iff rendering a sub-agent call — routes to sub-agent endpoint. */
+  agentFileId?: string;
   callId: number;
   prevCallId?: number | null;
+  /** Cache token accounting for diagnostic row. All four must be present
+   *  (and prev call must exist) for the row to render; otherwise we skip
+   *  the row silently. */
+  currCacheRead?: number;
+  currCacheWrite?: number;
+  prevCacheRead?: number;
+  prevCacheWrite?: number;
 }
 
-export function DiffPanel({ sessionId, callId, prevCallId }: Props) {
+export function DiffPanel({
+  sessionId, agentFileId, callId, prevCallId,
+  currCacheRead, currCacheWrite, prevCacheRead, prevCacheWrite,
+}: Props) {
   const { t } = useTranslation();
   const [data, setData] = useState<DiffTreeResult | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,12 +114,15 @@ export function DiffPanel({ sessionId, callId, prevCallId }: Props) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    apiV2.diffTree(sessionId, callId)
+    const fetcher = agentFileId
+      ? apiV2.subAgentDiffTree(sessionId, agentFileId, callId)
+      : apiV2.diffTree(sessionId, callId);
+    fetcher
       .then((r) => { if (!cancelled) setData(r); })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sessionId, callId]);
+  }, [sessionId, agentFileId, callId]);
 
   if (loading) {
     return <div style={{ padding: "32px 0", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>{t("diff.loading")}</div>;
@@ -167,6 +197,14 @@ export function DiffPanel({ sessionId, callId, prevCallId }: Props) {
         )}
       </div>
 
+      <CacheImpactRow
+        currCacheRead={currCacheRead}
+        currCacheWrite={currCacheWrite}
+        prevCacheRead={prevCacheRead}
+        prevCacheWrite={prevCacheWrite}
+        sections={data.sections}
+      />
+
       {data.error && (
         <div style={{
           padding: "8px 12px", fontSize: 11, color: "#92400e",
@@ -177,6 +215,232 @@ export function DiffPanel({ sessionId, callId, prevCallId }: Props) {
       )}
 
       <DiffView sections={data.sections} summary={data.summary} />
+    </div>
+  );
+}
+
+// ─── CacheImpactRow — drift 守恒诊断 ─────────────────────────────────────────
+//
+// 数学事实：相邻 LLM call 在缓存正常工作时，curr.cache_read 严格等于
+// prev.cache_creation + prev.cache_read（实测多 session 0 偏差）。drift
+// = curr.cr − (prev.cw + prev.cr) 偏离 0 越多，说明本次有越多本应能命中
+// 的 cache 被某件事冲掉了。
+//
+// 不是预测器、不调 tokenizer。仅基于 response.usage 的精确数字做守恒校验。
+// 三态：健康（drift 在 ±100 内）/ 轻微偏差 / 击穿。击穿时给出 diff 里最大
+// 那段 added section 作为根因提示。
+//
+// 不在以下情况渲染：
+//   - 首 call（无 prev）
+//   - 调用方未提供 token 数（sub-agent / linked panel 路径暂未接）
+
+interface CacheImpactRowProps {
+  currCacheRead?: number;
+  currCacheWrite?: number;
+  prevCacheRead?: number;
+  prevCacheWrite?: number;
+  sections: DiffSection[];
+}
+
+const HEALTHY_DRIFT_THRESHOLD = 100;
+const BREACH_DRIFT_THRESHOLD  = 1000;
+
+function CacheImpactRow({
+  currCacheRead, currCacheWrite, prevCacheRead, prevCacheWrite, sections,
+}: CacheImpactRowProps) {
+  const { t } = useTranslation();
+  // 静默跳过：调用方未提供任一字段
+  if (
+    currCacheRead === undefined || currCacheWrite === undefined ||
+    prevCacheRead === undefined || prevCacheWrite === undefined
+  ) return null;
+  // 首 call 守恒口径未定义（prev 全 0 时退化为只看 curr.cr），不强行渲染
+  if (prevCacheRead + prevCacheWrite === 0) return null;
+
+  const expected = prevCacheRead + prevCacheWrite;
+  const drift    = currCacheRead - expected;
+  const absDrift = Math.abs(drift);
+
+  let state: "healthy" | "minor" | "broken";
+  if (absDrift < HEALTHY_DRIFT_THRESHOLD)      state = "healthy";
+  else if (absDrift < BREACH_DRIFT_THRESHOLD)  state = "minor";
+  else                                         state = "broken";
+
+  const palette = {
+    healthy: { bg: "#f0fdf4", border: "#bbf7d0", fg: "#15803d", icon: "✅" },
+    minor:   { bg: "#fffbeb", border: "#fde68a", fg: "#92400e", icon: "⚠️" },
+    broken:  { bg: "#fef2f2", border: "#fecaca", fg: "#b91c1c", icon: "🔴" },
+  }[state];
+
+  // 「最大变更段」—— 启发式描述，不是因果证明。drift 显著为负时，挑出 diff 里
+  // 变化最大的 section 给用户一个起点，但显式标注为「最大变更」而不是「根因」。
+  // 真实的因果可能是 TTL 过期、compaction、tools 微改 + 多段同时改 ……单从 wire
+  // diff 无法裁定。
+  const biggestChange = state === "broken"
+    ? sections
+        .filter(s => s.counts.added + s.counts.removed + s.counts.modified > 0)
+        .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))[0]
+    : null;
+  const biggestChangeLabel = biggestChange ? SECTION_META[biggestChange.id].label : null;
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+      padding: "6px 10px", fontSize: 11,
+      background: palette.bg, border: `1px solid ${palette.border}`, borderRadius: 6,
+    }}>
+      <span style={{ fontSize: 13 }}>{palette.icon}</span>
+      <span style={{ fontWeight: 600, color: palette.fg }}>
+        {t("diff.cacheImpact.label")}
+      </span>
+      <span style={{ color: "#6b7280", fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
+        cache_read {fmtK(currCacheRead)} · cache_create {fmtK(currCacheWrite)}
+      </span>
+      <span style={{ color: "#9ca3af" }}>·</span>
+      <span style={{ color: palette.fg, fontWeight: 600 }}>
+        {state === "healthy" && t("diff.cacheImpact.healthy")}
+        {state === "minor"   && t("diff.cacheImpact.minor", { drift: fmtDelta(drift) })}
+        {state === "broken"  && t("diff.cacheImpact.broken", { drift: fmtDelta(drift) })}
+      </span>
+      {biggestChangeLabel && (
+        <>
+          <span style={{ color: "#9ca3af" }}>·</span>
+          <span style={{ color: palette.fg }}>
+            {t("diff.cacheImpact.biggestChange", { section: biggestChangeLabel })}
+          </span>
+        </>
+      )}
+      <span style={{ flex: 1 }} />
+      <HoverTip
+        align="right"
+        content={
+          <CacheImpactExplain />
+        }
+      >
+        <span
+          style={{
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            width: 16, height: 16, borderRadius: 8,
+            background: "rgba(255,255,255,0.6)",
+            color: palette.fg, border: `1px solid ${palette.border}`,
+            fontSize: 10, fontWeight: 700,
+            cursor: "help", userSelect: "none",
+          }}
+          aria-label={t("diff.cacheImpact.help")}
+        >?</span>
+      </HoverTip>
+    </div>
+  );
+}
+
+// ─── HoverTip — 自定义浮层 tooltip（ledger 白卡风格） ─────────────────────────
+// 对齐 LedgerExplainer 的视觉语言：白底 + 灰边 + 软阴影 + 深灰文字。
+//   - 触发：onMouseEnter / onMouseLeave 切换 show 状态
+//   - 定位：紧贴 trigger 下方，左/中/右对齐三档
+//   - 不依赖任何外部 portal / 库
+function HoverTip({
+  content,
+  children,
+  align = "center",
+}: {
+  content: React.ReactNode;
+  children: React.ReactNode;
+  /** 默认 center；right 时把 tooltip 锚到右下避免溢出 */
+  align?: "left" | "center" | "right";
+}) {
+  const [show, setShow] = useState(false);
+  const transform =
+    align === "center" ? "translateX(-50%)" :
+    align === "right"  ? "translateX(-100%)" : "none";
+  const left = align === "left" ? "0" : align === "right" ? "100%" : "50%";
+  return (
+    <span
+      style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      {children}
+      {show && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 8px)",
+            left,
+            transform,
+            zIndex: 100,
+            background: "#fff",
+            color: "#374151",
+            border: "1px solid #e5e7eb",
+            borderRadius: 8,
+            padding: "12px 14px",
+            fontSize: 11,
+            lineHeight: 1.5,
+            maxWidth: 420,
+            minWidth: 280,
+            boxShadow: "0 8px 24px rgba(15,23,42,0.12), 0 2px 6px rgba(15,23,42,0.06)",
+            whiteSpace: "normal",
+            textAlign: "left",
+            pointerEvents: "none",
+          }}
+        >
+          {content}
+        </div>
+      )}
+    </span>
+  );
+}
+
+// ─── CacheImpactExplain — drift 算法说明（i18n，ledger 白卡风格） ──────────────
+function CacheImpactExplain() {
+  const { t } = useTranslation();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{
+        fontWeight: 700, fontSize: 11, color: "#111827",
+        letterSpacing: "0.04em", textTransform: "uppercase",
+      }}>
+        {t("diff.cacheImpact.explainTitle")}
+      </div>
+      <div style={{
+        fontFamily: "ui-monospace, SFMono-Regular, monospace",
+        background: "#fafafa",
+        border: "1px solid #f3f4f6",
+        padding: "6px 8px", borderRadius: 4,
+        fontSize: 10, color: "#111827",
+      }}>
+        {t("diff.cacheImpact.explainFormula")}
+      </div>
+      <div style={{ color: "#6b7280", fontSize: 11 }}>{t("diff.cacheImpact.explainSource")}</div>
+      <div style={{
+        color: "#15803d", fontSize: 11,
+        background: "#f0fdf4",
+        borderLeft: "2px solid #16a34a",
+        padding: "4px 8px",
+      }}>
+        ✓ {t("diff.cacheImpact.explainHealthy")}
+      </div>
+      <div style={{
+        color: "#b91c1c", fontSize: 11,
+        background: "#fef2f2",
+        borderLeft: "2px solid #ef4444",
+        padding: "4px 8px",
+      }}>
+        🔴 {t("diff.cacheImpact.explainBroken")}
+      </div>
+      <div style={{
+        color: "#92400e", fontSize: 11,
+        background: "#fffbeb",
+        borderLeft: "2px solid #f59e0b",
+        padding: "4px 8px",
+      }}>
+        ⚠ {t("diff.cacheImpact.explainAttribution")}
+      </div>
+      <div style={{
+        color: "#9ca3af", fontStyle: "italic", fontSize: 10,
+        borderTop: "1px dashed #f3f4f6", paddingTop: 6,
+      }}>
+        {t("diff.cacheImpact.explainNote")}
+      </div>
     </div>
   );
 }
@@ -192,7 +456,6 @@ export function DiffView({ sections, summary }: DiffViewProps) {
   const { t } = useTranslation();
   const [selectedSection, setSelectedSection] = useState<DiffSectionId | null>(null);
   const [selectedLeafId, setSelectedLeafId] = useState<string | null>(null);
-  const [expandedBins, setExpandedBins] = useState<Set<string>>(new Set());
 
   const grandNewTotal = sections.reduce((s, x) => s + x.newTotal, 0);
   const hasAnyChange =
@@ -203,7 +466,6 @@ export function DiffView({ sections, summary }: DiffViewProps) {
   const handleSectionSelect = (id: DiffSectionId) => {
     setSelectedSection((cur) => (cur === id ? null : id));
     setSelectedLeafId(null);
-    setExpandedBins(new Set());
   };
 
   return (
@@ -242,8 +504,6 @@ export function DiffView({ sections, summary }: DiffViewProps) {
           section={sections.find((s) => s.id === selectedSection)!}
           selectedLeafId={selectedLeafId}
           onSelectLeaf={setSelectedLeafId}
-          expandedBins={expandedBins}
-          setExpandedBins={setExpandedBins}
         />
       )}
     </div>
@@ -317,6 +577,7 @@ function SectionDiffBar({
   const [hoveredId, setHoveredId] = useState<DiffSectionId | null>(null);
   if (grandTotal === 0) return null;
   const hasSelection = selectedSection !== null;
+
   return (
     <div
       style={{ display: "flex", gap: 4, height: 44 }}
@@ -327,7 +588,6 @@ function SectionDiffBar({
         const pct = s.newTotal / grandTotal;
         const isSel = selectedSection === s.id;
         const isHov = hoveredId === s.id;
-        // 三档强度（与 attribution 同规则）
         let intensity: 0 | 1 | 2 | 3 = 1;
         if (hasSelection) {
           if (isSel) intensity = 3;
@@ -348,14 +608,11 @@ function SectionDiffBar({
             title={`${meta.label} · ${fmtK(s.newTotal)} chars${hasChange ? ` · Δ ${fmtDelta(s.delta)}` : ""}`}
             style={{
               flex: Math.max(pct, 0.05), minWidth: 64,
-              background: meta.barBg,
-              opacity,
-              border: "none",
-              outline, outlineOffset: -2,
+              background: meta.barBg, opacity,
+              border: "none", outline, outlineOffset: -2,
               borderRadius: 6,
               padding: "8px 14px",
-              cursor: "pointer",
-              textAlign: "left",
+              cursor: "pointer", textAlign: "left",
               color: meta.barText,
               display: "flex", alignItems: "center", gap: 8,
               overflow: "hidden",
@@ -371,8 +628,7 @@ function SectionDiffBar({
                 fontSize: 11, fontWeight: 700,
                 padding: "1px 6px", borderRadius: 3,
                 background: "rgba(255,255,255,0.28)",
-                color: meta.barText,
-                flexShrink: 0,
+                color: meta.barText, flexShrink: 0,
               }}>{fmtDelta(s.delta)}</span>
             )}
           </button>
@@ -381,6 +637,10 @@ function SectionDiffBar({
     </div>
   );
 }
+
+// Pin-related visualization removed from diff page. Cache topology now lives in
+// the dedicated `CachePanel` tab. Diff page only carries `CacheImpactRow` as the
+// drift-conservation summary linking diff content changes to cache outcomes.
 
 // ─── Layer 1: SectionTable ───────────────────────────────────────────────────
 
@@ -474,107 +734,55 @@ function DeltaPill({ delta, small, inverse, label }: {
 }
 
 // ─── Layer 2: SectionDrillIn ─────────────────────────────────────────────────
+// 取消 bin 合并：每个 leaf 都是独立 strip item / 列表行；unchanged 在视觉上整体置灰。
 
-interface UnchangedBin { kind: "bin"; id: string; leaves: DiffLeaf[]; totalSize: number; }
-interface SingleLeaf  { kind: "single"; leaf: DiffLeaf; }
-type MergedItem = UnchangedBin | SingleLeaf;
-
-function mergeBins(leaves: DiffLeaf[]): MergedItem[] {
-  const out: MergedItem[] = [];
-  let pending: DiffLeaf[] = [];
-  let binCounter = 0;
-  const flush = () => {
-    if (pending.length === 0) return;
-    out.push({ kind: "bin", id: `bin-${binCounter++}`, leaves: pending, totalSize: pending.reduce((s, l) => s + l.newCharCount, 0) });
-    pending = [];
-  };
-  for (const l of leaves) {
-    if (l.kind === "kept") pending.push(l);
-    else { flush(); out.push({ kind: "single", leaf: l }); }
-  }
-  flush();
-  return out;
-}
-
-interface DiffStripItem { id: string; size: number; merged: MergedItem; }
-
-function toStripItems(merged: MergedItem[], expandedBins: Set<string>): DiffStripItem[] {
-  const items: DiffStripItem[] = [];
-  for (const m of merged) {
-    if (m.kind === "bin") {
-      if (expandedBins.has(m.id)) {
-        for (const l of m.leaves) items.push({ id: l.id, size: Math.max(l.newCharCount, 1), merged: { kind: "single", leaf: l } });
-      } else {
-        items.push({ id: m.id, size: Math.max(m.totalSize, 1), merged: m });
-      }
-    } else {
-      const l = m.leaf;
-      const size = l.kind === "removed" ? (l.oldCharCount ?? 100) : l.newCharCount;
-      items.push({ id: l.id, size: Math.max(size, 1), merged: m });
-    }
-  }
-  return items;
+interface DiffStripItem {
+  id: string;
+  size: number;
+  merged: { kind: "single"; leaf: DiffLeaf };
 }
 
 function SectionDrillIn({
   section, selectedLeafId, onSelectLeaf,
-  expandedBins, setExpandedBins,
 }: {
   section: DiffSection;
   selectedLeafId: string | null;
   onSelectLeaf: (id: string | null) => void;
-  expandedBins: Set<string>;
-  setExpandedBins: (s: Set<string>) => void;
 }) {
   const { t } = useTranslation();
-  const merged = useMemo(() => mergeBins(section.leaves), [section.leaves]);
-  const items = useMemo(() => toStripItems(merged, expandedBins), [merged, expandedBins]);
+  // 不再合并 bin —— 每个 leaf 都是独立 item。unchanged 用浅色置灰，方便用户找到
+  // 被 pin 命中的 leaf（之前 bin 折叠会把 pin 藏起来）。
+  const items: DiffStripItem[] = useMemo(
+    () => section.leaves.map((l) => {
+      const size = l.kind === "removed" ? (l.oldCharCount ?? 100) : l.newCharCount;
+      return { id: l.id, size: Math.max(size, 1), merged: { kind: "single", leaf: l } };
+    }),
+    [section.leaves],
+  );
 
   const handleStripSelect = (it: DiffStripItem) => {
-    if (it.merged.kind === "bin") {
-      const next = new Set(expandedBins);
-      if (next.has(it.id)) next.delete(it.id); else next.add(it.id);
-      setExpandedBins(next);
-      onSelectLeaf(null);
-    } else {
-      onSelectLeaf(selectedLeafId === it.id ? null : it.id);
-    }
+    onSelectLeaf(selectedLeafId === it.id ? null : it.id);
   };
 
   const selectedLeaf = useMemo(() => {
     if (!selectedLeafId) return null;
-    for (const m of merged) {
-      if (m.kind === "single" && m.leaf.id === selectedLeafId) return m.leaf;
-      if (m.kind === "bin") {
-        const f = m.leaves.find((l) => l.id === selectedLeafId);
-        if (f) return f;
-      }
-    }
-    return null;
-  }, [merged, selectedLeafId]);
+    return section.leaves.find((l) => l.id === selectedLeafId) ?? null;
+  }, [section.leaves, selectedLeafId]);
 
   return (
     <>
-      {/* LeafStrip — hover/select 反馈完全交给 FisheyeStrip 内部三档强度 */}
       <div style={{ minWidth: 0, maxWidth: "100%", overflowX: "hidden" }}>
         <FisheyeStrip<DiffStripItem>
           items={items}
-          getColor={(it) => {
-            if (it.merged.kind === "bin") return BIN_COLOR;
-            return DIFF_COLOR[it.merged.leaf.kind];
-          }}
+          // unchanged leaf 用 BIN_COLOR 浅灰；变化 leaf 用 diff 三色
+          getColor={(it) => it.merged.leaf.kind === "kept" ? BIN_COLOR : DIFF_COLOR[it.merged.leaf.kind]}
           getLabel={(it) => {
-            // 段内 label：只显示前缀 + slot，不带 delta 数字（数字在 detail 中显示）
-            if (it.merged.kind === "bin") {
-              return `${it.merged.leaves.length} ${t("diff.unchanged")}`;
-            }
             const l = it.merged.leaf;
             const slot = shortSlot(l.slotType);
             const prefix = DIFF_PREFIX[l.kind];
             return prefix ? `${prefix} ${slot}` : slot;
           }}
           getTitle={(it) => {
-            if (it.merged.kind === "bin") return `${it.merged.leaves.length} ${t("diff.unchanged")} · ${fmtK(it.merged.totalSize)} chars · ${t("diff.clickToExpand")}`;
             const l = it.merged.leaf;
             const slot = shortSlot(l.slotType);
             if (l.kind === "removed")  return `− ${slot} · ${fmtK(l.oldCharCount ?? 0)} chars`;
@@ -590,18 +798,12 @@ function SectionDrillIn({
         />
       </div>
 
-      {/* Diff list — selecting a section auto-renders every change in this
-          module so the user can scan/click without expanding each strip bar
-          one by one. Unchanged segments collapse into a single fold row. */}
       <LeafDiffList
-        merged={merged}
+        leaves={section.leaves}
         selectedLeafId={selectedLeafId}
         onSelectLeaf={onSelectLeaf}
-        expandedBins={expandedBins}
-        setExpandedBins={setExpandedBins}
       />
 
-      {/* SelectedDetail — 扁平展示，无 card 外框 */}
       {selectedLeaf && <SelectedDiffDetail leaf={selectedLeaf} />}
     </>
   );
@@ -615,80 +817,36 @@ function SectionDrillIn({
 // FisheyeStrip selection above and the SelectedDiffDetail panel below.
 
 function LeafDiffList({
-  merged, selectedLeafId, onSelectLeaf, expandedBins, setExpandedBins,
+  leaves, selectedLeafId, onSelectLeaf,
 }: {
-  merged: MergedItem[];
+  leaves: DiffLeaf[];
   selectedLeafId: string | null;
   onSelectLeaf: (id: string | null) => void;
-  expandedBins: Set<string>;
-  setExpandedBins: (s: Set<string>) => void;
 }) {
-  const { t } = useTranslation();
-
-  const toggleBin = (binId: string) => {
-    const next = new Set(expandedBins);
-    if (next.has(binId)) next.delete(binId); else next.add(binId);
-    setExpandedBins(next);
-  };
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1, marginTop: 4 }}>
-      {merged.map((m) => {
-        if (m.kind === "bin") {
-          const expanded = expandedBins.has(m.id);
-          return (
-            <Fragment key={m.id}>
-              <button
-                onClick={() => toggleBin(m.id)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  padding: "5px 8px",
-                  background: "transparent", border: "none", borderRadius: 4,
-                  cursor: "pointer", textAlign: "left",
-                  color: "#9ca3af", fontSize: 11, fontStyle: "italic",
-                  transition: "background 0.1s",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "#fafafa"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-              >
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: BIN_COLOR, flexShrink: 0 }} />
-                <span style={{ fontSize: 9, fontFamily: "ui-monospace, SFMono-Regular, monospace", color: "#9ca3af" }}>
-                  {expanded ? "▼" : "▶"}
-                </span>
-                <span>
-                  {m.leaves.length} {t("diff.unchanged")} · {fmtK(m.totalSize)} chars
-                </span>
-              </button>
-              {expanded && m.leaves.map((l) => (
-                <DiffLeafRow
-                  key={l.id}
-                  leaf={l}
-                  selected={selectedLeafId === l.id}
-                  onClick={() => onSelectLeaf(selectedLeafId === l.id ? null : l.id)}
-                />
-              ))}
-            </Fragment>
-          );
-        }
-        const l = m.leaf;
-        return (
-          <DiffLeafRow
-            key={l.id}
-            leaf={l}
-            selected={selectedLeafId === l.id}
-            onClick={() => onSelectLeaf(selectedLeafId === l.id ? null : l.id)}
-          />
-        );
-      })}
+      {leaves.map((l) => (
+        <DiffLeafRow
+          key={l.id}
+          leaf={l}
+          selected={selectedLeafId === l.id}
+          onClick={() => onSelectLeaf(selectedLeafId === l.id ? null : l.id)}
+        />
+      ))}
     </div>
   );
 }
 
 function DiffLeafRow({
   leaf, selected, onClick,
-}: { leaf: DiffLeaf; selected: boolean; onClick: () => void }) {
-  const fill = DIFF_COLOR[leaf.kind];
-  const txtColor = DIFF_TEXT_COLOR[leaf.kind];
+}: {
+  leaf: DiffLeaf;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const isKept = leaf.kind === "kept";
+  const fill = isKept ? BIN_COLOR : DIFF_COLOR[leaf.kind];
+  const txtColor = isKept ? "#9ca3af" : DIFF_TEXT_COLOR[leaf.kind];
   const prefix = DIFF_PREFIX[leaf.kind] || "·";
   const sizeText =
     leaf.kind === "removed"
@@ -707,9 +865,11 @@ function DiffLeafRow({
         display: "flex", alignItems: "center", gap: 10,
         padding: "5px 8px",
         background: selected ? "#eef2ff" : "transparent",
-        border: "none", borderRadius: 4,
+        border: "none",
+        borderRadius: 4,
         cursor: "pointer", textAlign: "left",
-        transition: "background 0.1s",
+        opacity: isKept ? 0.55 : 1,  // ← unchanged 行整行置灰，让有变化的行更醒目
+        transition: "background 0.1s, opacity 0.1s",
       }}
       onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "#f9fafb"; }}
       onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = "transparent"; }}
@@ -727,13 +887,13 @@ function DiffLeafRow({
       <span
         style={{
           fontFamily: "ui-monospace, SFMono-Regular, monospace",
-          fontSize: 11, color: "#111827",
+          fontSize: 11, color: isKept ? "#6b7280" : "#111827",
           minWidth: 180, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}
       >
         {shortSlot(leaf.slotType)}
       </span>
-      <span style={{ fontSize: 11, color: "#374151", minWidth: 110 }}>{sizeText}</span>
+      <span style={{ fontSize: 11, color: isKept ? "#9ca3af" : "#374151", minWidth: 110 }}>{sizeText}</span>
       {delta !== null && (
         <span style={{ minWidth: 52 }}>
           <DeltaPill delta={delta} small />

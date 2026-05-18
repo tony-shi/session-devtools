@@ -63,6 +63,21 @@ export const apiV2 = {
   subAgentDrilldown: (sessionId: string, agentFileId: string) =>
     get<SessionDrilldown>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/subagent/${encodeURIComponent(agentFileId)}/drilldown`),
 
+  // Sub-agent variants of the per-call endpoints. URL path encodes the
+  // parent session id (where proxy_requests rows live) plus the agentFileId
+  // identifying which sub-agent JSONL to parse.
+  subAgentCallDetail: (sessionId: string, agentFileId: string, callId: number) =>
+    get<CallDetail>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/subagent/${encodeURIComponent(agentFileId)}/calls/${callId}/detail`),
+
+  subAgentAttributionTree: (sessionId: string, agentFileId: string, callId: number) =>
+    get<AttributionTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/subagent/${encodeURIComponent(agentFileId)}/calls/${callId}/attribution-tree`),
+
+  subAgentResponseTree: (sessionId: string, agentFileId: string, callId: number) =>
+    get<ResponseTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/subagent/${encodeURIComponent(agentFileId)}/calls/${callId}/response-tree`),
+
+  subAgentDiffTree: (sessionId: string, agentFileId: string, callId: number) =>
+    get<DiffTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/subagent/${encodeURIComponent(agentFileId)}/calls/${callId}/diff-tree`),
+
   sync: () =>
     get<{ synced: number; skipped: number; errors: number }>("/api/v2/sessions/sync"),
 };

@@ -289,15 +289,21 @@ function anchorEvidenceOf(slot: TemplateSlot, text: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function extractToolResultText(
-  content: string | Array<{ type: string; text?: string }> | undefined,
+  content: string | Array<{ type: string; text?: string; tool_name?: string }> | undefined,
 ): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  // 拼接所有 type==="text" 的 text 字段；其他 type（image 等）暂忽略
   return content
-    .filter((c) => c.type === "text" && typeof c.text === "string")
-    .map((c) => c.text!)
-    .join("");
+    .map((c) => {
+      if (c.type === "text" && typeof c.text === "string") return c.text;
+      // tool_reference: ToolSearchTool 的 deferred-load 占位块，没有文本内容
+      // 但需要有可读的 rawText 让归因视图知道这个 slot 存在。
+      if (c.type === "tool_reference" && typeof c.tool_name === "string")
+        return `[tool_reference: ${c.tool_name}]`;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -206,6 +206,39 @@ export const auditLens: Lens = {
   },
 };
 
+// ─── Diff Lens ───────────────────────────────────────────────────────────────
+//
+// 按 leaf.diffKind（来自 diff-tree 合并）分桶：added / modified / removed / kept。
+// removed 的 leaf 严格来说不在 attribution-tree 的 current snapshot 里，由外层
+// 单独处理（双层 bar 的 Prev bar 渲染 + Removed footer 卡），所以 lens 本身
+// 把它当成一个 bucket（数量为 0 也保留，便于切换时显示"−2 removed"）。
+
+const DIFF_ADDED    = "added";
+const DIFF_MODIFIED = "modified";
+const DIFF_REMOVED  = "removed";
+const DIFF_KEPT     = "kept";
+
+const DIFF_BUCKETS: LensBucket[] = [
+  { id: DIFF_ADDED,    label: "新增", color: "#16a34a",
+    description: "本轮请求新增的 leaf（上一轮没有）" },
+  { id: DIFF_MODIFIED, label: "修改", color: "#f59e0b",
+    description: "上一轮同 slot 存在但内容改了" },
+  { id: DIFF_REMOVED,  label: "删除", color: "#dc2626",
+    description: "上一轮存在、本轮已删除（在 Prev bar 和底部 footer 列出）" },
+  { id: DIFF_KEPT,     label: "未变", color: "#9ca3af",
+    description: "未变化的 leaf" },
+];
+
+export const diffLens: Lens = {
+  id: "diff",
+  label: "Diff",
+  description: "相对上一次 call 的 leaf 级变化（依赖 diff-tree 数据合并）",
+  buckets: DIFF_BUCKETS,
+  bucketOf(leaf) {
+    return leaf.diffKind ?? DIFF_KEPT;
+  },
+};
+
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 // TODO(lens · OriginCall / 来源累积): 这是一个独立的归因维度，值得作为一个
@@ -233,8 +266,8 @@ export const auditLens: Lens = {
 // 与 bp-dot TODO 的关系：二者都依赖 prefix-history 视角；可以共用同一份
 // firstSeenCallIndex / bpKind 数据。
 
-/** 默认 Lens 顺序。审计性 lens 放最后；内容性 lens（用户更关心）放前面。 */
-export const LENSES: Lens[] = [provenanceLens, cacheLens, auditLens];
+/** 默认 Lens 顺序。来源在最左（默认开启基底）；Diff 次之；Cache 紧随；Audit 放最后。 */
+export const LENSES: Lens[] = [provenanceLens, diffLens, cacheLens, auditLens];
 
 /** 工具：根据 id 取 lens。 */
 export function getLens(id: string): Lens {

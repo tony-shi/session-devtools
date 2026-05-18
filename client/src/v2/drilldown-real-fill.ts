@@ -30,9 +30,11 @@ export interface SessionMetrics {
   totalLlmCalls: number;
   totalToolCalls: number;
   peakContext: number;
+  // Totals across the **main session JSONL only**. Does NOT include
+  // sub-agent calls or background API calls (haiku title gen, retries).
   totalCacheRead: number;
   totalCacheWrite: number;
-  totalFreshIn: number;
+  totalFreshIn: number;       // SUM of usage.input_tokens (non-cached, 1x billing)
   totalFreshOut: number;
   lastContext: number;          // ✓ contextSize of the final LLM call
   systemErrorCount: number;

@@ -78,7 +78,7 @@ const statValueStyle: React.CSSProperties = {
 // (command, unknown) carry their event-instance count so the row always reads
 // as a quantity. Tooltip exposes the full label for accessibility.
 
-export type StatusBadgeKind = "compaction" | "error" | "subAgent" | "command" | "unknown";
+export type StatusBadgeKind = "compaction" | "error" | "subAgent" | "command" | "unknown" | "noProxy";
 
 export interface StatusBadge {
   kind: StatusBadgeKind;
@@ -93,6 +93,7 @@ const STATUS_BADGE_COLORS: Record<StatusBadgeKind, { fg: string; bg: string; bor
   subAgent:   { fg: "#7c3aed", bg: "#faf5ff", border: "#e9d5ff" },
   command:    { fg: "#d97706", bg: "#fffbeb", border: "#fde68a" },
   unknown:    { fg: "#9ca3af", bg: "#f9fafb", border: "#e5e7eb" },
+  noProxy:    { fg: "#d97706", bg: "#fffbeb", border: "#fde68a" },
 };
 
 export interface StatusBadgeStripProps {

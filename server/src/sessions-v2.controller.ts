@@ -232,6 +232,230 @@ export class SessionsV2Controller {
     return drilldown;
   }
 
+  // Sub-agent call-detail mirrors the main session endpoint. A sub-agent is
+  // an independent SessionDrilldown (parseSubAgentDrilldown), but its proxy
+  // rows live under the **parent** session_id (Claude Code sends the parent
+  // session id in X-Claude-Code-Session-Id for all sub-agent requests), so
+  // loadCallDetail is invoked with the parent id rather than the synthetic
+  // "subagent:..." id.
+  @Get("sessions/:id/subagent/:agentFileId/calls/:callId/detail")
+  async subAgentCallDetail(
+    @Param("id") id: string,
+    @Param("agentFileId") agentFileId: string,
+    @Param("callId") callIdStr: string,
+  ) {
+    const db = getDb();
+    const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+
+    const drilldown = parseSubAgentDrilldown(row.source_file, agentFileId);
+    const callId = parseInt(callIdStr, 10);
+    const allCalls = drilldown.turns.flatMap((t) => t.calls);
+    const callIdx = allCalls.findIndex((c) => c.id === callId);
+    if (callIdx === -1) throw Object.assign(new Error("call not found"), { status: 404 });
+    const call = allCalls[callIdx];
+    const prevCall = callIdx > 0 ? allCalls[callIdx - 1] : undefined;
+
+    return loadCallDetail(
+      id, // parent session_id for proxy lookup
+      call.timestamp,
+      call.model,
+      {
+        contextSize: call.contextSize,
+        cacheRead: call.cacheRead,
+        cacheWrite: call.cacheWrite,
+        freshIn: call.freshIn,
+        outputTokens: call.outputTokens,
+      },
+      call.stopReason,
+      db,
+      callId,
+      prevCall?.timestamp,
+      call.apiRequestId,
+      prevCall?.apiRequestId,
+    );
+  }
+
+  // Sub-agent attribution-tree. Same structure as the main session endpoint,
+  // but sourceFile is the sub-agent JSONL and proxy lookups use the parent
+  // session_id. Reverse-attribution enrichment is intentionally skipped here
+  // — the session-level attribution graph is keyed on a single sessionId and
+  // the sub-agent's calls form an independent scope; running it for every
+  // sub-agent navigation would be wasteful and isn't needed for the current
+  // UI (the sub-agent view is a drilldown, not a graph).
+  @Get("sessions/:id/subagent/:agentFileId/calls/:callId/attribution-tree")
+  async subAgentAttributionTree(
+    @Param("id") id: string,
+    @Param("agentFileId") agentFileId: string,
+    @Param("callId") callIdStr: string,
+  ) {
+    const db = getDb();
+    const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+
+    // Resolve the sub-agent JSONL path the same way parseSubAgentDrilldown does.
+    const { dirname, basename, join } = await import("node:path");
+    const sessionBase = basename(row.source_file, ".jsonl");
+    const subAgentFile = join(dirname(row.source_file), sessionBase, "subagents", `agent-${agentFileId}.jsonl`);
+
+    const drilldown = parseSubAgentDrilldown(row.source_file, agentFileId);
+    const callId = parseInt(callIdStr, 10);
+    const allCalls = drilldown.turns.flatMap((t) => t.calls.map((c) => ({ call: c, turnId: t.id })));
+    const idx = allCalls.findIndex((x) => x.call.id === callId);
+    if (idx === -1) throw Object.assign(new Error("call not found"), { status: 404 });
+
+    let cachedEvents: LinkableJsonlEvent[] | null = null;
+    const loadJsonlEvents = (file: string): LinkableJsonlEvent[] | null => {
+      if (file !== subAgentFile) return null;
+      if (cachedEvents === null) cachedEvents = readSessionEventsForLinker(file);
+      return cachedEvents;
+    };
+
+    const resolveCallMeta = (_sid: string, cid: number) => {
+      const cur = allCalls.find((x) => x.call.id === cid);
+      if (!cur) return null;
+      const curIdx = allCalls.indexOf(cur);
+      const prev = curIdx > 0 ? allCalls[curIdx - 1] : null;
+      return {
+        call: { id: cur.call.id, timestamp: cur.call.timestamp, turnId: cur.turnId, sourceFile: subAgentFile, apiRequestId: cur.call.apiRequestId },
+        prevCall: prev ? { id: prev.call.id, timestamp: prev.call.timestamp, apiRequestId: prev.call.apiRequestId } : null,
+      };
+    };
+    const fetchProxyReqBodyAt = async (
+      _sid: string,
+      ts: string,
+      excludeProxyId?: number,
+      apiRequestId?: string | null,
+    ) => {
+      // Always use the parent session id for proxy lookup — sub-agent proxy
+      // rows landed under the parent session_id.
+      const proxyRow = findProxyRowForCall(db, id, apiRequestId ?? undefined, excludeProxyId);
+      if (!proxyRow) return null;
+      const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
+      const reqBodyStr = rec?.reqBody as string | undefined;
+      if (typeof reqBodyStr !== "string") return null;
+      let reqBody: Record<string, unknown> | null = null;
+      try { reqBody = JSON.parse(reqBodyStr) as Record<string, unknown>; }
+      catch { return null; }
+      let reqHeaders: Record<string, string> = {};
+      try { reqHeaders = JSON.parse(proxyRow.req_headers ?? "{}") as Record<string, string>; }
+      catch { /* default empty */ }
+      return {
+        reqBody,
+        reqHeaders,
+        proxyRequestId: proxyRow.id,
+        startedAt: proxyRow.started_at ?? ts,
+      };
+    };
+
+    // loadAttributionTree's first arg is the sessionId used as a cache key
+    // and threaded through helpers. We pass a synthetic id scoping the cache
+    // to (parentSessionId, agentFileId, callId) so different sub-agents don't
+    // collide.
+    return loadAttributionTree(`${id}::subagent::${agentFileId}`, callId, db, {
+      resolveCallMeta,
+      fetchProxyReqBodyAt,
+      loadJsonlEvents,
+    });
+  }
+
+  // Sub-agent diff-tree — mirror of the main session endpoint with
+  // parseSubAgentDrilldown + parent-session_id proxy lookup.
+  @Get("sessions/:id/subagent/:agentFileId/calls/:callId/diff-tree")
+  async subAgentDiffTree(
+    @Param("id") id: string,
+    @Param("agentFileId") agentFileId: string,
+    @Param("callId") callIdStr: string,
+  ) {
+    const db = getDb();
+    const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+
+    const { dirname, basename, join } = await import("node:path");
+    const sessionBase = basename(row.source_file, ".jsonl");
+    const subAgentFile = join(dirname(row.source_file), sessionBase, "subagents", `agent-${agentFileId}.jsonl`);
+
+    const drilldown = parseSubAgentDrilldown(row.source_file, agentFileId);
+    const callId = parseInt(callIdStr, 10);
+    const allCalls = drilldown.turns.flatMap((t) => t.calls.map((c) => ({ call: c, turnId: t.id })));
+    const idx = allCalls.findIndex((x) => x.call.id === callId);
+    if (idx === -1) throw Object.assign(new Error("call not found"), { status: 404 });
+
+    return loadDiffTree(`${id}::subagent::${agentFileId}`, callId, db, {
+      resolveCallMeta: (_sid, cid) => {
+        const cur = allCalls.find((x) => x.call.id === cid);
+        if (!cur) return null;
+        const curIdx = allCalls.indexOf(cur);
+        const prev = curIdx > 0 ? allCalls[curIdx - 1] : null;
+        return {
+          call: { id: cur.call.id, timestamp: cur.call.timestamp, turnId: cur.turnId, sourceFile: subAgentFile, apiRequestId: cur.call.apiRequestId },
+          prevCall: prev ? { id: prev.call.id, timestamp: prev.call.timestamp, apiRequestId: prev.call.apiRequestId } : null,
+        };
+      },
+      fetchProxyReqBodyAt: async (_sid, ts, excludeProxyId, apiRequestId) => {
+        const proxyRow = findProxyRowForCall(db, id, apiRequestId, excludeProxyId);
+        if (!proxyRow) return null;
+        const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
+        const reqBodyStr = rec?.reqBody as string | undefined;
+        if (typeof reqBodyStr !== "string") return null;
+        let reqBody: Record<string, unknown> | null = null;
+        try { reqBody = JSON.parse(reqBodyStr) as Record<string, unknown>; } catch { return null; }
+        let reqHeaders: Record<string, string> = {};
+        try { reqHeaders = JSON.parse(proxyRow.req_headers ?? "{}") as Record<string, string>; } catch { /* default */ }
+        return {
+          reqBody, reqHeaders,
+          proxyRequestId: proxyRow.id,
+          startedAt: proxyRow.started_at ?? ts,
+        };
+      },
+    });
+  }
+
+  // Sub-agent response-tree — mirror of the main session endpoint.
+  @Get("sessions/:id/subagent/:agentFileId/calls/:callId/response-tree")
+  async subAgentResponseTree(
+    @Param("id") id: string,
+    @Param("agentFileId") agentFileId: string,
+    @Param("callId") callIdStr: string,
+  ) {
+    const db = getDb();
+    const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+
+    const { dirname, basename, join } = await import("node:path");
+    const sessionBase = basename(row.source_file, ".jsonl");
+    const subAgentFile = join(dirname(row.source_file), sessionBase, "subagents", `agent-${agentFileId}.jsonl`);
+
+    const drilldown = parseSubAgentDrilldown(row.source_file, agentFileId);
+    const callId = parseInt(callIdStr, 10);
+    const allCalls = drilldown.turns.flatMap((t) => t.calls);
+    const idx = allCalls.findIndex((c) => c.id === callId);
+    if (idx === -1) throw Object.assign(new Error("call not found"), { status: 404 });
+
+    return loadResponseTree(`${id}::subagent::${agentFileId}`, callId, db, {
+      resolveCallContext: (_sid, cid) => {
+        const curIdx = allCalls.findIndex((c) => c.id === cid);
+        if (curIdx === -1) return null;
+        const cur = allCalls[curIdx];
+        const next = curIdx + 1 < allCalls.length ? allCalls[curIdx + 1] : null;
+        return {
+          sourceFile: subAgentFile,
+          callTimestamp: cur.timestamp,
+          toolCalls: cur.toolCalls.map((tc) => ({
+            toolUseId: tc.toolUseId,
+            name: tc.name,
+            outputPreview: tc.outputPreview,
+            outputSize: tc.outputSize,
+            isError: tc.isError,
+          })),
+          nextCallId: next ? next.id : null,
+          stopReason: cur.stopReason,
+          outputTokens: cur.outputTokens,
+        };
+      },
+    });
+  }
+
   @Get("sessions/:id/calls/:callId/detail")
   async callDetail(@Param("id") id: string, @Param("callId") callIdStr: string) {
     const db = getDb();
@@ -328,9 +552,8 @@ export class SessionsV2Controller {
       proxyRequestId: number | null;
       startedAt: string;
     } | null> => {
-      const match = findProxyRowForCall(db, sid, apiRequestId ?? undefined, ts, excludeProxyId);
-      if (!match) return null;
-      const { row: proxyRow } = match;
+      const proxyRow = findProxyRowForCall(db, sid, apiRequestId ?? undefined, excludeProxyId);
+      if (!proxyRow) return null;
       const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
       const reqBodyStr = rec?.reqBody as string | undefined;
       if (typeof reqBodyStr !== "string") return null;
@@ -433,9 +656,8 @@ export class SessionsV2Controller {
           };
         },
         fetchProxyReqBodyAt: async (sid, ts, excludeProxyId, apiRequestId) => {
-          const match = findProxyRowForCall(db, sid, apiRequestId, ts, excludeProxyId);
-          if (!match) return null;
-          const { row: proxyRow } = match;
+          const proxyRow = findProxyRowForCall(db, sid, apiRequestId, excludeProxyId);
+          if (!proxyRow) return null;
           const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
           const reqBodyStr = rec?.reqBody as string | undefined;
           if (typeof reqBodyStr !== "string") return null;
@@ -492,9 +714,8 @@ export class SessionsV2Controller {
         };
       },
       fetchProxyReqBodyAt: async (sid, ts, excludeProxyId, apiRequestId) => {
-        const match = findProxyRowForCall(db, sid, apiRequestId, ts, excludeProxyId);
-        if (!match) return null;
-        const { row: proxyRow } = match;
+        const proxyRow = findProxyRowForCall(db, sid, apiRequestId, excludeProxyId);
+        if (!proxyRow) return null;
 
         const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
         const reqBodyStr = rec?.reqBody as string | undefined;

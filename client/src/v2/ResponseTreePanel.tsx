@@ -246,11 +246,13 @@ function NodeDetail({
 
 interface Props {
   sessionId: string;
+  /** Present iff rendering a sub-agent call — routes to sub-agent endpoint. */
+  agentFileId?: string;
   callId: number;
   onLinkCall?: (callId: number) => void;
 }
 
-export function ResponseTreePanel({ sessionId, callId, onLinkCall }: Props) {
+export function ResponseTreePanel({ sessionId, agentFileId, callId, onLinkCall }: Props) {
   const [data, setData] = useState<ResponseTreeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -258,10 +260,13 @@ export function ResponseTreePanel({ sessionId, callId, onLinkCall }: Props) {
   useEffect(() => {
     setLoading(true);
     setSelectedId(null);
-    apiV2.responseTree(sessionId, callId)
+    const fetcher = agentFileId
+      ? apiV2.subAgentResponseTree(sessionId, agentFileId, callId)
+      : apiV2.responseTree(sessionId, callId);
+    fetcher
       .then((d) => { setData(d); setLoading(false); })
       .catch(() => { setData(null); setLoading(false); });
-  }, [sessionId, callId]);
+  }, [sessionId, agentFileId, callId]);
 
   // Pending-focus consumption: when a Turn-view tool_use jump lands here
   // with `{ toolUseId }`, find the matching response block and select it.

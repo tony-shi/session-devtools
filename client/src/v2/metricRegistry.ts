@@ -16,16 +16,17 @@ export interface TokenMetric {
 }
 
 export const TOKEN_METRICS: Record<string, TokenMetric> = {
-  // Fresh In = input_tokens + cache_creation_input_tokens: all tokens the model processed
-  // fresh this call. Cache writes count as fresh (first-time processing), not reuse.
+  // Input ≡ Anthropic API's usage.input_tokens — the non-cached portion of
+  // input, billed at the 1× baseline rate. Cache read and cache write are
+  // separate buckets. Aligns with the "input" column in `claude /cost`.
   fresh_input: {
     id: "fresh_input",
-    label: "Fresh In",
+    label: "Input",
     color: "#6366f1",
     category: "input",
     unit: "tokens",
-    description: "Tokens freshly processed this call: non-cached input + cache writes. Cache writes are first-time processing, not reuse.",
-    relation: "Fresh In = input_tokens + cache_write; Total = Fresh In + Cache Read",
+    description: "Input tokens NOT served from cache and NOT written to cache — the model had to process them fresh this call. Equals the API's usage.input_tokens field, the 1× billing tier.",
+    relation: "Input + Cache Read + Cache Write = full prompt size; the three are mutually exclusive Anthropic billing buckets",
     tooltipKey: "metrics.freshInput.tooltip",
   },
   cache_read: {
@@ -65,7 +66,7 @@ export const TOKEN_METRICS: Record<string, TokenMetric> = {
     category: "context",
     unit: "tokens",
     description: "Tokens placed in the model's context window for this call. Not the same as billed input tokens.",
-    relation: "Context ≈ Fresh In + Cache Read + reused written context",
+    relation: "Context = Input + Cache Read + Cache Write (the three Anthropic input buckets)",
     tooltipKey: "metrics.contextUsed.tooltip",
   },
   context_delta: {
@@ -92,7 +93,7 @@ export const TOKEN_METRICS: Record<string, TokenMetric> = {
     color: "#059669",
     category: "derived",
     unit: "percent",
-    description: "Cache read as a share of total reusable input. Formula: cache_read / (fresh_input + cache_read + cache_write).",
+    description: "Cache read as a share of total prompt input. Formula: cache_read / (input + cache_read + cache_write).",
     relation: "Higher ratio = better cache efficiency",
     labelKey: "metrics.cacheRatio.label",
     tooltipKey: "metrics.cacheRatio.tooltip",

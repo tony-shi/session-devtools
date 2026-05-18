@@ -30,8 +30,20 @@ export interface SubAgentSummary {
   agentFileId: string;
   agentType: string;
   description: string;
+  // Parent's Agent tool_use.id this sub-agent was spawned from. Empty string when
+  // the deterministic (promptId, prompt-text) match against the main JSONL could
+  // not pin a unique tool_use — we accept "unknown parent" rather than fall back
+  // to positional/dictionary-order guessing (which silently mis-attributes when
+  // a turn spawns multiple sub-agents).
   toolUseId: string;
   toolUseName: string;
+  // Parent assistant event line index in the main JSONL (lineIdx of the event
+  // that emitted the Agent tool_use). Front-end can use this to render the
+  // causal jump-link back to the triggering call. -1 when unmatched.
+  parentLineIdx: number;
+  // Parent LlmCall.id (the user-visible call number). Filled in post-hoc after
+  // LlmCalls are built and the toolUseId→callId map is known. 0 when unmatched.
+  parentCallId: number;
   llmCallCount: number;
   toolCallCount: number;
   totalCacheRead: number;
@@ -128,7 +140,7 @@ export interface LlmCall {
   // Quality of this call's proxy ↔ JSONL link. See call-detail.ts ProxyMatchMode.
   // Populated by sessionDrilldown after computeCallProxyMatchModes runs;
   // defaults to 'unmatched' in code paths that don't enrich (e.g. sub-agent stubs).
-  proxyMatchMode: "exact" | "fallback" | "unmatched";
+  proxyMatchMode: "exact" | "unmatched";
   // All sub-agents spawned by this call (one per Agent tool_use block; usually 0-1, rarely >1)
   subAgents: SubAgentSummary[];
   incomingDiff: DiffEntry[];
@@ -215,14 +227,23 @@ export interface SessionDrilldown {
   totalLlmCalls: number;
   totalToolCalls: number;
   peakContext: number;
+  // Token totals are computed from JSONL `usage` fields of canonical
+  // assistant frames of the **main session only**. They do NOT include:
+  //   - sub-agent calls (browse the sub-agent drilldown for its own totals)
+  //   - background API calls Claude Code makes itself but doesn't write to
+  //     JSONL (haiku title generation, quota probes, retries)
+  // This intentionally mirrors what's visible in the conversation; for
+  // `/cost`-shape billing aggregates the source-of-truth lives in Claude
+  // Code's own ~/.claude.json (per-project last session) and isn't
+  // reconstructable from JSONL alone.
   totalCacheRead: number;
   totalCacheWrite: number;
-  totalFreshIn: number;   // sum of API input_tokens (non-cached) — billing unit
+  totalFreshIn: number;   // SUM of usage.input_tokens — non-cached fresh input
   totalFreshOut: number;
   lastContext: number;    // contextSize of the final LLM call — current window usage
   systemErrorCount: number;
   compactionCount: number;
-  // Per-model breakdown: model name → { calls, outputTokens, cacheRead, cacheWrite }
+  // Per-model breakdown across the main session's JSONL canonical frames.
   modelBreakdown: Record<string, ModelStats>;
   // Top tool names by usage count, descending
   toolDistribution: ToolUsageEntry[];

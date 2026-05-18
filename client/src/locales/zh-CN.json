@@ -49,7 +49,8 @@
   "sessionList": {
     "title": "会话列表",
     "count": "{{count}} 条",
-    "empty": "当天无会话数据"
+    "empty": "当天无会话数据",
+    "noProxyBadgeTooltip": "{{missing}} 个 LLM 调用缺少 proxy 数据（已匹配 {{matched}}/{{total}}）"
   },
   "digest": {
     "title": "LLM 日报",
@@ -63,14 +64,14 @@
     "pairCount": "，共 {{count}} 对对话"
   },
   "metrics": {
-    "freshInput":   { "tooltip": "本次未命中缓存、需要模型重新处理的输入 token。越高意味着成本和延迟越高。" },
+    "freshInput":   { "tooltip": "未命中缓存、也没有写入缓存的输入 token —— 即 API 的 usage.input_tokens 字段，按 1× 标准价计费。对应 `claude /cost` 输出里的 'input' 那一列。" },
     "cacheRead":    { "tooltip": "本次从缓存命中并复用的输入 token。命中越多，成本和延迟越低。" },
     "cacheWrite":   { "tooltip": "本次写入缓存、供后续请求复用的 token。独立计费项，不归入输入也不归入输出。" },
     "output":       { "tooltip": "模型本次生成的 token，是影响延迟尾部的主要因素之一。" },
     "contextUsed":  { "tooltip": "本次调用放入模型窗口的 token 数，不等于计费 token。" },
     "contextDelta": { "tooltip": "相对上一次 call 增加的上下文量，用于定位「哪一步把窗口撑大」。" },
     "peakContext":  { "tooltip": "本 session 或 turn 内观测到的最大上下文占用。" },
-    "cacheRatio":   { "label": "缓存命中率", "tooltip": "cache_read / (fresh_in + cache_read + cache_write)，越高说明缓存利用越充分。" }
+    "cacheRatio":   { "label": "缓存命中率", "tooltip": "cache_read / (input + cache_read + cache_write)，越高说明缓存利用越充分。" }
   },
   "nav": {
     "sessions": "会话",
@@ -179,7 +180,9 @@
       "errors": "错误",
       "subAgents": "子 Agent",
       "commands": "命令",
-      "unknown": "未知事件"
+      "unknown": "未知事件",
+      "noProxy": "缺少 Proxy 数据",
+      "noProxyDetail": "{{count}} 个调用无 proxy 数据 — 归因降级为 JSONL 估算模式，raw request 不可用"
     },
     "models": {
       "title": "模型分布",
@@ -267,8 +270,10 @@
     "request": "请求",
     "response": "响应",
     "structure": "原始结构",
-    "attribution": "归因",
-    "diff": "与前次的差异",
+    "attribution": "请求归因",
+    "diff": "请求对比",
+    "cache": "缓存分析",
+    "responseAnalysis": "响应分析",
     "raw": "原始数据"
   },
   "rawTab": {
@@ -301,7 +306,45 @@
     "removed": "删除",
     "modified": "修改",
     "unchanged": "未变",
-    "clickToExpand": "点击展开"
+    "clickToExpand": "点击展开",
+    "cacheImpact": {
+      "label": "缓存影响",
+      "healthy": "✓ 按预期命中",
+      "minor": "轻微偏差 {{drift}} tok",
+      "broken": "缓存击穿 {{drift}} tok",
+      "biggestChange": "最大变更：{{section}} 段",
+      "help": "如何计算？",
+      "explainTitle": "缓存影响 (cache impact) 怎么算",
+      "explainFormula": "drift = 本次 cache_read − [上次 cache_create + 上次 cache_read]",
+      "explainSource": "三个数字都来自 Anthropic response.usage（精确值）：不估算、不预测、不调 tokenizer。",
+      "explainHealthy": "drift ≈ 0 → 上次缓存的全部内容（cw + cr）本次以 cache_read 形式命中，前缀守恒，正常。",
+      "explainBroken": "drift 显著为负（≥ 1000 tok）→ 缓存被击穿，至少一条 cache_control 条目失效。可能原因：tools 列表新增/删除、system prompt 变化、1h TTL 过期、context 压缩重写。",
+      "explainAttribution": "我们只能告诉你「diff 里最大变更段是 X」——这是观察，不是因果证明。同一次 call 里可能同时有多种触发因素（修改 + 删除 + TTL），无法从 wire diff 单独裁定哪个是真凶。",
+      "explainNote": "只反映「相对上次的实际命中」，不预测下一次；具体哪段失效请结合下方 SectionDiffBar 的 diff 颜色综合判断。"
+    },
+    "pin": {
+      "tooltipTitle": "cache_control 标记（来自 wire）",
+      "path": "wire 字段",
+      "slot": "slot",
+      "ttl": "TTL",
+      "scope": "scope",
+      "blockChars": "本块字符数",
+      "prefixChars": "累积前缀字符（tools→sys→msgs）",
+      "explanation": "Anthropic 会把请求起点到此位置的整段前缀写一条缓存条目；下次匹配命中则整段计入 cache_read。"
+    }
+  },
+  "cache": {
+    "loading": "加载缓存拓扑…",
+    "loadFailed": "加载失败：{{error}}",
+    "noData": "无缓存数据。",
+    "noPins": "本次请求没有 cache_control 标记 —— 不会写任何缓存条目。",
+    "totalLayers": "{{count}} 层缓存",
+    "totalChars": "总 {{chars}} 字符",
+    "headerNote": "前缀缓存：下层包含上层全部 + 增量；点击「原始」行展开归因细节。",
+    "rawLabel": "原始",
+    "expand": "点击展开归因详情",
+    "collapse": "收起",
+    "notCoveredHint": "本层未覆盖的部分"
   },
   "terms": {
     "callMinimap": "Call 概览",
@@ -369,19 +412,19 @@
     "inputSection": "{{sigma}}输入（传递给模型的内容）",
     "outputSection": "{{sigma}}输出（由模型生成的内容）",
     "ratioLabel": "Cache Ratio",
-    "ratioFormulaCall": "cache_read / (cache_read + cache_write + fresh_in)",
-    "ratioFormulaAgg": "Σcache_read / Σ(cache_read + cache_write + fresh_in)",
+    "ratioFormulaCall": "cache_read / (cache_read + cache_write + input)",
+    "ratioFormulaAgg": "Σcache_read / Σ(cache_read + cache_write + input)",
     "ratioFormulaEquals": "= {{formula}}",
     "emptyInput": "本次没有 input —— 三个 input 桶都为 0，Cache Ratio 无意义。",
-    "footer": "以上 <strong>四个桶互不重叠</strong>，对应 Anthropic API 的真实计费档位：cache_read ≈ 0.1（折扣）× 基础单价 · cache_write ≈ 1.25（溢价）× 基础单价 · fresh_in ≈ 1.0（标准）× 基础单价 · output 独立计费。",
-    "footerAggSuffix": " 聚合视图下，每个桶的数值都是 session/turn 范围内的累加。",
+    "footer": "以上 <strong>四个桶互不重叠</strong>，对应 Anthropic API 的真实计费档位：cache_read ≈ 0.1（折扣）× 基础单价 · cache_write ≈ 1.25（溢价）× 基础单价 · input ≈ 1.0（标准）× 基础单价 · output 独立计费。",
+    "footerAggSuffix": " 聚合视图下，每个桶的数值都是 session/turn 范围内的累加。<br/><br/><strong>范围：</strong>仅基于 JSONL —— 只覆盖主 session 里可见的对话调用。<strong>不计入：</strong>sub-agent 调用（请进入它自己的 drilldown 查看） · Claude Code 自己的后台调用（haiku 标题生成、重试、quota 探测——这些不会写入 JSONL）。这就是这里的数字会比 <code>claude /cost</code>（按全部 API call 计算）偏低的原因。",
     "rows": {
-      "cacheReadCall": "历史复用：从过往LLM调用的缓存读回，不需要重新过模型",
-      "cacheReadAgg": "累计历史复用：从过往LLM调用的缓存命中读回",
-      "cacheWriteCall": "本轮写入缓存：第一次给模型、且被打了 cache breakpoint 供下次复用",
-      "cacheWriteAgg": "累计写入缓存：被打了 cache breakpoint 的本轮新内容",
-      "freshInCall": "本轮未缓存：第一次给模型、且没被 cache breakpoint 拦下的部分",
-      "freshInAgg": "累计未缓存输入：本轮新内容中未被打 cache breakpoint 的部分",
+      "cacheReadCall": "API cache_read_input_tokens —— 本次从 prompt 缓存读回的输入。按 ~0.1× 计费（最便宜档）。对应 claude /cost 中的 'cache read' 列。",
+      "cacheReadAgg": "各 call 的 cache_read_input_tokens 累加 —— 累计从缓存复用的输入。",
+      "cacheWriteCall": "API cache_creation_input_tokens —— 本次写入 prompt 缓存的输入（新内容打了 cache 标记供后续复用）。按 ~1.25× 计费（写缓存溢价）。对应 claude /cost 中的 'cache write' 列。",
+      "cacheWriteAgg": "各 call 的 cache_creation_input_tokens 累加 —— 累计写入缓存的新内容。",
+      "freshInCall": "API usage.input_tokens —— 本轮既未命中缓存、也未写入缓存的输入。按 1× 标准价计费，对应 claude /cost 中的 'input' 列。",
+      "freshInAgg": "各 call 的 usage.input_tokens 累加 —— 既未命中缓存、也未写入缓存的输入部分。与 claude /cost 中每模型的 'input' 合计对齐。",
       "outputCall": "单次LLM调用生成的 token",
       "outputAgg": "累计模型生成 token"
     }

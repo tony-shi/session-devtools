@@ -60,6 +60,7 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
     getColor,
     getLabel,
     getTitle,
+    getMarker,
     height = DEFAULT_HEIGHT,
     background = DEFAULT_BG,
     selectedId = null,
@@ -207,7 +208,18 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
               borderRadius: isCollapsed ? 0 : 3,
               outline: isSelected ? "2px solid #4338ca" : "none",
               outlineOffset: -2,
-              boxShadow: intensity === 2 && !isSelected ? "0 0 0 1px rgba(67,56,202,0.45) inset" : "none",
+              boxShadow: (() => {
+                const marker = getMarker ? getMarker(item) : null;
+                const hoverShadow = intensity === 2 && !isSelected
+                  ? "0 0 0 1px rgba(67,56,202,0.45) inset" : "";
+                if (marker) {
+                  // 右侧 4px 实色 inset（不影响 layout / 鱼眼计算），强调"这个 element
+                  // 是 pin 命中点"。视觉权重明显高于普通 hover 描边。
+                  const markerShadow = `inset -4px 0 0 0 ${marker}`;
+                  return hoverShadow ? `${markerShadow}, ${hoverShadow}` : markerShadow;
+                }
+                return hoverShadow || "none";
+              })(),
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 10, color: labelColor, fontWeight,
               whiteSpace: "nowrap", overflow: "hidden",
@@ -218,6 +230,26 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
               willChange: "left, width",
             }}
           >
+            {(() => {
+              const marker = getMarker ? getMarker(item) : null;
+              return marker ? (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: 0, right: 0,
+                    background: marker,
+                    color: "#fff",
+                    fontSize: 8,
+                    lineHeight: "10px",
+                    fontWeight: 700,
+                    letterSpacing: "0.04em",
+                    padding: "1px 3px",
+                    borderRadius: "0 3px 0 3px",
+                    pointerEvents: "none",
+                  }}
+                >PIN</span>
+              ) : null;
+            })()}
             {isCollapsed ? (
               <ZigzagBreak width={w} height={innerHeight} />
             ) : (

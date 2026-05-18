@@ -21,8 +21,8 @@ import JsonView from "@uiw/react-json-view";
 export type EventDirection = "in" | "out";
 
 export type EventCoordinate =
-  | { kind: "jsonl"; line: number; uuid?: string; parentUuid?: string }
-  | { kind: "structured"; path: string; callIndex?: number; source?: string };
+  | { kind: "jsonl"; line: number; uuid?: string; parentUuid?: string; jsonPath?: string }
+  | { kind: "structured"; path: string; callIndex?: number; source?: string; jsonPath?: string };
 
 export interface EventSegment {
   /** Optional uppercase tag above the raw content (e.g. "INPUT" / "OUTPUT"). */
@@ -51,6 +51,13 @@ export interface EventSegment {
    * essentially show the same content.
    */
   rawOnly?: boolean;
+  /**
+   * When true (requires `rawJson` to be set), the segment starts in JSON
+   * tree mode but the user can still toggle to the rendered text view.
+   * Use for surfaces where the structured form is the primary one (e.g.
+   * Attribution leaf detail for tool definitions / wire blocks).
+   */
+  defaultRaw?: boolean;
 }
 
 export interface EventUnitCardProps {
@@ -407,12 +414,19 @@ function ImpactChips({ impact }: { impact: NonNullable<EventUnitCardProps["impac
 }
 
 function CoordinateChips({ coordinate }: { coordinate: EventCoordinate }) {
+  // Request-body JSON pointer (e.g. `system[0]`, `messages[0].content[1]`).
+  // Server stores it as `reqBody.<path>` — strip that prefix so the chip reads
+  // like the path you'd type into the raw-request JSON.
+  const reqPath = coordinate.jsonPath
+    ? coordinate.jsonPath.replace(/^reqBody\./, "")
+    : undefined;
   if (coordinate.kind === "jsonl") {
     return (
       <>
         <span>jsonl: L{coordinate.line}</span>
         {coordinate.uuid && <span>uuid: {coordinate.uuid.slice(0, 8)}…</span>}
         {coordinate.parentUuid && <span>parent: {coordinate.parentUuid.slice(0, 8)}…</span>}
+        {reqPath && <span>request: <code style={{ fontSize: 9 }}>{reqPath}</code></span>}
       </>
     );
   }
@@ -421,6 +435,7 @@ function CoordinateChips({ coordinate }: { coordinate: EventCoordinate }) {
       <span>path: <code style={{ fontSize: 9 }}>{coordinate.path}</code></span>
       {coordinate.callIndex != null && <span>call #{coordinate.callIndex}</span>}
       {coordinate.source && <span>source: {coordinate.source}</span>}
+      {reqPath && <span>request: <code style={{ fontSize: 9 }}>{reqPath}</code></span>}
     </>
   );
 }
@@ -461,7 +476,7 @@ export function ForwardArrowIcon() {
   );
 }
 
-function SegmentView({ seg }: { seg: EventSegment }) {
+export function SegmentView({ seg }: { seg: EventSegment }) {
   const { t } = useTranslation();
   const truncateAt = seg.truncateAt ?? 1000;
   const tooLong = seg.content.length > truncateAt;
@@ -475,7 +490,10 @@ function SegmentView({ seg }: { seg: EventSegment }) {
   // "preview" = rendered/truncated content (default); "raw" = JSON tree
   // viewer over `seg.rawJson`. Toggle only available when rawJson is
   // present — segments without structured backing stay text-only.
-  const [viewMode, setViewMode] = useState<"preview" | "raw">(rawOnly ? "raw" : "preview");
+  // `defaultRaw` flips the initial mode to JSON tree while keeping the
+  // toggle visible, so users can still drop back to the raw string.
+  const initialMode: "preview" | "raw" = rawOnly || (seg.defaultRaw && hasRaw) ? "raw" : "preview";
+  const [viewMode, setViewMode] = useState<"preview" | "raw">(initialMode);
   const effectiveMode = rawOnly ? "raw" : viewMode;
   const showToggle = hasRaw && !rawOnly;
   const shown = !tooLong || showFull ? seg.content : seg.content.slice(0, truncateAt);

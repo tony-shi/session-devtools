@@ -68,21 +68,8 @@ function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onCl
           <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 20, fontWeight: 600, background: badge.bg, color: badge.color }}>
             {session.tool}
           </span>
-          {/* 只在"有 proxy 数据但并非全部能精确匹配"时显示，提示用户该会话
-              的 proxy ↔ jsonl 关联可能不可靠（fallback 路径）。全部 exact 时
-              不展示，避免视觉噪声。 */}
-          {session.proxy_count > 0 && session.proxy_request_id_count < session.proxy_count && (
-            <span
-              title={`${session.proxy_request_id_count}/${session.proxy_count} proxy requests carry an Anthropic request-id; the rest fall back to time-window matching and may be wrong.`}
-              style={{
-                fontSize: 10, padding: "1px 5px", borderRadius: 4,
-                background: "#fef3c7", color: "#92400e", fontWeight: 600,
-                lineHeight: 1.4,
-              }}
-            >
-              proxy {Math.round((session.proxy_request_id_count / session.proxy_count) * 100)}%
-            </span>
-          )}
+          {/* 严格 request-id 匹配：proxy_request_id_count < llm_call_count
+              就说明有 LLM call 没有对应的 proxy 数据，归因会降级。全部匹配时不展示。 */}
         </div>
       </td>
 

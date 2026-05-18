@@ -41,8 +41,13 @@ export interface SubAgentSummary {
   agentFileId: string;        // e.g. "a373036faaffe1b06"
   agentType: string;          // "Explore" | "general-purpose" | custom name
   description: string;        // from meta.json
-  toolUseId: string;          // matching tool_use.id in parent call content
+  toolUseId: string;          // matching tool_use.id in parent call content; "" if unmatched
   toolUseName: string;        // usually "Agent"
+  // Parent assistant event line index in the main JSONL — UI can jump back to
+  // the triggering call. -1 when parent match failed.
+  parentLineIdx: number;
+  // Parent LlmCall.id (user-visible call number). 0 when parent match failed.
+  parentCallId: number;
 
   // Token / call stats from sub agent JSONL
   llmCallCount: number;
@@ -126,9 +131,10 @@ export interface LlmCall {
   proxy: ProxyCallData | null;
 
   // Quality of this call's proxy ↔ JSONL link. 'exact' = matched on
-  // Anthropic request-id; 'fallback' = time-window heuristic (may be wrong);
-  // 'unmatched' = no proxy row found. UI surfaces non-exact as a status dot.
-  proxyMatchMode: "exact" | "fallback" | "unmatched";
+  // Anthropic request-id; 'unmatched' = JSONL missing requestId, or no proxy
+  // row with that id. Time-window fallback was removed because it routinely
+  // mis-attributes sub-agent / background-probe traffic to the wrong call.
+  proxyMatchMode: "exact" | "unmatched";
 
   // Sub-agents spawned by this call (one per Agent tool_use; usually 0-1, rarely >1)
   subAgents: SubAgentSummary[];
@@ -218,9 +224,13 @@ export interface SessionDrilldown {
   totalLlmCalls: number;
   totalToolCalls: number;
   peakContext: number;
+  // Totals across the **main session JSONL only**. Does NOT include:
+  //   - sub-agent calls (browse the sub-agent drilldown for its own totals)
+  //   - background API calls Claude Code makes itself (haiku title gen,
+  //     retries, quota probes) — these never land in JSONL.
   totalCacheRead: number;
   totalCacheWrite: number;
-  totalFreshIn: number;   // sum of per-call context deltas — new content injected each call
+  totalFreshIn: number;   // SUM of usage.input_tokens — non-cached fresh input (1x billing)
   totalFreshOut: number;
   lastContext: number;    // contextSize of the final LLM call — current window usage
   systemErrorCount: number;
@@ -259,10 +269,8 @@ export interface CallDetail {
   callId: number;
   sessionId: string;
   proxyRequestId: number | null;
-  // 'unmatched' when proxyRequestId is null; otherwise reflects whether the
-  // row was found via Anthropic request-id (exact) or the time-window
-  // fallback (less trustworthy).
-  proxyMatchMode: "exact" | "fallback" | "unmatched";
+  // 'exact' = matched on Anthropic request-id; 'unmatched' = no row found.
+  proxyMatchMode: "exact" | "unmatched";
 
   model: string;
   stopReason: string | null;

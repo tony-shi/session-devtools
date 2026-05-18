@@ -25,7 +25,7 @@ import type {
 import { coverageStateOf } from "./attribution-tree-types";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { CodeBlock } from "./shared/CodeBlock";
-import { EventUnitCard, type EventCoordinate } from "./shared/EventUnitCard";
+import { LinkIcon, SegmentView } from "./shared/EventUnitCard";
 import { EVENT_PALETTES } from "./shared/eventPalette";
 import type { IntervalEventKind } from "./drilldown-types";
 import { useAttributionGraph } from "./attribution-graph-context";
@@ -123,6 +123,13 @@ export interface LeafLite {
   preview: string;
   origin: SegmentOrigin;
   rawText?: string;
+  /**
+   * Position of this leaf inside the raw LLM request JSON
+   * (e.g. `reqBody.system[0]`, `reqBody.messages[0].content[1]`). Carried
+   * from `SerializedNode.jsonPath` so the leaf detail can surface where in
+   * the wire payload the content came from.
+   */
+  jsonPath: string;
   messageRole?: "user" | "assistant" | "system";
   /**
    * The wire tool_use_id for `messages.tool_use@N` leaves. Carried into
@@ -133,6 +140,9 @@ export interface LeafLite {
   toolUseId?: string;
   // Cache 视角需要：节点缓存策略。来自 SerializedNode.cachePolicy（可选）。
   cachePolicy?: { ttl: "5m" | "1h"; scope: "org" | "global" };
+  // Diff 视角需要：本 leaf 相对前一次 call 的变化状态。由父组件从 diff-tree
+  // 按 leafId 合并而来；attribution-tree 自身不带 diff 信息，所以是可选。
+  diffKind?: "added" | "removed" | "modified" | "kept";
 }
 
 export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
@@ -148,6 +158,7 @@ export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
         preview: node.preview,
         origin: node.origin,
         rawText: node.rawText,
+        jsonPath: node.jsonPath,
         ...(node.wireMeta?.messageRole && { messageRole: node.wireMeta.messageRole }),
         ...(node.wireMeta?.toolUseId && { toolUseId: node.wireMeta.toolUseId }),
         ...(node.cachePolicy && { cachePolicy: node.cachePolicy }),
@@ -176,7 +187,9 @@ export function computeSectionStats(leaves: LeafLite[]): SectionStat[] {
     if (!map.has(id)) map.set(id, []);
     map.get(id)!.push(l);
   }
-  const order: SectionId[] = ["system", "tools", "messages", "other"];
+  // 与 Anthropic 实际 cache prefix 顺序 + diff-tree-service 一致，让两边视觉
+  // 顺序对齐：tools → system → messages → other。
+  const order: SectionId[] = ["tools", "system", "messages", "other"];
   const out: SectionStat[] = [];
   for (const id of order) {
     const ls = map.get(id);
@@ -579,20 +592,26 @@ export function SelectedDetail({ leaf, onLinkSource }: {
       }
     : undefined;
 
-  // Translate the leaf's origin into EventUnitCard params so this detail view
-  // shares the same visual shell as Turn-card events / Call-detail response
-  // blocks (dot · kind · title · shortId · size · META).
+  // Flat detail: top one-line metadata row + content + dynamic fields.
+  // Identity bits (color / kindLabel / title / shortId) come from the
+  // shared mapper so this stays in sync with Turn/Response renderings.
   const { color, kindLabel, title, shortId } = leafOriginToCardHeader(leaf);
-  const coordinate: EventCoordinate | undefined =
-    leaf.origin.kind === "jsonl"
-      ? { kind: "jsonl", line: leaf.origin.jsonlLineIdx + 1 }
-      : leaf.origin.kind === "rule"
-        ? { kind: "structured", path: leaf.origin.ruleId, source: "rule" }
-        : undefined;
+  const requestPath = leaf.jsonPath ? leaf.jsonPath.replace(/^reqBody\./, "") : undefined;
   const confidence =
     leaf.origin.kind === "rule" || leaf.origin.kind === "jsonl"
       ? leaf.origin.confidence
       : undefined;
+  // `originSuffix` collects the secondary facts that follow the primary
+  // identifier (kindLabel + the call/line coordinate, then confidence,
+  // then size). Joined with " · " so the row stays a single inline strip.
+  const originSuffixParts: string[] = [kindLabel.toLowerCase()];
+  if (leaf.origin.kind === "jsonl") {
+    originSuffixParts.push(`L${leaf.origin.jsonlLineIdx + 1}`);
+  }
+  if (confidence) originSuffixParts.push(confidence);
+  originSuffixParts.push(`${leaf.charCount}b`);
+  const originSuffix = originSuffixParts.join(" · ");
+
   // Always attempt to parse — `tryParseSegmentJson` gates on the first
   // non-whitespace char being `{` or `[`, so prose leaves return undefined
   // and stay text-only. This catches both the jsonl wire payloads (where
@@ -603,43 +622,94 @@ export function SelectedDetail({ leaf, onLinkSource }: {
   const parsedRawJson = tryParseSegmentJson(leaf.rawText ?? leaf.preview);
   const hasJsonContent = parsedRawJson !== undefined;
 
+  const jumpLabel = jumpTarget !== undefined
+    ? t("terms.viewSourceCall", { callId: jumpTarget })
+    : undefined;
+  const jumpTooltip = jumpTarget !== undefined
+    ? (isToolUseLeaf
+        ? t("terms.jumpToCallCardTooltip", { callId: jumpTarget })
+        : t("terms.jumpToCallLineTooltip", { callId: jumpTarget }))
+    : undefined;
+
   return (
-    <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
-      <EventUnitCard
-        color={color}
-        kindLabel={kindLabel}
-        title={title}
-        shortId={shortId}
-        size={{ bytes: leaf.charCount }}
-        segments={[
-          {
-            label: "CONTENT",
-            content: leaf.rawText ?? leaf.preview,
-            // Monospace for either: explicit jsonl wire payloads, or
-            // anything that parses as JSON. Prose rule/structural leaves
-            // stay proportional.
-            monospace: leaf.origin.kind === "jsonl" || hasJsonContent,
-            rawJson: parsedRawJson,
-          },
-        ]}
-        coordinate={coordinate}
-        confidence={confidence}
-        expandable={false}
-        defaultExpanded={true}
-        onJump={handleJumpSource}
-        jumpLabel={jumpTarget !== undefined
-          ? t("terms.viewSourceCall", { callId: jumpTarget })
-          : undefined}
-        jumpTooltip={jumpTarget !== undefined
-          ? (isToolUseLeaf
-              ? t("terms.jumpToCallCardTooltip", { callId: jumpTarget })
-              : t("terms.jumpToCallLineTooltip", { callId: jumpTarget }))
-          : undefined}
+    <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Inline metadata strip — replaces the EventUnitCard shell so the
+          info reads as a single header line, not a labeled META footer
+          duplicated under a card with the same title in its header. */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        fontSize: 11, color: "#374151",
+        paddingBottom: 6, borderBottom: "1px solid #e5e7eb",
+        flexWrap: "wrap",
+      }}>
+        <span style={{
+          width: 8, height: 8, borderRadius: 2,
+          background: color, flexShrink: 0,
+        }} />
+        {requestPath && (
+          <>
+            <code style={{
+              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+              fontSize: 11, color: "#111827", fontWeight: 600,
+            }}>
+              {requestPath}
+            </code>
+            <span style={{ color: "#d1d5db" }}>·</span>
+          </>
+        )}
+        <span style={{
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          fontSize: 11, color: "#1f2937",
+        }}>
+          {title ?? "—"}
+        </span>
+        {shortId && (
+          <>
+            <span style={{ color: "#d1d5db" }}>·</span>
+            <span style={{ color: "#6b7280", fontSize: 10 }}>{shortId}</span>
+          </>
+        )}
+        <span style={{ color: "#d1d5db" }}>·</span>
+        <span style={{ color: "#6b7280", fontSize: 10 }}>{originSuffix}</span>
+        {handleJumpSource && (
+          <button
+            type="button"
+            title={jumpTooltip}
+            onClick={(e) => { e.stopPropagation(); handleJumpSource(); }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "#4338ca"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "#4f46e5"; }}
+            style={{
+              marginLeft: "auto",
+              display: "inline-flex", alignItems: "center", gap: 5,
+              border: "none", background: "#4f46e5", color: "#fff",
+              borderRadius: 4, fontSize: 10, fontWeight: 700,
+              padding: "3px 9px", cursor: "pointer", lineHeight: 1.3,
+              flexShrink: 0, whiteSpace: "nowrap",
+              transition: "background 0.12s",
+              letterSpacing: "0.02em",
+            }}
+          >
+            <LinkIcon />
+            {jumpLabel ?? t("terms.jump", { defaultValue: "跳转" })}
+          </button>
+        )}
+      </div>
+
+      {/* Content — sole focus of the rest of the panel. JSON-parseable
+          payloads start in tree mode (toggle to raw available); prose
+          stays as a plain block. */}
+      <SegmentView
+        seg={{
+          content: leaf.rawText ?? leaf.preview,
+          monospace: leaf.origin.kind === "jsonl" || hasJsonContent,
+          rawJson: parsedRawJson,
+          defaultRaw: hasJsonContent,
+        }}
       />
 
-      {/* Rule origin's dynamic field injection trail — kept as a collapsible
-          aside below the main card (orthogonal information, not part of the
-          event-unit identity). */}
+      {/* Rule origin's dynamic field injection trail — collapsible aside
+          below the content. Orthogonal information, not part of the leaf
+          identity, so it stays out of the header. */}
       {leaf.origin.kind === "rule" && leaf.origin.dynamicFields && leaf.origin.dynamicFields.length > 0 && (
         <details style={{ fontSize: 10 }}>
           <summary style={{ cursor: "pointer", color: "#6366f1" }}>
@@ -836,9 +906,13 @@ function AuditBadge({
 // stay. Only the panel function below should be removed once we're sure no
 // stray import survives.
 export function AttributionTreePanel({
-  sessionId, callId, onLinkSource,
+  sessionId, agentFileId, callId, onLinkSource,
 }: {
   sessionId: string;
+  /** Present iff the panel is rendering a call from a sub-agent — routes
+   *  the API call to the sub-agent endpoint variant. Parent (main) sessions
+   *  leave this undefined. */
+  agentFileId?: string;
   callId: number;
   /** 反向 link：点击 jsonl origin 带 sourceCallId 的 leaf 时调用。
    *  parent 决定要不要展示 link 按钮（main 模式提供，panel 模式留空避免嵌套）。*/
@@ -856,12 +930,15 @@ export function AttributionTreePanel({
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError(null); setSelectedSection(null); setSelectedNodeId(null);
-    apiV2.attributionTree(sessionId, callId)
+    const fetcher = agentFileId
+      ? apiV2.subAgentAttributionTree(sessionId, agentFileId, callId)
+      : apiV2.attributionTree(sessionId, callId);
+    fetcher
       .then((r) => { if (!cancelled) setResult(r); })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sessionId, callId]);
+  }, [sessionId, agentFileId, callId]);
 
   const allLeaves = useMemo(() => result ? flattenLeaves(result) : [], [result]);
 
