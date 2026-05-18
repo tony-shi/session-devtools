@@ -913,7 +913,7 @@ function DiffLeafRow({
 
 // ─── SelectedDiffDetail — 扁平展示，无 card 外框 ────────────────────────────
 
-function SelectedDiffDetail({ leaf }: { leaf: DiffLeaf }) {
+export function SelectedDiffDetail({ leaf }: { leaf: DiffLeaf }) {
   const { t } = useTranslation();
   const color = DIFF_TEXT_COLOR[leaf.kind];
   const kindLabel = t(`diff.${leaf.kind}` as const);

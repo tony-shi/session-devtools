@@ -14,6 +14,7 @@ import { FisheyeStrip } from "./fisheye-strip";
 import { EventUnitCard } from "./shared/EventUnitCard";
 import type {
   ResponseTreeResult,
+  ResponseTreeDataSource,
   ResponseNode,
   ResponseSlotType,
 } from "./response-tree-types";
@@ -178,54 +179,71 @@ function BlockTable({
 
 // ─── 叶子详情视图 ─────────────────────────────────────────────────────────────
 
+// 把 ResponseTreeDataSource 转成 META 行展示用的可读 source 标签。
+// "none" 路径不会走到 NodeDetail，所以这里只处理 proxy-* 两种。
+function dataSourceLabel(ds: ResponseTreeDataSource): string {
+  if (ds === "proxy-sse") return "proxy SSE";
+  if (ds === "proxy-json") return "proxy (non-stream)";
+  return ds; // 兜底 — 不应到达
+}
+
 function NodeDetail({
-  node, onClose,
+  node, dataSource,
 }: {
   node: ResponseNode;
-  onClose: () => void;
+  dataSource: ResponseTreeDataSource;
 }) {
   const meta = slotMeta(node.slotType);
   const isToolUse = node.slotType === "response.tool_use";
   // structured path: response.tool_use / response.text / response.thinking
   const path = node.slotType;
 
-  return (
-    <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 6 }}>
-      {/* Back button — kept outside the EventUnitCard since it's a navigation
-          action specific to the detail view, not an attribute of the event. */}
-      <div>
-        <button
-          onClick={onClose}
-          style={{
-            fontSize: 11, padding: "3px 10px", borderRadius: 4,
-            background: "#fff", border: "1px solid #e5e7eb",
-            cursor: "pointer", color: "#374151",
-          }}
-        >← back</button>
-      </div>
+  // 对 tool_use，rawText 是完整 content block 序列化 `{type, id, name, input}`。
+  // 拆出 input 给"渲染"tab；rawJson tab 显示整个对象（含 type/id/name）—— 这就是
+  // 用户切到"原始"时应该看到的 wire 真相。
+  let renderContent: string;
+  let rawJsonObject: unknown;
+  if (isToolUse) {
+    const parsed = tryParseJson(node.rawText ?? "") as
+      | { type?: string; id?: string; name?: string; input?: unknown }
+      | undefined;
+    if (parsed && typeof parsed === "object") {
+      renderContent = parsed.input != null ? JSON.stringify(parsed.input, null, 2) : "";
+      rawJsonObject = parsed;
+    } else {
+      renderContent = node.rawText ?? node.preview;
+      rawJsonObject = tryParseJson(node.rawText ?? node.preview);
+    }
+  } else {
+    // text / thinking：rawText 直接是文本，没有 wire envelope
+    renderContent = node.rawText ?? node.preview;
+    rawJsonObject = undefined;
+  }
 
-      {/* Main event unit — shared shell with Turn-card events */}
+  return (
+    <div style={{ marginTop: 4 }}>
+      {/* 不再有 ← back 按钮。关闭交互对齐 lens framework：再点上方
+          BlockTable 同一行即收起；没有独立的退出按钮。 */}
       <EventUnitCard
         color={meta.marker}
         bg={meta.rowBg}
         border="#e5e7eb"
         kindLabel={meta.label}
         title={node.wireMeta?.toolName}
-        shortId={node.wireMeta?.toolUseId}
+        // 不再传 shortId={node.wireMeta?.toolUseId} —— toolu_xxx 是协议层配对
+        // token，不属于"语义产出"。要看 id 切到下方"原始 JSON" tab，它在 wire
+        // 对象里看得到。
         size={{ bytes: node.charCount, direction: "out" }}
         description={isToolUse ? extractToolDescription(node.rawText ?? node.preview) : undefined}
         segments={[
           {
             label: isToolUse ? "INPUT" : "CONTENT",
-            content: node.rawText ?? node.preview,
+            content: renderContent,
             monospace: isToolUse,
-            // For tool_use, the rendered content is a JSON string of the
-            // wire input — make it tree-toggleable. For text/thinking the
-            // content is prose; raw mode adds no value, leave undefined.
-            rawJson: isToolUse ? tryParseJson(node.rawText ?? node.preview) : undefined,
+            rawJson: rawJsonObject,
           },
         ]}
-        coordinate={{ kind: "structured", path, source: "jsonl" }}
+        coordinate={{ kind: "structured", path, source: dataSourceLabel(dataSource) }}
         expandable={false}
         defaultExpanded={true}
       />
@@ -284,10 +302,31 @@ export function ResponseTreePanel({ sessionId, agentFileId, callId, onLinkCall }
     return <div style={{ fontSize: 11, color: "#9ca3af", padding: "32px 0", textAlign: "center" }}>Loading response…</div>;
   }
 
+  // dataSource="none" 专门占位：proxy 没存这个 call 的 response，不做 jsonl
+  // 反向渲染，明确告诉用户"没有数据"而非展示伪原物。
   if (!data?.snapshot) {
+    const isMissing = data?.dataSource === "none";
     return (
-      <div style={{ padding: 16, fontSize: 11, color: "#9ca3af", background: "#fafafa", borderRadius: 6, border: "1px dashed #e5e7eb" }}>
-        {data?.error ?? "No response data available."}
+      <div style={{ padding: 16, fontSize: 11, color: "#6b7280", background: "#fafafa", borderRadius: 6, border: "1px dashed #e5e7eb", lineHeight: 1.6 }}>
+        {isMissing ? (
+          <>
+            <div style={{ fontWeight: 600, color: "#374151", marginBottom: 4 }}>
+              未存储该 call 的 HTTP response 原始数据
+            </div>
+            <div>
+              Response 视图只展示 proxy 抓取的 wire 原物。该 call 未匹配到 proxy 记录
+              （旧 session / 无 request-id / proxy 未启用）。如需查看 LLM 决策的事件视角，
+              请回到左侧 Turn card 的 Tool Use 行。
+            </div>
+            {data?.error && (
+              <div style={{ marginTop: 6, fontSize: 10, color: "#9ca3af" }}>
+                {data.error}
+              </div>
+            )}
+          </>
+        ) : (
+          <>{data?.error ?? "No response data available."}</>
+        )}
       </div>
     );
   }
@@ -296,6 +335,10 @@ export function ResponseTreePanel({ sessionId, agentFileId, callId, onLinkCall }
   const blocks = root?.children ?? [];
   const totalChars = root?.charCount ?? 0;
   const selected = selectedId ? blocks.find((n) => n.id === selectedId) ?? null : null;
+
+  // 对齐 lens framework：再点同一行收起 / 点另一行切换 / 上层 bar 也可取消。
+  const toggleSelect = (id: string | null) =>
+    setSelectedId((cur) => (id !== null && cur === id ? null : id));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -311,8 +354,13 @@ export function ResponseTreePanel({ sessionId, agentFileId, callId, onLinkCall }
         <span style={{ fontSize: 11, color: "#6b7280" }}>
           blocks: <strong style={{ color: "#374151" }}>{blocks.length}</strong>
         </span>
+        {data.truncated && (
+          <span style={{ fontSize: 10, color: "#b45309", background: "#fef3c7", padding: "1px 6px", borderRadius: 3 }}>
+            SSE 流中断
+          </span>
+        )}
         <span style={{ marginLeft: "auto", fontSize: 9, color: "#d1d5db" }}>
-          source: {data.dataSource}
+          source: {dataSourceLabel(data.dataSource)}
         </span>
       </div>
 
@@ -320,26 +368,27 @@ export function ResponseTreePanel({ sessionId, agentFileId, callId, onLinkCall }
       <ResponseBar
         blocks={blocks}
         selectedId={selectedId}
-        onSelect={setSelectedId}
+        onSelect={toggleSelect}
       />
 
-      {/* Layer 2 / detail */}
+      {/* Layer 2: BlockTable 常驻，选中行下方直接挂 NodeDetail（lens 框架范式：
+          列表 + inline 详情，没有 ← back 按钮，再点同行收起）。 */}
       {blocks.length === 0 ? (
         <div style={{ fontSize: 11, color: "#9ca3af", padding: "16px 0", textAlign: "center" }}>
           No content blocks in this response.
         </div>
-      ) : selected ? (
-        <NodeDetail
-          node={selected}
-          onClose={() => setSelectedId(null)}
-        />
       ) : (
-        <BlockTable
-          blocks={blocks}
-          totalChars={totalChars}
-          selectedId={null}
-          onSelect={setSelectedId}
-        />
+        <>
+          <BlockTable
+            blocks={blocks}
+            totalChars={totalChars}
+            selectedId={selectedId}
+            onSelect={(id) => toggleSelect(id)}
+          />
+          {selected && (
+            <NodeDetail node={selected} dataSource={data.dataSource} />
+          )}
+        </>
       )}
     </div>
   );

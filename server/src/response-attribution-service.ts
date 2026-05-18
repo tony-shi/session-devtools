@@ -7,18 +7,32 @@
 //   - 类型上复用 SerializedNode / SerializedNodeSummary 形态以便前端组件复用
 //   - 不污染 attribution-service 的 parseQuery 链路（response wire 结构不同）
 //
-// 数据源策略（增量第一版）：
-//   - 直接从 session JSONL 的 assistant message.content 读取
-//   - JSONL 是 Claude Code 写出的 wire response 镜像，对 thinking/text/tool_use 而言充分
-//   - 后续若需更严格 wire 对齐，可以扩展从 proxy resBody（SSE）重组
+// 数据源策略（B6）：
+//   **只走 proxy SSE，不做 JSONL 反向渲染。**
+//   通过 proxy_requests 表按 requestId 精确匹配，读 resBody（完整 SSE 文本），
+//   通过 parseSseText + reconstructAssistantMessage 重组成 wire 等价的 assistant message。
+//   这是"右侧 = HTTP response 原始信息"的唯一可信路径。
+//
+//   当 proxy 数据缺失（旧 session、无 request-id、proxy 未启用等）时：
+//     - 返回 dataSource="none" + 明确的 error 字段说明缺失原因
+//     - **不**回落到 JSONL —— JSONL 是 agent harness 自己拼的镜像，不是 wire response。
+//       用 jsonl 渲染会让用户误以为这就是 LLM 真正吐出的内容，造成严重的归因误判
+//       （SSE frame 边界、partial tool_use input、stop_reason 时序差异都会丢）。
+//     - 前端 UI 看到 "none" 应显示明确的"未存储 proxy response 数据"占位，
+//       而不是反向用 jsonl 内容假装。
 //
 // linkedToolResult 字段：
 //   - response 中的 tool_use 节点会附加一个"指针"，指向下游 call 的 tool_result
 //   - 数据从 LlmCall.toolCalls（drilldown parser 已配对好）拿
 //   - 前端点击此指针 → 触发右侧 LinkedContextPanel 跳转到下游 call
 
-import { readFileSync, existsSync } from "fs";
 import type { Database } from "better-sqlite3";
+import { findProxyRowForCall, readProxyRecord } from "./call-detail.ts";
+import {
+  parseSseText,
+  reconstructAssistantMessage,
+  type ReconstructedContentBlock,
+} from "./sse-response-reconstructor.ts";
 
 // ─── 输出类型（与 SerializedNode 同形态，扩展 linkedToolResult） ──────────────
 
@@ -48,7 +62,14 @@ export interface ResponseNode {
   charCount: number;
   rawHash: string;
   preview: string;
-  /** 完整 rawText — 叶子节点保留（thinking/text/tool_use 的 input json） */
+  /**
+   * 叶子节点的"原始数据"字符串形态。
+   *   - thinking: 完整 thinking 文本（不包 type/signature，因为 thinking 块的语义就是文本）
+   *   - text:     完整文本
+   *   - tool_use: **完整 content block 序列化** `JSON.stringify({type, id, name, input}, null, 2)`
+   *               这里特意包含 type/id/name，而非只 input 子对象 —— 让原始 JSON tab 看到
+   *               wire 真容、不丢字段。
+   */
   rawText?: string;
   parentId?: string;
   /** 仅 response.tool_use 节点携带：toolName、toolUseId */
@@ -76,15 +97,32 @@ export interface ResponseSnapshot {
   nodeSummaries: Record<string, ResponseNodeSummary>;
 }
 
+/**
+ * 数据来源透明度：前端据此在 META 行透出本视图基于哪种 proxy 形态。
+ *   - "proxy-sse":  从 proxy 抓取的 SSE 流重组，最严格 wire 对齐
+ *   - "proxy-json": 从 proxy 非流式 response body 读取（少见，stream=false 的 API 调用）
+ *   - "none":       proxy 数据未存储或不可读 —— 不渲染内容，仅展示缺失说明
+ *
+ * 注意：不存在 "jsonl" 来源。jsonl 是 agent 落盘镜像，用它渲染 response 会造成
+ * 归因误判，因此 proxy 缺失时宁可显示"无数据"也不回落 jsonl。
+ */
+export type ResponseTreeDataSource = "proxy-sse" | "proxy-json" | "none";
+
 export interface ResponseTreeResult {
   callId: number;
   sessionId: string;
-  /** 数据来源标识。增量第一版固定为 "jsonl"；后续可扩展 "proxy" */
-  dataSource: "jsonl" | "proxy" | "none";
+  dataSource: ResponseTreeDataSource;
   snapshot: ResponseSnapshot | null;
   /** 当前 call 的 stop_reason / output_tokens（前端 header 用） */
   stopReason: string | null;
   outputTokens: number;
+  /**
+   * SSE 流是否中断（仅 dataSource="proxy-sse" 时有意义）。
+   * true 表示没有收到 message_stop —— content 可能不完整。
+   */
+  truncated?: boolean;
+  /** 数据源加载过程中遇到的非致命问题，前端可选择性展示 */
+  warnings?: string[];
   error?: string;
 }
 
@@ -108,10 +146,22 @@ function shortPreview(text: string, max = 200): string {
 // ─── 主入口 ───────────────────────────────────────────────────────────────────
 
 export interface LoadResponseTreeHelpers {
-  /** 拿到 call 元信息：sourceFile、timestamp、turn id、下游 call id（用于 linkedToolResult） */
+  /** 拿到 call 元信息。proxy 是唯一数据源，所以 helpers 只暴露 proxy 查询主键 +
+   *  linkedToolResult 所需的下游 call 元信息。 */
   resolveCallContext: (sessionId: string, callId: number) => {
-    sourceFile: string;
-    callTimestamp: string;
+    /**
+     * Anthropic API request-id（来自 JSONL assistant 事件顶层 `requestId`）。
+     * 用作 proxy_requests.request_id 的精确匹配键。
+     * 旧 session / 无 proxy / Claude Code 旧版本不透传 request-id 时为 null，
+     * loadResponseTree 此时返回 dataSource="none"。
+     */
+    apiRequestId?: string | null;
+    /**
+     * 用于 proxy_requests 查询的 session id。一般等于路由 sessionId，
+     * 但 sub-agent 路由会传合成 id（`${parent}::subagent::...`），此时这里要传
+     * 真实的 sessionId（与 proxy_requests.session_id 对齐）。null/undefined 跳过 proxy。
+     */
+    proxySessionId?: string | null;
     /** drilldown parser 已经从 JSONL 解析好的 tool_use ↔ tool_result 配对 */
     toolCalls: Array<{
       toolUseId: string;
@@ -127,71 +177,39 @@ export interface LoadResponseTreeHelpers {
   } | null;
 }
 
-export async function loadResponseTree(
-  sessionId: string,
-  callId: number,
-  _db: Database,
-  helpers: LoadResponseTreeHelpers,
-): Promise<ResponseTreeResult> {
-  const ctx = helpers.resolveCallContext(sessionId, callId);
-  if (!ctx) {
-    return {
-      callId, sessionId,
-      dataSource: "none",
-      snapshot: null,
-      stopReason: null, outputTokens: 0,
-      error: "call not found in session drilldown",
-    };
-  }
+// ─── 树构建：与数据源无关 ────────────────────────────────────────────────────
 
-  if (!existsSync(ctx.sourceFile)) {
-    return {
-      callId, sessionId,
-      dataSource: "none",
-      snapshot: null,
-      stopReason: ctx.stopReason, outputTokens: ctx.outputTokens,
-      error: "session jsonl file unavailable",
-    };
-  }
+/**
+ * Anthropic content block 的统一形态。两个来源都归一到这里：
+ *   - proxy SSE 重组：reconstructAssistantMessage 输出的 ReconstructedContentBlock
+ *   - jsonl 读取：assistant.message.content[i]（结构相同）
+ */
+type WireContentBlock =
+  | { type: "thinking"; thinking?: string; signature?: string }
+  | { type: "text"; text?: string }
+  | { type: "tool_use"; id?: string; name?: string; input?: unknown }
+  | { type?: string; [k: string]: unknown };
 
-  // 找到对应 callId 的 assistant 事件（按时间戳就近匹配）
-  const lines = readFileSync(ctx.sourceFile, "utf-8").split("\n");
-  let bestContent: unknown = null;
-  for (const line of lines) {
-    if (!line) continue;
-    let ev: { type?: string; timestamp?: string; ts?: string; isSidechain?: boolean; message?: { content?: unknown; usage?: { output_tokens?: number } } };
-    try { ev = JSON.parse(line); } catch { continue; }
-    if (ev.type !== "assistant") continue;
-    if (ev.isSidechain) continue;
-    const ts = ev.timestamp ?? ev.ts;
-    if (ts !== ctx.callTimestamp) continue;
-    // 优先选有非零 output_tokens 的事件（避免 streaming 占位行）
-    const out = ev.message?.usage?.output_tokens ?? 0;
-    if (out > 0 && Array.isArray(ev.message?.content)) {
-      bestContent = ev.message.content;
-      break;
-    }
-    // fallback：第一条同时间戳的 assistant
-    if (bestContent === null && Array.isArray(ev.message?.content)) {
-      bestContent = ev.message.content;
-    }
-  }
+interface BuildContext {
+  callId: number;
+  toolCalls: Array<{
+    toolUseId: string;
+    name: string;
+    outputPreview: string;
+    outputSize: number;
+    isError: boolean;
+  }>;
+  nextCallId: number | null;
+}
 
-  if (!Array.isArray(bestContent)) {
-    return {
-      callId, sessionId,
-      dataSource: "none",
-      snapshot: null,
-      stopReason: ctx.stopReason, outputTokens: ctx.outputTokens,
-      error: "no assistant message content found for this call",
-    };
-  }
-
-  // ── 构建树 ──
-  const toolCallMap = new Map<string, typeof ctx.toolCalls[number]>();
+function buildResponseTree(
+  blocks: ReadonlyArray<WireContentBlock>,
+  ctx: BuildContext,
+): ResponseSnapshot {
+  const toolCallMap = new Map<string, BuildContext["toolCalls"][number]>();
   for (const tc of ctx.toolCalls) toolCallMap.set(tc.toolUseId, tc);
 
-  const rootId = `resp-${callId}`;
+  const rootId = `resp-${ctx.callId}`;
   const root: ResponseNode = {
     id: rootId,
     slotType: "response",
@@ -201,17 +219,16 @@ export async function loadResponseTree(
     preview: "",
     children: [],
   };
-
   const summaries: Record<string, ResponseNodeSummary> = {};
   let totalChars = 0;
 
-  for (let i = 0; i < bestContent.length; i++) {
-    const block = bestContent[i] as { type?: string; text?: string; thinking?: string; id?: string; name?: string; input?: unknown };
-    const bType = block?.type;
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i] as WireContentBlock;
+    const bType = (block as { type?: string }).type;
     const nodeId = `${rootId}-${i}`;
 
     if (bType === "thinking") {
-      const text = (block.thinking ?? "");
+      const text = (block as { thinking?: string }).thinking ?? "";
       const charCount = text.length;
       totalChars += charCount;
       const node: ResponseNode = {
@@ -223,7 +240,7 @@ export async function loadResponseTree(
       root.children.push(node);
       summaries[nodeId] = { id: nodeId, slotType: node.slotType, charCount, preview: node.preview, parentId: rootId };
     } else if (bType === "text") {
-      const text = block.text ?? "";
+      const text = (block as { text?: string }).text ?? "";
       const charCount = text.length;
       totalChars += charCount;
       const node: ResponseNode = {
@@ -235,13 +252,20 @@ export async function loadResponseTree(
       root.children.push(node);
       summaries[nodeId] = { id: nodeId, slotType: node.slotType, charCount, preview: node.preview, parentId: rootId };
     } else if (bType === "tool_use") {
-      const inputJson = block.input != null ? JSON.stringify(block.input) : "";
-      const charCount = inputJson.length;
+      const tu = block as { id?: string; name?: string; input?: unknown };
+      const toolUseId = tu.id ?? "";
+      const toolName  = tu.name ?? "unknown";
+      // 完整 wire 形态序列化 —— 前端 raw JSON tab 直接消费此字符串
+      const rawText = JSON.stringify(
+        { type: "tool_use", id: toolUseId, name: toolName, input: tu.input ?? {} },
+        null,
+        2,
+      );
+      // 短预览仍只看 input —— preview 是给列表行用的，加上 wire 包装会变成噪音
+      const inputJson = tu.input != null ? JSON.stringify(tu.input) : "";
+      const charCount = rawText.length;
       totalChars += charCount;
-      const toolUseId = block.id ?? "";
-      const toolName = block.name ?? "unknown";
       const matched = toolUseId ? toolCallMap.get(toolUseId) : undefined;
-
       let linkedToolResult: LinkedToolResult | undefined;
       if (matched) {
         linkedToolResult = {
@@ -252,11 +276,10 @@ export async function loadResponseTree(
           isError: matched.isError,
         };
       }
-
       const node: ResponseNode = {
         id: nodeId, slotType: "response.tool_use", contentIdx: i,
-        charCount, rawHash: sha1(inputJson),
-        preview: shortPreview(inputJson, 120), rawText: inputJson,
+        charCount, rawHash: sha1(rawText),
+        preview: shortPreview(inputJson, 120), rawText,
         parentId: rootId,
         wireMeta: { toolUseId, toolName },
         ...(linkedToolResult && { linkedToolResult }),
@@ -273,11 +296,132 @@ export async function loadResponseTree(
   root.preview = `${root.children.length} block${root.children.length !== 1 ? "s" : ""}`;
   summaries[rootId] = { id: rootId, slotType: "response", charCount: totalChars, preview: root.preview };
 
+  return { queryKind: "response", roots: [root], nodeSummaries: summaries };
+}
+
+// ─── 数据源加载器 ────────────────────────────────────────────────────────────
+
+interface ProxyLoadOk {
+  ok: true;
+  blocks: ReconstructedContentBlock[];
+  dataSource: "proxy-sse" | "proxy-json";
+  stopReason: string | null;
+  outputTokens: number | null;
+  truncated: boolean;
+  warnings: string[];
+}
+interface ProxyLoadMiss {
+  ok: false;
+  reason: string;
+}
+
+async function tryLoadFromProxy(
+  db: Database,
+  proxySessionId: string | null | undefined,
+  apiRequestId: string | null | undefined,
+): Promise<ProxyLoadOk | ProxyLoadMiss> {
+  if (!proxySessionId || !apiRequestId) {
+    return { ok: false, reason: "missing apiRequestId or proxySessionId" };
+  }
+  const row = findProxyRowForCall(db, proxySessionId, apiRequestId);
+  if (!row) return { ok: false, reason: "no proxy row matches request-id" };
+
+  const rec = await readProxyRecord(row.jsonl_file, row.jsonl_byte_offset);
+  if (!rec) return { ok: false, reason: "proxy record unreadable at offset" };
+
+  const meta = (rec.meta as Record<string, unknown>) ?? {};
+  const isStream = !!meta.isStream;
+  const resBody = typeof rec.resBody === "string" ? rec.resBody : "";
+
+  if (!resBody) return { ok: false, reason: "proxy resBody empty" };
+
+  if (isStream) {
+    const events = parseSseText(resBody);
+    const r = reconstructAssistantMessage(events);
+    if (!r.message) {
+      return { ok: false, reason: `SSE reconstruction failed (no message_start). errors: ${r.errors.join("; ")}` };
+    }
+    return {
+      ok: true,
+      blocks: r.message.content,
+      dataSource: "proxy-sse",
+      stopReason: r.message.stop_reason,
+      outputTokens: r.message.usage.output_tokens,
+      truncated: r.truncated,
+      warnings: r.errors,
+    };
+  }
+
+  // 非流式 JSON response（少见，但 Anthropic API 支持 stream=false）
+  try {
+    const parsed = JSON.parse(resBody) as {
+      content?: ReconstructedContentBlock[];
+      stop_reason?: string | null;
+      usage?: { output_tokens?: number };
+    };
+    if (!Array.isArray(parsed.content)) {
+      return { ok: false, reason: "proxy non-stream resBody missing content[]" };
+    }
+    return {
+      ok: true,
+      blocks: parsed.content,
+      dataSource: "proxy-json",
+      stopReason: parsed.stop_reason ?? null,
+      outputTokens: parsed.usage?.output_tokens ?? null,
+      truncated: false,
+      warnings: [],
+    };
+  } catch {
+    return { ok: false, reason: "proxy non-stream resBody not valid JSON" };
+  }
+}
+
+// ─── 主流程 ──────────────────────────────────────────────────────────────────
+
+export async function loadResponseTree(
+  sessionId: string,
+  callId: number,
+  db: Database,
+  helpers: LoadResponseTreeHelpers,
+): Promise<ResponseTreeResult> {
+  const ctx = helpers.resolveCallContext(sessionId, callId);
+  if (!ctx) {
+    return {
+      callId, sessionId,
+      dataSource: "none",
+      snapshot: null,
+      stopReason: null, outputTokens: 0,
+      error: "call not found in session drilldown",
+    };
+  }
+
+  const buildCtx: BuildContext = {
+    callId,
+    toolCalls: ctx.toolCalls,
+    nextCallId: ctx.nextCallId,
+  };
+
+  // 只走 proxy。缺数据直接返回 none + 原因，不做 jsonl 反向渲染。
+  const proxyResult = await tryLoadFromProxy(db, ctx.proxySessionId, ctx.apiRequestId);
+  if (!proxyResult.ok) {
+    return {
+      callId, sessionId,
+      dataSource: "none",
+      snapshot: null,
+      stopReason: ctx.stopReason,
+      outputTokens: ctx.outputTokens,
+      error: `proxy response 未存储：${proxyResult.reason}`,
+    };
+  }
+
+  const snapshot = buildResponseTree(proxyResult.blocks, buildCtx);
   return {
     callId, sessionId,
-    dataSource: "jsonl",
-    snapshot: { queryKind: "response", roots: [root], nodeSummaries: summaries },
-    stopReason: ctx.stopReason,
-    outputTokens: ctx.outputTokens,
+    dataSource: proxyResult.dataSource,
+    snapshot,
+    stopReason: proxyResult.stopReason ?? ctx.stopReason,
+    outputTokens: proxyResult.outputTokens ?? ctx.outputTokens,
+    truncated: proxyResult.truncated,
+    warnings: proxyResult.warnings.length ? proxyResult.warnings : undefined,
   };
 }

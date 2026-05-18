@@ -52,6 +52,11 @@ const DENSITY_GAP_NORMAL_PX = 2;
 const DENSITY_GAP_THRESHOLD_PX = 4;
 const DENSITY_GAP_HARD_PX = 1.5;
 
+// Underline 色条参数（diff lens 用，bar 下方）
+const UNDERLINE_GAP_PX = 1;        // bar 底部到色条之间的留白
+const UNDERLINE_THICKNESS_PX = 5;  // 色条本身的厚度（加粗以提升 diff 信号识别度）
+const UNDERLINE_RESERVE_PX = UNDERLINE_GAP_PX + UNDERLINE_THICKNESS_PX;
+
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
 
 export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>) {
@@ -61,6 +66,8 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
     getLabel,
     getTitle,
     getMarker,
+    getUnderlineColor,
+    getDimmed,
     height = DEFAULT_HEIGHT,
     background = DEFAULT_BG,
     selectedId = null,
@@ -117,6 +124,15 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
 
   void totalSize; // 当前不需要直接用，但保留 hook 防止未来误删
 
+  // 是否有任意 item 需要 underline 色条 → 决定容器是否预留底部空间
+  const hasUnderline = useMemo(
+    () => !!getUnderlineColor && items.some((it) => !!getUnderlineColor(it)),
+    [items, getUnderlineColor],
+  );
+  const containerHeight = height + (hasUnderline ? UNDERLINE_RESERVE_PX : 0);
+  // bar 实际占用高度（不含 underline 区域）。原逻辑 top:2 bottom:2 → height-4。
+  const barInnerHeight = Math.max(height - 4, 0);
+
   const handleClick = (item: T, isCollapsed: boolean) => {
     if (isCollapsed && collapse) {
       collapse.onToggleExpand(item);
@@ -135,7 +151,7 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
       onMouseLeave={() => { setFocus(null); setHoveredIdx(null); onHover?.(null); }}
       style={{
         position: "relative",
-        width: "100%", height,
+        width: "100%", height: containerHeight,
         background,
         borderRadius: 6,
         overflow: "hidden",
@@ -164,11 +180,10 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
         } else if (hoveredIdx !== null) {
           intensity = isHovered ? 2 : 1;
         }
-        const opacity =
-          intensity === 0 ? 0.18 :
-          intensity === 1 ? 1 :
-          intensity === 2 ? 1 :
-          1;
+        const externalDim = getDimmed ? getDimmed(item) : false;
+        const opacity = externalDim
+          ? 0.18
+          : (intensity === 0 ? 0.18 : 1);
         const fontWeight =
           intensity === 0 ? 400 :
           intensity === 1 ? 500 :
@@ -184,7 +199,7 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
           ? getTitle(item)
           : `${label || item.id} · size ${item.size}${isCollapsed ? " · BROKEN (click to expand)" : ""}`;
 
-        const innerHeight = Math.max(height - 4, 0);
+        const innerHeight = barInnerHeight;
         // label 按实时段宽决定显示 — 鱼眼 / 等宽下，宽段都能显示 label
         // dim 状态下不渲染文字（intensity 0），避免视觉噪声
         const labelFits =
@@ -201,8 +216,8 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
             style={{
               position: "absolute",
               left, width: w,
-              top: 2, bottom: 2,
-              background: isCollapsed ? "transparent" : color,
+              top: 2, height: barInnerHeight,
+              backgroundColor: isCollapsed ? "transparent" : color,
               opacity,
               border: "none",
               borderRadius: isCollapsed ? 0 : 3,
@@ -256,6 +271,47 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
               labelFits ? label : ""
             )}
           </div>
+        );
+      })}
+
+      {/* Underline 色条（diff lens：add 绿 / modify 黄 / remove 红）。
+          单独一遍 map 渲染，方便和 bar 用相同 left/width 但独立定位在容器底部。
+          underline 自身不响应点击，吸收到下方的 bar 元素上由 onClick 处理。 */}
+      {hasUnderline && items.map((item, i) => {
+        const ul = getUnderlineColor ? getUnderlineColor(item) : null;
+        if (!ul) return null;
+        const left = positions[i];
+        const right = positions[i + 1];
+        const gapPx =
+          minBarPx < DENSITY_GAP_HARD_PX ? 0 :
+          minBarPx < DENSITY_GAP_THRESHOLD_PX ? 1 :
+          DENSITY_GAP_NORMAL_PX;
+        const w = Math.max(right - left - gapPx, 0);
+        // hover/select dim 联动主 bar 的强度
+        const isSelected = selectedId === item.id;
+        const isHovered = hoveredIdx === i;
+        const hasSelection = selectedIdx >= 0;
+        let ulOpacity = 1;
+        if (hasSelection && !isSelected && !isHovered) ulOpacity = 0.25;
+        if (getDimmed && getDimmed(item)) ulOpacity = Math.min(ulOpacity, 0.2);
+        return (
+          <div
+            key={`underline-${item.id}`}
+            style={{
+              position: "absolute",
+              left,
+              width: w,
+              top: 2 + barInnerHeight + UNDERLINE_GAP_PX,
+              height: UNDERLINE_THICKNESS_PX,
+              backgroundColor: ul,
+              opacity: ulOpacity,
+              borderRadius: 1,
+              pointerEvents: "none",
+              transition: focus !== null && fisheyeActive
+                ? "left 40ms linear, width 40ms linear, opacity 120ms ease-out"
+                : "left 220ms ease-out, width 220ms ease-out, opacity 120ms ease-out",
+            }}
+          />
         );
       })}
 

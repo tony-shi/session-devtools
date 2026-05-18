@@ -15,6 +15,12 @@
 
 import type { LeafLite } from "./AttributionTreePanel";
 import { coverageStateOf } from "./attribution-tree-types";
+import {
+  provenancePalette,
+  diffPalette,
+  cachePalette,
+  auditPalette,
+} from "./lens-palette";
 
 // ─── 类型定义 ────────────────────────────────────────────────────────────────
 
@@ -74,25 +80,25 @@ const PROV_HARNESS_INJECT  = "harness-injection";
 const PROV_UNKNOWN         = "unknown";
 
 const PROVENANCE_BUCKETS: LensBucket[] = [
-  { id: PROV_SYSTEM_PROMPT,   label: "系统提示词",   color: "#3b82f6",
+  { id: PROV_SYSTEM_PROMPT,   label: "系统提示词",   color: provenancePalette.systemPrompt,
     description: "Claude Code 内置系统 prompt（规则匹配段，含静态模板与动态字段注入）" },
-  { id: PROV_USER_INPUT,      label: "用户输入",     color: "#10b981",
+  { id: PROV_USER_INPUT,      label: "用户输入",     color: provenancePalette.userInput,
     description: "原始用户输入消息（jsonl user_input 事件）" },
-  { id: PROV_TOOL_USE,        label: "工具调用",     color: "#f59e0b",
+  { id: PROV_TOOL_USE,        label: "工具调用",     color: provenancePalette.toolUse,
     description: "Agent 发起的 tool_use block（assistant 响应中的工具调用请求）" },
-  { id: PROV_TOOL_RESULT,     label: "工具结果",     color: "#ec4899",
+  { id: PROV_TOOL_RESULT,     label: "工具结果",     color: provenancePalette.toolResult,
     description: "工具执行结果回灌（jsonl tool_result 事件）" },
-  { id: PROV_CLAUDE_THINKING, label: "AI 思考",      color: "#8b5cf6",
+  { id: PROV_CLAUDE_THINKING, label: "AI 思考",      color: provenancePalette.claudeThinking,
     description: "Extended thinking 块（AI 内部推理过程，不直接输出给用户）" },
-  { id: PROV_CLAUDE_TEXT,     label: "AI 回复",      color: "#06b6d4",
+  { id: PROV_CLAUDE_TEXT,     label: "AI 回复",      color: provenancePalette.claudeText,
     description: "Assistant 文本响应（直接输出给用户的回复内容）" },
-  { id: PROV_FILE_ATTACHMENT, label: "文件附件",     color: "#a78bfa",
+  { id: PROV_FILE_ATTACHMENT, label: "文件附件",     color: provenancePalette.fileAttachment,
     description: "用户上传的文件或 attachment 事件（task_reminder / queued_command / edited_text_file 等）" },
-  { id: PROV_COMMAND_OUTPUT,  label: "命令输出",     color: "#f97316",
+  { id: PROV_COMMAND_OUTPUT,  label: "命令输出",     color: provenancePalette.commandOutput,
     description: "Bash / 本地命令输出（<bash-stdout> / <local-command-*> 等）" },
-  { id: PROV_HARNESS_INJECT,  label: "Skill / 摘要", color: "#64748b",
+  { id: PROV_HARNESS_INJECT,  label: "Skill / 摘要", color: provenancePalette.harnessInject,
     description: "Skill 工具加载的 SKILL.md 内容，或 compaction 压缩后注入的对话摘要" },
-  { id: PROV_UNKNOWN,         label: "未识别",       color: "#9ca3af",
+  { id: PROV_UNKNOWN,         label: "未识别",       color: provenancePalette.unknown,
     description: "structural 占位 / 未匹配规则 / 未知 origin" },
 ];
 
@@ -142,11 +148,11 @@ const CACHE_1H   = "cached-1h";
 const CACHE_NONE = "not-cached";
 
 const CACHE_BUCKETS: LensBucket[] = [
-  { id: CACHE_5M,   label: "5min 缓存", color: "#10b981",
+  { id: CACHE_5M,   label: "5min 缓存", color: cachePalette.ttl5m,
     description: "短期缓存（5 分钟 TTL）—— 同一会话内快速复用" },
-  { id: CACHE_1H,   label: "1h 缓存",   color: "#14b8a6",
+  { id: CACHE_1H,   label: "1h 缓存",   color: cachePalette.ttl1h,
     description: "长期缓存（1 小时 TTL）—— 跨会话稳定复用" },
-  { id: CACHE_NONE, label: "未缓存",     color: "#9ca3af",
+  { id: CACHE_NONE, label: "未缓存",     color: cachePalette.notCached,
     description: "未被打缓存的内容（每次请求都重新计费）" },
 ];
 
@@ -188,11 +194,11 @@ const AUDIT_PARTIAL = "partial";
 const AUDIT_NONE    = "none";
 
 const AUDIT_BUCKETS: LensBucket[] = [
-  { id: AUDIT_FULL,    label: "Full",    color: "#10b981",
+  { id: AUDIT_FULL,    label: "Full",    color: auditPalette.full,
     description: "叶子被规则或 jsonl 完整覆盖" },
-  { id: AUDIT_PARTIAL, label: "Partial", color: "#f59e0b",
+  { id: AUDIT_PARTIAL, label: "Partial", color: auditPalette.partial,
     description: "rule/jsonl 命中但 fullyCovered=false（动态注入未覆盖、内容近似）" },
-  { id: AUDIT_NONE,    label: "None",    color: "#9ca3af",
+  { id: AUDIT_NONE,    label: "None",    color: auditPalette.none,
     description: "structural（slot 已知但无规则）或 unknown（template 未识别）" },
 ];
 
@@ -219,13 +225,13 @@ const DIFF_REMOVED  = "removed";
 const DIFF_KEPT     = "kept";
 
 const DIFF_BUCKETS: LensBucket[] = [
-  { id: DIFF_ADDED,    label: "新增", color: "#16a34a",
+  { id: DIFF_ADDED,    label: "新增", color: diffPalette.added,
     description: "本轮请求新增的 leaf（上一轮没有）" },
-  { id: DIFF_MODIFIED, label: "修改", color: "#f59e0b",
+  { id: DIFF_MODIFIED, label: "修改", color: diffPalette.modified,
     description: "上一轮同 slot 存在但内容改了" },
-  { id: DIFF_REMOVED,  label: "删除", color: "#dc2626",
+  { id: DIFF_REMOVED,  label: "删除", color: diffPalette.removed,
     description: "上一轮存在、本轮已删除（在 Prev bar 和底部 footer 列出）" },
-  { id: DIFF_KEPT,     label: "未变", color: "#9ca3af",
+  { id: DIFF_KEPT,     label: "未变", color: diffPalette.kept,
     description: "未变化的 leaf" },
 ];
 
@@ -266,8 +272,24 @@ export const diffLens: Lens = {
 // 与 bp-dot TODO 的关系：二者都依赖 prefix-history 视角；可以共用同一份
 // firstSeenCallIndex / bpKind 数据。
 
-/** 默认 Lens 顺序。来源在最左（默认开启基底）；Diff 次之；Cache 紧随；Audit 放最后。 */
-export const LENSES: Lens[] = [provenanceLens, diffLens, cacheLens, auditLens];
+/** Audit lens 是诊断用视角，对最终用户没价值；仅在 dev 环境暴露。
+ *  判定：Vite DEV 构建 (npm run dev) 或浏览器里手动开后门
+ *        (localStorage.devLens === '1')。
+ *  prod build (npm run build, npx 发布的产物) 下，integer-tree-shaking 会把
+ *  auditLens 整段消除，bundle 里不会出现 "Audit" 字样。 */
+function isDevLensEnabled(): boolean {
+  if (import.meta.env.DEV) return true;
+  if (typeof localStorage !== "undefined") {
+    try { return localStorage.getItem("devLens") === "1"; } catch { /* SSR/blocked */ }
+  }
+  return false;
+}
+
+/** 默认 Lens 顺序。来源在最左（默认开启基底）；Diff 次之；Cache 紧随；
+ *  Audit 仅 dev 下挂出来。 */
+export const LENSES: Lens[] = isDevLensEnabled()
+  ? [provenanceLens, diffLens, cacheLens, auditLens]
+  : [provenanceLens, diffLens, cacheLens];
 
 /** 工具：根据 id 取 lens。 */
 export function getLens(id: string): Lens {

@@ -24,8 +24,8 @@ import { getSessionDisplayName } from "./session-display";
 import { AttributionTreePanel } from "./AttributionTreePanel";
 import { AttributionTreeLensPanel } from "./AttributionTreeLensPanel";
 import { ResponseTreePanel } from "./ResponseTreePanel";
-import { DiffPanel } from "./DiffPanel";
-import { CachePanel } from "./CachePanel";
+// DiffPanel / CachePanel 旧入口已合并到 AttributionTreeLensPanel 的多 lens 视角中。
+// 这两个组件文件保留但不再有 tab 入口。
 import { TOKEN_METRICS } from "./metricRegistry";
 import {
   HeaderStatRow,
@@ -2860,18 +2860,20 @@ function ToolCallRow({
         color="#f59e0b"
         kindLabel="Tool Use"
         title={tc.name}
-        shortId={tc.toolUseId}
-        size={{ bytes: tc.inputSize, direction: "in" }}
+        // tool_use 是 LLM 输出的 wire 字段 —— direction 应为 "out"。
+        // 不再展示 `toolu_xxx` shortId：那是 Anthropic API 服务端生成的
+        // 配对 token，不属于 LLM 语义产出。要看 wire 原物，通过 jump chip
+        // 跳到右侧 ResponseTreePanel（那里是 HTTP response 权威 view）。
+        size={{ bytes: tc.inputSize, direction: "out" }}
         preview={description}
         description={description}
         segments={tc.inputPreview ? [
           {
             label: "INPUT", content: tc.inputPreview,
             monospace: true, truncateAt: 600,
-            // tc.inputPreview is a JSON string of the tool's wire input.
-            // Make it toggleable to the JSON-tree view so users can drill
-            // into nested fields without parsing it mentally.
-            rawJson: tryParseJson(tc.inputPreview),
+            // 不在这里提供"原始 JSON" tab —— 左侧是事件流派生 view（来自 parser
+            // 加工后的 ToolCallSlot.inputPreview，已被截到 300 字符）。要看真正
+            // 的原始 wire response，请用 jump chip 跳到右侧 ResponseTreePanel。
           },
         ] : []}
         active={active}
@@ -4395,7 +4397,8 @@ function PayloadSegmentEvidenceDrawer({ seg, onClear }: { seg: PayloadSegment; o
 // Four-tab top-level structure for Call detail. Attribution and diff are
 // surfaced as the first two tabs so they're immediately reachable — they're
 // the most-used analytical views. Response and raw structure follow.
-type CallTab = "attribution" | "diff" | "cache" | "response" | "raw";
+// Diff / Cache 已合并进 attribution tab 的多 lens 视角；不再有独立 tab。
+type CallTab = "attribution" | "response" | "raw";
 type DiffMode = "segment" | "range" | "raw";
 
 // ─── Attribution Tab ──────────────────────────────────────────────────────────
@@ -5041,9 +5044,7 @@ function LlmCallDetailPanel({
   }));
 
   const TAB_DEFS: Array<{ id: CallTab; label: string }> = [
-    { id: "attribution", label: t("callTab.attribution") },     // 请求归因
-    { id: "diff",        label: t("callTab.diff") },            // 请求对比
-    { id: "cache",       label: t("callTab.cache") },           // 缓存分析（新）
+    { id: "attribution", label: t("callTab.attribution") },     // 请求（含 来源/Diff/Cache/Audit 多 lens）
     { id: "response",    label: t("callTab.responseAnalysis") },// 响应分析
     { id: "raw",         label: t("callTab.raw") },             // 原始数据
   ];
@@ -5231,38 +5232,14 @@ function LlmCallDetailPanel({
             ))}
           </div>
 
-          {/* ══ Attribution — prompt 来源 / 缓存 / Audit lens ════════════ */}
+          {/* ══ Attribution — 多 lens 统一视图（来源 / Diff / 缓存 / Audit） ══ */}
           {tab === "attribution" && (
             <AttributionTreeLensPanel
               sessionId={sessionId}
               agentFileId={agentFileId}
               callId={call.id}
               prevCallId={prevCallId}
-              hideDiff
               onLinkSource={onLinkSource}
-            />
-          )}
-
-          {/* ══ Diff — 与前次 call 的 prompt 差异 ═══════════════════════ */}
-          {tab === "diff" && (
-            <DiffPanel
-              sessionId={sessionId}
-              agentFileId={agentFileId}
-              callId={call.id}
-              prevCallId={prevCallId ?? undefined}
-              currCacheRead={call.cacheRead}
-              currCacheWrite={call.cacheWrite}
-              prevCacheRead={prevCall?.cacheRead}
-              prevCacheWrite={prevCall?.cacheWrite}
-            />
-          )}
-
-          {/* ══ Cache — 本次 call 的 cache_control 分层拓扑 ══════════════ */}
-          {tab === "cache" && (
-            <CachePanel
-              sessionId={sessionId}
-              agentFileId={agentFileId}
-              callId={call.id}
             />
           )}
 

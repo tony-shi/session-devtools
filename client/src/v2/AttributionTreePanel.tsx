@@ -29,6 +29,7 @@ import { LinkIcon, SegmentView } from "./shared/EventUnitCard";
 import { EVENT_PALETTES } from "./shared/eventPalette";
 import type { IntervalEventKind } from "./drilldown-types";
 import { useAttributionGraph } from "./attribution-graph-context";
+import { sectionPalette, UNKNOWN_FILL as PALETTE_UNKNOWN_FILL } from "./lens-palette";
 
 // ─── 类型与配色 ─────────────────────────────────────────────────────────────
 
@@ -46,16 +47,12 @@ export interface SectionMeta {
   textColor: string;
 }
 
-export const SECTION_META: Record<SectionId, SectionMeta> = {
-  system:   { label: "System",   barBg: "#bfdbfe", barText: "#1e3a8a", rowBg: "#eff6ff", marker: "#3b82f6", textColor: "#1e40af" },
-  tools:    { label: "Tools",    barBg: "#3b82f6", barText: "#fff",    rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1e40af" },
-  messages: { label: "Messages", barBg: "#a78bfa", barText: "#fff",    rowBg: "#f5f3ff", marker: "#8b5cf6", textColor: "#5b21b6" },
-  other:    { label: "Other",    barBg: "#d1d5db", barText: "#374151", rowBg: "#fafafa", marker: "#9ca3af", textColor: "#374151" },
-};
+// 配色集中在 lens-palette.ts；本处仅 re-export 以保持向后兼容。
+export const SECTION_META: Record<SectionId, SectionMeta> = sectionPalette;
 
 // Leaf 颜色：解析清楚的（rule / jsonl / structural）使用所属 section 的色调；
 // unknown 统一用「加重一号」的灰，与可解释段落明显区分。
-const UNKNOWN_FILL = "#9ca3af";
+const UNKNOWN_FILL = PALETTE_UNKNOWN_FILL;
 
 export function leafFill(leaf: { origin: SegmentOrigin; rootSlotType: string }): string {
   if (leaf.origin.kind === "unknown") return UNKNOWN_FILL;
@@ -336,7 +333,7 @@ function SectionBar({
 //   - hover / select 反馈走 FisheyeStrip 内部三档强度（颜色/字重），不再外挂顶部 readout 行。
 
 /** Leaf item — 适配 FisheyeStrip 接口（id + size），保留原 leaf 引用便于回调取数据 */
-interface LeafItem {
+export interface LeafItem {
   id: string;
   size: number;
   leaf: LeafLite;
@@ -348,7 +345,7 @@ type LayoutMode = "proportional" | "equal";
 const OVERLOAD_MIN_BAR_PX = 1.5;
 
 export function LeafStrip({
-  leaves, selectedId, onSelect, getColor,
+  leaves, selectedId, onSelect, getColor, getUnderlineColor,
 }: {
   leaves: LeafLite[];
   selectedId: string | null;
@@ -356,6 +353,9 @@ export function LeafStrip({
   /** Optional override — Lens panel passes lens-based color; default uses
    *  leafFill (section-based). */
   getColor?: (leaf: LeafLite) => string;
+  /** Optional — return underline color for the leaf bar (Diff lens uses this:
+   *  add 绿 / modify 黄). null = no underline. Bar 本身不变。 */
+  getUnderlineColor?: (leaf: LeafLite) => string | null;
 }) {
   const { t } = useTranslation();
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("proportional");
@@ -405,6 +405,7 @@ export function LeafStrip({
       <FisheyeStrip<LeafItem>
         items={items}
         getColor={(it) => getColor ? getColor(it.leaf) : leafFill(it.leaf)}
+        getUnderlineColor={getUnderlineColor ? (it) => getUnderlineColor(it.leaf) : undefined}
         getLabel={(it) => shortSlot(it.leaf.slotType)}
         getTitle={(it) => `${shortSlot(it.leaf.slotType)} · ${fmtK(it.leaf.charCount)} chars · ${originLabel(it.leaf.origin)}`}
         height={SUB_BAR_HEIGHT}
@@ -487,7 +488,7 @@ function SectionTable({
 }
 
 export function LeafTable({
-  leaves, selectedId, onSelect, getColor,
+  leaves, selectedId, onSelect, getColor, getBadges,
 }: {
   leaves: LeafLite[];
   selectedId: string | null;
@@ -495,6 +496,9 @@ export function LeafTable({
   /** Optional override — Lens panel passes lens-based color; default uses
    *  leafFill (section-based). */
   getColor?: (leaf: LeafLite) => string;
+  /** 每个 leaf 行末尾的额外 badge 列表，按 active lens 维度提供
+   *  （Lens panel 用来表达 diff state / cache layer / audit 等附加属性）。 */
+  getBadges?: (leaf: LeafLite) => Array<{ key: string; label: string; color: string; bg: string; border: string; title?: string }>;
 }) {
   const total = leaves.reduce((s, l) => s + l.charCount, 0);
   // 选中后只显示该 leaf 行，其他兄弟不再列出（避免与 SelectedDetail 重复信息）
@@ -529,6 +533,22 @@ export function LeafTable({
             <span style={{ fontSize: 10, color: "#6b7280", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {l.preview}
             </span>
+            {getBadges && getBadges(l).map((b) => (
+              <span
+                key={b.key}
+                title={b.title}
+                style={{
+                  display: "inline-flex", alignItems: "center",
+                  padding: "1px 5px", borderRadius: 3,
+                  fontSize: 9, fontWeight: 700, letterSpacing: "0.02em",
+                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                  color: b.color, background: b.bg, border: `1px solid ${b.border}`,
+                  flexShrink: 0,
+                }}
+              >
+                {b.label}
+              </span>
+            ))}
           </button>
         );
       })}

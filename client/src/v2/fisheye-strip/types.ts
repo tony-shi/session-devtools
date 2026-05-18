@@ -56,6 +56,16 @@ export interface FisheyeStripProps<T extends FisheyeItem> {
   /** 可选：对应 item 上叠加的特殊标记色（如 cache_control pin → 红框）。
    *  返回 null 不画。用 boxShadow inset 渲染，不影响 layout / 鱼眼计算。 */
   getMarker?: (item: T) => string | null;
+  /** 可选：返回 item 下方"下划色条"的颜色（diff lens 用：add 绿 / modify 黄 /
+   *  remove 红）。返回 null 表示该 item 无 underline。
+   *
+   *  视觉位置：bar 本体下方 1px gap + 3px 实色色条。bar 本体不动、底色不污染。
+   *  仅当 getUnderlineColor 返回过非 null 值时，容器才会额外多出 4px 高度。 */
+  getUnderlineColor?: (item: T) => string | null;
+  /** 可选：返回该 item 是否被"外部 filter 灰化"（如 bucket pill 选中后，
+   *  非命中 leaf 应灰掉）。true 时强制 opacity≈0.18，覆盖默认 hover/select
+   *  联动；点击仍可用。 */
+  getDimmed?: (item: T) => boolean;
 
   // ─── 容器外观 ─────────────────────────────────────
   height?: number;

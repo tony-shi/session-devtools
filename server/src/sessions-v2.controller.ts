@@ -422,10 +422,6 @@ export class SessionsV2Controller {
     const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
 
-    const { dirname, basename, join } = await import("node:path");
-    const sessionBase = basename(row.source_file, ".jsonl");
-    const subAgentFile = join(dirname(row.source_file), sessionBase, "subagents", `agent-${agentFileId}.jsonl`);
-
     const drilldown = parseSubAgentDrilldown(row.source_file, agentFileId);
     const callId = parseInt(callIdStr, 10);
     const allCalls = drilldown.turns.flatMap((t) => t.calls);
@@ -439,8 +435,10 @@ export class SessionsV2Controller {
         const cur = allCalls[curIdx];
         const next = curIdx + 1 < allCalls.length ? allCalls[curIdx + 1] : null;
         return {
-          sourceFile: subAgentFile,
-          callTimestamp: cur.timestamp,
+          apiRequestId: cur.apiRequestId,
+          // 子代理 proxy 查询用真实 sessionId（与 proxy_requests.session_id 对齐），
+          // 而非合成的 `${id}::subagent::...`
+          proxySessionId: id,
           toolCalls: cur.toolCalls.map((tc) => ({
             toolUseId: tc.toolUseId,
             name: tc.name,
@@ -765,8 +763,8 @@ export class SessionsV2Controller {
         const cur = allCalls[curIdx];
         const next = curIdx + 1 < allCalls.length ? allCalls[curIdx + 1] : null;
         return {
-          sourceFile,
-          callTimestamp: cur.timestamp,
+          apiRequestId: cur.apiRequestId,
+          proxySessionId: id,
           toolCalls: cur.toolCalls.map((tc) => ({
             toolUseId: tc.toolUseId,
             name: tc.name,

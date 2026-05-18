@@ -24,14 +24,17 @@ import {
   computeSectionStats,
   flattenLeaves,
   sectionOf,
+  shortSlot,
   fmtK,
   LeafStrip,
   LeafTable,
   SelectedDetail,
   type LeafLite,
+  type LeafItem,
   type SectionId,
   type SectionStat,
 } from "./AttributionTreePanel";
+import { FisheyeStrip } from "./fisheye-strip";
 import {
   LENSES,
   getLens,
@@ -40,100 +43,13 @@ import {
   type Lens,
   type LensBucket,
 } from "./lens-framework";
-import { DiffPanel } from "./DiffPanel";
+// DiffPanel 旧入口已废弃，但其中的 SelectedDiffDetail 仍然复用（行级 inline diff）。
+import type { DiffSection, DiffTreeResult, PinInfo } from "./diff-tree-types";
+import { SelectedDiffDetail } from "./DiffPanel";
+import { diffUnderlineFor, sectionFrame } from "./lens-palette";
 
-// "Diff vs Previous" is folded into the lens switcher as a virtual lens —
-// it's a special-case view (前后两个 call 的对比) that doesn't fit the
-// regular "leaf 分桶" pattern, so when this id is active we replace the
-// section/leaf rendering with <DiffPanel> entirely. The id lives only in
-// this file (not in LENSES, which is the bucketing registry).
-const DIFF_LENS_ID = "__diff__";
-const DIFF_LENS_LABEL = "Diff vs Previous";
-const DIFF_LENS_DESCRIPTION = "与前一次 call 的 prompt 差异 — 增/删/改的段";
-
-const BAR_HEIGHT = 44;
-
-// ─── Dev TODO strip ──────────────────────────────────────────────────────────
-//
-// 旁路 Lens 视图遗留的开发任务，以黄色 dashed chip 形式直接挂在 UI 上。
-// 每条 TODO 写一个稳定的内部 id（dev-todo-*），便于在代码 / commit / PR
-// 里互相引用。鼠标悬停看到完整描述。
-//
-// 用同一个 chip 视觉规范：fontSize 10 / 黄底 / 黄色虚线边框 / 鼠标 help
-// 光标。和经典 AuditBadge 里 "TODO: 应移至 turn 视图" 那个 chip 同款。
-
-interface DevTodo {
-  /** dev-todo-* 稳定 id，可在代码注释 / 文档里反向引用。 */
-  id: string;
-  /** chip 上的短文案（< 24 字符）。 */
-  label: string;
-  /** hover 时的完整描述（说明背景 + 下一步动作）。 */
-  detail: string;
-  /** 仅在指定 lens 激活时显示；不指定则始终可见（跨 lens 通用 TODO）。 */
-  showForLensId?: string;
-}
-
-const DEV_TODOS: DevTodo[] = [
-  // 跨 Lens / 全局
-  {
-    id: "dev-todo-multi-select",
-    label: "多选 / Lens 叠加",
-    detail: "当前只支持单选 lens、单选桶。多选叠加（例：Cache + Provenance 同时高亮）和 lens 叠加待后续推进。",
-  },
-  {
-    id: "dev-todo-diff-as-lens",
-    label: "Diff 折叠为 Lens",
-    detail: "Diff（与前次的差异）仍是顶部独立 tab，未抽象成 lens。后续可加 diffLens（added / removed / modified / kept 四桶），需要在前端引入 prev call diff tree data。",
-  },
-  // Provenance 视角专属
-  {
-    id: "dev-todo-provenance-harness-submech",
-    label: "Skill vs 摘要细分",
-    detail: "harness_injection 桶目前把 skill_invocation 和 compaction_summary 合并显示。若要再细分，需要在前端 SegmentOrigin 加 harness?: { mechanism; payload } 字段（后端已序列化），然后在 bucketOf 里分桶。当前粒度够用。",
-    showForLensId: "provenance",
-  },
-  // Cache 视角专属
-  {
-    id: "dev-todo-cache-policy-coverage",
-    label: "cachePolicy 覆盖度",
-    detail: "Cache Lens 依赖 server 端 SerializedNode.cachePolicy 填充。如发现实际命中缓存的 leaf 被归到「未缓存」桶，说明 parser 端没在所有 cached leaves 上 propagate cachePolicy。需要检查 server 端 cache-control breakpoint → 子节点的传播逻辑。",
-    showForLensId: "cache",
-  },
-];
-
-function DevTodoStrip({ activeLensId }: { activeLensId: string }) {
-  const visible = DEV_TODOS.filter((td) => !td.showForLensId || td.showForLensId === activeLensId);
-  if (visible.length === 0) return null;
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 6,
-      flexWrap: "wrap",
-      padding: "2px 0",
-    }}>
-      <span style={{
-        fontSize: 9, fontWeight: 700, color: "#a16207",
-        letterSpacing: "0.04em", textTransform: "uppercase",
-      }}>
-        DEV TODO
-      </span>
-      {visible.map((td) => (
-        <span
-          key={td.id}
-          title={`${td.id}\n\n${td.detail}`}
-          style={{
-            fontSize: 10, color: "#a16207",
-            padding: "1px 6px", borderRadius: 3,
-            background: "#fef3c7", border: "1px dashed #fcd34d",
-            cursor: "help", userSelect: "none",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {td.label}
-        </span>
-      ))}
-    </div>
-  );
-}
+// Diff 现在是真正的 lens（在 lens-framework.ts 里定义为 diffLens），不再是
+// "虚拟"的 chip 切换 + DiffPanel 替换。这套老 DIFF_LENS_ID 常量已废除。
 
 // ─── LensSwitcher（多 lens toggle）────────────────────────────────────────────
 
@@ -255,102 +171,130 @@ function BucketPillRow({
   );
 }
 
-// ─── LensSectionBar ─────────────────────────────────────────────────────────
+// ─── MainSectionBar ─────────────────────────────────────────────────────────
 //
-// 顶部三段大柱（System / Tools / Messages），形状按全集分布；激活桶时叠加角标
-// 显示「本 section 内匹配桶的 leaf 数」，无命中的 section 灰化。这部分逻辑和
-// 经典版 AuditBadge → SectionBar 的桥接一致，只是 filterColor 从 audit 桶颜色
-// 换成 Lens 桶颜色。
+// 顶部主 bar —— 不再是 "三段 section 大色块"，而是按 leaf 级 provenance 颜色
+// 拼接 + 三个 section 细描边框框住（视觉传达"section 是分组容器，内容是 leaf
+// 的来源"）。
+//
+// 状态/行为：
+//   - section 框宽度 = 该 section 字符占比（flex 比例）
+//   - section 框头部带 label + 字符数/段数小标
+//   - section 框内部一个 FisheyeStrip，渲染该 section 的 leaves（按 provenance
+//     色着色，diff lens 激活时叠 underline，bucket 过滤激活时非命中 leaf dim）
+//   - 点击 section 框头部 = drill into 该 section（外层 onSelectSection 处理）
+//   - 点击 leaf = onSelectLeaf
 
-function LensSectionBar({
-  stats, totalChars, selectedSection, onSelect,
-  filteredStats, bucketColor,
+function MainSectionBar({
+  sections, totalChars,
+  selectedSection, onSelectSection,
+  selectedLeafId, onSelectLeaf,
+  leafColor, leafUnderline, isDimmed,
 }: {
-  stats: SectionStat[];
+  sections: SectionStat[];
   totalChars: number;
   selectedSection: SectionId | null;
-  onSelect: (s: SectionId) => void;
-  filteredStats: SectionStat[] | null;
-  bucketColor: string | null;
+  onSelectSection: (s: SectionId) => void;
+  selectedLeafId: string | null;
+  onSelectLeaf: (id: string) => void;
+  leafColor: (leaf: LeafLite) => string;
+  leafUnderline?: (leaf: LeafLite) => string | null;
+  isDimmed?: (leaf: LeafLite) => boolean;
 }) {
-  const [hoveredId, setHoveredId] = useState<SectionId | null>(null);
   if (totalChars === 0) return null;
-  const hasSelection = selectedSection !== null;
-  const filterActive = filteredStats !== null && bucketColor !== null;
   return (
-    <div
-      style={{ display: "flex", gap: 4, height: BAR_HEIGHT }}
-      onMouseLeave={() => setHoveredId(null)}
-    >
-      {stats.map((s) => {
+    <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
+      {sections.map((s) => {
         const meta = SECTION_META[s.id];
         const pct = s.totalChars / totalChars;
-        const isSel = selectedSection === s.id;
-        const isHov = hoveredId === s.id;
-        let intensity: 0 | 1 | 2 | 3 = 1;
-        if (hasSelection) {
-          if (isSel) intensity = 3;
-          else if (isHov) intensity = 2;
-          else intensity = 0;
-        } else if (hoveredId !== null) {
-          intensity = isHov ? 2 : 1;
-        }
-        let opacity = intensity === 0 ? 0.18 : 1;
-        const fontWeight = intensity >= 2 ? 800 : 700;
-        const hitCount = filterActive
-          ? (filteredStats!.find((fs) => fs.id === s.id)?.leafCount ?? 0)
-          : null;
-        if (filterActive && hitCount === 0 && !isSel) opacity = Math.min(opacity, 0.25);
-        const outline = isSel ? "2px solid #1f2937" : (intensity === 2 ? "2px solid rgba(31,41,55,0.45)" : "none");
+        const isSelectedSec = selectedSection === s.id;
+        const items: LeafItem[] = s.leaves.map((l) => ({
+          id: l.nodeId,
+          size: Math.max(l.charCount, 0.001),
+          leaf: l,
+        }));
+        // Fieldset / legend 风格：四周中性灰细描边，label 浮在顶边线上（白底
+        // 小字嵌入顶边），不再有 barBg 大色块。选中态：边框变深灰。
+        // 整个 section 框可点击（点框 / 点 label / 点框内空白都 = 选中 section）；
+        // 点 leaf 由内部 FisheyeStrip 处理（带 stopPropagation，不会冒泡到这里），
+        // 但 FisheyeStrip 的 onSelect 回调里也会顺便设 selectedSection。
+        const frameColor = isSelectedSec ? sectionFrame.borderSelected : sectionFrame.border;
         return (
-          <button
+          <div
             key={s.id}
-            onClick={() => onSelect(s.id)}
-            onMouseEnter={() => setHoveredId(s.id)}
-            title={`${meta.label} · ${fmtK(s.totalChars)} chars (${(pct * 100).toFixed(1)}%)`}
+            onClick={() => onSelectSection(s.id)}
+            title={`${meta.label} · ${fmtK(s.totalChars)} chars · ${s.leafCount} segments — 点击钻入`}
             style={{
-              flex: pct, minWidth: 64,
-              background: meta.barBg,
-              opacity,
-              border: "none",
-              outline, outlineOffset: -2,
-              borderRadius: 6,
-              padding: "8px 14px",
+              flex: pct, minWidth: 80,
+              position: "relative",
+              display: "flex", flexDirection: "column",
+              border: `1px solid ${frameColor}`,
+              borderRadius: 4,
+              paddingTop: 8, // 给 label 浮出顶边留位
+              background: "transparent",
+              transition: "border-color 0.15s",
               cursor: "pointer",
-              textAlign: "left",
-              color: meta.barText,
-              display: "flex", alignItems: "center",
-              overflow: "hidden",
-              transition: "opacity 0.15s, outline-color 0.15s",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {meta.label}
-              </div>
-              {filterActive && bucketColor && hitCount !== null && pct >= 0.05 && (
-                <span
-                  title={`${hitCount} 个 leaf 匹配当前桶`}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 4,
-                    fontSize: 10, fontWeight: 700,
-                    padding: "1px 5px", borderRadius: 3,
-                    background: "rgba(255,255,255,0.7)",
-                    color: "#1f2937",
-                    whiteSpace: "nowrap", flexShrink: 0,
-                  }}
-                >
-                  <span style={{ width: 5, height: 5, borderRadius: 1, background: bucketColor }} />
-                  {hitCount}
-                </span>
+            <span
+              style={{
+                position: "absolute",
+                top: -8, // label 竖向居中横线
+                left: 10,
+                background: "#fff",
+                color: meta.textColor,
+                padding: "0 6px",
+                fontSize: 11,
+                fontWeight: 700,
+                display: "inline-flex", alignItems: "center", gap: 6,
+                lineHeight: 1.4,
+                whiteSpace: "nowrap",
+                maxWidth: "calc(100% - 20px)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                pointerEvents: "none", // label 本身不接事件，点击由外层 div 统一处理
+              }}
+            >
+              <span>{meta.label}</span>
+              <span style={{
+                fontSize: 9, fontWeight: 600,
+                padding: "0 4px", borderRadius: 2,
+                background: `${meta.marker}1a`,
+                color: meta.textColor,
+                whiteSpace: "nowrap",
+              }}>
+                {fmtK(s.totalChars)} · {s.leafCount}
+              </span>
+            </span>
+            <div style={{ flex: 1, minWidth: 0, padding: 4 }}>
+              {items.length > 0 ? (
+                <FisheyeStrip<LeafItem>
+                  items={items}
+                  getColor={(it) => leafColor(it.leaf)}
+                  getUnderlineColor={leafUnderline ? (it) => leafUnderline(it.leaf) : undefined}
+                  getDimmed={isDimmed ? (it) => isDimmed(it.leaf) : undefined}
+                  getLabel={(it) => shortSlot(it.leaf.slotType)}
+                  getTitle={(it) => `${shortSlot(it.leaf.slotType)} · ${fmtK(it.leaf.charCount)} chars`}
+                  height={MAIN_BAR_LEAF_HEIGHT}
+                  background="transparent"
+                  autoConfig={{ minCount: 4, clickableThresholdPx: 12 }}
+                  selectedId={selectedLeafId}
+                  onSelect={(it) => onSelectLeaf(it.id)}
+                />
+              ) : (
+                <div style={{ height: MAIN_BAR_LEAF_HEIGHT, fontSize: 10, color: "#9ca3af", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  empty
+                </div>
               )}
             </div>
-          </button>
+          </div>
         );
       })}
     </div>
   );
 }
+
+const MAIN_BAR_LEAF_HEIGHT = 34;
 
 // ─── LensSectionTable ───────────────────────────────────────────────────────
 //
@@ -558,8 +502,10 @@ export function AttributionTreeLensPanel({
   }, [pendingFocus, allLeaves, clearPendingFocus]);
 
   // 把"任意 active lens 的桶选择"合并成一个谓词，AND 联合过滤。
+  // 注意：cache lens 的桶只用于联动 CacheTopologyStrip 高亮，不参与 leaf 过滤
+  // （用户明确要求：cache 选中不应该 dim 主 bar 的 leaf）。
   const passesAllFilters = useMemo(() => {
-    const filters = Object.entries(bucketFilters).filter(([, b]) => !!b);
+    const filters = Object.entries(bucketFilters).filter(([lid, b]) => !!b && lid !== "cache");
     if (filters.length === 0) return null;
     return (leaf: LeafLite): boolean => {
       for (const [lid, bid] of filters) {
@@ -619,6 +565,39 @@ export function AttributionTreeLensPanel({
     };
   }, []);
 
+  // Diff 视角的 underline 色条：Diff lens 激活时，给 added/modified 的 leaf
+  // bar 底下加 3px 实色色条（add 绿 / modify 黄）。bar 本体和 provenance 底色
+  // 完全不动。kept / removed 没有 underline（removed 在 Prev bar / Removed
+  // footer 单独表达）。
+  const leafUnderline = useMemo(() => {
+    if (!activeLenses.has("diff")) return undefined;
+    return (leaf: LeafLite) => diffUnderlineFor(leaf.diffKind ?? null);
+  }, [activeLenses]);
+
+  // 每个 leaf 行尾的 badge 列：按 active lens（除 provenance 外）逐个输出。
+  // 各 lens 自己负责给 leaf 算桶 + 桶颜色，badge 用 lens 的桶元数据。
+  const leafBadges = useMemo(() => {
+    const otherLenses = LENSES.filter((l) => l.id !== LENSES[0].id && activeLenses.has(l.id));
+    return (leaf: LeafLite) => {
+      return otherLenses
+        .map((ln) => {
+          const bid = ln.bucketOf(leaf);
+          if (!bid) return null;
+          const b = ln.buckets.find((x) => x.id === bid);
+          if (!b) return null;
+          return {
+            key: ln.id,
+            label: b.label,
+            color: b.color,
+            bg: `${b.color}1a`, // ~10% alpha tint
+            border: `${b.color}40`,
+            title: `${ln.label}: ${b.label}${b.description ? "\n" + b.description : ""}`,
+          };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+    };
+  }, [activeLenses]);
+
   // 决定哪些 lens 出现在 toggle 行 + bucket pill 区。Provenance 永远出现；
   // Diff lens 在没有 prevCall 时无意义，隐藏。
   // 注意：useMemo 必须在所有 early return 之上，避免 hook 顺序变化。
@@ -650,43 +629,97 @@ export function AttributionTreeLensPanel({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {/* Layer 0: 多 lens toggle。来源永远 active（chip 显示禁用样式）；
-          其他 lens 点击 toggle on/off。 */}
+      {/* Layer 0: lens toggle 行。基底（来源）永远 active 且不出现在 toggle 行；
+          只列出可切换的 lens（diff / cache / 可选 audit）。 */}
       <LensSwitcher
-        lenses={visibleLenses}
+        lenses={visibleLenses.filter((l) => l.id !== LENSES[0].id)}
         activeLenses={activeLenses}
         baseLensId={LENSES[0].id}
         onToggle={toggleLens}
       />
 
-      {/* Layer 0.1: 开发者可见的 TODO 列表 —— 仅 Provenance（基底 lens）的 todo */}
-      <DevTodoStrip activeLensId={LENSES[0].id} />
-
       {/* Prelude（CachePanel 旧路径用过；统一后由 cache lens 自管） */}
       {prelude}
 
-      {/* Layer 0.5: 每个 active lens 一行 bucket pill */}
-      {visibleLenses.filter((l) => activeLenses.has(l.id)).map((l) => (
-        <BucketPillRow
-          key={l.id}
-          lens={l}
-          selectedBucketId={bucketFilters[l.id] ?? null}
-          onSelect={(bid) => setBucketFilter(l.id, bid)}
-          leaves={allLeaves}
-        />
-      ))}
+      {/* Layer 0.5: 每个 active lens 一行 bucket pill。
+          cache lens 跳过 —— L1/L2/L3 拓扑条本身就是 cache 桶的索引视图。
 
-      {/* Layer 1: section 大柱 */}
-      <LensSectionBar
-        stats={stats}
+          每个 lens 的桶数字按"被其他 lens 过滤后剩下的子集"统计，正交语义：
+          选了来源=系统提示词(35) → diff 桶显示的就是这 35 个里的 added/modified/
+          kept 分布，三者加起来恰好 = 35。 */}
+      {visibleLenses
+        .filter((l) => activeLenses.has(l.id) && l.id !== "cache")
+        .map((l) => {
+          // 排除自己的桶过滤 + cache（cache 不过滤），按其余 lens 的桶过滤交集筛 leaves
+          const otherFilters = Object.entries(bucketFilters)
+            .filter(([lid, b]) => !!b && lid !== l.id && lid !== "cache");
+          const leavesForThisLens = otherFilters.length === 0
+            ? allLeaves
+            : allLeaves.filter((leaf) => {
+                for (const [lid, bid] of otherFilters) {
+                  const ln = getLens(lid);
+                  if (ln.bucketOf(leaf) !== bid) return false;
+                }
+                return true;
+              });
+          return (
+            <BucketPillRow
+              key={l.id}
+              lens={l}
+              selectedBucketId={bucketFilters[l.id] ?? null}
+              onSelect={(bid) => setBucketFilter(l.id, bid)}
+              leaves={leavesForThisLens}
+            />
+          );
+        })}
+
+      {/* Layer 0.8: Cache lens 激活时，在主 SectionBar 上方插入 L1/L2/L3 紧凑条
+          （现在的 prelude 旧路径之外，新路径走这里） */}
+      {activeLenses.has("cache") && diffData && (() => {
+        // 计算 selected leaf 在全局 prefix 字符流中的 [start, end] 位置
+        // （供 CacheTopologyStrip 在每条 L 行画"leaf 位置小块"的联动）。
+        // 整行高亮只在用户显式点击 L 行时出现，不会因为选 leaf 自动触发。
+        let leafPos: { start: number; end: number } | null = null;
+        if (selectedLeaf) {
+          let cum = 0;
+          outer: for (const sec of diffData.sections) {
+            for (const l of sec.leaves) {
+              if (l.id === selectedLeaf.nodeId) {
+                leafPos = { start: cum, end: cum + (l.newCharCount ?? 0) };
+                break outer;
+              }
+              cum += l.newCharCount ?? 0;
+            }
+          }
+        }
+        return (
+          <CacheTopologyStrip
+            diffData={diffData}
+            selectedLeafPosition={leafPos}
+          />
+        );
+      })()}
+
+      {/* Layer 1: 主 bar —— diff lens 的对比靠 leaf 上的 underline + 底部
+          RemovedFooter + 选中后的行级 diff 详情，不再画"上一轮 bar"。 */}
+      <MainSectionBar
+        sections={stats}
         totalChars={totalChars}
         selectedSection={selectedSection}
-        onSelect={(s) => {
+        onSelectSection={(s) => {
           setSelectedSection((cur) => (cur === s ? null : s));
           setSelectedNodeId(null);
         }}
-        filteredStats={filteredStats}
-        bucketColor={filterAccentColor}
+        selectedLeafId={selectedNodeId}
+        onSelectLeaf={(id) => {
+          // 主 bar 内点 leaf → 自动 drill 到该 leaf 的 section + 选中
+          const leaf = allLeaves.find((l) => l.nodeId === id);
+          if (leaf) setSelectedSection(sectionOf(leaf.rootSlotType));
+          setSelectedNodeId((cur) => (cur === id ? null : id));
+        }}
+        leafColor={leafColor}
+        leafUnderline={leafUnderline}
+        isDimmed={passesAllFilters ? (l) => !passesAllFilters(l) : undefined}
       />
 
       {selectedStat === null ? (
@@ -704,18 +737,253 @@ export function AttributionTreeLensPanel({
             selectedId={selectedNodeId}
             onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
             getColor={leafColor}
+            getUnderlineColor={leafUnderline}
           />
           <LeafTable
             leaves={selectedStat.leaves}
             selectedId={selectedNodeId}
             onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
             getColor={leafColor}
+            getBadges={leafBadges}
           />
           {selectedLeaf && sectionOf(selectedLeaf.rootSlotType) === selectedStat.id && (
-            <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} />
+            <>
+              <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} />
+              {/* Diff lens 激活时，选中 leaf 有 diff 变化的话，叠加行级 diff 详情。
+                  modified → before/after 字级 inline diff；
+                  added / removed → 单边内容展示。
+                  kept / 无 diffData / 找不到对应 diff leaf → 不渲染。 */}
+              {activeLenses.has("diff") && diffData && (() => {
+                const diffLeaf = diffData.sections
+                  .flatMap((s) => s.leaves)
+                  .find((l) => l.id === selectedLeaf.nodeId);
+                if (!diffLeaf || diffLeaf.kind === "kept") return null;
+                return (
+                  <div style={{
+                    marginTop: 6,
+                    borderTop: "1px solid #e5e7eb",
+                    paddingTop: 6,
+                  }}>
+                    <SelectedDiffDetail leaf={diffLeaf} />
+                  </div>
+                );
+              })()}
+            </>
           )}
         </>
       )}
+
+      {/* Layer 末尾：Diff lens 激活 + 有 removed leaves 时显示底部"被删除"卡 */}
+      {activeLenses.has("diff") && diffData && (
+        <RemovedFooterCard diffData={diffData} />
+      )}
+    </div>
+  );
+}
+
+// ─── RemovedFooterCard — Diff lens 激活时底部"被删除"列表 ───────────────────
+
+function RemovedFooterCard({ diffData }: { diffData: DiffTreeResult }) {
+  const removed = diffData.sections.flatMap((s) =>
+    s.leaves.filter((l) => l.kind === "removed").map((l) => ({ ...l, sectionId: s.id })),
+  );
+  if (removed.length === 0) return null;
+  return (
+    <div style={{
+      marginTop: 6,
+      background: "#fef2f2",
+      border: "1px solid #fecaca",
+      borderRadius: 6,
+      padding: "10px 12px",
+    }}>
+      <div style={{
+        fontSize: 10, fontWeight: 700, color: "#b91c1c",
+        letterSpacing: "0.05em", textTransform: "uppercase",
+        marginBottom: 6,
+      }}>
+        ⊖ 本轮删除 · {removed.length} 段（在上一轮存在、本轮已不在）
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {removed.map((l) => {
+          const meta = SECTION_META[l.sectionId];
+          return (
+            <div key={l.id} style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "2px 0",
+              fontSize: 11,
+            }}>
+              <span style={{ width: 6, height: 6, borderRadius: 2, background: meta?.marker ?? "#9ca3af", flexShrink: 0 }} />
+              <span style={{
+                fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                color: "#111827",
+                minWidth: 220, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              }}>
+                {l.slotType}
+              </span>
+              <span style={{ fontSize: 10, color: "#6b7280" }}>
+                {(l.oldCharCount ?? 0).toLocaleString()} chars
+              </span>
+              <span style={{
+                fontSize: 10, color: "#9ca3af",
+                flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                fontStyle: "italic",
+              }}>
+                {(l.oldRawText ?? "").replace(/\s+/g, " ").slice(0, 120)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── CacheTopologyStrip — Cache lens 激活时的 L1/L2/L3 紧凑条 ────────────────
+
+function CacheTopologyStrip({
+  diffData,
+  selectedLeafPosition,
+}: {
+  diffData: DiffTreeResult;
+  /** sub-bar 选中 leaf 在全局 prefix 字符流中的 [start, end]。当存在时，
+   *  在每条 L 行的对应字符位置画一个透明小块，用户视觉上能看到"该 leaf
+   *  在哪些 L 层被缓存（落在 L 行 cum 内）"。 */
+  selectedLeafPosition?: { start: number; end: number } | null;
+}) {
+  const pins: PinInfo[] = diffData.sections
+    .flatMap((s) => s.pins ?? [])
+    .filter((p) => typeof p?.cumulativePrefixChars === "number")
+    .sort((a, b) => a.cumulativePrefixChars - b.cumulativePrefixChars);
+
+  const grandTotal = diffData.sections.reduce((sum, s) => sum + s.newTotal, 0);
+
+  if (pins.length === 0 || grandTotal === 0) return null;
+
+  // 把 sections 按 tools→sys→msgs 顺序累积，给每个 section 算出 [start, end]
+  const ranges: Array<{ id: DiffSection["id"]; start: number; end: number }> = [];
+  let cum = 0;
+  for (const s of diffData.sections) {
+    ranges.push({ id: s.id, start: cum, end: cum + s.newTotal });
+    cum += s.newTotal;
+  }
+
+  function sliceBy(from: number, to: number) {
+    return ranges
+      .map((r) => ({
+        id: r.id,
+        chars: Math.max(0, Math.min(r.end, to) - Math.max(r.start, from)),
+      }))
+      .filter((x) => x.chars > 0);
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {pins.map((pin, idx) => {
+        const cumChars = pin.cumulativePrefixChars;
+        const sectionBreakdown = sliceBy(0, cumChars);
+        const uncovered = grandTotal - cumChars;
+        return (
+          <div
+            key={`L${idx + 1}`}
+            style={{
+              display: "flex", alignItems: "center", gap: 8,
+              fontSize: 10,
+              position: "relative",
+            }}
+          >
+            <div style={{
+              flex: 1, minWidth: 0,
+              height: 12,
+              display: "flex", gap: 4,
+              position: "relative",  // 给 selectedLeafPosition 小块作为定位参考
+            }}>
+              {sectionBreakdown.map((b, i) => {
+                const meta = SECTION_META[b.id];
+                if (!meta) return null;
+                return (
+                  <div key={i} title={`${meta.label} · ${b.chars} chars`} style={{
+                    flex: b.chars,
+                    background: meta.barBg,
+                    borderRadius: 2,
+                  }} />
+                );
+              })}
+              {uncovered > 0 && (
+                <div style={{ flex: uncovered, background: "transparent" }} />
+              )}
+              {/* sub-bar 选中 leaf 时，在每条 L 行的字符位置画半透明小块。
+                  落在 [0, cumChars] 内 → 实色（说明被该 L 层缓存）
+                  落在 [cumChars, grandTotal] 内 → 淡色 + 虚线（未缓存到该层） */}
+              {selectedLeafPosition && grandTotal > 0 && (() => {
+                const { start, end } = selectedLeafPosition;
+                if (end <= start) return null;
+                const leftPct = (start / grandTotal) * 100;
+                const widthPct = ((end - start) / grandTotal) * 100;
+                const inCache = end <= cumChars;
+                return (
+                  <div
+                    style={{
+                      position: "absolute",
+                      left: `${leftPct}%`,
+                      width: `${widthPct}%`,
+                      top: -2, bottom: -2,
+                      background: inCache ? "rgba(31, 41, 55, 0.22)" : "rgba(31, 41, 55, 0.06)",
+                      border: inCache
+                        ? "1px solid rgba(31, 41, 55, 0.65)"
+                        : "1px dashed rgba(31, 41, 55, 0.35)",
+                      borderRadius: 2,
+                      pointerEvents: "none",
+                      boxSizing: "border-box",
+                    }}
+                  />
+                );
+              })()}
+            </div>
+            {/* 右侧合并信息：L# · chars · ttl · scope，加 ℹ 信息点 hover 说明 */}
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              flexShrink: 0,
+              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+              fontSize: 10,
+            }}>
+              <span style={{
+                color: "#dc2626", fontWeight: 700, letterSpacing: "0.04em",
+                minWidth: 22,
+              }}>
+                L{idx + 1}
+              </span>
+              <span style={{ color: "#6b7280", minWidth: 48, textAlign: "right" }}>
+                {cumChars.toLocaleString()}
+              </span>
+              <span style={{ color: "#9ca3af", fontSize: 9, minWidth: 50 }}>
+                {pin.ttl} · {pin.scope === "global" ? "G" : "org"}
+              </span>
+              <span
+                title={
+                  `L${idx + 1} 层缓存\n\n` +
+                  `这是请求中第 ${idx + 1} 个 cache_control breakpoint（按 prefix 顺序）。\n` +
+                  `它把请求体的前 ${cumChars.toLocaleString()} 个字符标为可缓存，\n` +
+                  `TTL = ${pin.ttl}（${pin.ttl === "5m" ? "5 分钟" : pin.ttl === "1h" ? "1 小时" : pin.ttl}），` +
+                  `scope = ${pin.scope === "global" ? "global（跨 org 复用）" : "org（仅本 org）"}。\n\n` +
+                  `下方 bar 显示该层覆盖了哪些 section（tools / system / messages）。\n` +
+                  `右端如有空白 = 未被该层缓存的部分（${(grandTotal - cumChars).toLocaleString()} 字符）。`
+                }
+                style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 14, height: 14, borderRadius: "50%",
+                  fontSize: 9, fontWeight: 700,
+                  background: "#f3f4f6", color: "#6b7280",
+                  border: "1px solid #d1d5db",
+                  cursor: "help",
+                  userSelect: "none",
+                }}
+              >
+                i
+              </span>
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
