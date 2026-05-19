@@ -331,6 +331,12 @@
       "blockChars": "本块字符数",
       "prefixChars": "累积前缀字符（tools→sys→msgs）",
       "explanation": "Anthropic 会把请求起点到此位置的整段前缀写一条缓存条目；下次匹配命中则整段计入 cache_read。"
+    },
+    "unavailable": {
+      "noPrev": "这是本次会话的第一次请求，没有可对照的上一次",
+      "prevNotCaptured": "未抓到上一次请求，diff 不可用",
+      "curNotCaptured": "未抓到本次请求，diff 不可用",
+      "prevParseFailed": "上一次请求解析失败，diff 不可用"
     }
   },
   "cache": {

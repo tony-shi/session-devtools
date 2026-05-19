@@ -15,6 +15,7 @@ import { FisheyeStrip } from "./fisheye-strip";
 import { CodeBlock } from "./shared/CodeBlock";
 import type {
   DiffKind, DiffLeaf, DiffSection, DiffSectionId, DiffTreeResult,
+  DiffUnavailableReason,
 } from "./diff-tree-types";
 
 // ─── 配色 ─────────────────────────────────────────────────────────────────────
@@ -142,6 +143,17 @@ export function DiffPanel({
     );
   }
 
+  // "Diff 不可用" 是一等公民：prev reqBody 缺失 / 第一条 call / 解析失败时，UI 显式占位，
+  // 不再走"全 added"那条假绿路径。reason 由 server 给（DiffUnavailableReason）；占位仍
+  // 暴露 "vs Call #N"（如果服务端能算出 prevCallId），让用户知道本应对照的是哪条。
+  //
+  // 未来下拉框落地：父层会改成"始终渲染 DiffPanel"，no-prev 的占位位置正好用来挂下拉框
+  // 让用户选别的对照对象 — 所以这里 4 种 reason 现在都实现完整，本期父层 hide 了 no-prev
+  // 不展示，但 DiffPanel 内部已就绪。
+  if (data.unavailableReason) {
+    return <DiffUnavailablePlaceholder reason={data.unavailableReason} prevCallId={data.prevCallId} />;
+  }
+
   const effectivePrevId = data.prevCallId ?? prevCallId ?? null;
   const sum = data.summary;
   const changedSegments = sum ? sum.addedCount + sum.removedCount + sum.modifiedCount : 0;
@@ -215,6 +227,46 @@ export function DiffPanel({
       )}
 
       <DiffView sections={data.sections} summary={data.summary} />
+    </div>
+  );
+}
+
+// ─── DiffUnavailablePlaceholder — 显式表达"无法 diff" ────────────────────────
+//
+// 替代旧的"prev 缺失 → silent fallback 到全 added"路径。当 server 返回
+// unavailableReason 时只渲染这一块；不展示 KindPillRow / SectionDiffBar /
+// CacheImpactRow，避免空 sections 又被解读成"无变化 ✓"。
+//
+// 4 种 reason 共用同一视觉容器（中性灰），仅文案不同。下拉框落地后会在这里
+// 加一个 "换条对照" 入口，所以保留为独立组件而不是 inline JSX。
+const REASON_LABEL: Record<DiffUnavailableReason, string> = {
+  "no-prev":            "diff.unavailable.noPrev",
+  "prev-not-captured":  "diff.unavailable.prevNotCaptured",
+  "cur-not-captured":   "diff.unavailable.curNotCaptured",
+  "prev-parse-failed":  "diff.unavailable.prevParseFailed",
+};
+
+function DiffUnavailablePlaceholder({
+  reason, prevCallId,
+}: { reason: DiffUnavailableReason; prevCallId: number | null }) {
+  const { t } = useTranslation();
+  return (
+    <div style={{
+      display: "flex", flexDirection: "column", gap: 4,
+      padding: "16px 14px",
+      fontSize: 11,
+      background: "#fafafa",
+      border: "1px dashed #e5e7eb",
+      borderRadius: 6,
+      color: "#6b7280",
+    }}>
+      <div style={{ color: "#374151", fontSize: 12 }}>{t(REASON_LABEL[reason])}</div>
+      {/* prev id 还是给出来，方便用户感知"本应对照的是哪条" — no-prev 时为 null 隐藏 */}
+      {prevCallId != null && (
+        <div style={{ fontSize: 10, color: "#9ca3af" }}>
+          {t("diff.vsCall")} <strong style={{ color: "#6b7280" }}>#{prevCallId}</strong>
+        </div>
+      )}
     </div>
   );
 }

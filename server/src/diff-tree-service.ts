@@ -103,11 +103,28 @@ export interface DiffSection {
   pins: PinInfo[];
 }
 
+/** 显式表达「diff 无法计算」的原因。null = 正常 diff。
+ *  下拉框落地后，前端可以根据 reason 决定 UI 行为（例如 "no-prev" 时默认选第一条对照、
+ *  "prev-not-captured" 时建议用户换一条对照对象等）。
+ *
+ *  - "no-prev"            : session / sub-agent 的第一条 call，无可对照
+ *  - "cur-not-captured"   : 当前 call 自己的 proxy reqBody 缺失（实际很难触达，因为
+ *                           AttributionTree 同样依赖它，会先于此报错；保留以兜底独立使用）
+ *  - "prev-not-captured"  : 上一条 call 的 proxy reqBody 缺失（最常见 — 用户没开 proxy
+ *                           抓包，或者那条恰好没记录）
+ *  - "prev-parse-failed"  : 上一条 reqBody 在 parse 阶段抛错 */
+export type DiffUnavailableReason =
+  | "no-prev"
+  | "cur-not-captured"
+  | "prev-not-captured"
+  | "prev-parse-failed";
+
 export interface DiffTreeResult {
   callId: number;
   sessionId: string;
   prevCallId: number | null;
-  /** 各 section 的 diff；未变 / 无内容的 section 不出现 */
+  /** 各 section 的 diff；未变 / 无内容的 section 不出现。
+   *  unavailableReason 非 null 时一律为空 — 不要 fallback 成 "全 added" */
   sections: DiffSection[];
   /** 顶层 summary，方便前端直接展示 */
   summary: {
@@ -121,7 +138,11 @@ export interface DiffTreeResult {
     /** git 风格：删除字符总数（removed 全量 + modified 中 oldCharCount） */
     deletedChars: number;
   };
-  /** 错误信息（reqBody 缺失 / 解析失败等） */
+  /** Diff 不可用时填该字段，前端据此切到占位渲染（避免 prev 缺失被误读成 "全 added"）。
+   *  正常 diff 时为 null。 */
+  unavailableReason: DiffUnavailableReason | null;
+  /** 附加诊断信息（parse 异常 message 等）。不参与前端分支判断 — 分支只看
+   *  unavailableReason。 */
   error?: string;
 }
 
@@ -148,6 +169,12 @@ export async function loadDiffTree(
       prevCall: { id: number; timestamp: string; apiRequestId: string | null } | null;
     } | null;
   },
+  /** 未来用：让调用方指定一个非默认的对照 call（下拉框场景）。
+   *  当前 HTTP 层不暴露此参数，签名保留以避免后续改动炸开 callsite。
+   *    - undefined : 走 resolveCallMeta 默认的 prev（前一条）
+   *    - null      : 显式 "不要 diff"（直接返回 no-prev）
+   *    - number    : 拿那条 callId 作为对照 — 需 resolveCallMeta 能解析到 */
+  _opts?: { desiredPrevCallId?: number | null },
 ): Promise<DiffTreeResult> {
   const emptySummary = {
     addedCount: 0, removedCount: 0, modifiedCount: 0, keptCount: 0,
@@ -156,7 +183,12 @@ export async function loadDiffTree(
 
   const meta = helpers.resolveCallMeta(sessionId, callId);
   if (!meta) {
-    return { callId, sessionId, prevCallId: null, sections: [], summary: emptySummary, error: "call not found" };
+    return {
+      callId, sessionId, prevCallId: null,
+      sections: [], summary: emptySummary,
+      unavailableReason: "cur-not-captured",
+      error: "call not found",
+    };
   }
 
   const proxy = await helpers.fetchProxyReqBodyAt(
@@ -167,7 +199,19 @@ export async function loadDiffTree(
       callId, sessionId,
       prevCallId: meta.prevCall?.id ?? null,
       sections: [], summary: emptySummary,
+      unavailableReason: "cur-not-captured",
       error: "proxy reqBody unavailable for this call",
+    };
+  }
+
+  // session/sub-agent 的第一条 — 无可对照，直接返回 no-prev 占位。
+  // 不再 fallback 成 "全 added"，避免 UI 误读为 "整段新增"。
+  if (!meta.prevCall) {
+    return {
+      callId, sessionId,
+      prevCallId: null,
+      sections: [], summary: emptySummary,
+      unavailableReason: "no-prev",
     };
   }
 
@@ -190,33 +234,50 @@ export async function loadDiffTree(
       callId, sessionId,
       prevCallId: meta.prevCall?.id ?? null,
       sections: [], summary: emptySummary,
+      // cur snapshot 解析失败属于 cur 侧问题 — 用 cur-not-captured 兜底。
+      unavailableReason: "cur-not-captured",
       error: err instanceof Error ? err.message : String(err),
     };
   }
 
   // —— previous snapshot（不需 jsonl-linker，仅 parseQuery + attributeSnapshot）—— //
-  let prevSnapshot: ParsedQuerySnapshot | null = null;
-  if (meta.prevCall) {
-    const prevProxy = await helpers.fetchProxyReqBodyAt(
-      sessionId,
-      meta.prevCall.timestamp,
-      proxy.proxyRequestId ?? undefined,
-      meta.prevCall.apiRequestId,
-    );
-    if (prevProxy?.reqBody) {
-      try {
-        const snap = parseQuery({
-          reqBody: prevProxy.reqBody as Parameters<typeof parseQuery>[0]["reqBody"],
-          proxyFile: `proxy:${prevProxy.proxyRequestId ?? "prev"}`,
-          reqHeaders: prevProxy.reqHeaders,
-          ts: prevProxy.startedAt,
-        });
-        attributeSnapshot(snap);
-        prevSnapshot = snap;
-      } catch {
-        prevSnapshot = null;
-      }
-    }
+  // meta.prevCall 已在上面 narrow 过非空，下面三种"prev 不可用"全部走显式占位，
+  // 不再 silent fallback 到 prevSnapshot=null + computeTreeDiff（那条路径会把所有
+  // leaves 标 added，UI 一片绿，且 prevCallId 仍指向那条 call —— 用户看着像有对照
+  // 实际没有，是这次要修的"假绿"bug）。
+  const prevProxy = await helpers.fetchProxyReqBodyAt(
+    sessionId,
+    meta.prevCall.timestamp,
+    proxy.proxyRequestId ?? undefined,
+    meta.prevCall.apiRequestId,
+  );
+  if (!prevProxy?.reqBody) {
+    return {
+      callId, sessionId,
+      prevCallId: meta.prevCall.id,
+      sections: [], summary: emptySummary,
+      unavailableReason: "prev-not-captured",
+    };
+  }
+
+  let prevSnapshot: ParsedQuerySnapshot;
+  try {
+    const snap = parseQuery({
+      reqBody: prevProxy.reqBody as Parameters<typeof parseQuery>[0]["reqBody"],
+      proxyFile: `proxy:${prevProxy.proxyRequestId ?? "prev"}`,
+      reqHeaders: prevProxy.reqHeaders,
+      ts: prevProxy.startedAt,
+    });
+    attributeSnapshot(snap);
+    prevSnapshot = snap;
+  } catch (err) {
+    return {
+      callId, sessionId,
+      prevCallId: meta.prevCall.id,
+      sections: [], summary: emptySummary,
+      unavailableReason: "prev-parse-failed",
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 
   const diff = computeTreeDiff(curSnapshot, prevSnapshot);
@@ -245,9 +306,10 @@ export async function loadDiffTree(
   return {
     callId,
     sessionId,
-    prevCallId: meta.prevCall?.id ?? null,
+    prevCallId: meta.prevCall.id,
     sections,
     summary,
+    unavailableReason: null,
   };
 }
 

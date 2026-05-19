@@ -52,10 +52,23 @@ export interface DiffSection {
   pins: PinInfo[];
 }
 
+/** 显式表达「diff 无法计算」的原因。null = 正常 diff。镜像 server。
+ *
+ *  - "no-prev"           : session/sub-agent 第一条 call
+ *  - "cur-not-captured"  : 当前 call 自己的 proxy reqBody 缺失
+ *  - "prev-not-captured" : 上一条 call 的 proxy reqBody 缺失（最常见 — 用户没开 proxy）
+ *  - "prev-parse-failed" : 上一条 reqBody parse 阶段抛错 */
+export type DiffUnavailableReason =
+  | "no-prev"
+  | "cur-not-captured"
+  | "prev-not-captured"
+  | "prev-parse-failed";
+
 export interface DiffTreeResult {
   callId: number;
   sessionId: string;
   prevCallId: number | null;
+  /** unavailableReason 非 null 时一律为空数组。 */
   sections: DiffSection[];
   summary: {
     addedCount: number;
@@ -66,5 +79,8 @@ export interface DiffTreeResult {
     insertedChars: number;
     deletedChars: number;
   };
+  /** Diff 不可用时按此 reason 切占位渲染；正常 diff 时为 null。 */
+  unavailableReason: DiffUnavailableReason | null;
+  /** 附加诊断信息（parse 异常等）。不参与前端分支判断。 */
   error?: string;
 }

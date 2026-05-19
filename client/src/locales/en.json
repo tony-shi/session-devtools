@@ -335,6 +335,12 @@
       "blockChars": "block chars",
       "prefixChars": "cumulative prefix chars (tools→sys→msgs)",
       "explanation": "Anthropic writes one cache entry covering the entire prefix from request start to this position. On subsequent matching requests, the full prefix is billed as cache_read."
+    },
+    "unavailable": {
+      "noPrev": "This is the first call of the session — nothing to diff against.",
+      "prevNotCaptured": "Previous request was not captured — diff unavailable.",
+      "curNotCaptured": "This request was not captured — diff unavailable.",
+      "prevParseFailed": "Failed to parse previous request — diff unavailable."
     }
   },
   "cache": {
