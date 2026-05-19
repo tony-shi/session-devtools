@@ -329,7 +329,7 @@ export class SessionsV2Controller {
     ) => {
       // Always use the parent session id for proxy lookup — sub-agent proxy
       // rows landed under the parent session_id.
-      const proxyRow = findProxyRowForCall(db, id, apiRequestId ?? undefined, excludeProxyId);
+      const proxyRow = findProxyRowForCall(db, id, apiRequestId ?? undefined, excludeProxyId, ts);
       if (!proxyRow) return null;
       const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
       const reqBodyStr = rec?.reqBody as string | undefined;
@@ -393,7 +393,7 @@ export class SessionsV2Controller {
         };
       },
       fetchProxyReqBodyAt: async (_sid, ts, excludeProxyId, apiRequestId) => {
-        const proxyRow = findProxyRowForCall(db, id, apiRequestId, excludeProxyId);
+        const proxyRow = findProxyRowForCall(db, id, apiRequestId, excludeProxyId, ts);
         if (!proxyRow) return null;
         const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
         const reqBodyStr = rec?.reqBody as string | undefined;
@@ -550,7 +550,7 @@ export class SessionsV2Controller {
       proxyRequestId: number | null;
       startedAt: string;
     } | null> => {
-      const proxyRow = findProxyRowForCall(db, sid, apiRequestId ?? undefined, excludeProxyId);
+      const proxyRow = findProxyRowForCall(db, sid, apiRequestId ?? undefined, excludeProxyId, ts);
       if (!proxyRow) return null;
       const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
       const reqBodyStr = rec?.reqBody as string | undefined;
@@ -654,7 +654,7 @@ export class SessionsV2Controller {
           };
         },
         fetchProxyReqBodyAt: async (sid, ts, excludeProxyId, apiRequestId) => {
-          const proxyRow = findProxyRowForCall(db, sid, apiRequestId, excludeProxyId);
+          const proxyRow = findProxyRowForCall(db, sid, apiRequestId, excludeProxyId, ts);
           if (!proxyRow) return null;
           const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
           const reqBodyStr = rec?.reqBody as string | undefined;
@@ -712,7 +712,7 @@ export class SessionsV2Controller {
         };
       },
       fetchProxyReqBodyAt: async (sid, ts, excludeProxyId, apiRequestId) => {
-        const proxyRow = findProxyRowForCall(db, sid, apiRequestId, excludeProxyId);
+        const proxyRow = findProxyRowForCall(db, sid, apiRequestId, excludeProxyId, ts);
         if (!proxyRow) return null;
 
         const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);

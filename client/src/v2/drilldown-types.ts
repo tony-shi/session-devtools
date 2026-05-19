@@ -130,11 +130,12 @@ export interface LlmCall {
   // null when no proxy record matches this call
   proxy: ProxyCallData | null;
 
-  // Quality of this call's proxy ↔ JSONL link. 'exact' = matched on
-  // Anthropic request-id; 'unmatched' = JSONL missing requestId, or no proxy
-  // row with that id. Time-window fallback was removed because it routinely
-  // mis-attributes sub-agent / background-probe traffic to the wrong call.
-  proxyMatchMode: "exact" | "unmatched";
+  // Quality of this call's proxy ↔ JSONL link.
+  //   'exact'       — matched on Anthropic request-id (1:1, trustworthy)
+  //   'time-window' — JSONL has no requestId (典型：代理站剥掉了 request-id header)，
+  //                   按 (session_id, 最近 started_at) 兜底；sub-agent 并发场景下可能错挂
+  //   'unmatched'   — neither matched
+  proxyMatchMode: "exact" | "time-window" | "unmatched";
 
   // Sub-agents spawned by this call (one per Agent tool_use; usually 0-1, rarely >1)
   subAgents: SubAgentSummary[];
@@ -269,8 +270,8 @@ export interface CallDetail {
   callId: number;
   sessionId: string;
   proxyRequestId: number | null;
-  // 'exact' = matched on Anthropic request-id; 'unmatched' = no row found.
-  proxyMatchMode: "exact" | "unmatched";
+  // See drilldown-types Call.proxyMatchMode for semantics.
+  proxyMatchMode: "exact" | "time-window" | "unmatched";
 
   model: string;
   stopReason: string | null;

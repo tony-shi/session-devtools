@@ -24,12 +24,15 @@ export interface CallDetailTokens {
 }
 
 // Per-call proxy linking quality.
-//   'exact'     — JSONL.requestId matched proxy_requests.request_id (1:1, trustworthy)
-//   'unmatched' — no proxy row found (either JSONL has no requestId, or proxy has
-//                 no matching row). Time-window heuristics are intentionally NOT
-//                 used: they routinely mis-attribute background probes / parallel
-//                 sub-agent traffic to the wrong call.
-export type ProxyMatchMode = "exact" | "unmatched";
+//   'exact'       — JSONL.requestId matched proxy_requests.request_id (1:1, trustworthy)
+//   'time-window' — JSONL has no requestId (典型：经代理站，Anthropic 的 request-id header
+//                   被剥掉两端都空)，按 (session_id, 最近 started_at) 兜底匹配。临时开放，
+//                   sub-agent 并发场景下可能错挂——可接受。
+//   'unmatched'   — no proxy row found.
+export type ProxyMatchMode = "exact" | "time-window" | "unmatched";
+
+// 时间窗兜底容差。代理站常带可观察的延迟（排队 / 转发 / 重试），所以放到 ±60s。
+const TIME_WINDOW_TOLERANCE_MS = 60_000;
 
 export interface CallDetail {
   callId: number;
@@ -117,36 +120,68 @@ interface ProxyRow {
   jsonl_byte_offset: number;
   req_headers: string | null;
   started_at: string | null;
+  matchMode: ProxyMatchMode;  // "exact" | "time-window" — 调用方据此打 badge
 }
 
-// Look up the proxy row for a JSONL call by exact Anthropic `request-id`.
+// Look up the proxy row for a JSONL call.
 //
-//   JSONL assistant event 顶层 `requestId` ⇄ proxy_requests.request_id
-//   （从 resHeaders["request-id"] 抽出）。1:1 确定性匹配。
+// 优先级：
+//   1. Exact —— JSONL assistant.requestId ⇄ proxy_requests.request_id
+//      （proxy 从 resHeaders["request-id"] 抽出）。1:1 确定性匹配。
+//   2. Time-window 兜底 —— 仅当 JSONL 这边没有 requestId 时启用。代理站通常会
+//      剥掉 Anthropic 的 request-id 响应头，于是两端对称失明；这种情况下按
+//      (session_id, 最近 started_at) 匹配总比直接 unmatched 强。容差 ±60s。
+//      已知风险：sub-agent 与主会话共用 session_id 时可能错挂；临时开放。
 //
-// 没有 requestId（旧版本 Claude Code 或某些 gateway 不透传 request-id）一律
-// 返回 null —— 不再走 timestamp 兜底，宁可显示"无 proxy"也不接受可能错误
-// 的归因（典型坑：sub-agent 与主会话共用 session_id，时间窗会把并行 sub-agent
-// 的请求错挂到主 call 上）。
+// 当 JSONL 有 requestId 但找不到对应 proxy 行时，**不**走时间窗——这种情形要
+// 么是 proxy 还没 ingest 完，要么是真的错配，再兜底反而会污染归因。
 export function findProxyRowForCall(
   db: Database,
   sessionId: string,
   apiRequestId: string | null | undefined,
   excludeProxyId?: number,
+  callTimestamp?: string | null,
 ): ProxyRow | null {
-  if (!apiRequestId) return null;
-  const row = db.prepare(`
+  // 1. Exact match path
+  if (apiRequestId) {
+    const row = db.prepare(`
+      SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
+      FROM proxy_requests
+      WHERE session_id = ? AND request_id = ?
+      ${excludeProxyId !== undefined ? "AND id != ?" : ""}
+      LIMIT 1
+    `).get(
+      ...(excludeProxyId !== undefined
+        ? [sessionId, apiRequestId, excludeProxyId]
+        : [sessionId, apiRequestId])
+    ) as Omit<ProxyRow, "matchMode"> | undefined;
+    if (row) return { ...row, matchMode: "exact" };
+    return null;
+  }
+
+  // 2. Time-window fallback — only when JSONL has no requestId.
+  if (!callTimestamp) return null;
+  const callTsMs = Date.parse(callTimestamp);
+  if (!Number.isFinite(callTsMs)) return null;
+
+  const rows = db.prepare(`
     SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
     FROM proxy_requests
-    WHERE session_id = ? AND request_id = ?
+    WHERE session_id = ? AND started_at IS NOT NULL
     ${excludeProxyId !== undefined ? "AND id != ?" : ""}
-    LIMIT 1
-  `).get(
-    ...(excludeProxyId !== undefined
-      ? [sessionId, apiRequestId, excludeProxyId]
-      : [sessionId, apiRequestId])
-  ) as ProxyRow | undefined;
-  return row ?? null;
+  `).all(
+    ...(excludeProxyId !== undefined ? [sessionId, excludeProxyId] : [sessionId])
+  ) as Array<Omit<ProxyRow, "matchMode">>;
+
+  let best: { row: Omit<ProxyRow, "matchMode">; delta: number } | null = null;
+  for (const r of rows) {
+    const t = Date.parse(r.started_at!);
+    if (!Number.isFinite(t)) continue;
+    const delta = Math.abs(t - callTsMs);
+    if (delta > TIME_WINDOW_TOLERANCE_MS) continue;
+    if (!best || delta < best.delta) best = { row: r, delta };
+  }
+  return best ? { ...best.row, matchMode: "time-window" } : null;
 }
 
 // Batch classifier for the session drilldown. One SQL query loads every
@@ -161,13 +196,48 @@ export function computeCallProxyMatchModes(
   if (calls.length === 0) return result;
 
   const rows = db.prepare(`
-    SELECT request_id FROM proxy_requests
-    WHERE session_id = ? AND request_id IS NOT NULL
-  `).all(sessionId) as Array<{ request_id: string }>;
+    SELECT request_id, started_at FROM proxy_requests
+    WHERE session_id = ?
+  `).all(sessionId) as Array<{ request_id: string | null; started_at: string | null }>;
 
-  const byRequestId = new Set<string>(rows.map((r) => r.request_id));
+  const byRequestId = new Set<string>();
+  const sortedTsMs: number[] = [];
+  for (const r of rows) {
+    if (r.request_id) byRequestId.add(r.request_id);
+    if (r.started_at) {
+      const t = Date.parse(r.started_at);
+      if (Number.isFinite(t)) sortedTsMs.push(t);
+    }
+  }
+  sortedTsMs.sort((a, b) => a - b);
+
   for (const c of calls) {
-    result.set(c.id, c.apiRequestId && byRequestId.has(c.apiRequestId) ? "exact" : "unmatched");
+    if (c.apiRequestId && byRequestId.has(c.apiRequestId)) {
+      result.set(c.id, "exact");
+      continue;
+    }
+    if (!c.apiRequestId && sortedTsMs.length > 0) {
+      const callTsMs = Date.parse(c.timestamp);
+      if (Number.isFinite(callTsMs)) {
+        // 二分找最近 started_at
+        let lo = 0, hi = sortedTsMs.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (sortedTsMs[mid]! < callTsMs) lo = mid + 1; else hi = mid;
+        }
+        const candidates: number[] = [];
+        if (lo < sortedTsMs.length) candidates.push(sortedTsMs[lo]!);
+        if (lo > 0) candidates.push(sortedTsMs[lo - 1]!);
+        const bestDelta = candidates.length > 0
+          ? Math.min(...candidates.map((t) => Math.abs(t - callTsMs)))
+          : Infinity;
+        if (bestDelta <= TIME_WINDOW_TOLERANCE_MS) {
+          result.set(c.id, "time-window");
+          continue;
+        }
+      }
+    }
+    result.set(c.id, "unmatched");
   }
   return result;
 }
@@ -189,11 +259,11 @@ export async function loadCallDetail(
     model: callModel, stopReason: callStopReason, timestamp: callTimestamp,
     tokens: callTokens,
   };
-  const proxyRow = findProxyRowForCall(db, sessionId, apiRequestId);
+  const proxyRow = findProxyRowForCall(db, sessionId, apiRequestId, undefined, callTimestamp);
   if (!proxyRow) return { ...base, proxyRequestId: null, proxyMatchMode: "unmatched", rawRequestJson: null };
 
   const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
-  if (!rec) return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: "exact", rawRequestJson: null };
+  if (!rec) return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: proxyRow.matchMode, rawRequestJson: null };
 
   const reqBody = rec.reqBody as string | undefined;
   let rawReqParsed: Record<string, unknown> | null = null;
@@ -201,5 +271,5 @@ export async function loadCallDetail(
     try { rawReqParsed = JSON.parse(reqBody) as Record<string, unknown>; }
     catch { /* not JSON */ }
   }
-  return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: "exact", rawRequestJson: rawReqParsed };
+  return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: proxyRow.matchMode, rawRequestJson: rawReqParsed };
 }

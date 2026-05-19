@@ -140,7 +140,7 @@ export interface LlmCall {
   // Quality of this call's proxy ↔ JSONL link. See call-detail.ts ProxyMatchMode.
   // Populated by sessionDrilldown after computeCallProxyMatchModes runs;
   // defaults to 'unmatched' in code paths that don't enrich (e.g. sub-agent stubs).
-  proxyMatchMode: "exact" | "unmatched";
+  proxyMatchMode: "exact" | "time-window" | "unmatched";
   // All sub-agents spawned by this call (one per Agent tool_use block; usually 0-1, rarely >1)
   subAgents: SubAgentSummary[];
   incomingDiff: DiffEntry[];
