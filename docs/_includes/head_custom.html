@@ -1,0 +1,102 @@
+{% assign docs_lang = "root" %}
+{% if page.url contains "/zh/" %}
+  {% assign docs_lang = "zh" %}
+{% elsif page.url contains "/en/" %}
+  {% assign docs_lang = "en" %}
+{% endif %}
+
+<style>
+  @media (min-width: 66.5rem) {
+    .side-bar {
+      width: 16.5rem;
+      min-width: 16.5rem;
+      align-items: stretch;
+    }
+
+    .side-bar + .main {
+      margin-left: 16.5rem;
+    }
+
+    .site-header,
+    .site-nav,
+    .site-footer {
+      width: 16.5rem;
+    }
+  }
+
+  @media (min-width: 50rem) {
+    .main {
+      max-width: none;
+      margin: 0;
+    }
+
+    .main-content-wrap {
+      max-width: 64rem;
+    }
+  }
+
+  {% if docs_lang == "zh" %}
+    .site-nav > ul.nav-list:first-child > li.nav-list-item:nth-child(2) {
+      display: none;
+    }
+    .site-nav > ul.nav-list:first-child > li.nav-list-item:nth-child(1) > .nav-list-expander,
+    .site-nav > ul.nav-list:first-child > li.nav-list-item:nth-child(1) > .nav-list-link {
+      display: none;
+    }
+    .site-nav > ul.nav-list:first-child > li.nav-list-item:nth-child(1) > ul.nav-list {
+      display: block;
+      padding-left: 0;
+    }
+  {% elsif docs_lang == "en" %}
+    .site-nav > ul.nav-list:first-child > li.nav-list-item:nth-child(1) {
+      display: none;
+    }
+    .site-nav > ul.nav-list:first-child > li.nav-list-item:nth-child(2) > .nav-list-expander,
+    .site-nav > ul.nav-list:first-child > li.nav-list-item:nth-child(2) > .nav-list-link {
+      display: none;
+    }
+    .site-nav > ul.nav-list:first-child > li.nav-list-item:nth-child(2) > ul.nav-list {
+      display: block;
+      padding-left: 0;
+    }
+  {% endif %}
+
+  .docs-language-switch {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin: 0 0.75rem;
+    white-space: nowrap;
+  }
+
+  .docs-language-switch a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2rem;
+    padding: 0 0.65rem;
+    border: 1px solid #eeebee;
+    border-radius: 0.375rem;
+    color: #5c5962;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  .docs-language-switch a:hover {
+    background: #f7f7f7;
+  }
+
+  .docs-language-switch a[aria-current="true"] {
+    border-color: #7253ed;
+    background: #f1edff;
+    color: #5e41d0;
+  }
+
+  @media (max-width: 50rem) {
+    .docs-language-switch {
+      order: 2;
+      width: 100%;
+      margin: 0.5rem 0 0;
+    }
+  }
+</style>

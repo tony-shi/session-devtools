@@ -1,0 +1,18 @@
+{% assign docs_lang = "root" %}
+{% assign zh_url = "/zh/" %}
+{% assign en_url = "/en/" %}
+
+{% if page.url contains "/zh/" %}
+  {% assign docs_lang = "zh" %}
+  {% assign en_url = page.url | replace_first: "/zh/", "/en/" %}
+  {% assign zh_url = page.url %}
+{% elsif page.url contains "/en/" %}
+  {% assign docs_lang = "en" %}
+  {% assign zh_url = page.url | replace_first: "/en/", "/zh/" %}
+  {% assign en_url = page.url %}
+{% endif %}
+
+<nav class="docs-language-switch" aria-label="Language">
+  <a href="{{ zh_url | relative_url }}" {% if docs_lang == "zh" %}aria-current="true"{% endif %}>中文</a>
+  <a href="{{ en_url | relative_url }}" {% if docs_lang == "en" %}aria-current="true"{% endif %}>EN</a>
+</nav>

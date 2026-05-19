@@ -12,11 +12,10 @@
 
 ![session-devtools hero demo](./docs/assets/hero.gif)
 
-> **你在看什么：** 一次含有 sub-agent 委派的 Claude Code session。
+> **你在看什么：** 一次含有sub-agent委派的Claude Code session。
 > Session 列表（token / call / tool 计数）→ turn 下钻 → sub-agent 父子边界 → 上下文归因 → call 间 diff。
-> 每一层都可点开。
 
-▶ 观看完整 60 秒 demo → [Bilibili](https://www.bilibili.com/video/REPLACE_ID) · [YouTube](https://youtu.be/REPLACE_ID)  
+▶ 观看完整DEMO → [Bilibili](https://www.bilibili.com/video/BV19eLA66EBb) · [YouTube](https://youtu.be/REPLACE_ID)  
 📖 **[产品说明：每个界面的含义 →](https://tony-shi.github.io/session-devtools/walkthrough)**
 
 ---
@@ -29,13 +28,12 @@
 
 ---
 
-**Claude Code 是宇宙飞船。我们做的是驾驶舱。**
 
-> "Claude Code 已经变成了一艘宇宙飞船，80% 的功能我根本用不到。基本上没有任何 harness 允许你检查与模型交互的每一个细节。"
+> "Claude Code 已经变成了一艘宇宙飞船，80% 的功能我根本用不到。基本上没有任何harness允许你检查与模型交互的每一个细节。"
 >
 > — Mario Zechner，[*What I learned building an opinionated and minimal coding agent*](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)
 
-`session-devtools` 就是那个 harness。
+**Claude Code 是宇宙飞船。`session-devtools`尝试构建驾驶舱仪表盘。**
 
 > **Alpha** · 当前仅支持 Claude Code 2.x · 本地运行 · 数据不出本机。
 
@@ -51,7 +49,6 @@
 - 十几次 **tool call**
 - 多个 **sub-agent** 在自己的上下文里探索
 - 悄悄注入的指令
-- 一次上下文压缩
 
 **把它当作浏览器 DevTools —— 但针对 LLM 交互。**
 
@@ -98,7 +95,7 @@ session-devtools
 ```text
 先计算当前仓库下，ls后多少文件？
 之后，分析仓库，回答以下问题：最重要的三个文件是什么？分别完成什么？
-不要进行代码修改！只输出结论
+不要进行代码修改！只输出结论！
 ```
 
 跑完后切回 `session-devtools`，依次看：
@@ -148,11 +145,10 @@ session-devtools --no-proxy
 
 ---
 
-## Alpha 阶段坦白
+## Alpha 阶段
 
 - **目前仅支持 Claude Code 2.x。** Codex / Gemini 暂未支持。
 - **归因**需要 MITM 代理（首次启动自动安装，可用 `--no-proxy` 关闭）。
-- **数据不上传云端。** 全部存放在本地 `~/.api-dashboard/sessions.db`。
 
 ---
 
@@ -161,7 +157,7 @@ session-devtools --no-proxy
 - Node.js v22+
 - Claude Code（用于 session 数据）
 
-Session 数据自动从 `~/.claude/projects/**/*.jsonl` 读取。
+Session数据自动从 `~/.claude/projects/**/*.jsonl` 读取。
 覆盖数据目录：`API_DASHBOARD_DIR=/your/path`。
 
 发布新版本后，`session-devtools` 在下次启动时会打印升级提示。
@@ -191,4 +187,4 @@ cd client && npm run lint
 
 > **Agent 驾驭 LLM。你驾驭 agent。**
 
-如果这个项目能帮到你，**点个 star**，在 [discussions](https://github.com/tony-shi/session-devtools/discussions) 里告诉我们你还想检查什么。
+如果这个项目能帮到你，**点个 star ^-^ **，在 [discussions](https://github.com/tony-shi/session-devtools/discussions) 里告诉我们你还想检查什么。
