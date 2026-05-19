@@ -459,6 +459,7 @@ export class SessionsV2Controller {
           nextCallId: next ? next.id : null,
           stopReason: cur.stopReason,
           outputTokens: cur.outputTokens,
+          callTimestamp: cur.timestamp,
         };
       },
     });
@@ -785,6 +786,7 @@ export class SessionsV2Controller {
           nextCallId: next ? next.id : null,
           stopReason: cur.stopReason,
           outputTokens: cur.outputTokens,
+          callTimestamp: cur.timestamp,
         };
       },
     });

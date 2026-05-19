@@ -9,6 +9,9 @@ server/src/proxy/dist/
 *.sqlite
 *.sqlite3
 
+# TypeScript incremental build cache (tsc --incremental / tsc -b)
+*.tsbuildinfo
+
 # Local config with secrets
 digest.cfg
 .env

@@ -27,7 +27,7 @@
 //   - 前端点击此指针 → 触发右侧 LinkedContextPanel 跳转到下游 call
 
 import type { Database } from "better-sqlite3";
-import { findProxyRowForCall, readProxyRecord } from "./call-detail.ts";
+import { findProxyRowForCall, readProxyRecord, type ProxyMatchHint } from "./call-detail.ts";
 import {
   parseSseText,
   reconstructAssistantMessage,
@@ -174,6 +174,8 @@ export interface LoadResponseTreeHelpers {
     nextCallId: number | null;
     stopReason: string | null;
     outputTokens: number;
+    /** JSONL assistant.timestamp。无 requestId 时供 proxy time-window 匹配用。 */
+    callTimestamp: string;
   } | null;
 }
 
@@ -318,13 +320,16 @@ interface ProxyLoadMiss {
 async function tryLoadFromProxy(
   db: Database,
   proxySessionId: string | null | undefined,
-  apiRequestId: string | null | undefined,
+  hint: ProxyMatchHint,
 ): Promise<ProxyLoadOk | ProxyLoadMiss> {
-  if (!proxySessionId || !apiRequestId) {
-    return { ok: false, reason: "missing apiRequestId or proxySessionId" };
+  if (!proxySessionId) return { ok: false, reason: "missing proxySessionId" };
+  // exact requestId 优先；缺失时 findProxyRowForCall 会用 callTimestamp +
+  // callOutputTokens 走 time-window 兜底（代理站剥掉 request-id 的常见场景）。
+  if (!hint.apiRequestId && !hint.callTimestamp) {
+    return { ok: false, reason: "no usable proxy match hint (apiRequestId + callTimestamp 都缺)" };
   }
-  const row = findProxyRowForCall(db, proxySessionId, { apiRequestId });
-  if (!row) return { ok: false, reason: "no proxy row matches request-id" };
+  const row = findProxyRowForCall(db, proxySessionId, hint);
+  if (!row) return { ok: false, reason: "no proxy row matches hint" };
 
   const rec = await readProxyRecord(row.jsonl_file, row.jsonl_byte_offset);
   if (!rec) return { ok: false, reason: "proxy record unreadable at offset" };
@@ -402,7 +407,11 @@ export async function loadResponseTree(
   };
 
   // 只走 proxy。缺数据直接返回 none + 原因，不做 jsonl 反向渲染。
-  const proxyResult = await tryLoadFromProxy(db, ctx.proxySessionId, ctx.apiRequestId);
+  const proxyResult = await tryLoadFromProxy(db, ctx.proxySessionId, {
+    apiRequestId: ctx.apiRequestId,
+    callTimestamp: ctx.callTimestamp,
+    callOutputTokens: ctx.outputTokens,
+  });
   if (!proxyResult.ok) {
     return {
       callId, sessionId,

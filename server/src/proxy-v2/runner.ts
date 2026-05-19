@@ -14,9 +14,23 @@ import { readSettings } from "./settings";
 // In bundled mode: proxy-server.js lives alongside server.js in dist/
 // In dev mode: proxy TS source is at server/src/proxy-v2/server/start.ts
 const PROXY_BUNDLE = join(import.meta.dirname, "proxy-server.js");
-// Dev mode paths (two levels up from server/src/proxy-v2/ → server/)
+// Dev mode paths
+//   - server root = server/                  (two levels up from server/src/proxy-v2/)
+//   - repo root   = <repo>/                  (three levels up, where workspaces hoist .bin)
+// 自 server 加入 npm workspaces 后，tsx 默认被 hoist 到 <repo>/node_modules/.bin/tsx；
+// 旧的 nested install (server/node_modules/.bin/tsx) 作为 fallback 兼容残留环境。
 const SERVER_ROOT = join(import.meta.dirname, "../..");
-const TSX_BIN = join(SERVER_ROOT, "node_modules/.bin/tsx");
+const REPO_ROOT = join(import.meta.dirname, "../../..");
+const TSX_CANDIDATES = [
+  join(REPO_ROOT, "node_modules/.bin/tsx"),
+  join(SERVER_ROOT, "node_modules/.bin/tsx"),
+];
+function resolveTsxBin(): string | null {
+  for (const p of TSX_CANDIDATES) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
 const TSCONFIG = join(SERVER_ROOT, "tsconfig.node.json");
 const SERVER_ENTRY = join(import.meta.dirname, "server/start.ts");
 const AMBIENT_PROXY_ENV_KEYS = [
@@ -62,18 +76,21 @@ export async function spawnProxy(port: number, log: (msg: string) => void): Prom
   }
 
   let spawnArgs: [string, string[]];
+  const tsxBin = resolveTsxBin();
   if (existsSync(PROXY_BUNDLE)) {
     // Published package: run pre-compiled JS bundle
     log("[runner] spawning proxy server via node (compiled bundle)...");
     spawnArgs = [process.execPath, [PROXY_BUNDLE, "--port", String(port)]];
-  } else if (existsSync(TSX_BIN) && existsSync(TSCONFIG)) {
+  } else if (tsxBin && existsSync(TSCONFIG)) {
     // Dev mode: run TypeScript source via tsx
     log("[runner] spawning proxy server via tsx (dev mode)...");
-    spawnArgs = [TSX_BIN, ["--tsconfig", TSCONFIG, SERVER_ENTRY, "--port", String(port)]];
+    spawnArgs = [tsxBin, ["--tsconfig", TSCONFIG, SERVER_ENTRY, "--port", String(port)]];
   } else {
     throw new Error(
-      `Proxy bundle not found at ${PROXY_BUNDLE} and tsx not found at ${TSX_BIN}.\n` +
-      `Run "npm run build" to compile the proxy bundle, or "cd server && npm install" for dev mode.`,
+      `Proxy bundle not found at ${PROXY_BUNDLE} ` +
+      `and tsx not found in any of: ${TSX_CANDIDATES.join(", ")}.\n` +
+      `Run "npm run build" to compile the proxy bundle, ` +
+      `or "npm install" from the repo root for dev mode.`,
     );
   }
 
