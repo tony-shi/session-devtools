@@ -1,6 +1,6 @@
 {
   "name": "session-devtools",
-  "version": "0.1.0-alpha.5",
+  "version": "0.1.0-alpha.6",
   "description": "Local devtools for AI coding sessions. Claude Code first.",
   "license": "MIT",
   "author": "tony-shi <realshihuashen@gmail.com>",
@@ -43,7 +43,7 @@
   "scripts": {
     "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
     "server:dev": "tsx --tsconfig server/tsconfig.node.json server/main.ts",
-    "client:dev": "bash scripts/wait-server.sh",
+    "client:dev": "npm run dev --workspace=client",
     "build": "npm run build:server && npm run build:client",
     "build:client": "cd client && npm run build && rm -rf ../dist/public && cp -r ../server/public ../dist/public",
     "build:server": "tsup",

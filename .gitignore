@@ -62,3 +62,5 @@ session-devtools-*.tgz
 # found-ground-info skill output
 tmp/
 .agents
+local-scripts
+server/scripts/
