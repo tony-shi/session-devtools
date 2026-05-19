@@ -323,7 +323,7 @@ async function tryLoadFromProxy(
   if (!proxySessionId || !apiRequestId) {
     return { ok: false, reason: "missing apiRequestId or proxySessionId" };
   }
-  const row = findProxyRowForCall(db, proxySessionId, apiRequestId);
+  const row = findProxyRowForCall(db, proxySessionId, { apiRequestId });
   if (!row) return { ok: false, reason: "no proxy row matches request-id" };
 
   const rec = await readProxyRecord(row.jsonl_file, row.jsonl_byte_offset);

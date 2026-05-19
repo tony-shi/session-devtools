@@ -37,11 +37,12 @@
     "node": ">=22.0.0"
   },
   "workspaces": [
-    "client"
+    "client",
+    "server"
   ],
   "scripts": {
-    "dev": "bash scripts/setup-env.sh && concurrently \"npm run server:dev\" \"npm run client:dev\"",
-    "server:dev": "server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json server/main.ts",
+    "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
+    "server:dev": "tsx --tsconfig server/tsconfig.node.json server/main.ts",
     "client:dev": "bash scripts/wait-server.sh",
     "build": "npm run build:server && npm run build:client",
     "build:client": "cd client && npm run build && rm -rf ../dist/public && cp -r ../server/public ../dist/public",
@@ -51,11 +52,11 @@
     "start": "node bin/session-devtools.js",
     "test": "cd server && npm test",
     "env:init": "[ -f .env ] || cp .env.example .env && echo 'Created .env from .env.example'",
-    "audit": "server/node_modules/.bin/tsx scripts/audit.ts",
-    "audit:json": "server/node_modules/.bin/tsx scripts/audit.ts --json",
-    "migrate:proxy-traffic": "server/node_modules/.bin/tsx scripts/migrate-proxy-traffic.ts",
-    "backfill:proxy-request-id": "server/node_modules/.bin/tsx scripts/backfill-proxy-request-id.ts",
-    "jsonl:coverage": "server/node_modules/.bin/tsx --tsconfig server/tsconfig.node.json scripts/jsonl-coverage-report.ts"
+    "audit": "tsx scripts/audit.ts",
+    "audit:json": "tsx scripts/audit.ts --json",
+    "migrate:proxy-traffic": "tsx scripts/migrate-proxy-traffic.ts",
+    "backfill:proxy-request-id": "tsx scripts/backfill-proxy-request-id.ts",
+    "jsonl:coverage": "tsx --tsconfig server/tsconfig.node.json scripts/jsonl-coverage-report.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",

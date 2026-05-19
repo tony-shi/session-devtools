@@ -4,6 +4,11 @@ dist/
 server/public/
 server/src/proxy/dist/
 
+# Local databases (各用户自己 ~/.api-dashboard/，不入 git)
+*.db
+*.sqlite
+*.sqlite3
+
 # Local config with secrets
 digest.cfg
 .env
@@ -28,7 +33,19 @@ docs/pr
 .claude/worktrees/
 .audit/
 dump-attr.ts
-scripts
+
+# 本地保留、不入 git 的 scripts 工具（一次性分析 / 内部诊断 / worktree 工具）
+scripts/analyze-message-requests.py
+scripts/context-char-diff.ts
+scripts/find-fixture-candidates.ts
+scripts/find-interjections.ts
+scripts/find-merge-n1-cases.ts
+scripts/find-queue-messages.ts
+scripts/proxy-rollback.sh
+scripts/sync-worktree-to-main.sh
+scripts/verify-rules-against-cli.ts
+scripts/verify-smoosh-coverage.ts
+scripts/jsonl-coverage-report.html
 
 .claude
 server/test/fixtures
