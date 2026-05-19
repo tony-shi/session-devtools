@@ -5736,12 +5736,10 @@ export function SessionDetailV2({ session, onClose }: Props) {
           // need":
           //   · linkedPanel open → widest (1560px) since right panel eats
           //     a big chunk
-          //   · subagent open → also widen (1480px) because the sub-agent
-          //     view now has its own 200px left nav + breadcrumb + amber
-          //     notice on top of the main canvas; with the default 1200px
-          //     cap, both the parent's left nav and the sub-agent's left
-          //     nav (400px combined) leave the call cards squeezed
-          //   · default (session / turn / call) → 1200px
+          //   · subagent open → 1480px because the sub-agent view has its
+          //     own 200px left nav + breadcrumb + amber notice
+          //   · default (session / turn / call) → 1480px so unified lens
+          //     view has room to breathe (旧版 1200 太挤；用户反馈调宽)
           // The viewport-relative form (calc(100vw - Npx)) is the lower
           // bound when the screen is narrow; the maxWidth caps it on a
           // wide screen so the drawer doesn't stretch to absurd widths.
@@ -5749,8 +5747,8 @@ export function SessionDetailV2({ session, onClose }: Props) {
             ? "calc(100vw - 64px)"
             : navLevel === "subagent"
               ? "calc(100vw - 96px)"
-              : "calc(100vw - 200px)",
-          maxWidth: linkedPanel ? 1560 : navLevel === "subagent" ? 1480 : 1200,
+              : "calc(100vw - 120px)",
+          maxWidth: linkedPanel ? 1560 : navLevel === "subagent" ? 1480 : 1480,
           height: "100%",
           background: "#fff",
           boxShadow: "-4px 0 24px rgba(0,0,0,0.12)",

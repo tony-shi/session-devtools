@@ -18,8 +18,10 @@ export const V2_PATHS = {
   history: join(V2_HOME, "history"),
 };
 
-const PROXY_SERVER_HOME = join(homedir(), ".api-dashboard", "proxy");
-const BACKUPS_HOME = join(homedir(), ".api-dashboard", "backups");
+const API_DASHBOARD_DIR =
+  process.env.API_DASHBOARD_DIR ?? join(homedir(), ".api-dashboard");
+const PROXY_SERVER_HOME = join(API_DASHBOARD_DIR, "proxy");
+const BACKUPS_HOME = join(API_DASHBOARD_DIR, "backups");
 
 export const PROXY_SERVER_PATHS = {
   home: PROXY_SERVER_HOME,

@@ -219,6 +219,8 @@ function MainSectionBar({
         // 点 leaf 由内部 FisheyeStrip 处理（带 stopPropagation，不会冒泡到这里），
         // 但 FisheyeStrip 的 onSelect 回调里也会顺便设 selectedSection。
         const frameColor = isSelectedSec ? sectionFrame.borderSelected : sectionFrame.border;
+        // 有 section 被选中时，其他同级 section 整体 dim，凸显"当前钻入的段"。
+        const dimByOtherSelected = selectedSection !== null && !isSelectedSec;
         return (
           <div
             key={s.id}
@@ -232,8 +234,9 @@ function MainSectionBar({
               borderRadius: 4,
               paddingTop: 8, // 给 label 浮出顶边留位
               background: "transparent",
-              transition: "border-color 0.15s",
+              transition: "border-color 0.15s, opacity 0.15s",
               cursor: "pointer",
+              opacity: dimByOtherSelected ? 0.35 : 1,
             }}
           >
             <span
@@ -453,6 +456,18 @@ export function AttributionTreeLensPanel({
 
   // 并行拉 diff-tree，用 leafId 把 diffKind 合并到 attribution leaves 上。
   // Diff lens / Diff 视角的双层 bar / Removed footer 都依赖这份数据。
+  //
+  // TODO(远 diff · 用户已确认采用方案 C): 当前 diffTree(sessionId, callId) 隐式
+  // 以「上一次 call」为 basis。用户需要支持「任选某个 call 作为 basis（含跨
+  // sub-agent）」。实施需要：
+  //   1. 后端 api：diffTree(sessionId, callId, basisCallId?) 接受可选 basis
+  //      （subAgentDiffTree 同步）
+  //   2. 后端实现：从 attribution snapshot 仓库取 basisCallId 的 snapshot，
+  //      做 diff（基础设施已具备）
+  //   3. 前端 UI：Diff lens pill 行右侧加 "vs #N" 下拉，列出所有可作为 basis
+  //      的 call（含 sub-agent call）
+  //   4. 前端 state：basisCallId 进入本组件 state，作为 useEffect 依赖
+  // 暂缓不实施（复杂度中等，先收敛当前 UI 体验）。
   const [diffData, setDiffData] = useState<import("./diff-tree-types").DiffTreeResult | null>(null);
   useEffect(() => {
     let cancelled = false;

@@ -579,6 +579,22 @@ export function SelectedDetail({ leaf, onLinkSource }: {
   // these differ; for tool_use they coincide.
   const { t } = useTranslation();
   const { flashEvent, flashCall, flashToolUse } = useAttributionGraph();
+  // copy 按钮的"已复制"短暂反馈状态。复制的内容是 rawText（完整原文）；
+  // 仅当后端未带 rawText 时 fallback 到 preview（截断版）。
+  const [copiedAt, setCopiedAt] = useState<number>(0);
+  const isCopied = copiedAt > 0 && Date.now() - copiedAt < 1500;
+  const fullContent = leaf.rawText ?? leaf.preview;
+  const isFullRaw = !!leaf.rawText;
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(fullContent).then(
+      () => {
+        setCopiedAt(Date.now());
+        setTimeout(() => setCopiedAt(0), 1500);
+      },
+      () => { /* clipboard API 不可用时静默 */ },
+    );
+  };
   const sourceTurnId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceTurnId : undefined;
   const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;
   const firstSeenInCall = leaf.origin.kind === "jsonl" ? leaf.origin.firstSeenInCall : undefined;
@@ -691,6 +707,44 @@ export function SelectedDetail({ leaf, onLinkSource }: {
         )}
         <span style={{ color: "#d1d5db" }}>·</span>
         <span style={{ color: "#6b7280", fontSize: 10 }}>{originSuffix}</span>
+        {/* copy 按钮：复制 leaf 的完整原文（rawText）。靠 marginLeft:auto 推到
+            右端；如果还有 jump 按钮，jump 紧跟其后排在更右。 */}
+        <button
+          type="button"
+          title={isFullRaw
+            ? `复制原文（${fullContent.length.toLocaleString()} 字符）`
+            : `复制（${fullContent.length.toLocaleString()} 字符 · 预览版，原文未提供）`}
+          onClick={handleCopy}
+          style={{
+            marginLeft: "auto",
+            display: "inline-flex", alignItems: "center", gap: 4,
+            border: "1px solid",
+            borderColor: isCopied ? "#16a34a" : "#d1d5db",
+            background: isCopied ? "#dcfce7" : "#fff",
+            color: isCopied ? "#15803d" : "#374151",
+            borderRadius: 4, fontSize: 10, fontWeight: 600,
+            padding: "2px 7px", cursor: "pointer", lineHeight: 1.3,
+            flexShrink: 0, whiteSpace: "nowrap",
+            transition: "background 0.12s, border-color 0.12s, color 0.12s",
+          }}
+        >
+          {isCopied ? (
+            <>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              已复制
+            </>
+          ) : (
+            <>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+              复制原文
+            </>
+          )}
+        </button>
         {handleJumpSource && (
           <button
             type="button"
@@ -699,7 +753,6 @@ export function SelectedDetail({ leaf, onLinkSource }: {
             onMouseEnter={(e) => { e.currentTarget.style.background = "#4338ca"; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = "#4f46e5"; }}
             style={{
-              marginLeft: "auto",
               display: "inline-flex", alignItems: "center", gap: 5,
               border: "none", background: "#4f46e5", color: "#fff",
               borderRadius: 4, fontSize: 10, fontWeight: 700,
