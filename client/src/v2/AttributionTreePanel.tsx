@@ -10,7 +10,7 @@
 //   - 点击 leaf bar / leaf 行 → 高亮该 leaf，并显示叶子详情。
 //   - 「← back」回到上一级。
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
 import { FisheyeStrip } from "./fisheye-strip";
@@ -400,14 +400,24 @@ export function LeafStrip({
         ]}
       />
 
-      {/* Strip — getLabel 返回 shortSlot；模块按段宽决定 inside / 隐藏。
+      {/* Strip — getLabel 返回 shortSlot；命中 skill_listing 的 leaf 显示
+          "Skills 注册" 友好标签。模块按段宽决定 inside / 隐藏。
           minCount=5 让 attribution leaves 天然开启鱼眼。 */}
       <FisheyeStrip<LeafItem>
         items={items}
         getColor={(it) => getColor ? getColor(it.leaf) : leafFill(it.leaf)}
         getUnderlineColor={getUnderlineColor ? (it) => getUnderlineColor(it.leaf) : undefined}
-        getLabel={(it) => shortSlot(it.leaf.slotType)}
-        getTitle={(it) => `${shortSlot(it.leaf.slotType)} · ${fmtK(it.leaf.charCount)} chars · ${originLabel(it.leaf.origin)}`}
+        getLabel={(it) => {
+          const sl = it.leaf.origin.kind === "rule" ? it.leaf.origin.payload?.skillListing : undefined;
+          return sl ? t("skillListing.title") : shortSlot(it.leaf.slotType);
+        }}
+        getTitle={(it) => {
+          const sl = it.leaf.origin.kind === "rule" ? it.leaf.origin.payload?.skillListing : undefined;
+          if (sl) {
+            return `${t("skillListing.title")} · ${t("skillListing.rowSuffix", { count: sl.entries.length })} · ${fmtK(it.leaf.charCount)} chars`;
+          }
+          return `${shortSlot(it.leaf.slotType)} · ${fmtK(it.leaf.charCount)} chars · ${originLabel(it.leaf.origin)}`;
+        }}
         height={SUB_BAR_HEIGHT}
         background="transparent"
         autoConfig={{ minCount: 5, clickableThresholdPx: 16 }}
@@ -488,7 +498,7 @@ function SectionTable({
 }
 
 export function LeafTable({
-  leaves, selectedId, onSelect, getColor, getBadges,
+  leaves, selectedId, onSelect, getColor, getBadges, totalContextChars,
 }: {
   leaves: LeafLite[];
   selectedId: string | null;
@@ -499,39 +509,70 @@ export function LeafTable({
   /** 每个 leaf 行末尾的额外 badge 列表，按 active lens 维度提供
    *  （Lens panel 用来表达 diff state / cache layer / audit 等附加属性）。 */
   getBadges?: (leaf: LeafLite) => Array<{ key: string; label: string; color: string; bg: string; border: string; title?: string }>;
+  /** 总 context 字节数。用于：skill_listing 行的 % 列显示"占 context X%"
+   *  而非 section-相对 %（这样既有的 LeafTable 行就充当了 meta header，
+   *  不需要在 SelectedDetail 里再叠一条额外的 bar）。 */
+  totalContextChars?: number;
 }) {
+  const { t } = useTranslation();
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const total = leaves.reduce((s, l) => s + l.charCount, 0);
   // 选中后只显示该 leaf 行，其他兄弟不再列出（避免与 SelectedDetail 重复信息）
   const visibleLeaves = selectedId ? leaves.filter((l) => l.nodeId === selectedId) : leaves;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {visibleLeaves.map((l) => {
-        const pct = total > 0 ? (l.charCount / total) * 100 : 0;
         const isSel = selectedId === l.nodeId;
         const fill = getColor ? getColor(l) : leafFill(l);
+        // 当 leaf 命中 skill_listing rule 时：
+        //   - 行标签换成"Skills 注册 · N 个"
+        //   - preview 清空（普通用户不关心 <system-reminder> 原文）
+        //   - % 列改为"占 context X%"（如果上游传了 totalContextChars），
+        //     与 SelectedDetail 想表达的"占 context 多少"对齐
+        //   - hover 这一行弹出 tooltip card（rule / 来源 / 解析状态）
+        const skillListing = l.origin.kind === "rule" ? l.origin.payload?.skillListing : undefined;
+        const rowLabel = skillListing
+          ? `${t("skillListing.rowLabel")} · ${t("skillListing.rowSuffix", { count: skillListing.entries.length })}`
+          : shortSlot(l.slotType);
+        const rowPreview = skillListing ? "" : l.preview;
+        const pct = skillListing && totalContextChars && totalContextChars > 0
+          ? (l.charCount / totalContextChars) * 100
+          : (total > 0 ? (l.charCount / total) * 100 : 0);
+        const showTooltip = !!skillListing && hoveredId === l.nodeId;
         return (
+          <div key={l.nodeId} style={{ position: "relative" }}>
           <button
-            key={l.nodeId}
             onClick={() => onSelect(l.nodeId)}
+            onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = "#f9fafb"; if (skillListing) setHoveredId(l.nodeId); }}
+            onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.background = "transparent"; if (skillListing) setHoveredId(null); }}
             style={{
               display: "flex", alignItems: "center", gap: 12,
               padding: "6px 8px",
               background: isSel ? "#eef2ff" : "transparent",
               border: "none", borderRadius: 4,
               cursor: "pointer", textAlign: "left",
+              width: "100%",
               transition: "background 0.1s",
             }}
-            onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = "#f9fafb"; }}
-            onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.background = "transparent"; }}
           >
             <span style={{ width: 8, height: 8, borderRadius: 2, background: fill, flexShrink: 0 }} />
-            <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 11, color: "#111827", minWidth: 180, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {shortSlot(l.slotType)}
+            <span style={{
+              fontFamily: skillListing ? undefined : "ui-monospace, SFMono-Regular, monospace",
+              fontSize: 11,
+              color: skillListing ? "#312e81" : "#111827",
+              fontWeight: skillListing ? 600 : undefined,
+              minWidth: 180, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>
+              {rowLabel}
             </span>
             <span style={{ fontSize: 11, color: "#374151", minWidth: 50 }}>{fmtK(l.charCount)}</span>
-            <span style={{ fontSize: 10, color: "#9ca3af", minWidth: 40 }}>{pct.toFixed(1)}%</span>
+            <span style={{ fontSize: 10, color: "#9ca3af", minWidth: 60 }}>
+              {skillListing && totalContextChars
+                ? `占 context ${pct.toFixed(1)}%`
+                : `${pct.toFixed(1)}%`}
+            </span>
             <span style={{ fontSize: 10, color: "#6b7280", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {l.preview}
+              {rowPreview}
             </span>
             {getBadges && getBadges(l).map((b) => (
               <span
@@ -550,18 +591,356 @@ export function LeafTable({
               </span>
             ))}
           </button>
+          {showTooltip && (
+            <SkillListingTooltipCard leaf={l} totalContextChars={totalContextChars} />
+          )}
+          </div>
         );
       })}
     </div>
   );
 }
 
+// ─── Skill listing 专属 leaf 详情 ──────────────────────────────────────────────
+//
+// 当 leaf.origin.kind==='rule' 且 origin.payload.skillListing 存在时，SelectedDetail
+// 走这个分支。完全取代通用 leaf 详情布局：不再展示 ruleId / jsonPath / confidence /
+// 字节数等技术 header；普通用户看到的只有"Skills 注册 · N 个"标题、解析后的 skill
+// 列表，以及一个右上角的 "原文 / 格式化" 切换按钮。技术元信息通过 hover meta 条触
+// 发的 tooltip card 提供（参考 token ledger 风格）。
+function SkillListingTooltipCard({
+  leaf,
+  totalContextChars,
+}: {
+  leaf: LeafLite;
+  totalContextChars?: number;
+}) {
+  const { t } = useTranslation();
+  if (leaf.origin.kind !== "rule" || !leaf.origin.payload?.skillListing) return null;
+  const sl = leaf.origin.payload.skillListing;
+  const path = leaf.jsonPath ? leaf.jsonPath.replace(/^reqBody\./, "") : leaf.slotType;
+  const size = fmtK(leaf.charCount);
+  const pct =
+    totalContextChars && totalContextChars > 0
+      ? ((leaf.charCount / totalContextChars) * 100).toFixed(1)
+      : null;
+  const parseStatusText =
+    sl.errorCount === 0
+      ? t("skillListing.tooltipAllParsed", { count: sl.entries.length })
+      : t("skillListing.tooltipPartialParsed", { ok: sl.successCount, err: sl.errorCount });
+
+  const sectionTitleStyle: React.CSSProperties = {
+    fontSize: 10,
+    color: "#6b7280",
+    fontWeight: 600,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    marginBottom: 4,
+  };
+  const valueStyle: React.CSSProperties = { fontSize: 12, color: "#1f2937", lineHeight: 1.55 };
+  const kvRowStyle: React.CSSProperties = { display: "flex", gap: 8, alignItems: "baseline" };
+  const kStyle: React.CSSProperties = { fontSize: 11, color: "#6b7280", minWidth: 64 };
+  const vStyle: React.CSSProperties = {
+    fontSize: 12,
+    color: "#1f2937",
+    fontFamily: "ui-monospace, SFMono-Regular, monospace",
+  };
+
+  return (
+    <div
+      role="tooltip"
+      style={{
+        position: "absolute",
+        top: "calc(100% + 6px)",
+        left: 0,
+        zIndex: 50,
+        width: 380,
+        background: "#fff",
+        border: "1px solid #e5e7eb",
+        borderRadius: 6,
+        boxShadow: "0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04)",
+        padding: 14,
+        pointerEvents: "none",
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#312e81", marginBottom: 10 }}>
+        {t("skillListing.tooltipTitle")}
+      </div>
+
+      <div style={{ marginBottom: 10 }}>
+        <div style={sectionTitleStyle}>{t("skillListing.tooltipParsedFrom")}</div>
+        <div style={valueStyle}>{t("skillListing.tooltipParsedFromValue")}</div>
+        <div style={{ ...kvRowStyle, marginTop: 4 }}>
+          <span style={kStyle}>{t("skillListing.tooltipPosition")}</span>
+          <span style={vStyle}>{path}</span>
+        </div>
+        <div style={kvRowStyle}>
+          <span style={kStyle}>{t("skillListing.tooltipSize")}</span>
+          <span style={vStyle}>
+            {t("skillListing.tooltipSizeValue", { size, count: sl.entries.length })}
+            {pct ? ` · ${pct}%` : ""}
+          </span>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 10 }}>
+        <div style={sectionTitleStyle}>{t("skillListing.tooltipDataSource")}</div>
+        <div style={{ ...valueStyle, fontSize: 11.5, color: "#374151" }}>
+          {t("skillListing.tooltipDataSourceValue")}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 10 }}>
+        <div style={sectionTitleStyle}>{t("skillListing.tooltipMatchedRule")}</div>
+        <div style={vStyle}>{leaf.origin.ruleId}</div>
+        <div style={kvRowStyle}>
+          <span style={kStyle}>{t("skillListing.tooltipConfidence")}</span>
+          <span style={vStyle}>{leaf.origin.confidence}</span>
+        </div>
+      </div>
+
+      <div>
+        <div style={sectionTitleStyle}>{t("skillListing.tooltipParseStatus")}</div>
+        <div
+          style={{
+            ...valueStyle,
+            color: sl.errorCount === 0 ? "#15803d" : "#b45309",
+            fontWeight: 500,
+          }}
+        >
+          {sl.errorCount === 0 ? "✓ " : "⚠ "}
+          {parseStatusText}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SkillListingDetail({
+  leaf,
+  totalContextChars,
+}: {
+  leaf: LeafLite;
+  totalContextChars?: number;
+}) {
+  const { t } = useTranslation();
+  const [mode, setMode] = useState<"parsed" | "raw">("parsed");
+  const [copied, setCopied] = useState(false);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+
+  if (leaf.origin.kind !== "rule" || !leaf.origin.payload?.skillListing) return null;
+  const sl = leaf.origin.payload.skillListing;
+  const fullText = leaf.rawText ?? leaf.preview;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(fullText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const sizeStr = fmtK(leaf.charCount);
+  const pct =
+    totalContextChars && totalContextChars > 0
+      ? ((leaf.charCount / totalContextChars) * 100).toFixed(1)
+      : null;
+  const metaText = pct
+    ? t("skillListing.detailMeta", {
+        title: t("skillListing.title"),
+        count: sl.entries.length,
+        size: sizeStr,
+        pct,
+      })
+    : t("skillListing.detailMetaNoCtx", {
+        title: t("skillListing.title"),
+        count: sl.entries.length,
+        size: sizeStr,
+      });
+
+  const toggleBtnStyle = (active: boolean): React.CSSProperties => ({
+    border: "1px solid #d1d5db",
+    background: active ? "#4338ca" : "#fff",
+    color: active ? "#fff" : "#374151",
+    padding: "1px 8px",
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: "pointer",
+    lineHeight: 1.4,
+    transition: "background 0.12s, color 0.12s",
+  });
+
+  return (
+    <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* 不再新增 meta 条 —— 直接复用上方 LeafTable 行作为标题 + 状态展示。
+          metaText 仍用于 a11y / 调试，不渲染。 */}
+      <span style={{ display: "none" }}>{metaText}</span>
+
+      {/* Toggle 行：sub bar 下面，content 右上角；按钮收紧 padding/height */}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+        <div style={{ display: "inline-flex", borderRadius: 4, overflow: "hidden" }}>
+          <button
+            type="button"
+            onClick={() => setMode("parsed")}
+            style={{
+              ...toggleBtnStyle(mode === "parsed"),
+              borderRadius: "4px 0 0 4px",
+            }}
+          >
+            {t("skillListing.toggleParsed")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("raw")}
+            style={{
+              ...toggleBtnStyle(mode === "raw"),
+              borderLeft: "none",
+              borderRadius: "0 4px 4px 0",
+            }}
+          >
+            {t("skillListing.toggleRaw")}
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={handleCopy}
+          style={{
+            border: "1px solid",
+            borderColor: copied ? "#16a34a" : "#d1d5db",
+            background: copied ? "#dcfce7" : "#fff",
+            color: copied ? "#15803d" : "#374151",
+            padding: "1px 8px",
+            fontSize: 11,
+            fontWeight: 600,
+            borderRadius: 4,
+            cursor: "pointer",
+            lineHeight: 1.4,
+          }}
+        >
+          {copied ? t("skillListing.copied") : t("skillListing.copyRaw")}
+        </button>
+      </div>
+
+      {/* Content */}
+      {mode === "parsed" ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "max-content 1fr",
+            columnGap: 16,
+            rowGap: 6,
+            padding: "10px 12px",
+            background: "#fafafa",
+            border: "1px solid #e5e7eb",
+            borderRadius: 4,
+          }}
+        >
+          {sl.entries.map((e, i) => (
+            <Fragment key={i}>
+              {e.parseError ? (
+                <>
+                  <span
+                    style={{
+                      fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                      fontSize: 12,
+                      color: "#9ca3af",
+                      fontStyle: "italic",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    ⚠ unparsed
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: "#9ca3af",
+                      fontStyle: "italic",
+                      lineHeight: 1.5,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                    }}
+                    title={e.rawLine}
+                  >
+                    {e.rawLine}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span
+                    style={{
+                      fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                      fontSize: 12.5,
+                      color: "#4338ca",
+                      fontWeight: 500,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {e.name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 12.5,
+                      color: e.description ? "#374151" : "#9ca3af",
+                      lineHeight: 1.5,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                    }}
+                    title={e.description ?? "(no description)"}
+                  >
+                    {e.description ?? "—"}
+                  </span>
+                </>
+              )}
+            </Fragment>
+          ))}
+        </div>
+      ) : (
+        <pre
+          style={{
+            margin: 0,
+            padding: "10px 12px",
+            background: "#fafafa",
+            border: "1px solid #e5e7eb",
+            borderRadius: 4,
+            fontSize: 11.5,
+            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+            color: "#1f2937",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            maxHeight: 480,
+            overflow: "auto",
+            lineHeight: 1.55,
+          }}
+        >
+          {fullText}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 // ─── 叶子详情 ───────────────────────────────────────────────────────────────
 
-export function SelectedDetail({ leaf, onLinkSource }: {
+export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
   leaf: LeafLite;
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
+  /** 总 context 字节数，用于在 skill_listing 等富展示中显示"占 context X%"。
+   *  缺省时富展示只显示绝对字符数，不显示百分比。 */
+  totalContextChars?: number;
 }) {
+  // 命中 skill_listing rule 时，走专属富展示，完全替换通用 leaf 详情布局。
+  if (leaf.origin.kind === "rule" && leaf.origin.payload?.skillListing) {
+    return <SkillListingDetail leaf={leaf} totalContextChars={totalContextChars} />;
+  }
+
   // Back-link target: open the Turn view (onLinkSource), then scroll to a
   // landing point that depends on the leaf's underlying event kind:
   //
@@ -767,6 +1146,10 @@ export function SelectedDetail({ leaf, onLinkSource }: {
           </button>
         )}
       </div>
+
+      {/* Skill listing 专属渲染已由 SelectedDetail 顶部的 SkillListingDetail
+          分支接管（命中 claude-code.messages.skill-listing.v1 时早 return），
+          此处通用布局只处理其他 leaf 类型。 */}
 
       {/* Content — sole focus of the rest of the panel. JSON-parseable
           payloads start in tree mode (toggle to raw available); prose
@@ -1110,11 +1493,12 @@ export function AttributionTreePanel({
             leaves={selectedStat.leaves}
             selectedId={selectedNodeId}
             onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
+            totalContextChars={totalChars}
           />
 
           {/* Layer 3: leaf detail（扁平展示） */}
           {selectedLeaf && sectionOf(selectedLeaf.rootSlotType) === selectedStat.id && (
-            <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} />
+            <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} totalContextChars={totalChars} />
           )}
         </>
       )}

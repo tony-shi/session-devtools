@@ -546,7 +546,7 @@ export function SegmentView({ seg }: { seg: EventSegment }) {
         }}>
           <JsonView
             value={seg.rawJson as object}
-            collapsed={2}
+            collapsed={false}
             displayDataTypes={false}
             displayObjectSize={false}
             enableClipboard

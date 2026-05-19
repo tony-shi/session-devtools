@@ -9,6 +9,7 @@
 import type { Confidence, SegmentCategory } from "../../types";
 import { SUPPORTED_CLAUDE_CODE_VERSION } from "../../rules/context-rule-registry";
 import type { ContextRule } from "../../rules/context-rule-registry";
+import { parseSkillListingBody } from "../../rules/skill-listing-parser";
 import type { SegmentNode } from "../types";
 import type { RuleEvaluation } from "./rule-evaluator";
 import type { RuleOrigin, DynamicFieldWithEvidence } from "./origin";
@@ -17,7 +18,31 @@ import type {
   CharCoverage,
   CharRange,
   SegmentAttribution,
+  SegmentAttributionPayload,
 } from "./types";
+
+// rule-specific 二次解析的 ruleId 白名单 + 派发逻辑
+// 命中这些 rule 时，resolver 调用对应 parser、把结构化结果挂到 SegmentAttribution.payload。
+// 其他 rule 命中时 payload 缺省，行为不变。
+const SKILL_LISTING_RULE_ID = "claude-code.messages.skill-listing.v1";
+
+function buildPayload(
+  rule: ContextRule,
+  evaluation: RuleEvaluation,
+  node: SegmentNode,
+): SegmentAttributionPayload | undefined {
+  if (rule.ruleId !== SKILL_LISTING_RULE_ID) return undefined;
+
+  // 取 (?<skillsBlock>...) 的捕获值与 segment 内偏移。
+  // 缺失任何一个都返回 undefined（rule 命中但 group 缺失，理论不会发生；防御性）。
+  const block = evaluation.dynamicFields?.find(f => f.name === "skillsBlock");
+  if (!block) return undefined;
+
+  const body = node.rawText.slice(block.charStart, block.charEnd);
+  return {
+    skillListing: parseSkillListingBody(body, block.charStart),
+  };
+}
 
 function fullRange(node: SegmentNode): CharRange | undefined {
   return node.rawText.length > 0 ? { start: 0, end: node.rawText.length } : undefined;
@@ -91,6 +116,7 @@ export function resolveFromEvaluation(
   // regex 子串、prefix 锚点匹配天然 partial。
   const cov = evaluation.charCoverage;
   const fullyCovered = cov.rawChars > 0 && cov.matchedChars === cov.rawChars;
+  const payload = buildPayload(rule, evaluation, node);
   const origin: RuleOrigin = {
     kind: "rule",
     ruleId: rule.ruleId,
@@ -98,6 +124,7 @@ export function resolveFromEvaluation(
     confidence,
     fullyCovered,
     ...(evaluation.dynamicFields ? { dynamicFields: evaluation.dynamicFields as DynamicFieldWithEvidence[] } : {}),
+    ...(payload ? { payload } : {}),
   };
   node.origin = origin;
 
@@ -112,6 +139,7 @@ export function resolveFromEvaluation(
     matchedRange: evaluation.matchedRange,
     charCoverage: evaluation.charCoverage,
     ...(evaluation.dynamicFields ? { dynamicFields: evaluation.dynamicFields } : {}),
+    ...(payload ? { payload } : {}),
     reconstructable: reconstructableFromRule(rule),
     confidence,
   };

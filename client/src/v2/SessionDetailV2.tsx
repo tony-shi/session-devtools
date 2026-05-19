@@ -4937,6 +4937,104 @@ function ProxyMissingEmptyState() {
   );
 }
 
+// ─── 原始数据 tab ─────────────────────────────────────────────────────────────
+
+function RawCopyButton({ text }: { text: string }) {
+  const [copiedAt, setCopiedAt] = useState<number>(0);
+  const isCopied = copiedAt > 0 && Date.now() - copiedAt < 1500;
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text).then(
+      () => { setCopiedAt(Date.now()); setTimeout(() => setCopiedAt(0), 1500); },
+      () => {},
+    );
+  };
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={isCopied ? "已复制" : "复制"}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 3,
+        border: "1px solid",
+        borderColor: isCopied ? "#16a34a" : "#d1d5db",
+        background: isCopied ? "#dcfce7" : "transparent",
+        color: isCopied ? "#15803d" : "#9ca3af",
+        borderRadius: 3, fontSize: 9, fontWeight: 600,
+        padding: "1px 6px", cursor: "pointer", lineHeight: 1.3,
+        flexShrink: 0,
+        transition: "background 0.12s, border-color 0.12s, color 0.12s",
+      }}
+      onMouseEnter={(e) => { if (!isCopied) { e.currentTarget.style.borderColor = "#9ca3af"; e.currentTarget.style.color = "#374151"; } }}
+      onMouseLeave={(e) => { if (!isCopied) { e.currentTarget.style.borderColor = "#d1d5db"; e.currentTarget.style.color = "#9ca3af"; } }}
+    >
+      {isCopied ? (
+        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      ) : (
+        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+      )}
+      {isCopied ? "已复制" : "复制"}
+    </button>
+  );
+}
+
+function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
+  call: MockLlmCall;
+  freshIn: number;
+  callDetail: CallDetail | null;
+  callDetailLoading: boolean;
+}) {
+  const { t } = useTranslation();
+  const jsonlText = JSON.stringify(
+    { call_id: call.id, index_in_turn: call.indexInTurn, model: call.model, timestamp: call.timestamp, usage: { context_size: call.contextSize, fresh_in: freshIn, cache_read: call.cacheRead, cache_write: call.cacheWrite, output_tokens: call.outputTokens }, stop_reason: call.stopReason, ...(call.proxy ? { proxy_request_id: call.proxy.requestId, duration_ms: call.proxy.durationMs } : {}) },
+    null, 2,
+  );
+  const requestText = callDetail?.rawRequestJson
+    ? JSON.stringify(callDetail.rawRequestJson, null, 2)
+    : null;
+
+  if (callDetailLoading) {
+    return <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>;
+  }
+
+  return (
+    <>
+      <div style={{ fontSize: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 6, padding: "5px 10px", marginBottom: 12, color: "#374151" }}>
+        Proxy — full request body available.
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          {t("terms.jsonlMetadata")}
+        </div>
+        <RawCopyButton text={jsonlText} />
+      </div>
+      <CodeBlock variant="json" style={{ marginBottom: 14 }}>
+        {jsonlText}
+      </CodeBlock>
+
+      {requestText && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              {t("terms.proxyRequestBody")}
+            </div>
+            <RawCopyButton text={requestText} />
+          </div>
+          <CodeBlock variant="json">
+            {requestText}
+          </CodeBlock>
+        </>
+      )}
+    </>
+  );
+}
+
 function LlmCallDetailPanel({
   call, prevCall, sessionId, agentFileId, mode = "main", requestedTab, jumpVersion,
   onShowTurnContext, onLinkCall, onLinkSource,
@@ -5255,29 +5353,12 @@ function LlmCallDetailPanel({
 
           {/* ══ Raw / Evidence ═══════════════════════════ */}
           {tab === "raw" && (
-            <div>
-              {callDetailLoading ? (
-                <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 6, padding: "5px 10px", marginBottom: 12, color: "#374151" }}>
-                    Proxy — full request body available.
-                  </div>
-                  <SectionLabel>{t("terms.jsonlMetadata")}</SectionLabel>
-                  <CodeBlock variant="json" style={{ marginBottom: 14 }}>
-                    {JSON.stringify({ call_id: call.id, index_in_turn: call.indexInTurn, model: call.model, timestamp: call.timestamp, usage: { context_size: call.contextSize, fresh_in: freshIn, cache_read: call.cacheRead, cache_write: call.cacheWrite, output_tokens: call.outputTokens }, stop_reason: call.stopReason, ...(call.proxy ? { proxy_request_id: call.proxy.requestId, duration_ms: call.proxy.durationMs } : {}) }, null, 2)}
-                  </CodeBlock>
-                  {callDetail?.rawRequestJson && (
-                    <>
-                      <SectionLabel>{t("terms.proxyRequestBody")}</SectionLabel>
-                      <CodeBlock variant="json">
-                        {JSON.stringify(callDetail.rawRequestJson, null, 2)}
-                      </CodeBlock>
-                    </>
-                  )}
-                </>
-              )}
-            </div>
+            <RawTab
+              call={call}
+              freshIn={freshIn}
+              callDetail={callDetail}
+              callDetailLoading={callDetailLoading}
+            />
           )}
           </div>
         </>

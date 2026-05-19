@@ -73,10 +73,30 @@ export interface SegmentAttribution {
   charCoverage: CharCoverage;
   /** regex 命名捕获组的值与 rawText 偏移。 */
   dynamicFields?: DynamicField[];
+  /**
+   * 特定 rule 命中后产出的结构化二次解析结果。每个 rule 自己决定 payload 形态；
+   * 命中其他 rule 时该字段缺省。可选字段，不破坏既有 SegmentAttribution 消费方。
+   *
+   * 设计动机：DynamicField 是 regex 单次命中的扁平 key-value，无法表达
+   * "一段正文里 N 条同构子项"（如 skill_listing 的 N 个 skill）。后端在 resolver
+   * 阶段对若干 rule 做二次解析，把结构化结果挂在这里，前端直接 consume。
+   */
+  payload?: SegmentAttributionPayload;
   /** 能否按当前 rule/fallback 逐字节重建该节点。 */
   reconstructable: boolean;
   /** 单一置信度，表达分类识别本身的确信度。 */
   confidence: Confidence;
+}
+
+/**
+ * SegmentAttributionPayload：rule-specific 二次解析输出的可辨别联合。
+ *
+ * 每个键对应一种 rule 的结构化结果；缺省时表示该 rule 未命中或未启用二次解析。
+ * 新增 payload 类型时，在这里加一个键，对应 rule 命中时填充。
+ */
+export interface SegmentAttributionPayload {
+  /** rule = claude-code.messages.skill-listing.v1 命中时填充。 */
+  skillListing?: import("../../rules/skill-listing-parser").SkillListingPayload;
 }
 
 // ── AttributionCoverage：字符级桶统计 ───────────────────────────────────────

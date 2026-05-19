@@ -64,14 +64,31 @@
     "pairCount": "，共 {{count}} 对对话"
   },
   "metrics": {
-    "freshInput":   { "tooltip": "未命中缓存、也没有写入缓存的输入 token —— 即 API 的 usage.input_tokens 字段，按 1× 标准价计费。对应 `claude /cost` 输出里的 'input' 那一列。" },
-    "cacheRead":    { "tooltip": "本次从缓存命中并复用的输入 token。命中越多，成本和延迟越低。" },
-    "cacheWrite":   { "tooltip": "本次写入缓存、供后续请求复用的 token。独立计费项，不归入输入也不归入输出。" },
-    "output":       { "tooltip": "模型本次生成的 token，是影响延迟尾部的主要因素之一。" },
-    "contextUsed":  { "tooltip": "本次调用放入模型窗口的 token 数，不等于计费 token。" },
-    "contextDelta": { "tooltip": "相对上一次 call 增加的上下文量，用于定位「哪一步把窗口撑大」。" },
-    "peakContext":  { "tooltip": "本 session 或 turn 内观测到的最大上下文占用。" },
-    "cacheRatio":   { "label": "缓存命中率", "tooltip": "cache_read / (input + cache_read + cache_write)，越高说明缓存利用越充分。" }
+    "freshInput": {
+      "tooltip": "未命中缓存、也没有写入缓存的输入 token —— 即 API 的 usage.input_tokens 字段，按 1× 标准价计费。对应 `claude /cost` 输出里的 'input' 那一列。"
+    },
+    "cacheRead": {
+      "tooltip": "本次从缓存命中并复用的输入 token。命中越多，成本和延迟越低。"
+    },
+    "cacheWrite": {
+      "tooltip": "本次写入缓存、供后续请求复用的 token。独立计费项，不归入输入也不归入输出。"
+    },
+    "output": {
+      "tooltip": "模型本次生成的 token，是影响延迟尾部的主要因素之一。"
+    },
+    "contextUsed": {
+      "tooltip": "本次调用放入模型窗口的 token 数，不等于计费 token。"
+    },
+    "contextDelta": {
+      "tooltip": "相对上一次 call 增加的上下文量，用于定位「哪一步把窗口撑大」。"
+    },
+    "peakContext": {
+      "tooltip": "本 session 或 turn 内观测到的最大上下文占用。"
+    },
+    "cacheRatio": {
+      "label": "缓存命中率",
+      "tooltip": "cache_read / (input + cache_read + cache_write)，越高说明缓存利用越充分。"
+    }
   },
   "nav": {
     "sessions": "会话",
@@ -434,5 +451,30 @@
       "outputCall": "单次LLM调用生成的 token",
       "outputAgg": "累计模型生成 token"
     }
+  },
+  "skillListing": {
+    "rowLabel": "Skills 注册",
+    "rowSuffix": "{{count}} 个",
+    "detailMeta": "{{title}} · {{count}} 个 · {{size}} · 占 context {{pct}}%",
+    "detailMetaNoCtx": "{{title}} · {{count}} 个 · {{size}}",
+    "title": "Skills 注册",
+    "toggleParsed": "格式化",
+    "toggleRaw": "原文",
+    "copyRaw": "复制原文",
+    "copied": "已复制",
+    "unparsedHint": "{{count}} 条未识别",
+    "tooltipTitle": "Skills 注册（skill_listing）",
+    "tooltipParsedFrom": "解析自",
+    "tooltipParsedFromValue": "<system-reminder>…</system-reminder> 块",
+    "tooltipPosition": "位置",
+    "tooltipSize": "大小",
+    "tooltipSizeValue": "{{size}} · {{count}} 个 skill",
+    "tooltipDataSource": "数据来源",
+    "tooltipDataSourceValue": "cli.js 每轮请求前由 uMY() 注入，首轮全量 dump，后续仅推送增量",
+    "tooltipMatchedRule": "命中规则",
+    "tooltipConfidence": "置信度",
+    "tooltipParseStatus": "解析状态",
+    "tooltipAllParsed": "{{count}} 条全部成功识别",
+    "tooltipPartialParsed": "{{ok}} 条成功 / {{err}} 条未识别"
   }
 }

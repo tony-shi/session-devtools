@@ -35,8 +35,28 @@ export type Evidence =
   | { kind: "memory"; memoryFile: string; memoryName?: string }
   | { kind: "unknown" };
 
+/**
+ * Rule-specific 结构化二次解析结果。每个 rule 自己决定形态；命中其他 rule 时
+ * 该字段缺省。镜像 server 的 SegmentAttributionPayload。新增类型时这里加键。
+ */
+export interface SegmentOriginPayload {
+  /** rule = claude-code.messages.skill-listing.v1 命中时填充。 */
+  skillListing?: {
+    entries: Array<{
+      rawLine: string;
+      name: string | null;
+      description: string | null;
+      parseError: boolean;
+      lineStart: number;
+      lineEnd: number;
+    }>;
+    successCount: number;
+    errorCount: number;
+  };
+}
+
 export type SegmentOrigin =
-  | { kind: "rule"; ruleId: string; matchMode: "exact" | "regex" | "prefix"; confidence: Confidence; fullyCovered: boolean; dynamicFields?: DynamicField[] }
+  | { kind: "rule"; ruleId: string; matchMode: "exact" | "regex" | "prefix"; confidence: Confidence; fullyCovered: boolean; dynamicFields?: DynamicField[]; payload?: SegmentOriginPayload }
   | {
       kind: "jsonl";
       eventKind: JsonlEventKindObject | string;

@@ -64,6 +64,15 @@ export interface RuleOrigin {
    */
   fullyCovered: boolean;
   dynamicFields?: DynamicFieldWithEvidence[];
+  /**
+   * 特定 rule 命中后产出的结构化二次解析结果（如 skill_listing 的逐 skill 列表）。
+   * 由 resolver 阶段在 RuleEvaluation 之外计算填入；未启用二次解析的 rule 缺省。
+   * 这是后端 → 前端的权威输出位（attribution-service 直接序列化 node.origin 到 wire）。
+   *
+   * 与 SegmentAttribution.payload 同形同源（resolver 同时写两处），保持 backward
+   * compat 与 new model 一致。
+   */
+  payload?: import("./types").SegmentAttributionPayload;
 }
 
 /**

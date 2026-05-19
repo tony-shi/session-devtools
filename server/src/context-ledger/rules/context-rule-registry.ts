@@ -98,6 +98,7 @@ const SLOT_BINDINGS: Record<string, string[]> = {
   "claude-code.system-prompt-gitstatus.v1": ["system.main-prompt.section.context"],
 
   "claude-code.messages.user-context.v1": ["messages.inline.system-reminder"],
+  "claude-code.messages.skill-listing.v1": ["messages.inline.system-reminder"],
   "claude-code.messages.system-reminder.v1": ["messages.inline.system-reminder"],
   "claude-code.messages.local-command.v1": ["messages.inline.local-command"],
   "claude-code.messages.file-attachment.v1": ["messages.inline.system-reminder"],

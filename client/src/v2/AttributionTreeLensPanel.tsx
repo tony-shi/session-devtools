@@ -760,10 +760,11 @@ export function AttributionTreeLensPanel({
             onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
             getColor={leafColor}
             getBadges={leafBadges}
+            totalContextChars={totalChars}
           />
           {selectedLeaf && sectionOf(selectedLeaf.rootSlotType) === selectedStat.id && (
             <>
-              <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} />
+              <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} totalContextChars={totalChars} />
               {/* Diff lens 激活时，选中 leaf 有 diff 变化的话，叠加行级 diff 详情。
                   modified → before/after 字级 inline diff；
                   added / removed → 单边内容展示。

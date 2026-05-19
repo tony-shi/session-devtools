@@ -2247,6 +2247,75 @@ export const CLAUDE_CODE_USER_CONTEXT_RULE: ContextLedgerRule = {
   materialization: "normalized_text",
 };
 
+// ── system-reminder 子类：skill_listing ──────────────────────────────────────
+//
+// 这是 system-reminder 的特化形态，由 `uMY`（attachments.ts:2700-2750
+// getSkillListingAttachment）每轮生成、`normalizeAttachmentForAPI` 的
+// skill_listing 分支（messages.ts:3728-3737）经 wrapMessagesInSystemReminder
+// 包成 SR 后塞进 messages.inline.system-reminder。
+//
+// 真实形态（cli.js 硬编码）：
+//   <system-reminder>
+//   The following skills are available for use with the Skill tool:
+//
+//   - {skill1.name}: {skill1.description}
+//   - {skill2.name}: {skill2.description}
+//   ...
+//   </system-reminder>
+//
+// 动态信息：
+//   - 行数 = 当轮"新增"的 skill 数（首轮 dump 全量，之后只发 delta）
+//   - 名称可含 plugin 命名空间冒号（如 "claude-hud:setup"）
+//   - 描述在预算压力下可能被 … 截断，极端时整行只剩 "- name"（无冒号无 desc）
+//
+// 设计：只用 header signature 锚定 + 一个 skillsBlock 命名组捕获整段正文。
+// 前端拿到 skillsBlock 后自行按行解析能识别的 skill 名；解析失败的行回退到 raw。
+// 平行的 task / todo / date_change 等 SR 子类后续按相同模式逐条补。
+//
+// sourcemap 锚点：
+//   - 内容生成：restored-src/src/utils/attachments.ts:2745
+//   - SR 包裹：restored-src/src/utils/messages.ts:3728 + :3097 wrapInSystemReminder
+//   - 单行格式：restored-src/src/tools/SkillTool/prompt.ts:65 formatCommandDescription
+export const SKILL_LISTING_PREFIX =
+  "<system-reminder>\nThe following skills are available for use with the Skill tool:";
+
+export const CLAUDE_CODE_MESSAGES_SKILL_LISTING_V1_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.skill-listing.v1",
+  // 锚点字符串自 2.1.88 以来稳定，已在真实 proxy dump（session 91d4，CLI 2.1.144）
+  // 上人工验证 pattern 命中。SUPPORTED 校对在补 2.1.126 dump 后切换为已 verified。
+  verifiedFor: null,
+  description:
+    "system-reminder 的 skill_listing 子类：" +
+    "cli.js uMY 每轮根据已发送 skill Set 计算 delta，包成 SR 注入 messages[0]/[N]。" +
+    "header 与外层 SR 标签是硬编码，正文（每行 '- name: desc'）随会话动态。" +
+    "本 rule 用 header signature 锚定，正文作为单个 skillsBlock 命名组留给下游解析。",
+  stability: "dynamic",
+  sourcemapRef:
+    "restored-src/src/utils/attachments.ts:2745 (skill_listing attachment) + " +
+    "restored-src/src/utils/messages.ts:3728 (normalizeAttachmentForAPI skill_listing) + " +
+    "restored-src/src/tools/SkillTool/prompt.ts:65 (formatCommandDescription)",
+
+  attribution: {
+    // header 必须严格匹配 cli.js 硬编码文本。skillsBlock 用 lazy `[\s\S]+?` 兜
+    // 整段正文（可含中文 description、unicode ellipsis、namespace 冒号等）。
+    // 末尾允许零或多个尾 \n —— ast-builder 切出来的 SR 段有时带 trailing \n
+    // （见 messages[0].content[2] 真实样本），与 USER_CONTEXT_RULE 一致放宽。
+    pattern:
+      "^<system-reminder>\\nThe following skills are available for use with the Skill tool:\\n\\n(?<skillsBlock>[\\s\\S]+?)\\n</system-reminder>\\n*$",
+    matchMode: "regex",
+    mechanism: "system_reminder_pattern",
+    category: "skill_listing",
+    captureGroups: {
+      skillsBlock:
+        "skill 清单正文：N 行 '- name: description'（description 可能以 \\u2026 截断，" +
+        "极端预算下整行可能只剩 '- name'）。下游按行解析；解析失败的行保留 raw。",
+    },
+  },
+
+  // 结构稳定（header + 行格式），但正文逐 skill / 逐 session 不同 → shape。
+  materialization: "shape",
+};
+
 // ── P2-1：messages 层 harness injection rules ─────────────────────────────────
 //
 // 这两条 rule 把 proxy-attribution.ts 里的硬编码 isSystemReminder / isLocalCommand
@@ -2569,6 +2638,8 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_SMOOSH_PLAN_MODE_REMINDER_V1_RULE,
   CLAUDE_CODE_SMOOSH_PLAN_MODE_EXITED_V1_RULE,
   CLAUDE_CODE_USER_CONTEXT_RULE,
+  // 必须排在 SYSTEM_REMINDER_RULE 之前，否则会被通用 SR 前缀兜底抢先命中。
+  CLAUDE_CODE_MESSAGES_SKILL_LISTING_V1_RULE,
   CLAUDE_CODE_SYSTEM_REMINDER_RULE,
   CLAUDE_CODE_LOCAL_COMMAND_RULE,
   CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,

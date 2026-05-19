@@ -203,9 +203,12 @@ function LazyBody({ requestId, kind }: { requestId: number; kind: "req" | "res" 
 
   return (
     <div>
-      <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "#9ca3af", marginBottom: 4, padding: 0 }}>
-        {t("proxyTraffic.foldBody")}
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: "#9ca3af", padding: 0 }}>
+          {t("proxyTraffic.foldBody")}
+        </button>
+        <CopyButton text={pretty} />
+      </div>
       <pre style={{
         background: "#1f2937", color: "#e8e8e8", borderRadius: 6,
         padding: "10px 12px", fontSize: 11, overflow: "auto",
@@ -291,6 +294,49 @@ function DetailSection({ title, children }: { title: string; children: React.Rea
   );
 }
 
+function CopyButton({ text }: { text: string }) {
+  const [copiedAt, setCopiedAt] = useState<number>(0);
+  const isCopied = copiedAt > 0 && Date.now() - copiedAt < 1500;
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text).then(
+      () => { setCopiedAt(Date.now()); setTimeout(() => setCopiedAt(0), 1500); },
+      () => {},
+    );
+  };
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={isCopied ? "已复制" : "复制"}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 2,
+        border: "1px solid",
+        borderColor: isCopied ? "#16a34a" : "#e5e7eb",
+        background: isCopied ? "#dcfce7" : "transparent",
+        color: isCopied ? "#15803d" : "#d1d5db",
+        borderRadius: 3, fontSize: 9, fontWeight: 600,
+        padding: "1px 5px", cursor: "pointer", lineHeight: 1.3,
+        flexShrink: 0,
+        transition: "background 0.12s, border-color 0.12s, color 0.12s",
+      }}
+      onMouseEnter={(e) => { if (!isCopied) { e.currentTarget.style.borderColor = "#d1d5db"; e.currentTarget.style.color = "#6b7280"; } }}
+      onMouseLeave={(e) => { if (!isCopied) { e.currentTarget.style.borderColor = "#e5e7eb"; e.currentTarget.style.color = "#d1d5db"; } }}
+    >
+      {isCopied ? (
+        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      ) : (
+        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
 function HeaderTable({ headers }: { headers: Record<string, string> }) {
   const entries = Object.entries(headers);
   if (!entries.length) return <span style={{ color: "#d1d5db", fontSize: 12 }}>—</span>;
@@ -298,9 +344,17 @@ function HeaderTable({ headers }: { headers: Record<string, string> }) {
     <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
       <tbody>
         {entries.map(([k, v]) => (
-          <tr key={k} style={{ borderBottom: "1px solid #f3f4f6" }}>
+          <tr key={k} style={{ borderBottom: "1px solid #f3f4f6" }}
+            onMouseEnter={(e) => { const btn = e.currentTarget.querySelector<HTMLElement>(".copy-btn"); if (btn) btn.style.visibility = "visible"; }}
+            onMouseLeave={(e) => { const btn = e.currentTarget.querySelector<HTMLElement>(".copy-btn"); if (btn) btn.style.visibility = "hidden"; }}
+          >
             <td style={{ padding: "3px 10px 3px 0", color: "#9ca3af", whiteSpace: "nowrap", verticalAlign: "top", width: 1 }}>{k}</td>
             <td style={{ padding: "3px 0", wordBreak: "break-all", color: "#374151" }}>{v}</td>
+            <td style={{ padding: "3px 0 3px 8px", verticalAlign: "top", width: 1 }}>
+              <span className="copy-btn" style={{ visibility: "hidden", display: "inline-block" }}>
+                <CopyButton text={v} />
+              </span>
+            </td>
           </tr>
         ))}
       </tbody>
