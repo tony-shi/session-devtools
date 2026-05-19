@@ -6,6 +6,7 @@ import http from "node:http";
 import https from "node:https";
 import tls from "node:tls";
 import zlib from "node:zlib";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { getMitmWhitelist, LISTEN_HOST, loadTargetCaPems } from "../config";
 import { PROXY_SERVER_PATHS as PATHS } from "../paths";
@@ -28,6 +29,32 @@ let _consecutiveFailures = 0;
 const UPSTREAM_WARN_THRESHOLD = 5;
 
 function recordUpstreamSuccess() { _consecutiveFailures = 0; }
+
+// Exported for tests only —— 转发路径以闭包形式直接调用，不需要从外部 import。
+// 注入合成 request-id：上游（典型代理站如 mcli/catpaw）会剥掉 Anthropic 的
+// `request-id` 响应头，导致 JSONL.assistant.requestId 和 proxy_requests.request_id
+// 两端对称失明。我们既然处于响应方向的下游边界，就在转发给 client 前补一个
+// 自生成的 ID：client 把它写进 JSONL，我们也把它落进 traffic.jsonl，1:1 自洽。
+//
+// 已有 request-id 时**不动**——直连 Anthropic 或诚实代理站不受影响。
+// 前缀 `proxy-` 用于事后审计区分"真 ID vs 我们打的标"。
+//
+// 副作用：rawHeaders 数组同步追加，确保下游用 rawHeaders 重建 dict 时也能看到。
+export function injectSyntheticRequestId(
+  headers: http.IncomingHttpHeaders,
+  rawHeaders: string[],
+): void {
+  for (const k of Object.keys(headers)) {
+    if (k.toLowerCase() === "request-id") {
+      const v = headers[k];
+      const isPresent = Array.isArray(v) ? v.some((x) => x && x.trim()) : (typeof v === "string" && v.trim().length > 0);
+      if (isPresent) return;
+    }
+  }
+  const synth = `proxy-${randomUUID()}`;
+  headers["request-id"] = synth;
+  rawHeaders.push("request-id", synth);
+}
 function recordUpstreamFailure(sni: string, reason: string) {
   _consecutiveFailures++;
   if (_consecutiveFailures >= UPSTREAM_WARN_THRESHOLD) {
@@ -289,6 +316,8 @@ function handleMitmRequest(req: http.IncomingMessage, res: http.ServerResponse) 
         },
       },
       (proxyRes) => {
+        // 缺失 request-id 时注入合成 ID（rawHeaders 也同步追加，下面 resHeaders dict 重建时一并带上）
+        injectSyntheticRequestId(proxyRes.headers, proxyRes.rawHeaders);
         res.writeHead(proxyRes.statusCode ?? 502, proxyRes.statusMessage ?? "", proxyRes.headers as any);
         const resHeaders: Record<string, string> = {};
         for (let i = 0; i < proxyRes.rawHeaders.length; i += 2) {
@@ -477,6 +506,7 @@ function handleHttpForward(req: http.IncomingMessage, res: http.ServerResponse) 
         },
       },
       (fwdRes) => {
+        injectSyntheticRequestId(fwdRes.headers, fwdRes.rawHeaders);
         res.writeHead(fwdRes.statusCode ?? 502, fwdRes.headers as any);
         const resHeaders: Record<string, string> = {};
         for (let i = 0; i < fwdRes.rawHeaders.length; i += 2) {

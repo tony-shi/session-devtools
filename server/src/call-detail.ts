@@ -24,15 +24,14 @@ export interface CallDetailTokens {
 }
 
 // Per-call proxy linking quality.
-//   'exact'       — JSONL.requestId matched proxy_requests.request_id (1:1, trustworthy)
-//   'time-window' — JSONL has no requestId (典型：经代理站，Anthropic 的 request-id header
-//                   被剥掉两端都空)，按 (session_id, 最近 started_at) 兜底匹配。临时开放，
-//                   sub-agent 并发场景下可能错挂——可接受。
-//   'unmatched'   — no proxy row found.
-export type ProxyMatchMode = "exact" | "time-window" | "unmatched";
-
-// 时间窗兜底容差。代理站常带可观察的延迟（排队 / 转发 / 重试），所以放到 ±60s。
-const TIME_WINDOW_TOLERANCE_MS = 60_000;
+//   'exact'     — JSONL.requestId matched proxy_requests.request_id (1:1, trustworthy)
+//   'unmatched' — no proxy row found.
+//
+// 代理站会剥掉 Anthropic 的 `request-id` 响应头，导致两端都拿不到。
+// proxy-v2/server/index.ts 的 injectSyntheticRequestId 在响应转发前补一个
+// 合成 `proxy-<uuid>`，确保两侧字符串一致 —— 因此 exact 永远成立，没有
+// 兜底通道，所有匹配失败一律 unmatched，不做时间窗 / 启发式归因。
+export type ProxyMatchMode = "exact" | "unmatched";
 
 export interface CallDetail {
   callId: number;
@@ -120,113 +119,51 @@ interface ProxyRow {
   jsonl_byte_offset: number;
   req_headers: string | null;
   started_at: string | null;
-  matchMode: ProxyMatchMode;  // "exact" | "time-window" — 调用方据此打 badge
 }
 
 // 用 JSONL 这一面已知的"证据"来定位 proxy 行。
-// 所有新增匹配信号都进 ProxyMatchHint —— callsite 不需要为新信号改签名。
+// hint 对象保留是为了将来增加替代匹配键（比如 x-stainless-request-id 之类）时
+// 不需要再动 5 个 callsite。当前只用 apiRequestId 做 1:1 精确匹配。
 export interface ProxyMatchHint {
   // Anthropic-issued request-id（JSONL.assistant.requestId）。1:1 匹配的硬证据。
+  // 代理站剥掉响应头时，proxy-v2/server/index.ts:injectSyntheticRequestId 会合成
+  // 一个 `proxy-<uuid>` 注入响应头，保证 JSONL 与 proxy_requests 两侧字符串一致。
   apiRequestId?: string | null;
-  // JSONL 上 call 的 assistant timestamp。time-window 兜底需要。
-  callTimestamp?: string | null;
-  // JSONL 上 call 的 usage.output_tokens。代理站不会改这个数；用作 time-window
-  // 多候选时的 tie-breaker（参见 e81ddb13 Turn 1 C1 案例：两条并发 proxy 行
-  // started_at 仅差 6ms，靠 output_tokens 区分）。
-  callOutputTokens?: number | null;
   // 排除某个 proxy 行 id（attribution 比较 prev/cur 时去重用）。
   excludeProxyId?: number;
 }
 
-// Look up the proxy row for a JSONL call.
-//
-// 优先级：
-//   1. Exact —— JSONL assistant.requestId ⇄ proxy_requests.request_id
-//      （proxy 从 resHeaders["request-id"] 抽出）。1:1 确定性匹配。
-//   2. Time-window 兜底 —— 仅当 JSONL 这边没有 requestId 时启用。代理站通常会
-//      剥掉 Anthropic 的 request-id 响应头，于是两端对称失明；这种情况下按
-//      (session_id, ±60s started_at) 候选，能用 output_tokens 区分就区分，
-//      否则取最近时间。已知风险：sub-agent 与主会话共用 session_id 时可能
-//      错挂；临时开放。
-//
-// 当 JSONL 有 requestId 但找不到对应 proxy 行时，**不**走时间窗——这种情形要
-// 么是 proxy 还没 ingest 完，要么是真的错配，再兜底反而会污染归因。
+// 根据 JSONL 端给的 requestId 在 proxy_requests 里查 1:1 行。
+// 没有 requestId 或查不到时一律返回 null（→ matchMode: "unmatched"），
+// 不做任何启发式归因——proxy 注入了合成 ID，正常流量永远走 exact。
 export function findProxyRowForCall(
   db: Database,
   sessionId: string,
   hint: ProxyMatchHint,
 ): ProxyRow | null {
-  const { apiRequestId, callTimestamp, callOutputTokens, excludeProxyId } = hint;
-
-  // 1. Exact match path
-  if (apiRequestId) {
-    const row = db.prepare(`
-      SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
-      FROM proxy_requests
-      WHERE session_id = ? AND request_id = ?
-      ${excludeProxyId !== undefined ? "AND id != ?" : ""}
-      LIMIT 1
-    `).get(
-      ...(excludeProxyId !== undefined
-        ? [sessionId, apiRequestId, excludeProxyId]
-        : [sessionId, apiRequestId])
-    ) as Omit<ProxyRow, "matchMode"> | undefined;
-    if (row) return { ...row, matchMode: "exact" };
-    return null;
-  }
-
-  // 2. Time-window fallback — only when JSONL has no requestId.
-  if (!callTimestamp) return null;
-  const callTsMs = Date.parse(callTimestamp);
-  if (!Number.isFinite(callTsMs)) return null;
-
-  const rows = db.prepare(`
-    SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at, res_output_tokens
+  const { apiRequestId, excludeProxyId } = hint;
+  if (!apiRequestId) return null;
+  const row = db.prepare(`
+    SELECT id, jsonl_file, jsonl_byte_offset, req_headers, started_at
     FROM proxy_requests
-    WHERE session_id = ? AND started_at IS NOT NULL
+    WHERE session_id = ? AND request_id = ?
     ${excludeProxyId !== undefined ? "AND id != ?" : ""}
-  `).all(
-    ...(excludeProxyId !== undefined ? [sessionId, excludeProxyId] : [sessionId])
-  ) as Array<Omit<ProxyRow, "matchMode"> & { res_output_tokens: number | null }>;
-
-  // 窗口内候选
-  const candidates: Array<{ row: Omit<ProxyRow, "matchMode"> & { res_output_tokens: number | null }; delta: number }> = [];
-  for (const r of rows) {
-    const t = Date.parse(r.started_at!);
-    if (!Number.isFinite(t)) continue;
-    const delta = Math.abs(t - callTsMs);
-    if (delta > TIME_WINDOW_TOLERANCE_MS) continue;
-    candidates.push({ row: r, delta });
-  }
-  if (candidates.length === 0) return null;
-
-  // 2a. 如果有 output_tokens 提示，先尝试用它作为 tie-breaker。
-  // 唯一命中才接受，多重命中或全不中都退回 nearest-ts。
-  if (typeof callOutputTokens === "number") {
-    const usageHits = candidates.filter((c) => c.row.res_output_tokens === callOutputTokens);
-    if (usageHits.length === 1) {
-      const { res_output_tokens: _omit, ...row } = usageHits[0]!.row;
-      return { ...row, matchMode: "time-window" };
-    }
-  }
-
-  // 2b. 退回最近 started_at
-  let best = candidates[0]!;
-  for (const c of candidates) if (c.delta < best.delta) best = c;
-  const { res_output_tokens: _omit, ...row } = best.row;
-  return { ...row, matchMode: "time-window" };
+    LIMIT 1
+  `).get(
+    ...(excludeProxyId !== undefined
+      ? [sessionId, apiRequestId, excludeProxyId]
+      : [sessionId, apiRequestId])
+  ) as ProxyRow | undefined;
+  return row ?? null;
 }
 
 // Batch classifier for the session drilldown. One SQL query loads every
 // proxy row for the session; per-call matching is then resolved in memory.
 // Avoids N+1 lookups across a session with hundreds of calls.
-// Batch 输入条目。形状与 ProxyMatchHint 一致（callId 仅作 key），
-// 这样未来匹配新增信号只在 ProxyMatchHint 处加字段，下游 caller 跟着填即可。
+// Batch 输入条目。结构开放，将来增加替代匹配键时不需要改 caller 形状。
 export interface CallMatchInput {
   id: number;
   apiRequestId: string | null;
-  timestamp: string;
-  outputTokens?: number | null;
 }
 
 export function computeCallProxyMatchModes(
@@ -238,46 +175,12 @@ export function computeCallProxyMatchModes(
   if (calls.length === 0) return result;
 
   const rows = db.prepare(`
-    SELECT request_id, started_at, res_output_tokens FROM proxy_requests
-    WHERE session_id = ?
-  `).all(sessionId) as Array<{ request_id: string | null; started_at: string | null; res_output_tokens: number | null }>;
-
-  const byRequestId = new Set<string>();
-  const tsRows: Array<{ tsMs: number; outputTokens: number | null }> = [];
-  for (const r of rows) {
-    if (r.request_id) byRequestId.add(r.request_id);
-    if (r.started_at) {
-      const t = Date.parse(r.started_at);
-      if (Number.isFinite(t)) tsRows.push({ tsMs: t, outputTokens: r.res_output_tokens });
-    }
-  }
-  tsRows.sort((a, b) => a.tsMs - b.tsMs);
-
+    SELECT request_id FROM proxy_requests
+    WHERE session_id = ? AND request_id IS NOT NULL
+  `).all(sessionId) as Array<{ request_id: string }>;
+  const byRequestId = new Set<string>(rows.map((r) => r.request_id));
   for (const c of calls) {
-    if (c.apiRequestId && byRequestId.has(c.apiRequestId)) {
-      result.set(c.id, "exact");
-      continue;
-    }
-    if (!c.apiRequestId && tsRows.length > 0) {
-      const callTsMs = Date.parse(c.timestamp);
-      if (Number.isFinite(callTsMs)) {
-        // 收集 ±TIME_WINDOW 内的候选；只在窗口内时才考虑 usage tie-break。
-        const inWindow = tsRows.filter((r) => Math.abs(r.tsMs - callTsMs) <= TIME_WINDOW_TOLERANCE_MS);
-        if (inWindow.length > 0) {
-          // 优先 output_tokens 命中；剩下都退回"窗口内最近"即可。
-          if (typeof c.outputTokens === "number") {
-            const usageHits = inWindow.filter((r) => r.outputTokens === c.outputTokens);
-            if (usageHits.length >= 1) {
-              result.set(c.id, "time-window");
-              continue;
-            }
-          }
-          result.set(c.id, "time-window");
-          continue;
-        }
-      }
-    }
-    result.set(c.id, "unmatched");
+    result.set(c.id, c.apiRequestId && byRequestId.has(c.apiRequestId) ? "exact" : "unmatched");
   }
   return result;
 }
@@ -299,15 +202,11 @@ export async function loadCallDetail(
     model: callModel, stopReason: callStopReason, timestamp: callTimestamp,
     tokens: callTokens,
   };
-  const proxyRow = findProxyRowForCall(db, sessionId, {
-    apiRequestId,
-    callTimestamp,
-    callOutputTokens: callTokens.outputTokens,
-  });
+  const proxyRow = findProxyRowForCall(db, sessionId, { apiRequestId });
   if (!proxyRow) return { ...base, proxyRequestId: null, proxyMatchMode: "unmatched", rawRequestJson: null };
 
   const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
-  if (!rec) return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: proxyRow.matchMode, rawRequestJson: null };
+  if (!rec) return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: "exact", rawRequestJson: null };
 
   const reqBody = rec.reqBody as string | undefined;
   let rawReqParsed: Record<string, unknown> | null = null;
@@ -315,5 +214,5 @@ export async function loadCallDetail(
     try { rawReqParsed = JSON.parse(reqBody) as Record<string, unknown>; }
     catch { /* not JSON */ }
   }
-  return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: proxyRow.matchMode, rawRequestJson: rawReqParsed };
+  return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: "exact", rawRequestJson: rawReqParsed };
 }

@@ -51,12 +51,7 @@
     "prepublishOnly": "node -e \"if (process.env.PUBLISH_FROM_SCRIPT !== '1') { console.error('ERROR: Use scripts/publish.sh instead of npm publish directly.'); process.exit(1); }\"",
     "start": "node bin/session-devtools.js",
     "test": "cd server && npm test",
-    "env:init": "[ -f .env ] || cp .env.example .env && echo 'Created .env from .env.example'",
-    "audit": "tsx scripts/audit.ts",
-    "audit:json": "tsx scripts/audit.ts --json",
-    "migrate:proxy-traffic": "tsx scripts/migrate-proxy-traffic.ts",
-    "backfill:proxy-request-id": "tsx scripts/backfill-proxy-request-id.ts",
-    "jsonl:coverage": "tsx --tsconfig server/tsconfig.node.json scripts/jsonl-coverage-report.ts"
+    "env:init": "[ -f .env ] || cp .env.example .env && echo 'Created .env from .env.example'"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",

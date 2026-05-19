@@ -192,12 +192,7 @@ export class SessionsV2Controller {
     // overwrite here so the front-end nav can show per-call status dots
     // without an extra round-trip per call.
     const flatCalls = drilldown.turns.flatMap((t) =>
-      t.calls.map((c) => ({
-        id: c.id,
-        apiRequestId: c.apiRequestId,
-        timestamp: c.timestamp,
-        outputTokens: c.outputTokens,
-      }))
+      t.calls.map((c) => ({ id: c.id, apiRequestId: c.apiRequestId }))
     );
     const modes = computeCallProxyMatchModes(db, id, flatCalls);
     for (const turn of drilldown.turns) {
@@ -224,12 +219,7 @@ export class SessionsV2Controller {
     // and the UI fills the left nav with gray dots — falsely implying the
     // session's proxy coverage is broken.
     const flatCalls = drilldown.turns.flatMap((t) =>
-      t.calls.map((c) => ({
-        id: c.id,
-        apiRequestId: c.apiRequestId,
-        timestamp: c.timestamp,
-        outputTokens: c.outputTokens,
-      }))
+      t.calls.map((c) => ({ id: c.id, apiRequestId: c.apiRequestId }))
     );
     const modes = computeCallProxyMatchModes(db, id, flatCalls);
     for (const turn of drilldown.turns) {
@@ -339,7 +329,7 @@ export class SessionsV2Controller {
     ) => {
       // Always use the parent session id for proxy lookup — sub-agent proxy
       // rows landed under the parent session_id.
-      const proxyRow = findProxyRowForCall(db, id, { apiRequestId, callTimestamp: ts, excludeProxyId });
+      const proxyRow = findProxyRowForCall(db, id, { apiRequestId, excludeProxyId });
       if (!proxyRow) return null;
       const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
       const reqBodyStr = rec?.reqBody as string | undefined;
@@ -403,7 +393,7 @@ export class SessionsV2Controller {
         };
       },
       fetchProxyReqBodyAt: async (_sid, ts, excludeProxyId, apiRequestId) => {
-        const proxyRow = findProxyRowForCall(db, id, { apiRequestId, callTimestamp: ts, excludeProxyId });
+        const proxyRow = findProxyRowForCall(db, id, { apiRequestId, excludeProxyId });
         if (!proxyRow) return null;
         const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
         const reqBodyStr = rec?.reqBody as string | undefined;
@@ -459,7 +449,6 @@ export class SessionsV2Controller {
           nextCallId: next ? next.id : null,
           stopReason: cur.stopReason,
           outputTokens: cur.outputTokens,
-          callTimestamp: cur.timestamp,
         };
       },
     });
@@ -561,7 +550,7 @@ export class SessionsV2Controller {
       proxyRequestId: number | null;
       startedAt: string;
     } | null> => {
-      const proxyRow = findProxyRowForCall(db, sid, { apiRequestId, callTimestamp: ts, excludeProxyId });
+      const proxyRow = findProxyRowForCall(db, sid, { apiRequestId, excludeProxyId });
       if (!proxyRow) return null;
       const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
       const reqBodyStr = rec?.reqBody as string | undefined;
@@ -665,7 +654,7 @@ export class SessionsV2Controller {
           };
         },
         fetchProxyReqBodyAt: async (sid, ts, excludeProxyId, apiRequestId) => {
-          const proxyRow = findProxyRowForCall(db, sid, { apiRequestId, callTimestamp: ts, excludeProxyId });
+          const proxyRow = findProxyRowForCall(db, sid, { apiRequestId, excludeProxyId });
           if (!proxyRow) return null;
           const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
           const reqBodyStr = rec?.reqBody as string | undefined;
@@ -723,7 +712,7 @@ export class SessionsV2Controller {
         };
       },
       fetchProxyReqBodyAt: async (sid, ts, excludeProxyId, apiRequestId) => {
-        const proxyRow = findProxyRowForCall(db, sid, { apiRequestId, callTimestamp: ts, excludeProxyId });
+        const proxyRow = findProxyRowForCall(db, sid, { apiRequestId, excludeProxyId });
         if (!proxyRow) return null;
 
         const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
@@ -786,7 +775,6 @@ export class SessionsV2Controller {
           nextCallId: next ? next.id : null,
           stopReason: cur.stopReason,
           outputTokens: cur.outputTokens,
-          callTimestamp: cur.timestamp,
         };
       },
     });

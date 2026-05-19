@@ -131,11 +131,12 @@ export interface LlmCall {
   proxy: ProxyCallData | null;
 
   // Quality of this call's proxy ↔ JSONL link.
-  //   'exact'       — matched on Anthropic request-id (1:1, trustworthy)
-  //   'time-window' — JSONL has no requestId (典型：代理站剥掉了 request-id header)，
-  //                   按 (session_id, 最近 started_at) 兜底；sub-agent 并发场景下可能错挂
-  //   'unmatched'   — neither matched
-  proxyMatchMode: "exact" | "time-window" | "unmatched";
+  //   'exact'     — matched on Anthropic request-id (1:1, trustworthy).
+  //                 proxy 端会对缺失 request-id 的响应注入 `proxy-<uuid>`
+  //                 合成 ID（server/proxy-v2/server/index.ts:injectSyntheticRequestId），
+  //                 因此代理站用户也走 exact，没有兜底通道。
+  //   'unmatched' — no proxy row matches; treat proxy data as absent.
+  proxyMatchMode: "exact" | "unmatched";
 
   // Sub-agents spawned by this call (one per Agent tool_use; usually 0-1, rarely >1)
   subAgents: SubAgentSummary[];
@@ -270,8 +271,8 @@ export interface CallDetail {
   callId: number;
   sessionId: string;
   proxyRequestId: number | null;
-  // See drilldown-types Call.proxyMatchMode for semantics.
-  proxyMatchMode: "exact" | "time-window" | "unmatched";
+  // See Call.proxyMatchMode for semantics.
+  proxyMatchMode: "exact" | "unmatched";
 
   model: string;
   stopReason: string | null;
