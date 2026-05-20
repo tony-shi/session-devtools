@@ -77,6 +77,7 @@ export type IntervalEventKind =
   | "user:human"         // user turn start — human typed text
   | "user:tool_result"   // tool_result block(s) in user event
   | "user:command"       // <local-command-caveat> / <command-name> etc.
+  | "user:skill_injection" // isMeta=true user.text 行，外层 sourceToolUseID 命中 Skill tool_use
   | "system:api_error"   // API error / retry
   | "system:local_command"
   | "system:turn_duration"
@@ -98,6 +99,14 @@ export interface IntervalEvent {
   contentPreview: string; // first 300 chars of meaningful text
   contentSize: number;    // byte length of full content
   rawJson: string;        // full JSON string of the event
+  // 当本 event 与某个 tool_use 有 cli.js 外层关联键（jsonl 的 sourceToolUseID
+  // 字段）时填充。仅由 cli.js SkillTool 在 tagMessagesWithToolUseID 路径上
+  // 写入 user/system 消息，attachment 消息不带这个字段。
+  // 用于：(1) hover 联动高亮整个 envelope；(2) skill_injection 行展示 skill 名。
+  sourceToolUseID?: string;
+  // 当 sourceToolUseID 命中本 turn 内 name="Skill" 的 tool_use 时，反查到的
+  // skill 名（即该 tool_use.input.skill）。parser 在 turn 构建阶段一次性填好。
+  skillName?: string;
 }
 
 // One tool_use block paired with its tool_result (if found in the next user event)
@@ -111,7 +120,40 @@ export interface ToolCallSlot {
   outputPreview: string;
   outputSize: number;     // chars of stringified content
   isError: boolean;
+  // 仅当 name === "Skill" 时填充：本次 skill 调用产出的副作用归因。
+  // 数据全部来自 jsonl 原生字段（tool_result.tool_use_id + 外层 sourceToolUseID），
+  // 100% 确定性，零 proxy 查询、零跨 call 遍历。详见 SkillInjectionInfo 注释。
+  skillInjection?: SkillInjectionInfo;
 }
+
+// Skill tool_use 的副作用归因。两种执行模式由 cli.js SkillTool.ts 在
+// command.context === "fork" 时分支决定（SKILL.md frontmatter 字段 `context: fork`）。
+// inline = 主对话注入 SKILL.md body + 其他 attachment；
+// forked = 起 sub-agent 子进程执行，主对话只剩一条 tool_result ack。
+//
+// 识别方式（确定性）：tool_result.content 文本以
+//   `Skill "{name}" completed (forked execution)` 开头 → forked，否则 inline。
+// sourcemap: restored-src/src/tools/SkillTool/SkillTool.ts:621, :852
+export type SkillInjectionInfo =
+  | {
+      mode: "inline";
+      // 紧邻 Skill tool_use 的 tool_result 行（含 "Launching skill: ..." 短 ack）
+      ackLineIdx: number;
+      // 所有外层 sourceToolUseID === toolUseId 的 user / attachment 行号
+      // （包括 SKILL.md body、command_permissions 等）。按 jsonl 出现顺序升序。
+      injectedLineIdxs: number[];
+      // 拼接的注入文本：所有 user.text 块顺序拼起来，行间 `\n\n` 分隔。
+      // 这是 chip 展开时给用户看的 SKILL.md 全文。
+      bodyText: string;
+      // 总字符 = ack content + bodyText.length。供 chip 标题显示"注入 X.Xk"。
+      totalChars: number;
+    }
+  | {
+      mode: "forked";
+      ackLineIdx: number;
+      // forked 模式下 tool_result.content 长度（包含 "Result:\n..." 子 agent 返回文本）
+      forkedResultChars: number;
+    };
 
 export interface LlmCall {
   id: number;

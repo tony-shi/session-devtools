@@ -72,8 +72,11 @@ export interface SubAgentSummary {
   result?: string;            // full tool_result text (verbatim, no truncation)
 }
 
+// Mirrors server `IntervalEventKind`. Keep in sync with
+// server/src/session-drilldown-types.ts.
 export type IntervalEventKind =
   | "user:human" | "user:tool_result" | "user:command"
+  | "user:skill_injection"
   | "system:api_error" | "system:local_command" | "system:turn_duration"
   | "system:stop_hook_summary" | "system:away_summary"
   | "attachment:skill_listing" | "attachment:task_reminder" | "attachment:queued_command"
@@ -87,6 +90,10 @@ export interface IntervalEvent {
   contentPreview: string;
   contentSize: number;
   rawJson: string;
+  /** cli.js 写入的 jsonl 外层字段。供 hover 联动 + skill_injection 特化渲染。 */
+  sourceToolUseID?: string;
+  /** parser 回填：sourceToolUseID 命中本 turn name="Skill" 的 tool_use 时填 skill 名。 */
+  skillName?: string;
 }
 
 export interface ToolCallSlot {
@@ -97,7 +104,27 @@ export interface ToolCallSlot {
   outputPreview: string;
   outputSize: number;
   isError: boolean;
+  // Mirrors server SkillInjectionInfo — populated only when name === "Skill".
+  skillInjection?: SkillInjectionInfo;
 }
+
+// Mirrors server `SkillInjectionInfo`. See server/src/session-drilldown-types.ts
+// for the full doc; key points:
+//   - mode === "inline":  SKILL.md body 注入到主对话，bodyText 携带全文
+//   - mode === "forked":  起 sub-agent 子进程执行，主对话只剩 1 条 ack
+export type SkillInjectionInfo =
+  | {
+      mode: "inline";
+      ackLineIdx: number;
+      injectedLineIdxs: number[];
+      bodyText: string;
+      totalChars: number;
+    }
+  | {
+      mode: "forked";
+      ackLineIdx: number;
+      forkedResultChars: number;
+    };
 
 export interface LlmCall {
   // Position within the session (1-based, globally across all turns)

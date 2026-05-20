@@ -14,6 +14,10 @@ interface JUserEvent {
   timestamp?: string;
   ts?: string;
   cwd?: string;
+  // cli.js SkillTool 通过 tagMessagesWithToolUseID 把 skill 调用产出的所有
+  // user / attachment 行外层挂 sourceToolUseID === 触发的 Skill tool_use id。
+  // 我们用它聚合"这次 Skill 注入了哪些行 / 多少字节"。
+  sourceToolUseID?: string;
 }
 
 interface JAssistantEvent {
@@ -230,6 +234,14 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
     } else if (isCommandContent(content)) {
       kind = "user:command";
       preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
+    } else if (uev.isMeta && typeof uev.sourceToolUseID === "string") {
+      // Skill 工具 tagMessagesWithToolUseID 路径产物 —— 确定性识别（cli.js
+      // SkillTool.ts:735 显式写入 sourceToolUseID）。
+      // 注意：这里只识别 user-type 行；attachment 行无 sourceToolUseID（见
+      // claude-code source: tagMessagesWithToolUseID 跳过 attachment），所以
+      // command_permissions 等仍保持 unknown / attachment 分类。
+      kind = "user:skill_injection";
+      preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
     } else {
       kind = "user:human";
       preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
@@ -359,7 +371,19 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
     preview = raw.slice(0, 300);
   }
 
-  return { kind, lineIdx, timestamp: ts, contentPreview: preview, contentSize: size, rawJson: raw };
+  // 透传 sourceToolUseID（jsonl 外层字段，cli.js 显式写入）。前端 hover 联动
+  // + IntervalEventRow 特化渲染都用这个键。skillName 由 turn-level 解析器在
+  // intervalEvents 构建完之后批量回填（同 turn 内 toolUseId → input.skill 反查）。
+  const stuid = (iev as { sourceToolUseID?: unknown }).sourceToolUseID;
+  return {
+    kind,
+    lineIdx,
+    timestamp: ts,
+    contentPreview: preview,
+    contentSize: size,
+    rawJson: raw,
+    ...(typeof stuid === "string" ? { sourceToolUseID: stuid } : {}),
+  };
 }
 
 // ─── Sub agent parser ─────────────────────────────────────────────────────────
@@ -870,6 +894,48 @@ export function parseSessionDrilldown(
             if (typeof rawOut === "string") outStr = rawOut;
             else if (Array.isArray(rawOut)) outStr = rawOut.map((c: { text?: string }) => c?.text ?? "").join("");
             else if (rawOut != null) outStr = JSON.stringify(rawOut);
+            // Skill 工具特殊处理：聚合 SKILL.md 注入信息（inline）或识别 forked。
+            // 判别：tool_result.content 以 `Skill "{name}" completed (forked execution)`
+            // 开头 → forked；否则 inline。然后在 [ei, endIdx) 内按 sourceToolUseID
+            // 等于此 toolUseId 的行收集 inline 注入（forked 模式下没有这种行）。
+            let skillInjection: import("./session-drilldown-types.ts").SkillInjectionInfo | undefined;
+            if (tu.name === "Skill") {
+              const forkedMarker = /^Skill "[^"]+" completed \(forked execution\)/;
+              if (forkedMarker.test(outStr)) {
+                skillInjection = {
+                  mode: "forked",
+                  ackLineIdx: ei,
+                  forkedResultChars: outStr.length,
+                };
+              } else {
+                const injectedLineIdxs: number[] = [];
+                const bodyParts: string[] = [];
+                // 从 ack 行之后扫到 endIdx，收集所有 sourceToolUseID === id 的行。
+                // attachment 行（如 command_permissions）也带 sourceToolUseID，
+                // 但其 message 字段不存在 —— 这里只把 user.text 块拼进 bodyText，
+                // attachment 仅记入 injectedLineIdxs。
+                for (let ej = ei + 1; ej < endIdx; ej++) {
+                  const sub = events[ej] as { sourceToolUseID?: string; type?: string; message?: { content?: unknown } };
+                  if (sub.sourceToolUseID !== rbc.tool_use_id) continue;
+                  injectedLineIdxs.push(ej);
+                  if (sub.type === "user" && Array.isArray(sub.message?.content)) {
+                    for (const blk of sub.message!.content as Array<{ type?: string; text?: string }>) {
+                      if (blk.type === "text" && typeof blk.text === "string") {
+                        bodyParts.push(blk.text);
+                      }
+                    }
+                  }
+                }
+                const bodyText = bodyParts.join("\n\n");
+                skillInjection = {
+                  mode: "inline",
+                  ackLineIdx: ei,
+                  injectedLineIdxs,
+                  bodyText,
+                  totalChars: outStr.length + bodyText.length,
+                };
+              }
+            }
             toolCallSlots.push({
               toolUseId: rbc.tool_use_id,
               name: tu.name,
@@ -878,6 +944,7 @@ export function parseSessionDrilldown(
               outputPreview: outStr.slice(0, 300),
               outputSize: outStr.length,
               isError: rbc.is_error === true,
+              ...(skillInjection ? { skillInjection } : {}),
             });
             toolUseMap.delete(rbc.tool_use_id); // matched
           }
@@ -944,6 +1011,31 @@ export function parseSessionDrilldown(
           }
 
           intervalEvents.push(makeIntervalEvent(iev, ei));
+        }
+      }
+
+      // Skill name 回填：对所有 sourceToolUseID 命中本 call name="Skill" 的 tool_use
+      // 的 intervalEvent，写入 skillName 字段。范围严格在本 call 的 toolCallSlots
+      // 内查找 —— 这与归因事实一致（cli.js SkillTool 写入 sourceToolUseID 时一定
+      // 对应同一 assistant call 内的 Skill tool_use id）。零跨 call / 跨 turn。
+      if (intervalEvents.length > 0 && toolCallSlots.some(tc => tc.name === "Skill")) {
+        const skillNameByToolUseId = new Map<string, string>();
+        for (const tc of toolCallSlots) {
+          if (tc.name !== "Skill") continue;
+          try {
+            const obj = JSON.parse(tc.inputPreview) as { skill?: string };
+            if (typeof obj.skill === "string") {
+              skillNameByToolUseId.set(tc.toolUseId, obj.skill);
+            }
+          } catch { /* truncated inputPreview, skip */ }
+        }
+        if (skillNameByToolUseId.size > 0) {
+          for (const ev of intervalEvents) {
+            if (ev.sourceToolUseID) {
+              const name = skillNameByToolUseId.get(ev.sourceToolUseID);
+              if (name) ev.skillName = name;
+            }
+          }
         }
       }
 

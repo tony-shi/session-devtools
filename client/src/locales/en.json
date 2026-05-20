@@ -419,7 +419,8 @@
     "jumpToCallCardTooltip": "Jump to call #{{callId}} card in Turn view (this tool_use came from that call's response)",
     "jumpToCallLineTooltip": "Jump to this JSONL event's line in Turn view (first injected into prompt by call #{{callId}})",
     "openAttributionAtLine": "Open attribution for call #{{callId}} and jump to the matching leaf",
-    "firstInjectedAtCall": "First injected at Call #{{callId}}"
+    "firstInjectedAtCall": "First injected at Call #{{callId}}",
+    "skillActivated": "Activated SKILL"
   },
   "eventKinds": {
     "user_human": "User input",
@@ -437,7 +438,8 @@
     "attachment_file": "File attach",
     "file_history_snapshot": "File snapshot",
     "last_prompt": "Last prompt",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "user_skill_injection": "Activated SKILL"
   },
   "ledgerExplainer": {
     "title": "Token Ledger · How it's computed",
@@ -487,5 +489,15 @@
     "tooltipParseStatus": "Parse status",
     "tooltipAllParsed": "All {{count}} entries parsed",
     "tooltipPartialParsed": "{{ok}} parsed / {{err}} unparsed"
+  },
+  "skillInvocation": {
+    "requestLoad": "Load SKILL: {{skill}}",
+    "argsLabel": "args: {{args}}",
+    "launching": "Launching: {{skill}}",
+    "forkedExecuted": "Executed (sub-agent): {{skill}} · Result {{size}}",
+    "forkedTodoLink": "Jump to sub-agent: TODO",
+    "activatedSkill": "Activated SKILL: {{skill}} · injected SKILL.md",
+    "viewSkillMd": "View SKILL.md",
+    "collapseSkillMd": "Collapse"
   }
 }

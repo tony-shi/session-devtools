@@ -21,6 +21,8 @@ export const EVENT_PALETTES: Record<IntervalEventKind, EventPalette> = {
   "user:human":               { bg: "#faf5ff", border: "#d8b4fe", fg: "#a855f7" },
   "user:tool_result":         { bg: "#f0fdf4", border: "#86efac", fg: "#16a34a" },
   "user:command":             { bg: "#fffbeb", border: "#fde68a", fg: "#d97706" },
+  // skill_injection：用 attachment:skill_listing 同款灰，与右侧 proxy 视图对齐
+  "user:skill_injection":     { bg: "#f8fafc", border: "#e2e8f0", fg: "#475569" },
 
   "system:api_error":         { bg: "#fef2f2", border: "#fca5a5", fg: "#dc2626" },
   "system:local_command":     SLATE_NEUTRAL,

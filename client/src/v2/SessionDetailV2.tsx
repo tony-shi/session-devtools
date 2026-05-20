@@ -35,7 +35,7 @@ import {
   type StatusBadgeKind,
 } from "./shared/HeaderStats";
 import { CallLedger } from "./shared/CallLedger";
-import { EventUnitCard, ForwardArrowIcon, LinkIcon } from "./shared/EventUnitCard";
+import { EventUnitCard, ForwardArrowIcon, LinkIcon, SegmentView } from "./shared/EventUnitCard";
 import { AttributionGraphProvider, AuditBoundaryStatus, LinkedPanelScope, useAttributionGraph } from "./attribution-graph-context";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { getToolPalette } from "./shared/toolRegistry";
@@ -2637,6 +2637,7 @@ const KIND_LABEL: Record<IntervalEventKind, string> = {
   "user:human":               "User input",
   "user:tool_result":         "Tool result",
   "user:command":             "Command",
+  "user:skill_injection":     "激活 SKILL",
   "system:api_error":         "API error",
   "system:local_command":     "Local cmd",
   "system:turn_duration":     "Turn duration",
@@ -2670,19 +2671,34 @@ function callDescription(call: MockLlmCall): string {
 }
 
 function toolUseIdsFromIntervalEvent(ev: IntervalEvent): string[] {
-  if (ev.kind !== "user:tool_result") return [];
+  // 关联键有两条独立路径，hover 联动需同时覆盖：
+  //   1) content[].tool_use_id  — tool_result block（user.kind="user:tool_result"），
+  //      映射 Skill / 任意 tool_use → 对应 tool_result 行
+  //   2) 外层 sourceToolUseID    — cli.js SkillTool 通过 tagMessagesWithToolUseID
+  //      给 skill 注入的所有 user / attachment 行打上的归属字段。
+  //      这条路径覆盖 SKILL.md body + command_permissions 等所有副作用行 ——
+  //      hover Skill ToolCallRow 时整个 envelope 全亮。
+  const ids: string[] = [];
   try {
-    const obj = JSON.parse(ev.rawJson) as { message?: { content?: unknown } };
-    const content = obj.message?.content;
-    if (!Array.isArray(content)) return [];
-    return content
-      .map(block => (block as { type?: string; tool_use_id?: string })?.type === "tool_result"
-        ? (block as { tool_use_id?: string }).tool_use_id
-        : null)
-      .filter((id): id is string => Boolean(id));
+    const obj = JSON.parse(ev.rawJson) as { sourceToolUseID?: string; message?: { content?: unknown } };
+    if (typeof obj.sourceToolUseID === "string") {
+      ids.push(obj.sourceToolUseID);
+    }
+    if (ev.kind === "user:tool_result") {
+      const content = obj.message?.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          const b = block as { type?: string; tool_use_id?: string };
+          if (b?.type === "tool_result" && typeof b.tool_use_id === "string") {
+            ids.push(b.tool_use_id);
+          }
+        }
+      }
+    }
   } catch {
     return [];
   }
+  return ids;
 }
 
 function shortToolUseId(id: string): string {
@@ -2842,6 +2858,37 @@ function ToolCallRow({
     return undefined;
   })();
 
+  // Skill 工具结构化参数：input schema 已被 cli.js 定为 { skill: string, args?: string }
+  // （SkillTool.ts:291 zod schema 固定）—— LLM 不能传其他字段，所以解析永远安全。
+  // 解析失败时 fallback 到通用 INPUT 渲染（保险，不破坏其他工具）。
+  const skillRequest: { preview: string; segments: { label: string; content: string; monospace: boolean }[] } | undefined = (() => {
+    if (tc.name !== "Skill") return undefined;
+    try {
+      const obj = JSON.parse(tc.inputPreview) as { skill?: string; args?: string };
+      if (typeof obj.skill !== "string") return undefined;
+      const segments: { label: string; content: string; monospace: boolean }[] = [
+        {
+          label: "",
+          content: t("skillInvocation.requestLoad", { skill: obj.skill }),
+          monospace: false,
+        },
+      ];
+      if (typeof obj.args === "string" && obj.args.length > 0) {
+        segments.push({
+          label: "",
+          content: t("skillInvocation.argsLabel", { args: obj.args }),
+          monospace: false,
+        });
+      }
+      return {
+        preview: t("skillInvocation.requestLoad", { skill: obj.skill }),
+        segments,
+      };
+    } catch {
+      return undefined;
+    }
+  })();
+
   return (
     <div
       data-tool-use-id={tc.toolUseId}
@@ -2865,17 +2912,27 @@ function ToolCallRow({
         // 配对 token，不属于 LLM 语义产出。要看 wire 原物，通过 jump chip
         // 跳到右侧 ResponseTreePanel（那里是 HTTP response 权威 view）。
         size={{ bytes: tc.inputSize, direction: "out" }}
-        preview={description}
-        description={description}
-        segments={tc.inputPreview ? [
-          {
-            label: "INPUT", content: tc.inputPreview,
-            monospace: true, truncateAt: 600,
-            // 不在这里提供"原始 JSON" tab —— 左侧是事件流派生 view（来自 parser
-            // 加工后的 ToolCallSlot.inputPreview，已被截到 300 字符）。要看真正
-            // 的原始 wire response，请用 jump chip 跳到右侧 ResponseTreePanel。
-          },
-        ] : []}
+        preview={skillRequest?.preview ?? description}
+        description={skillRequest?.preview ?? description}
+        segments={
+          skillRequest
+            // Skill 工具：把 INPUT raw JSON 替换为结构化两行展示
+            //   请求加载 SKILL: {skill}
+            //   args: {args}    （没有 args 时不显示）
+            // 用户的关注点是"请求做什么"，不是 wire JSON 长什么样。
+            ? skillRequest.segments
+            : tc.inputPreview
+              ? [
+                  {
+                    label: "INPUT", content: tc.inputPreview,
+                    monospace: true, truncateAt: 600,
+                    // 不在这里提供"原始 JSON" tab —— 左侧是事件流派生 view（来自 parser
+                    // 加工后的 ToolCallSlot.inputPreview，已被截到 300 字符）。要看真正
+                    // 的原始 wire response，请用 jump chip 跳到右侧 ResponseTreePanel。
+                  },
+                ]
+              : []
+        }
         active={active}
         onMouseEnter={() => onHoverToolUse(tc.toolUseId)}
         onMouseLeave={() => onHoverToolUse(null)}
@@ -2883,6 +2940,9 @@ function ToolCallRow({
         jumpLabel={t("terms.returnedByCall", { callId })}
         jumpTooltip={t("terms.openCallResponseTooltip", { callId })}
       />
+      {/* SkillInvocationChip（之前版本）已撤销 —— 改由 IntervalEventRow 在两条
+          后续 jsonl 行（user:tool_result 的 "Launching skill: ..." + user:skill_injection
+          的 SKILL.md body）上特化渲染，避免把"请求"和"结果"塞到同一张卡片。 */}
     </div>
   );
 }
@@ -2928,6 +2988,71 @@ function IntervalEventRow({
   // tool_result is the *output* fed back to the LLM; other kinds don't fit
   // input/output framing — leave bare bytes (direction undefined).
   const direction: "in" | "out" | undefined = ev.kind === "user:tool_result" ? "out" : undefined;
+
+  // ── Skill-related 特化渲染 ───────────────────────────────────────────────
+  // 三种 case 的识别依据全部是 cli.js 写入的确定性字段：
+  //   (a) user:tool_result + contentPreview 命中 "Launching skill: ..." → inline 加载中
+  //   (b) user:tool_result + contentPreview 命中 `Skill "..." completed (forked execution)` → forked
+  //   (c) user:skill_injection（parser 在 isMeta && sourceToolUseID 时打的 kind）→ SKILL.md 注入
+  //
+  // 这里只覆盖 preview / segments 这两层 UI 字段，**不改** kindLabel — 用户要求
+  // "Tool Result 保持不变，更清晰"。skill_injection 的 kindLabel 走默认 i18n
+  // (eventKinds.user_skill_injection = "激活 SKILL")。
+  const skillFormat: { preview: string; segmentContent: string; segmentLabel: string; defaultExpanded: boolean; footnote?: string } | null = (() => {
+    if (ev.kind === "user:tool_result") {
+      // (a) Launching skill: {name}
+      const launchMatch = /^Launching skill:\s*(.+?)\s*$/m.exec(ev.contentPreview);
+      if (launchMatch) {
+        const skill = ev.skillName ?? launchMatch[1];
+        return {
+          preview: t("skillInvocation.launching", { skill }),
+          segmentContent: ev.contentPreview,
+          segmentLabel: "",
+          defaultExpanded: true, // 单行短文本，默认就显示
+        };
+      }
+      // (b) Skill "name" completed (forked execution).\n\nResult:\n...
+      const forkedMatch = /^Skill "([^"]+)" completed \(forked execution\)\./.exec(ev.contentPreview);
+      if (forkedMatch) {
+        const skill = ev.skillName ?? forkedMatch[1];
+        const size = ev.contentSize >= 1000 ? `${(ev.contentSize / 1000).toFixed(1)}k` : `${ev.contentSize}b`;
+        return {
+          preview: t("skillInvocation.forkedExecuted", { skill, size }),
+          segmentContent: ev.contentPreview,
+          segmentLabel: "Result",
+          defaultExpanded: false,
+          footnote: t("skillInvocation.forkedTodoLink"),
+        };
+      }
+    }
+    if (ev.kind === "user:skill_injection") {
+      const skill = ev.skillName ?? "(unknown)";
+      // contentPreview 被 parser 强制截到 300 字符，但 SKILL.md 通常 5KB 量级 ——
+      // 从 rawJson（携带完整 jsonl 行 JSON）里提取 message.content 的 text 块拼出
+      // 全量正文。零后端改动，rawJson 本来就传到前端了。
+      let fullText = ev.contentPreview;
+      try {
+        const obj = JSON.parse(ev.rawJson) as { message?: { content?: unknown } };
+        const content = obj.message?.content;
+        if (Array.isArray(content)) {
+          const parts: string[] = [];
+          for (const blk of content as Array<{ type?: string; text?: string }>) {
+            if (blk.type === "text" && typeof blk.text === "string") parts.push(blk.text);
+          }
+          if (parts.length > 0) fullText = parts.join("\n\n");
+        } else if (typeof content === "string") {
+          fullText = content;
+        }
+      } catch { /* fall back to truncated preview */ }
+      return {
+        preview: t("skillInvocation.activatedSkill", { skill }),
+        segmentContent: fullText,
+        segmentLabel: t("skillInvocation.viewSkillMd"),
+        defaultExpanded: false, // 默认折叠
+      };
+    }
+    return null;
+  })();
 
   // ── Reverse-attribution lookup ────────────────────────────────────────
   // Each jsonl event may already have been audited by the session graph:
@@ -2982,12 +3107,20 @@ function IntervalEventRow({
         kindLabel={kindLabel}
         size={ev.contentSize > 0 ? { bytes: ev.contentSize, direction } : undefined}
         timestamp={ev.timestamp}
-        preview={ev.contentPreview.slice(0, 120)}
+        preview={skillFormat?.preview ?? ev.contentPreview.slice(0, 120)}
+        defaultExpanded={skillFormat ? skillFormat.defaultExpanded : undefined}
         segments={[
           {
-            label: direction === "out" ? "OUTPUT" : "CONTENT",
-            content: ev.contentPreview && ev.contentPreview.length > 0 ? ev.contentPreview : ev.rawJson,
-            monospace: true, truncateAt: 1000,
+            label: skillFormat
+              ? skillFormat.segmentLabel
+              : (direction === "out" ? "OUTPUT" : "CONTENT"),
+            content: skillFormat
+              ? skillFormat.segmentContent
+              : (ev.contentPreview && ev.contentPreview.length > 0 ? ev.contentPreview : ev.rawJson),
+            // skill_injection 的 SKILL.md 通常 5-10KB —— 给一个足够大的阈值，
+            // 让用户展开后能看到完整内容（SegmentView 仍提供 "展开全部" 按钮兜底）。
+            monospace: true,
+            truncateAt: skillFormat ? 20000 : 1000,
             // Whole-jsonl-line raw view — collapsible tree of the parsed
             // line object (parentUuid / message / toolUseResult / …). Lets
             // users drill into structural fields without parsing the
@@ -3008,6 +3141,18 @@ function IntervalEventRow({
         jumpLabel={jumpLabel}
         jumpTooltip={jumpTooltip}
       />
+      {/* forked 模式 footnote: "跳转 sub-agent：TODO" 占位文字（最简实现，无跳转） */}
+      {skillFormat?.footnote && (
+        <div style={{
+          marginTop: 2,
+          marginLeft: 18,
+          fontSize: 10,
+          fontStyle: "italic",
+          color: "#92400e",
+        }}>
+          {skillFormat.footnote}
+        </div>
+      )}
     </div>
   );
 }

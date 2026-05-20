@@ -408,7 +408,8 @@
     "jumpToCallCardTooltip": "跳到 Turn 视图里 call #{{callId}} 的卡片（这条 tool_use 来自该 call 的响应）",
     "jumpToCallLineTooltip": "跳到 Turn 视图里这条 jsonl event 的行（首次把这一段内容写进 prompt 的 call 是 #{{callId}}）",
     "openAttributionAtLine": "打开 call #{{callId}} 的归因视图，自动定位这条 jsonl 行对应的 leaf",
-    "firstInjectedAtCall": "首次注入于 LLM 调用 #{{callId}}"
+    "firstInjectedAtCall": "首次注入于 LLM 调用 #{{callId}}",
+    "skillActivated": "激活 SKILL"
   },
   "eventKinds": {
     "user_human": "用户输入",
@@ -426,7 +427,8 @@
     "attachment_file": "文件附件",
     "file_history_snapshot": "文件快照",
     "last_prompt": "上一个 Prompt",
-    "unknown": "未知"
+    "unknown": "未知",
+    "user_skill_injection": "激活 SKILL"
   },
   "ledgerExplainer": {
     "title": "Token 账本 · 计算说明",
@@ -476,5 +478,15 @@
     "tooltipParseStatus": "解析状态",
     "tooltipAllParsed": "{{count}} 条全部成功识别",
     "tooltipPartialParsed": "{{ok}} 条成功 / {{err}} 条未识别"
+  },
+  "skillInvocation": {
+    "requestLoad": "请求加载 SKILL: {{skill}}",
+    "argsLabel": "args: {{args}}",
+    "launching": "加载中: {{skill}}",
+    "forkedExecuted": "已执行（子 agent）: {{skill}} · 结果 {{size}}",
+    "forkedTodoLink": "跳转 sub-agent：TODO",
+    "activatedSkill": "激活 SKILL: {{skill}} · 注入 SKILL.md",
+    "viewSkillMd": "查看 SKILL.md",
+    "collapseSkillMd": "收起"
   }
 }
