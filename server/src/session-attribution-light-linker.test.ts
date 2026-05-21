@@ -161,6 +161,164 @@ describe("linkMessage", () => {
     };
     expect([...linkMessage(m, idxImg)]).toEqual([0]);
   });
+
+  // ─── Skill injection 双键匹配 ──────────────────────────────────────────────
+  // 真实 case：cli.js Skill 工具激活时，主对话写入一对相邻行：
+  //   jsonl#A  user.tool_result   { tool_use_id: X, content: "Launching skill: ..." }
+  //   jsonl#B  user.isMeta=true   text(SKILL.md body), sourceToolUseID: X
+  // 在 proxy 上这两行被压平到同一个 user message：
+  //   content[0] = tool_result(tool_use_id: X, ...)
+  //   content[1] = text(SKILL.md body)
+  // light-linker 必须把 content[1] 双键 (text hash + X) 命中 jsonl#B 的
+  // harnessInjection 索引。
+  describe("skill injection harness matching", () => {
+    const skillBody = "Base directory for this skill: /repo/.claude/skills/find-skills\n\n# Find Skills\n...";
+    const skillEvents: LinkableJsonlEvent[] = [
+      {
+        lineIdx: 10, type: "assistant",
+        toolUses: [{ id: "toolu_S1", name: "Skill" }],
+      },
+      {
+        lineIdx: 11, type: "user",
+        toolResults: [{ toolUseId: "toolu_S1", contentText: "Launching skill: find-skills" }],
+      },
+      {
+        lineIdx: 12, type: "user",
+        harnessInjection: {
+          mechanism: "skill_invocation",
+          payload: "skill_md_body",
+          rawText: skillBody,
+          triggerToolUseId: "toolu_S1",
+        },
+      },
+    ];
+
+    it("indexes skill_invocation harness rawText with double key", () => {
+      const idx = buildEventIndex(skillEvents);
+      // 单纯通过暴露的 lookup 验证索引存在（key 是私有的，通过行为验证）
+      const m = {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "toolu_S1", content: "Launching skill: find-skills" },
+          { type: "text", text: skillBody },
+        ],
+      };
+      // 应该同时命中 tool_result 行（lineIdx=11）和 SKILL.md inject 行（lineIdx=12）
+      expect([...linkMessage(m, idx)].sort((a, b) => a - b)).toEqual([11, 12]);
+    });
+
+    it("does NOT match skill inject without sibling tool_result (missing trigger key)", () => {
+      const idx = buildEventIndex(skillEvents);
+      // 同样的 text，但没有兄弟 tool_result —— 拿不到 triggerToolUseId，不命中
+      const m = {
+        role: "user",
+        content: [{ type: "text", text: skillBody }],
+      };
+      // 既不命中 skill inject（缺 trigger key），也不命中 user_input/command
+      // （那两个索引里也没存这段 text）
+      expect(linkMessage(m, idx).size).toBe(0);
+    });
+
+    it("does NOT match when sibling tool_use_id mismatches", () => {
+      const idx = buildEventIndex(skillEvents);
+      // text 正确，但兄弟 tool_result.tool_use_id 是另一个值 —— 双键校验失败
+      const m = {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "toolu_OTHER", content: "Launching skill: x" },
+          { type: "text", text: skillBody },
+        ],
+      };
+      // 只命中 text 没命中（缺 trigger 匹配）；tool_result 也找不到 toolu_OTHER。
+      expect(linkMessage(m, idx).size).toBe(0);
+    });
+
+    it("does NOT index harness rawText when triggerToolUseId is missing", () => {
+      const idxNoTrigger = buildEventIndex([
+        {
+          lineIdx: 20, type: "user",
+          harnessInjection: {
+            mechanism: "skill_invocation",
+            payload: "skill_md_body",
+            rawText: skillBody,
+            // triggerToolUseId intentionally absent — defensive: cli.js state
+            // machine may fail to identify trigger; we must not silently match.
+          },
+        },
+      ]);
+      const m = {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "toolu_S1", content: "Launching..." },
+          { type: "text", text: skillBody },
+        ],
+      };
+      expect(linkMessage(m, idxNoTrigger).size).toBe(0);
+    });
+
+    it("does NOT index compaction_summary harness rawText (out of scope)", () => {
+      // Per spec: only skill_invocation is indexed by light-linker. compaction
+      // 走 attribution-tree 的 full linker（rare path, big payload）。
+      const idxCompact = buildEventIndex([
+        {
+          lineIdx: 30, type: "user",
+          harnessInjection: {
+            mechanism: "compaction_summary",
+            payload: "conversation_summary",
+            rawText: "This session is being continued from a previous conversation.\n...",
+          },
+        },
+      ]);
+      const m = {
+        role: "user",
+        content: [{ type: "text", text: "This session is being continued from a previous conversation.\n..." }],
+      };
+      expect(linkMessage(m, idxCompact).size).toBe(0);
+    });
+
+    it("each text block hashed independently — multi-segment injection all linked", () => {
+      // 复杂 skill 可能产生多段 inject（如 `!ls` slash 扩展，cli.js 把扩展输出
+      // 也作为独立 createUserMessage push）。每段在 jsonl 都是独立行，proxy 上
+      // 是独立 text block。逐 block hash 才能各自 link。
+      const seg1 = "Base directory: /repo/.claude/skills/multi\n\n# Multi-segment Skill";
+      const seg2 = "Files in skill dir:\n- SKILL.md\n- helper.sh";
+      const events: LinkableJsonlEvent[] = [
+        {
+          lineIdx: 40, type: "user",
+          toolResults: [{ toolUseId: "toolu_M1", contentText: "Launching skill: multi" }],
+        },
+        {
+          lineIdx: 41, type: "user",
+          harnessInjection: {
+            mechanism: "skill_invocation",
+            payload: "skill_md_body",
+            rawText: seg1,
+            triggerToolUseId: "toolu_M1",
+          },
+        },
+        {
+          lineIdx: 42, type: "user",
+          harnessInjection: {
+            mechanism: "skill_invocation",
+            payload: "skill_md_body",
+            rawText: seg2,
+            triggerToolUseId: "toolu_M1",
+          },
+        },
+      ];
+      const idx = buildEventIndex(events);
+      const m = {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "toolu_M1", content: "Launching skill: multi" },
+          { type: "text", text: seg1 },
+          { type: "text", text: seg2 },
+        ],
+      };
+      // 三行都应该命中：tool_result(40), seg1(41), seg2(42)
+      expect([...linkMessage(m, idx)].sort((a, b) => a - b)).toEqual([40, 41, 42]);
+    });
+  });
 });
 
 describe("linkMessages", () => {

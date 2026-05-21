@@ -23,10 +23,16 @@
 //
 //   Match channels not covered (intentionally):
 //     • SmooshContent sub-segment fingerprint matching
-//     • Harness injection rawText matching
 //     • Attachment content matching
 //     • Image digest matching
 //     • Fallback turn-position inference for user_input
+//
+//   Harness injection (skill_invocation only): SUPPORTED with strict double-key
+//   matching — text hash MUST equal the jsonl rawText hash AND the sibling
+//   tool_result.tool_use_id MUST equal the jsonl event's triggerToolUseId.
+//   compaction_summary harness rawText is intentionally NOT indexed (out of
+//   scope per current spec; would conflict with conversation_summary's other
+//   content-equality matchers).
 //
 //   These cases are rare for the kind of "reverse audit" graph reporting
 //   front-end consumes (jump to "first call that pulled this event into a
@@ -51,6 +57,20 @@ export interface EventIndex {
   byCommandTextHash:   Map<string, number>;
   byThinkingSignature: Map<string, number>;
   byImageDigest:       Map<string, number>;  // user image digest → lineIdx
+  /**
+   * Skill harness injection 双键索引：(text hash, triggerToolUseId) → lineIdx。
+   * 仅索引 mechanism === "skill_invocation" 的 harnessInjection 行（compaction
+   * 不索引，参见本文件顶部 spec 注释）。
+   *
+   * 双键设计原因：text hash 单键在 cli.js 实际写入下基本足够（rawText byte-equal
+   * + 5KB+ 内容，session 内重复概率 ~0），但 triggerToolUseId 二次校验消除了
+   * "同 session 多次激活同名 skill 且参数完全相同"这种极端场景下的可能错配，
+   * 同时让"激活点 → 注入产物"的因果链在索引层显式表达。
+   *
+   * 命中条件由 linkMessage 强制：proxy 上 text 块必须有兄弟 tool_result 块，
+   * 且 tool_result.tool_use_id 等于 jsonl harnessInjection.triggerToolUseId。
+   */
+  bySkillInjection:    Map<string, number>;  // `${textHash}|${triggerToolUseId}` → lineIdx
 }
 
 /** 32-bit FNV-1a hash over a UTF-16 string. Plenty for in-session dedup —
@@ -74,6 +94,7 @@ export function buildEventIndex(events: LinkableJsonlEvent[]): EventIndex {
     byCommandTextHash:   new Map(),
     byThinkingSignature: new Map(),
     byImageDigest:       new Map(),
+    bySkillInjection:    new Map(),
   };
   // Iterate events in line order; if a key collides keep the EARLIEST line
   // (we want first-seen semantics).
@@ -109,6 +130,17 @@ export function buildEventIndex(events: LinkableJsonlEvent[]): EventIndex {
       for (const img of ev.userImages) {
         if (!idx.byImageDigest.has(img.digest)) idx.byImageDigest.set(img.digest, ev.lineIdx);
       }
+    }
+    // Skill 激活产生的 SKILL.md inject 行：双键 (rawText hash, triggerToolUseId)。
+    // 仅 skill_invocation；compaction 故意不索引（spec 决定，见文件顶部）。
+    // triggerToolUseId 缺失（极端：cli.js 状态机识别失败）时跳过 —— 双键模型
+    // 在缺一键时宁可不索引，让 lineIdx 进入 pending，也不放进单键索引。
+    if (ev.harnessInjection
+      && ev.harnessInjection.mechanism === "skill_invocation"
+      && typeof ev.harnessInjection.triggerToolUseId === "string"
+      && ev.harnessInjection.rawText) {
+      const key = hash32(ev.harnessInjection.rawText) + "|" + ev.harnessInjection.triggerToolUseId;
+      if (!idx.bySkillInjection.has(key)) idx.bySkillInjection.set(key, ev.lineIdx);
     }
   }
   return idx;
@@ -183,7 +215,21 @@ export function linkMessage(message: ApiMessage, index: EventIndex): Set<number>
   const content = asContentArray(message?.content);
   const role = message?.role;
 
-  // Block-level matches (id-based, exact).
+  // 先扫一遍 content，记录所有兄弟 tool_result block 的 tool_use_id —— 用于
+  // 后续 text 块的 skill_injection 双键匹配。skill 注入的 SKILL.md text 块
+  // 总是和它的"启动 tool_result"在同一个 user message 的 content[] 中（cli.js
+  // toolExecution.ts 直接 push 进 resultingMessages 时合并），所以兄弟 lookup
+  // 是同 message 内的局部操作。
+  const siblingToolUseIds: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    if ((block as { type?: string }).type === "tool_result") {
+      const tuid = (block as { tool_use_id?: string }).tool_use_id;
+      if (typeof tuid === "string") siblingToolUseIds.push(tuid);
+    }
+  }
+
+  // Block-level matches (id-based, exact + per-block text hashes).
   for (const block of content) {
     if (!block || typeof block !== "object") continue;
     const t = (block as { type?: string }).type;
@@ -222,10 +268,26 @@ export function linkMessage(message: ApiMessage, index: EventIndex): Set<number>
         const li = index.byImageDigest.get(d);
         if (li != null) matched.add(li);
       }
+    } else if (t === "text" && role === "user") {
+      // Skill injection 双键匹配（仅 user role；assistant 不会出现 skill inject）：
+      // 用 text 块的 hash 与本 message 内**每个**兄弟 tool_result.tool_use_id 组合
+      // 查 bySkillInjection。一个 text 块可能对应多个兄弟 tool_result 中的某一个 ——
+      // 命中其中一个就锁定，多次命中则全部添加（极端情况，保守覆盖）。
+      const text = (block as { text?: string }).text;
+      if (typeof text === "string" && text.length > 0 && siblingToolUseIds.length > 0) {
+        const h = hash32(text);
+        for (const tuid of siblingToolUseIds) {
+          const li = index.bySkillInjection.get(h + "|" + tuid);
+          if (li != null) matched.add(li);
+        }
+      }
     }
   }
 
-  // Whole-message text matches (content-hash based).
+  // Whole-message text matches (content-hash based) — for user_input / command /
+  // assistant_text 这些 jsonl event，文本是按整条 message 拼接后存的（attribution-
+  // service.extractUserPlainText / extractAssistantText 都做了 join）。
+  // skill_injection 已经在 block-level 处理（双键），不会被这里 misroute。
   const joinedText = joinTextBlocks(content);
   if (joinedText) {
     const h = hash32(joinedText);
