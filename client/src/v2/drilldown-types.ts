@@ -77,7 +77,9 @@ export interface SubAgentSummary {
 export type IntervalEventKind =
   | "user:human" | "user:tool_result" | "user:command"
   | "user:skill_injection"
+  | "user:compact_summary"   // jsonl user.isCompactSummary=true（仅 CompactEvent 合成 turn 用）
   | "system:api_error" | "system:local_command" | "system:turn_duration"
+  | "system:compact_boundary" // jsonl system.subtype=compact_boundary（仅 CompactEvent 合成 turn 用）
   | "system:stop_hook_summary" | "system:away_summary"
   | "attachment:skill_listing" | "attachment:task_reminder" | "attachment:queued_command"
   | "attachment:edited_text_file" | "attachment:file"
@@ -223,6 +225,55 @@ export interface UserTurn {
   calls: LlmCall[];
 }
 
+// ─── Event 归属语义（镜像 server EventBelonging） ────────────────────────────
+//   in-turn        — 事件在 turn N 内部
+//   postlude       — 紧贴 turn N 之后（closure 语义）
+//   prelude        — 紧贴 turn N+1 之前（setup 语义）
+//   between-turns  — 独立 sibling（maintenance 语义；/compact 走这条）
+//   pre/post-session — session 头尾的边界 gap
+export type EventBelonging =
+  | { kind: "in-turn"; turnId: number }
+  | { kind: "postlude"; turnId: number }
+  | { kind: "prelude"; turnId: number }
+  | { kind: "between-turns"; afterTurnId: number; beforeTurnId: number }
+  | { kind: "pre-session"; beforeTurnId: number }
+  | { kind: "post-session"; afterTurnId: number };
+
+// ─── CompactEvent（镜像 server） ──────────────────────────────────────────────
+// /compact 的完整刻画，三源交叉：jsonl boundary（主锚）+ isCompactSummary 用户
+// 事件（副锚）+ proxy_requests（富化）。LLM call 本身在 jsonl 没有 assistant
+// 事件，只能通过这三源拼出。详见 server/session-drilldown-types.ts 的注释。
+export interface CompactProxyInfo {
+  proxyRequestId: number;
+  requestId: string | null;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  durationMs: number;
+  startedAt: string;
+}
+
+export interface CompactEvent {
+  index: number;
+  belonging: EventBelonging;
+  boundaryLineIdx: number;
+  boundaryUuid: string;
+  timestamp: string;
+  trigger: "manual" | "auto" | "micro" | string;
+  preTokens: number;
+  postTokens: number;
+  durationMs: number;
+  summaryLineIdx: number | null;
+  summaryUuid: string | null;
+  summaryText: string | null;
+  // 用户在 /compact 后附加的指令，例如 `/compact focus on parser` 的 args 段。
+  // 没参数时为 null；这是 UI 必须显眼展示的字段 —— 它揭示了 compaction 的语义意图。
+  commandLineIdx: number | null;
+  userInstructions: string | null;
+  proxy: CompactProxyInfo | null;
+}
+
 // ─── Inter-turn block ─────────────────────────────────────────────────────────
 // Events between two turns (bash commands, /exit, etc.) — they enter context
 // but do NOT trigger an LLM call on their own.
@@ -278,6 +329,8 @@ export interface SessionDrilldown {
 
   turns: UserTurn[];
   interTurnBlocks: InterTurnBlock[];
+  // /compact 事件。按 timestamp 升序，与 turns 在时间轴上交错。
+  compactEvents: CompactEvent[];
 }
 
 // ─── Call detail (per-call drilldown) ────────────────────────────────────────

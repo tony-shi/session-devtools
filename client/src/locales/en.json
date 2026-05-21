@@ -325,6 +325,32 @@
     "noProxyOpenProxyTab": "Open proxy settings →",
     "noProxyDotTooltip": "This call has no matching proxy request body"
   },
+  "attribution": {
+    "loadFailed": "Attribution load failed",
+    "loading": "Loading attribution…",
+    "skip": {
+      "headerLabel": "Audit",
+      "headerOk": "Audit covers full session",
+      "summaryAllNoProxy": "{{n}} call(s) skipped — no proxy data",
+      "summaryMixed": "{{n}} call(s) skipped",
+      "callLine": "#{{callId}} · {{reason}}",
+      "reason": {
+        "noProxy": "This call has no matching proxy request body",
+        "drilldownMiss": "Call not found in session drilldown",
+        "parseError": "Attribution parse failed: {{detail}}",
+        "other": "{{detail}}"
+      }
+    },
+    "lensBanner": {
+      "diffUnavailableTitle": "Diff view unavailable",
+      "diffUnavailableCacheStillOk": "Cache view still works (built from this request's structure)",
+      "prevNotCaptured": "Previous call (#{{prevCallId}}) has no proxy data — nothing to diff against.",
+      "curNotCaptured": "This call has no proxy data — cannot build a baseline.",
+      "prevParseFailed": "Previous call's request body failed to parse.",
+      "noPrev": "This is the first request in the session — no previous to compare against.",
+      "goSetup": "Configure proxy →"
+    }
+  },
   "diff": {
     "loading": "Loading diff…",
     "loadFailed": "Failed to load diff: {{error}}",

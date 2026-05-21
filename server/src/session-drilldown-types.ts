@@ -78,8 +78,10 @@ export type IntervalEventKind =
   | "user:tool_result"   // tool_result block(s) in user event
   | "user:command"       // <local-command-caveat> / <command-name> etc.
   | "user:skill_injection" // isMeta=true user.text 行，外层 sourceToolUseID 命中 Skill tool_use
+  | "user:compact_summary" // jsonl user.isCompactSummary=true，CompactEvent 合成 turn 用
   | "system:api_error"   // API error / retry
   | "system:local_command"
+  | "system:compact_boundary" // jsonl system.subtype=compact_boundary，CompactEvent 合成 turn 用
   | "system:turn_duration"
   | "system:stop_hook_summary"
   | "system:away_summary"
@@ -233,6 +235,94 @@ export interface UserTurn {
   calls: LlmCall[];
 }
 
+// ─── Event 归属语义 ───────────────────────────────────────────────────────────
+// 描述一个非 LLM 事件相对于 turn 列表的位置。Compact 是首个落地用户；未来
+// closure（/exit、/clear）/ setup（/login、/model）/ ambient（/status、/help）
+// 等类别可以复用同一套 belonging 描述。
+//
+//   in-turn        — 事件发生在 turn N 内部（midTurnInjection 等场景）
+//   postlude       — 事件紧贴 turn N 之后（closure 语义；上一个 turn 的封底）
+//   prelude        — 事件紧贴 turn N+1 之前（setup 语义；下一个 turn 的引子）
+//   between-turns  — 独立 sibling，归属于"turn N 和 turn N+1 之间"，不属于任何一边
+//                    （maintenance 语义，典型代表：/compact）
+//   pre-session    — 全部 turn 之前（session 开头还没有 turn 时）
+//   post-session   — 全部 turn 之后（session 结尾 turn N 已经结束）
+export type EventBelonging =
+  | { kind: "in-turn"; turnId: number }
+  | { kind: "postlude"; turnId: number }
+  | { kind: "prelude"; turnId: number }
+  | { kind: "between-turns"; afterTurnId: number; beforeTurnId: number }
+  | { kind: "pre-session"; beforeTurnId: number }
+  | { kind: "post-session"; afterTurnId: number };
+
+// ─── CompactEvent ────────────────────────────────────────────────────────────
+// `/compact` 在 jsonl 里的足迹：
+//   主锚（决定性）：type=system, subtype=compact_boundary，compactMetadata 齐全
+//   副锚（决定性）：紧跟其后的 user 事件，isCompactSummary=true，parentUuid 指回主锚
+//   触发命令（可选）：boundary 之前最近的 user 事件，content 含 <command-name>/compact
+//                  当 /compact 带参数（如 `/compact focus on parser`）时 args 非空
+//   富化（可选）：proxy_requests 中 prompt 指纹命中 compaction template 的那条调用
+//
+// 这次 LLM call 本身在 jsonl 里没有 assistant 事件 —— 主锚 + 副锚 + (可选) proxy
+// 三源交叉拼出完整画像。
+export interface CompactProxyInfo {
+  proxyRequestId: number;
+  requestId: string | null;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  durationMs: number;
+  startedAt: string;
+}
+
+export interface CompactEvent {
+  // 0-based sequential index. UI 用于稳定排序。
+  index: number;
+  // 相对 turn 列表的归属位置（详见 EventBelonging）。
+  // /compact 永远是 between-turns / post-session 二选一 —— pre-session 不可能
+  // （第一条 turn 之前不会有 compact），in-turn / postlude / prelude 也不会
+  // （compact 在结构上严格独立于任何 turn）。
+  belonging: EventBelonging;
+
+  // ── 主锚：jsonl L21 ──────────────────────────────────────────────
+  boundaryLineIdx: number;
+  boundaryUuid: string;
+  // boundary 事件自身的 timestamp，时间轴排序的权威值。
+  timestamp: string;
+
+  // compactMetadata 透传 —— 全部来自 jsonl boundary 事件的同名字段。
+  // trigger: 'manual' 是用户敲 /compact；'auto' 是 harness 自动触发（token
+  // 预算压力）；'micro' 是更轻量的自动压缩（CLI 内部细分）。
+  trigger: "manual" | "auto" | "micro" | string;
+  preTokens: number;
+  postTokens: number;
+  // CLI 报告的 compact 整体耗时（含 LLM call + 本地处理）。
+  durationMs: number;
+
+  // ── 副锚：jsonl L22 ──────────────────────────────────────────────
+  // 紧跟 boundary 之后的 user 事件，parentUuid === boundaryUuid，
+  // isCompactSummary === true。这是真正被注入到 post-compact 第一次推理
+  // prompt 的 summary 文本（是 LLM 响应的有损子串：CLI 加前缀 + 截取 <summary>
+  // 段 + 加 jsonl path 后缀）。
+  summaryLineIdx: number | null;
+  summaryUuid: string | null;
+  // L22.content 全文。前端展示时可能截断，但 server 端不截。
+  summaryText: string | null;
+
+  // ── 用户附加指令：/compact <args> ─────────────────────────────────
+  // boundary 之前最近的 user 事件中 <command-args> 块。空字符串 / 缺失 = null。
+  // 当用户 `/compact focus on parser` 时 = "focus on parser"。
+  // 这个字段是关键：它揭示 compaction 的"语义意图"，UI 必须显眼地展示。
+  commandLineIdx: number | null;
+  userInstructions: string | null;
+
+  // ── 富化：proxy_requests ─────────────────────────────────────────
+  // 通过 prompt 指纹 + session_id + 时间窗匹配 proxy 记录，得到 compaction
+  // LLM call 的真实模型 / token / cost 信息。匹配失败时 null（不阻塞渲染）。
+  proxy: CompactProxyInfo | null;
+}
+
 // ─── Inter-turn block ─────────────────────────────────────────────────────────
 // Events that occur between two turns (or after the last turn).
 // These are user-driven actions (bash commands, /exit, etc.) that get injected
@@ -295,6 +385,9 @@ export interface SessionDrilldown {
   subAgents: SubAgentSummary[];
   turns: UserTurn[];
   interTurnBlocks: InterTurnBlock[];
+  // /compact 事件。按 timestamp 升序。当前是 session 顶层第一个非 turn 的 sibling
+  // 事件类别 —— 未来 closure / setup / ambient 等也会以平行数组形式加入。
+  compactEvents: CompactEvent[];
 }
 
 export interface ModelStats {

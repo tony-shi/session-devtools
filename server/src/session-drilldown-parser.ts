@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join, dirname, basename } from "path";
 import type { Database } from "better-sqlite3";
-import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData, ModelStats, SubAgentSummary, InterTurnBlock, IntervalEvent } from "./session-drilldown-types.ts";
+import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData, ModelStats, SubAgentSummary, InterTurnBlock, IntervalEvent, CompactEvent, CompactProxyInfo, EventBelonging } from "./session-drilldown-types.ts";
 import { normaliseModelName } from "./model-info.ts";
 
 // ─── JSONL record shapes (loose, best-effort) ────────────────────────────────
@@ -1281,6 +1281,186 @@ export function parseSessionDrilldown(
     }
   }
 
+  // ── 5b. Extract CompactEvent[] ─────────────────────────────────────────
+  // 三源拼装：
+  //   主锚 = system.compact_boundary（jsonl 决定性事件，compactMetadata 齐全）
+  //   副锚 = 紧跟其后的 user 事件，parentUuid === boundary.uuid，
+  //          isCompactSummary === true，content 是被注入 post-compact 第一次
+  //          推理的 summary 文本（CLI 截取 + 包装过的 LLM 响应）
+  //   富化（best-effort）= proxy_requests 表中 prompt 指纹命中 compaction
+  //          template 的那条 LLM call。失败时不阻塞，proxy=null。
+  //
+  // 还要找触发命令：boundary 之前最近的 user 事件，content 含
+  // <command-name>/compact</command-name>。从 <command-args>...</command-args>
+  // 段提取用户附加 instructions（如 `/compact focus on parser` → "focus on parser"）。
+  const compactEvents: CompactEvent[] = [];
+  {
+    // 准备 proxy lookup statement。注意：req_body 内容不存在 SQL column 里
+    // （proxy v2 把 body 写进外部 traffic.jsonl 文件，column 里只剩 file offset），
+    // 所以不能用 `LIKE '%Your task is to create...%'` 做 prompt 指纹匹配。
+    //
+    // 改用确定性的"时间 + 时长双因子"匹配：
+    //   factor 1: 同 session_id
+    //   factor 2: |proxy.started_at + duration_ms - boundary.ts| < 3000ms
+    //   factor 3: |proxy.duration_ms - boundary.compactMetadata.durationMs| < 2000ms
+    // boundary.ts 是 compact 完成时刻；proxy.started_at + duration_ms 也是完成时刻。
+    // duration 双向夹挤 → 在同一 session 同一时刻不会有第二条 LLM call 同时匹配，
+    // 双因子下假阳性概率 ≈ 0。
+    let proxyLookup: ((sessionId: string, boundaryTsMs: number, expectedDurMs: number) => unknown) | null = null;
+    try {
+      const stmt = db.prepare(`
+        SELECT id, request_id, model, res_input_tokens, res_output_tokens,
+               res_cache_read_tokens, duration_ms, started_at
+        FROM proxy_requests
+        WHERE session_id = ?
+          AND duration_ms IS NOT NULL
+          AND ABS((strftime('%s', started_at) * 1000.0 + (strftime('%f', started_at) * 1000 - strftime('%S', started_at) * 1000))
+                  + duration_ms - ?) < 3000
+          AND ABS(duration_ms - ?) < 2000
+        ORDER BY ABS(duration_ms - ?) ASC
+        LIMIT 1
+      `);
+      proxyLookup = (sid, btsMs, durMs) => stmt.get(sid, btsMs, durMs, durMs);
+    } catch {
+      proxyLookup = null;
+    }
+
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i];
+      if (ev.type !== "system") continue;
+      const sysEv = ev as JSystemEvent & {
+        uuid?: string;
+        content?: string;
+        compactMetadata?: { trigger?: string; preTokens?: number; postTokens?: number; durationMs?: number };
+      };
+      if (sysEv.subtype !== "compact_boundary") continue;
+
+      const boundaryUuid = sysEv.uuid ?? "";
+      const metadata = sysEv.compactMetadata ?? {};
+      const timestamp = tsOf(ev);
+
+      // 副锚：紧跟 boundary 之后的 isCompactSummary=true user 事件。
+      // 容差最多向后看 10 个 event（理论上紧邻第 1 个，留点窗口防止
+      // 未来 CLI 在中间塞其它事件）。
+      let summaryLineIdx: number | null = null;
+      let summaryUuid: string | null = null;
+      let summaryText: string | null = null;
+      for (let j = i + 1; j < Math.min(events.length, i + 10); j++) {
+        const cand = events[j] as JUserEvent & { isCompactSummary?: boolean; uuid?: string };
+        if (cand.type === "user" && cand.isCompactSummary === true) {
+          summaryLineIdx = j;
+          summaryUuid = cand.uuid ?? null;
+          const c = cand.message?.content;
+          summaryText = typeof c === "string" ? c : extractUserText(c);
+          break;
+        }
+      }
+
+      // 触发命令 + userInstructions：搜 boundary 两侧 ±30 个事件。
+      // 注意：jsonl 是按 *写入完成时刻* 排序，不是按用户输入时刻。boundary
+      // 在 LLM call 完成时立刻写，而 /compact 的 user command echo 经常在
+      // boundary 之后才被 flush（CLI 队列化命令 echo）。本 case L24 = /compact
+      // 出现在 L21 boundary 之后，所以单向 backward 搜会漏。两侧搜，取
+      // line-idx 距离 boundary 最近的那条。
+      let commandLineIdx: number | null = null;
+      let userInstructions: string | null = null;
+      {
+        let bestDist = Infinity;
+        const lo = Math.max(0, i - 30);
+        const hi = Math.min(events.length - 1, i + 30);
+        for (let k = lo; k <= hi; k++) {
+          if (k === i) continue;
+          const cand = events[k];
+          if (cand.type !== "user") continue;
+          const c = (cand as JUserEvent).message?.content;
+          const text = typeof c === "string" ? c : extractUserText(c);
+          if (!text.includes("<command-name>/compact</command-name>")) continue;
+          const dist = Math.abs(k - i);
+          if (dist >= bestDist) continue;
+          bestDist = dist;
+          commandLineIdx = k;
+          const m = text.match(/<command-args>([\s\S]*?)<\/command-args>/);
+          const args = (m?.[1] ?? "").trim();
+          userInstructions = args.length > 0 ? args : null;
+        }
+      }
+
+      // 归属判定：基于 boundary 在 events 中的位置 vs turnBoundaries 区间。
+      // /compact 一定不在任何 turn 内部 —— turn 是 humanInput → endTurn，
+      // compact_boundary 写在 endTurn 之后。所以只可能是 between-turns 或
+      // post-session。
+      let afterTurnId: number | null = null;
+      let beforeTurnId: number | null = null;
+      for (const tb of turnBoundaries) {
+        if (tb.endLine < i) afterTurnId = tb.turnId;
+        if (tb.startLine > i && beforeTurnId === null) beforeTurnId = tb.turnId;
+      }
+      let belonging: EventBelonging;
+      if (afterTurnId !== null && beforeTurnId !== null) {
+        belonging = { kind: "between-turns", afterTurnId, beforeTurnId };
+      } else if (afterTurnId !== null) {
+        belonging = { kind: "post-session", afterTurnId };
+      } else if (beforeTurnId !== null) {
+        // 极少见：session 开头第一条 turn 之前就 compact —— 不合常理但记录下来
+        belonging = { kind: "pre-session", beforeTurnId };
+      } else {
+        // 完全无 turn 的 session 不会触发 compact；防御性兜底
+        belonging = { kind: "post-session", afterTurnId: 0 };
+      }
+
+      // Proxy 富化（best-effort）
+      let proxy: CompactProxyInfo | null = null;
+      const boundaryTsMs = Date.parse(timestamp);
+      const expectedDurMs = metadata.durationMs ?? 0;
+      if (proxyLookup && !Number.isNaN(boundaryTsMs) && expectedDurMs > 0) {
+        try {
+          const row = proxyLookup(sessionId, boundaryTsMs, expectedDurMs) as {
+            id?: number;
+            request_id?: string | null;
+            model?: string | null;
+            res_input_tokens?: number | null;
+            res_output_tokens?: number | null;
+            res_cache_read_tokens?: number | null;
+            duration_ms?: number | null;
+            started_at?: string | null;
+          } | undefined;
+          if (row && row.id !== undefined) {
+            proxy = {
+              proxyRequestId: row.id,
+              requestId: row.request_id ?? null,
+              model: row.model ?? "",
+              inputTokens: row.res_input_tokens ?? 0,
+              outputTokens: row.res_output_tokens ?? 0,
+              cacheReadTokens: row.res_cache_read_tokens ?? 0,
+              durationMs: row.duration_ms ?? 0,
+              startedAt: row.started_at ?? "",
+            };
+          }
+        } catch {
+          // ignore — proxy 富化是 best-effort
+        }
+      }
+
+      compactEvents.push({
+        index: compactEvents.length,
+        belonging,
+        boundaryLineIdx: i,
+        boundaryUuid,
+        timestamp,
+        trigger: metadata.trigger ?? "manual",
+        preTokens: metadata.preTokens ?? 0,
+        postTokens: metadata.postTokens ?? 0,
+        durationMs: metadata.durationMs ?? 0,
+        summaryLineIdx,
+        summaryUuid,
+        summaryText,
+        commandLineIdx,
+        userInstructions,
+        proxy,
+      });
+    }
+  }
+
   // ── 6. Parse sub agents and join to LlmCalls ─────────────────────────────
   const subAgents = parseSubAgents(sourceFile, events);
   // Build lookup: toolUseId → SubAgentSummary
@@ -1383,6 +1563,7 @@ export function parseSessionDrilldown(
 
     turns,
     interTurnBlocks,
+    compactEvents,
   };
 }
 

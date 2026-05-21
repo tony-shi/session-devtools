@@ -321,6 +321,32 @@
     "noProxyOpenProxyTab": "打开代理设置 →",
     "noProxyDotTooltip": "本次 call 没有匹配到代理请求体"
   },
+  "attribution": {
+    "loadFailed": "归因加载失败",
+    "loading": "归因加载中…",
+    "skip": {
+      "headerLabel": "归因",
+      "headerOk": "归因覆盖整 session",
+      "summaryAllNoProxy": "{{n}} 个调用因无代理数据被跳过",
+      "summaryMixed": "{{n}} 个调用未参与归因",
+      "callLine": "#{{callId}} · {{reason}}",
+      "reason": {
+        "noProxy": "本次 call 没有匹配到代理请求体",
+        "drilldownMiss": "在 session drilldown 中找不到该 call",
+        "parseError": "归因解析失败：{{detail}}",
+        "other": "{{detail}}"
+      }
+    },
+    "lensBanner": {
+      "diffUnavailableTitle": "Diff 视角不可用",
+      "diffUnavailableCacheStillOk": "缓存视角仍可用（基于本次请求的结构）",
+      "prevNotCaptured": "上一条 call (#{{prevCallId}}) 没有代理数据，无法做对照。",
+      "curNotCaptured": "本次 call 没有代理数据，无法构建对照。",
+      "prevParseFailed": "上一条 call 的请求体解析失败，无法对照。",
+      "noPrev": "这是会话的第一次请求，没有可对照的上一次。",
+      "goSetup": "去配置代理 →"
+    }
+  },
   "diff": {
     "loading": "加载 diff…",
     "loadFailed": "加载失败：{{error}}",

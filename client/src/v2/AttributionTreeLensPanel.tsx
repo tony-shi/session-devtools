@@ -16,6 +16,7 @@
 //   • LensSectionBar / LensSectionTable（lens-aware section 横条 + 表格）
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
 import { useAttributionGraph } from "./attribution-graph-context";
 import type { AttributionTreeResult } from "./attribution-tree-types";
@@ -376,6 +377,72 @@ function LensSectionTable({
 
 // ─── 顶层 Panel ─────────────────────────────────────────────────────────────
 
+// ─── DiffUnavailableBanner ───────────────────────────────────────────────────
+// 当 diff endpoint 返回 unavailableReason（前 call 没 proxy / 解析失败 / 首条
+// call 无 prev）时，Lens 面板顶部插这一条 banner 解释「Diff 视角为何不可用」，
+// 并提示「缓存视角仍可用」—— Cache 视角只读当前 snapshot 的 pins + 各 section
+// 字符数，服务端在 prev 缺失时仍会 emit cur-only sections（参见
+// diff-tree-service buildCurOnlySections）。
+function DiffUnavailableBanner({
+  reason, prevCallId,
+}: {
+  reason: NonNullable<DiffTreeResult["unavailableReason"]>;
+  prevCallId: number | null;
+}) {
+  const { t } = useTranslation();
+  const descKey = reason === "prev-not-captured"  ? "attribution.lensBanner.prevNotCaptured"
+                : reason === "cur-not-captured"   ? "attribution.lensBanner.curNotCaptured"
+                : reason === "prev-parse-failed"  ? "attribution.lensBanner.prevParseFailed"
+                : /* no-prev */                     "attribution.lensBanner.noPrev";
+  // 三个 proxy 相关的 reason → 提供「去配置代理」link（CustomEvent 路由）；
+  // no-prev 是会话首条，不是代理问题，不展示 link。
+  const showProxyLink = reason !== "no-prev";
+  return (
+    <div style={{
+      display: "flex", alignItems: "flex-start", gap: 10,
+      padding: "10px 12px", borderRadius: 6,
+      background: "#fffbeb", border: "1px solid #fde68a",
+      fontSize: 12, lineHeight: 1.5,
+    }}>
+      <span style={{
+        marginTop: 2,
+        width: 8, height: 8, borderRadius: 999,
+        background: "#f59e0b", flexShrink: 0,
+        display: "inline-block",
+      }} />
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+        <div style={{ fontWeight: 600, color: "#92400e" }}>
+          {t("attribution.lensBanner.diffUnavailableTitle")}
+        </div>
+        <div style={{ color: "#78350f" }}>
+          {t(descKey, { prevCallId: prevCallId ?? "—" })}
+        </div>
+        <div style={{ color: "#a16207", fontSize: 11 }}>
+          {t("attribution.lensBanner.diffUnavailableCacheStillOk")}
+        </div>
+      </div>
+      {showProxyLink && (
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(
+            new CustomEvent("dashboard:navigate", { detail: { tab: "proxy-v2" } }),
+          )}
+          style={{
+            border: "none", background: "transparent", padding: 0,
+            color: "#6366f1", fontWeight: 600, fontSize: 12,
+            cursor: "pointer", whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}
+        >
+          {t("attribution.lensBanner.goSetup")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function AttributionTreeLensPanel({
   sessionId, agentFileId, callId, prevCallId, hideDiff, onLinkSource, onLeafSelect, prelude,
 }: {
@@ -395,6 +462,7 @@ export function AttributionTreeLensPanel({
    *  让它们与下方 LensSectionBar 在同一容器内自然对齐（同宽 / 同 padding）。 */
   prelude?: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   const [result, setResult] = useState<AttributionTreeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -613,37 +681,77 @@ export function AttributionTreeLensPanel({
     };
   }, [activeLenses]);
 
+  // unavailableReason 提到一等公民。老逻辑只看 diffData 是否 null，会把"空
+  // sections"误当成"成功无变化"——Diff chip 出现却显示无变化（假绿）、Cache
+  // 拓扑返回 null（点了无反馈）。
+  //
+  // 两个 lens 的可用条件不一样：
+  //   • Diff：需要 prev snapshot —— unavailableReason !== null 时一律隐藏。
+  //   • Cache：只读 curSnap 的 pins/newTotal —— 服务端在 prev 缺失时也会
+  //     emit cur-only sections（diff-tree-service buildCurOnlySections），
+  //     所以只要 sections 非空就能渲染。
+  const diffUnavailableReason = diffData?.unavailableReason ?? null;
+  const diffUsable = diffData != null && diffUnavailableReason == null;
+  // 拓扑视角需要有 section 数据（不管是不是 diff 完整版）。cur-not-captured
+  // 这一支返回 sections=[]，Cache 也无能为力，但 prev-not-captured / no-prev
+  // 这两支现在会带 cur-only sections，Cache 仍能用。
+  const cacheUsable = (diffData?.sections.length ?? 0) > 0;
+
   // 决定哪些 lens 出现在 toggle 行 + bucket pill 区。Provenance 永远出现；
-  // Diff lens 在没有 prevCall 时无意义，隐藏。
+  // Diff 在 prev snapshot 不可用时隐藏；Cache 单独按 cacheUsable 判断。
   // 注意：useMemo 必须在所有 early return 之上，避免 hook 顺序变化。
   const visibleLenses = useMemo(
     () => LENSES.filter((l) => {
-      if (l.id === "diff" && (hideDiff || prevCallId == null)) return false;
+      if (l.id === "diff" && (hideDiff || prevCallId == null || !diffUsable)) return false;
+      if (l.id === "cache" && !cacheUsable) return false;
       return true;
     }),
-    [hideDiff, prevCallId],
+    [hideDiff, prevCallId, diffUsable, cacheUsable],
   );
 
+  // Lens 被强制隐藏时，把它从 activeLenses 里同步剔除（否则下方对
+  // `activeLenses.has(...)` 的判断会在 chip 不显示的情况下还触发渲染分支）。
+  useEffect(() => {
+    setActiveLenses((prev) => {
+      const next = new Set(prev);
+      let mutated = false;
+      if (!diffUsable && next.has("diff"))   { next.delete("diff");  mutated = true; }
+      if (!cacheUsable && next.has("cache")) { next.delete("cache"); mutated = true; }
+      return mutated ? next : prev;
+    });
+  }, [diffUsable, cacheUsable]);
+
   if (loading) {
-    return <div style={{ padding: "32px 0", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>Loading attribution tree…</div>;
+    return <div style={{ padding: "32px 0", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>{t("attribution.loading")}</div>;
   }
   if (error) {
     return (
       <div style={{ padding: 16, fontSize: 11, color: "#b91c1c", background: "#fef2f2", borderRadius: 6, border: "1px solid #fecaca" }}>
-        Failed to load attribution tree: {error}
+        {t("attribution.loadFailed")}: {error}
       </div>
     );
   }
   if (!result?.snapshot) {
     return (
       <div style={{ padding: 16, fontSize: 11, color: "#9ca3af", background: "#fafafa", borderRadius: 6, border: "1px dashed #e5e7eb" }}>
-        {result?.error ?? "Attribution tree unavailable — proxy data may be missing for this call."}
+        {result?.error ?? t("attribution.lensBanner.curNotCaptured")}
       </div>
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {/* Diff 不可用 banner：在 Lens 切换器之上显式说明 Diff 视角为什么没了，
+          并强调 Cache 视角仍然可用（避免用户以为整块功能挂了）。提供「去配置
+          代理」入口让用户一键跳代理 tab。no-prev 是会话首条 call，是预期内
+          事件不是问题，不展示 banner。 */}
+      {diffUnavailableReason && diffUnavailableReason !== "no-prev" && (
+        <DiffUnavailableBanner
+          reason={diffUnavailableReason}
+          prevCallId={diffData?.prevCallId ?? prevCallId ?? null}
+        />
+      )}
+
       {/* Layer 0: lens toggle 行。基底（来源）永远 active 且不出现在 toggle 行；
           只列出可切换的 lens（diff / cache / 可选 audit）。 */}
       <LensSwitcher

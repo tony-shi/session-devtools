@@ -97,6 +97,18 @@ export interface JsonlEventAnnotation {
   firstSeenIsAfterAuditGap?: boolean;
 }
 
+/** 归因 skip 分类：让前端能用结构化方式渲染（NoProxyDot vs amber 文字 vs 错误样式），
+ *  不必再字符串 sniff 服务端的诊断 message。`reason` 字段保留诊断原文。 */
+export type UnauditedKind = "no-proxy" | "drilldown-miss" | "parse-error" | "other";
+
+export interface UnauditedCall {
+  callId: number;
+  /** 结构化分类，前端按此切视觉。 */
+  kind: UnauditedKind;
+  /** 服务端原文（开发者诊断 / 兜底 tooltip 文案）。 */
+  reason: string;
+}
+
 export interface SessionAttributionGraph {
   sessionId: string;
   /** 按 lineIdx 升序排列；含全部已解析的 jsonl 行，包括 contextImpact="skipped" 的。 */
@@ -104,7 +116,7 @@ export interface SessionAttributionGraph {
   /** session 内已被成功 audit 的 call.id（reverse 反查的输入域）。升序。 */
   auditedCallIds: number[];
   /** 跳过的 call（无 proxy / 错号 / fork）—— 报告给前端，让用户知道 graph 的"已知边界"。 */
-  unauditedCallIds: Array<{ callId: number; reason: string }>;
+  unauditedCallIds: UnauditedCall[];
 }
 
 // ─── helper 形状（与 loadAttributionTree 兼容） ──────────────────────────────
@@ -225,7 +237,7 @@ async function computeSessionAttributionGraphIncremental(
   const eventIndex: EventIndex = buildEventIndex(events);
 
   const callConsumers: Array<{ callId: number; consumedLineIdxs: number[] }> = [];
-  const unauditedCallIds: Array<{ callId: number; reason: string }> = [];
+  const unauditedCallIds: UnauditedCall[] = [];
 
   // Cross-call carry: lets us audit only the tail messages and inherit the
   // prefix's consumedLineIdxs without re-linking.
@@ -236,14 +248,14 @@ async function computeSessionAttributionGraphIncremental(
   for (const { callId } of calls) {
     const meta = helpers.loadCallHelpers.resolveCallMeta(sessionId, callId);
     if (!meta) {
-      unauditedCallIds.push({ callId, reason: "call not found in session drilldown" });
+      unauditedCallIds.push({ callId, kind: "drilldown-miss", reason: "call not found in session drilldown" });
       continue;
     }
     const proxy = await helpers.loadCallHelpers.fetchProxyReqBodyAt(
       sessionId, meta.call.timestamp, undefined, meta.call.apiRequestId,
     );
     if (!proxy || !proxy.reqBody) {
-      unauditedCallIds.push({ callId, reason: "proxy reqBody unavailable for this call" });
+      unauditedCallIds.push({ callId, kind: "no-proxy", reason: "proxy reqBody unavailable for this call" });
       continue;
     }
 
@@ -303,23 +315,30 @@ async function computeSessionAttributionGraphLegacy(
   const events: LinkableJsonlEvent[] = readSessionEventsForLinker(sourceFile);
 
   const callConsumers: Array<{ callId: number; consumedLineIdxs: number[] }> = [];
-  const unauditedCallIds: Array<{ callId: number; reason: string }> = [];
+  const unauditedCallIds: UnauditedCall[] = [];
 
   for (const { callId } of calls) {
     let result: AttributionTreeResult;
     try {
       result = await loadAttributionTree(sessionId, callId, db, helpers.loadCallHelpers);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       unauditedCallIds.push({
         callId,
-        reason: err instanceof Error ? err.message : String(err),
+        // loadAttributionTree 抛错通常是 parser / serializer 出问题；
+        // 用 substring 兜底识别 "proxy reqBody" 的情况（理论上不会走到，
+        // 但 helpers 私下可能 throw 而不是返回 falsy），其他归 parse-error。
+        kind: /proxy.*reqBody|reqBody.*proxy/i.test(msg) ? "no-proxy" : "parse-error",
+        reason: msg,
       });
       continue;
     }
     if (!result.snapshot) {
+      const msg = result.error ?? "no snapshot";
       unauditedCallIds.push({
         callId,
-        reason: result.error ?? "no snapshot",
+        kind: /proxy.*reqBody|no.*proxy|reqBody.*unavail/i.test(msg) ? "no-proxy" : "other",
+        reason: msg,
       });
       continue;
     }
@@ -347,7 +366,7 @@ export function annotateJsonlFromCallConsumers(
   sessionId: string,
   events: LinkableJsonlEvent[],
   callConsumers: Array<{ callId: number; consumedLineIdxs: number[] }>,
-  unauditedCallIds: Array<{ callId: number; reason: string }> = [],
+  unauditedCallIds: UnauditedCall[] = [],
 ): SessionAttributionGraph {
   // 反向建立 lineIdx → Set<callId>
   const lineIdxToCalls = new Map<number, Set<number>>();

@@ -9,8 +9,10 @@
 //     渲染（不展示新 META 字段），不阻塞。
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
-import type { JsonlEventAnnotation, SessionAttributionGraph } from "./attribution-graph-types";
+import type { JsonlEventAnnotation, SessionAttributionGraph, UnauditedCall, UnauditedKind } from "./attribution-graph-types";
+import { NoProxyDot } from "./shared/NoProxyDot";
 
 /** Hint passed to a destination Call detail panel to auto-select a leaf. */
 export type PendingFocus =
@@ -318,17 +320,38 @@ export function LinkedPanelScope({ children }: { children: React.ReactNode }) {
   return <Ctx.Provider value={masked}>{children}</Ctx.Provider>;
 }
 
+// 为单条 unaudited 拼一行 hover 文案。kind 决定走哪条 i18n key，reason 兜底
+// 拼到 detail 占位里（"parse error: {detail}"）。
+function formatUnauditedReason(
+  t: (k: string, opts?: Record<string, unknown>) => string,
+  u: UnauditedCall,
+): string {
+  const key = `attribution.skip.reason.${
+    u.kind === "no-proxy"        ? "noProxy"        :
+    u.kind === "drilldown-miss"  ? "drilldownMiss"  :
+    u.kind === "parse-error"     ? "parseError"     :
+                                   "other"
+  }`;
+  return t(key, { detail: u.reason });
+}
+
 /**
  * Inline chip rendered in modal/page headers — surfaces graph load status:
  *
- *   归因加载中…   — request in flight
- *   归因 ✓        — full session graph live
- *   归因加载失败  — error
+ *   归因加载中…       — request in flight
+ *   归因 ✓             — full session graph live
+ *   归因加载失败       — error
+ *   归因 ✓  ● 2        — full session graph but some calls skipped
  *
- * Also shows a "K skipped" indicator when any calls were unaudited (no
- * proxy data); hover to see per-call reasons.
+ * Skip indicator visual rules:
+ *   - All-no-proxy → NoProxyDot (yellow) + count, matches the per-call yellow
+ *     dot in sidebar / chrome.
+ *   - Mixed reasons → neutral amber dot + count, keeps the "something else
+ *     is wrong" feel distinct from the pure no-proxy case.
+ * Hover tooltip is fully i18n-driven (no raw server reason strings leak).
  */
 export function AuditBoundaryStatus() {
+  const { t } = useTranslation();
   const { graph, loading, error } = useAttributionGraph();
   if (error) {
     return (
@@ -339,7 +362,7 @@ export function AuditBoundaryStatus() {
           border: "1px solid #fecaca", borderRadius: 4, padding: "2px 8px",
         }}
       >
-        归因加载失败
+        {t("attribution.loadFailed")}
       </span>
     );
   }
@@ -350,16 +373,32 @@ export function AuditBoundaryStatus() {
           fontSize: 10, color: "#6366f1", background: "#eef2ff",
           border: "1px solid #c7d2fe", borderRadius: 4, padding: "2px 8px",
         }}>
-          归因加载中…
+          {t("attribution.loading")}
         </span>
       );
     }
     return null;
   }
-  const unaudited = graph.unauditedCallIds.length;
-  const reasonSummary = unaudited > 0
-    ? graph.unauditedCallIds.map(u => `#${u.callId}: ${u.reason}`).join("\n")
-    : "";
+  const unaudited = graph.unauditedCallIds;
+  const unauditedCount = unaudited.length;
+  const kinds = new Set<UnauditedKind>(unaudited.map((u) => u.kind));
+  const allNoProxy = unauditedCount > 0 && kinds.size === 1 && kinds.has("no-proxy");
+
+  const summaryLine = unauditedCount === 0
+    ? t("attribution.skip.headerOk")
+    : allNoProxy
+      ? t("attribution.skip.summaryAllNoProxy", { n: unauditedCount })
+      : t("attribution.skip.summaryMixed", { n: unauditedCount });
+
+  const tooltip = unauditedCount === 0
+    ? summaryLine
+    : summaryLine + "\n\n" + unaudited
+        .map((u) => t("attribution.skip.callLine", {
+          callId: u.callId,
+          reason: formatUnauditedReason(t, u),
+        }))
+        .join("\n");
+
   return (
     <span
       style={{
@@ -368,15 +407,26 @@ export function AuditBoundaryStatus() {
         background: "#f0fdf4", border: "1px solid #bbf7d0",
         borderRadius: 4, padding: "2px 8px",
       }}
-      title={
-        "audit 已覆盖整 session — firstSeenInCall 准确" +
-        (reasonSummary ? `\n\n以下 call 因边界条件被跳过：\n${reasonSummary}` : "")
-      }
+      title={tooltip}
     >
-      <span style={{ fontWeight: 700, color: "#6b7280", letterSpacing: "0.04em" }}>归因</span>
+      <span style={{ fontWeight: 700, color: "#6b7280", letterSpacing: "0.04em" }}>
+        {t("attribution.skip.headerLabel")}
+      </span>
       <span style={{ color: "#15803d", fontWeight: 600 }}>✓</span>
-      {unaudited > 0 && (
-        <span style={{ color: "#b45309" }}>{unaudited} skipped</span>
+      {unauditedCount > 0 && (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          {allNoProxy ? (
+            <NoProxyDot size={7} title={t("rawTab.noProxyDotTooltip")} />
+          ) : (
+            <span style={{
+              width: 7, height: 7, borderRadius: 999,
+              background: "#d97706", flexShrink: 0, display: "inline-block",
+            }} />
+          )}
+          <span style={{ color: allNoProxy ? "#b45309" : "#b45309", fontWeight: 600 }}>
+            {unauditedCount}
+          </span>
+        </span>
       )}
     </span>
   );

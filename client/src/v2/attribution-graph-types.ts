@@ -59,6 +59,18 @@ export interface JsonlEventAnnotation {
   firstSeenIsAfterAuditGap?: boolean;
 }
 
+/** Mirror of server's UnauditedKind — structured so the UI can pick the right
+ *  visual (NoProxyDot vs amber text vs error chip) and the right i18n bucket
+ *  without having to substring-sniff the diagnostic `reason`. */
+export type UnauditedKind = "no-proxy" | "drilldown-miss" | "parse-error" | "other";
+
+export interface UnauditedCall {
+  callId: number;
+  kind: UnauditedKind;
+  /** Server-side diagnostic message — kept around for hover/dev fallback. */
+  reason: string;
+}
+
 export interface SessionAttributionGraph {
   sessionId: string;
   /** Sorted by lineIdx ascending; includes skipped events too. */
@@ -66,5 +78,5 @@ export interface SessionAttributionGraph {
   /** Audited call ids (input domain for the reverse projection). */
   auditedCallIds: number[];
   /** Calls explicitly skipped during audit (no proxy / mcli / fork). */
-  unauditedCallIds: Array<{ callId: number; reason: string }>;
+  unauditedCallIds: UnauditedCall[];
 }

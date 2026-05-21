@@ -204,17 +204,10 @@ export async function loadDiffTree(
     };
   }
 
-  // session/sub-agent 的第一条 — 无可对照，直接返回 no-prev 占位。
-  // 不再 fallback 成 "全 added"，避免 UI 误读为 "整段新增"。
-  if (!meta.prevCall) {
-    return {
-      callId, sessionId,
-      prevCallId: null,
-      sections: [], summary: emptySummary,
-      unavailableReason: "no-prev",
-    };
-  }
-
+  // 先构建当前 snapshot —— 之后无论有没有 prev，Cache 视角都需要 cur-only
+  // sections（pins + newTotal）。把 cur 解析提前到 prev 检查之前，让
+  // no-prev / prev-not-captured / prev-parse-failed 三种"无可对照"分支都能
+  // emit cur-only sections，缓存拓扑视角不再被一起锁死。
   const jsonlEvents: LinkableJsonlEvent[] = readSessionEventsForLinker(meta.call.sourceFile);
 
   // —— current snapshot —— //
@@ -234,17 +227,29 @@ export async function loadDiffTree(
       callId, sessionId,
       prevCallId: meta.prevCall?.id ?? null,
       sections: [], summary: emptySummary,
-      // cur snapshot 解析失败属于 cur 侧问题 — 用 cur-not-captured 兜底。
+      // cur snapshot 解析失败属于 cur 侧问题 — 用 cur-not-captured 兜底；
+      // 此时也没有可用 snapshot 喂给 cur-only sections。
       unavailableReason: "cur-not-captured",
       error: err instanceof Error ? err.message : String(err),
     };
   }
 
+  // session/sub-agent 的第一条 — 无可对照，返回 no-prev 占位 + cur-only sections
+  // （让 Cache 视角依然可用）。Diff 视角由前端按 unavailableReason 隐藏。
+  if (!meta.prevCall) {
+    return {
+      callId, sessionId,
+      prevCallId: null,
+      sections: buildCurOnlySections(curSnapshot),
+      summary: emptySummary,
+      unavailableReason: "no-prev",
+    };
+  }
+
   // —— previous snapshot（不需 jsonl-linker，仅 parseQuery + attributeSnapshot）—— //
-  // meta.prevCall 已在上面 narrow 过非空，下面三种"prev 不可用"全部走显式占位，
-  // 不再 silent fallback 到 prevSnapshot=null + computeTreeDiff（那条路径会把所有
-  // leaves 标 added，UI 一片绿，且 prevCallId 仍指向那条 call —— 用户看着像有对照
-  // 实际没有，是这次要修的"假绿"bug）。
+  // meta.prevCall 已 narrow 过非空，下面"prev 不可用"两种分支均走显式占位 +
+  // cur-only sections。不再 silent fallback 到 prevSnapshot=null + computeTreeDiff
+  // （那条路径会把所有 leaves 标 added，UI 一片绿，是这次修过的"假绿"bug）。
   const prevProxy = await helpers.fetchProxyReqBodyAt(
     sessionId,
     meta.prevCall.timestamp,
@@ -255,7 +260,8 @@ export async function loadDiffTree(
     return {
       callId, sessionId,
       prevCallId: meta.prevCall.id,
-      sections: [], summary: emptySummary,
+      sections: buildCurOnlySections(curSnapshot),
+      summary: emptySummary,
       unavailableReason: "prev-not-captured",
     };
   }
@@ -274,7 +280,8 @@ export async function loadDiffTree(
     return {
       callId, sessionId,
       prevCallId: meta.prevCall.id,
-      sections: [], summary: emptySummary,
+      sections: buildCurOnlySections(curSnapshot),
+      summary: emptySummary,
       unavailableReason: "prev-parse-failed",
       error: err instanceof Error ? err.message : String(err),
     };
@@ -438,6 +445,54 @@ function buildSections(
     // 留存条件：有 leaves 变化 OR 有声明的 pin
     if ((!leaves || leaves.length === 0) && pins.length === 0) continue;
     out.push(summarizeSection(sid, leaves ?? [], pins));
+  }
+  return out;
+}
+
+/**
+ * 仅基于 curSnap 生成 sections —— 没有 prev 时（prev-not-captured /
+ * prev-parse-failed / no-prev）依然提供 Cache 视角所需的最小数据：
+ *   - 每个 section 的 newTotal（roots 字符总和），用于 grandTotal / section ranges
+ *   - pins（带 cumulativePrefixChars），用于 L1/L2/L3 拓扑条
+ *   - leaves: []   —— 没有 prev 就没有 diff，留空即可（unavailableReason 已经
+ *     告诉客户端 diff 标注不可信）
+ * 顺序与 Anthropic cache prefix 一致：tools → system → messages → other。
+ */
+function buildCurOnlySections(curSnap: ParsedQuerySnapshot): DiffSection[] {
+  const pinPositions = computePinPositions(curSnap);
+  const pinSectionPositions = computeSectionInternalPositions(curSnap);
+  const sumsBySection: Record<DiffSectionId, number> = { tools: 0, system: 0, messages: 0, other: 0 };
+  const pinsBySection: Record<DiffSectionId, PinInfo[]> = { tools: [], system: [], messages: [], other: [] };
+  for (const root of curSnap.roots) {
+    const sid = sectionOf(root.slotType);
+    sumsBySection[sid] += root.charCount;
+    if (root.cachePolicy) {
+      pinsBySection[sid].push({
+        slotType: root.slotType,
+        ttl: root.cachePolicy.ttl,
+        scope: root.cachePolicy.scope,
+        charCount: root.charCount,
+        cumulativePrefixChars: pinPositions.get(root.id) ?? 0,
+        cumulativeSectionChars: pinSectionPositions.get(root.id) ?? 0,
+        jsonPath: root.jsonPath,
+      });
+    }
+  }
+  const order: DiffSectionId[] = ["tools", "system", "messages", "other"];
+  const out: DiffSection[] = [];
+  for (const sid of order) {
+    const total = sumsBySection[sid];
+    const pins = pinsBySection[sid];
+    if (total === 0 && pins.length === 0) continue;
+    out.push({
+      id: sid,
+      newTotal: total,
+      oldTotal: 0,
+      delta: 0,
+      counts: { added: 0, removed: 0, modified: 0, kept: 0 },
+      leaves: [],
+      pins,
+    });
   }
   return out;
 }

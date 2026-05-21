@@ -6,7 +6,7 @@ import remarkGfm from "remark-gfm";
 import { scaleLinear, scaleSqrt, line as d3line, curveCatmullRom } from "d3";
 import { TurnMinimap } from "./TurnMinimap";
 import type { SessionV2 } from "./types";
-import type { DiffEntry, IntervalEvent, IntervalEventKind, LlmCall, ModelStats, SessionDrilldown, ToolCallSlot, UserTurn, InterTurnBlock, CallDetail } from "./drilldown-types";
+import type { DiffEntry, IntervalEvent, IntervalEventKind, LlmCall, ModelStats, SessionDrilldown, ToolCallSlot, UserTurn, InterTurnBlock, CompactEvent, CallDetail } from "./drilldown-types";
 import { apiV2 } from "./api";
 import proxyMissingUrl from "../assets/proxy-missing.png";
 import {
@@ -42,6 +42,7 @@ import { getToolPalette } from "./shared/toolRegistry";
 import { CHART_COLORS, TOOLTIP_PRESET, brandAreaGradient } from "./shared/chart-theme";
 import { CodeBlock } from "./shared/CodeBlock";
 import { EVENT_PALETTES } from "./shared/eventPalette";
+import { NoProxyDot } from "./shared/NoProxyDot";
 
 // Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
 type MockDiffEntry = DiffEntry;
@@ -2638,8 +2639,10 @@ const KIND_LABEL: Record<IntervalEventKind, string> = {
   "user:tool_result":         "Tool result",
   "user:command":             "Command",
   "user:skill_injection":     "激活 SKILL",
+  "user:compact_summary":     "Compact summary",
   "system:api_error":         "API error",
   "system:local_command":     "Local cmd",
+  "system:compact_boundary":  "Compact boundary",
   "system:turn_duration":     "Turn duration",
   "system:stop_hook_summary": "Stop hook",
   "system:away_summary":      "Away summary",
@@ -4946,23 +4949,6 @@ function AttributionSection({
   );
 }
 
-// ─── no-proxy 视觉统一组件 ───────────────────────────────────────────────────
-// 同一颗黄圆点同时出现在 (a) 左侧 nav 中 unmatched 的 LLM 调用条目末尾，
-// (b) 右侧 chrome 区 hasProxy=false 时的 inline 标记。左右两处共用一个组件，
-// 视觉、tooltip 一致。
-function NoProxyDot({ size = 8, title }: { size?: number; title?: string }) {
-  return (
-    <span
-      title={title}
-      style={{
-        width: size, height: size, borderRadius: 999,
-        background: "#f59e0b", flexShrink: 0,
-        display: "inline-block",
-      }}
-    />
-  );
-}
-
 // ─── 无 proxy 数据时的空状态 ──────────────────────────────────────────────────
 // raw tab 在 callDetail.proxyRequestId == null 时整页渲染本组件。
 // 配图位置：client/src/assets/proxy-missing.png（占位文件可为空 0 字节；
@@ -5835,7 +5821,7 @@ function SubAgentSessionPanel({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-type NavLevel = "session" | "turn" | "inter-turn" | "call" | "subagent";
+type NavLevel = "session" | "turn" | "inter-turn" | "call" | "subagent" | "compact-event";
 
 type InspectorState =
   | { type: "hotspots" }
@@ -5878,11 +5864,15 @@ export function SessionDetailV2({ session, onClose }: Props) {
 
   const turns: UserTurn[] = drilldown?.turns ?? buildFallbackTurns();
   const interTurnBlocks: InterTurnBlock[] = drilldown?.interTurnBlocks ?? [];
+  const compactEvents: CompactEvent[] = drilldown?.compactEvents ?? [];
   const isMockData = drilldown === null;
 
   const [navLevel, setNavLevel] = useState<NavLevel>("session");
   const [selectedTurn, setSelectedTurn] = useState<MockUserTurn | null>(null);
   const [selectedInterTurnBlock, setSelectedInterTurnBlock] = useState<InterTurnBlock | null>(null);
+  // /compact event 选中状态。点击 left rail 的 🗜 行只切换高亮 —— 详情面板在
+  // 后续 task 接入；目前只让用户能视觉确认"点击位置 = 这个 compact"。
+  const [selectedCompactEventIdx, setSelectedCompactEventIdx] = useState<number | null>(null);
   const [selectedCall, setSelectedCall] = useState<MockLlmCall | null>(null);
   const [inspector, setInspector] = useState<InspectorState>({ type: "hotspots" });
   const [selectedSubAgent, setSelectedSubAgent] = useState<SubAgentSummary | null>(null);
@@ -6233,6 +6223,25 @@ export function SessionDetailV2({ session, onClose }: Props) {
                         />
                       );
                     })}
+                    {/* 在 turn N 之后插入归属于 "afterTurnId === turn.id" 的
+                        compact 事件 sibling 行。同一个 turn 之后可能有多个
+                        compact（罕见但允许），按 belonging 顺序渲染。 */}
+                    {compactEvents
+                      .filter(ev =>
+                        (ev.belonging.kind === "between-turns" && ev.belonging.afterTurnId === turn.id)
+                        || (ev.belonging.kind === "post-session" && ev.belonging.afterTurnId === turn.id)
+                      )
+                      .map(ev => (
+                        <CompactEventNavItem
+                          key={`compact-${ev.index}`}
+                          ev={ev}
+                          active={navLevel === "compact-event" && selectedCompactEventIdx === ev.index}
+                          onClick={() => {
+                            setSelectedCompactEventIdx(ev.index);
+                            setNavLevel("compact-event");
+                          }}
+                        />
+                      ))}
                   </React.Fragment>
                 );
               });
@@ -6252,6 +6261,15 @@ export function SessionDetailV2({ session, onClose }: Props) {
             )}
             {navLevel === "inter-turn" && selectedInterTurnBlock && (
               <InterTurnBlockPanel block={selectedInterTurnBlock} />
+            )}
+            {navLevel === "compact-event" && selectedCompactEventIdx !== null
+              && compactEvents[selectedCompactEventIdx] && (
+              <UserTurnDetailPanel
+                turn={synthesizeCompactTurn(compactEvents[selectedCompactEventIdx])}
+                onSelectCall={() => { /* 合成 call 没有真实 jsonl line，暂不接入 call detail */ }}
+                isMockSession={false}
+                sessionId={session.session_id}
+              />
             )}
             {navLevel === "call" && selectedCall && (
               <LlmCallDetailPanel
@@ -6532,6 +6550,58 @@ function NavItem({
   );
 }
 
+// CompactEventNavItem —— 在左侧 Turn 列表中作为 sibling 行渲染。
+// 视觉规则：跟 turn / call 都不同，凸显"非 turn 的系统级事件"。
+//   - 橙色色板（不与 turn 蓝 / call 灰 / interTurn 紫冲突）
+//   - 🗜 icon + "Compact" + 压缩比一行表达
+//   - userInstructions 非空时作为副标题展示（"focus on parser" 这类语义意图必须可见）
+function CompactEventNavItem({ ev, active, onClick }: { ev: CompactEvent; active: boolean; onClick: () => void }) {
+  const ratioPct = ev.preTokens > 0
+    ? Math.max(0, Math.round((1 - ev.postTokens / ev.preTokens) * 100))
+    : 0;
+  const fmtTokens = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
+  const triggerTag = ev.trigger === "manual" ? "M" : ev.trigger === "auto" ? "A" : ev.trigger === "micro" ? "μ" : "?";
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        padding: "5px 12px 5px 16px",
+        cursor: "pointer",
+        background: active ? "#fff7ed" : "transparent",
+        borderLeft: active ? "2px solid #f97316" : "2px solid transparent",
+        display: "flex", alignItems: "center", gap: 6,
+      }}
+      onMouseEnter={e => { if (!active) e.currentTarget.style.background = "#fffbeb"; }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+      title={`Compact · ${ev.trigger} · ${fmtTokens(ev.preTokens)} → ${fmtTokens(ev.postTokens)} (-${ratioPct}%)`}
+    >
+      <span style={{ fontSize: 11, flexShrink: 0 }}>🗜</span>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{
+          fontSize: 11, color: active ? "#c2410c" : "#9a3412",
+          fontWeight: 600,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          Compact
+          <span style={{ fontWeight: 400, color: "#c2410c", marginLeft: 6, fontSize: 9 }}>{triggerTag}</span>
+          <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 6, fontSize: 10 }}>
+            {fmtTokens(ev.preTokens)} → {fmtTokens(ev.postTokens)}
+          </span>
+        </div>
+        <div style={{
+          fontSize: 10, color: "#9ca3af", marginTop: 1,
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          fontStyle: ev.userInstructions ? "normal" : "italic",
+        }}>
+          {ev.userInstructions
+            ? `"${ev.userInstructions}"`
+            : `-${ratioPct}% · ${(ev.durationMs / 1000).toFixed(1)}s${ev.proxy ? ` · ${ev.proxy.model}` : ""}`}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function InterTurnNavItem({ block, active, onClick }: { block: InterTurnBlock; active: boolean; onClick: () => void }) {
   const exitLabel = block.label.includes("/exit") || !block.enteredContext;
   return (
@@ -6562,6 +6632,334 @@ function InterTurnNavItem({ block, active, onClick }: { block: InterTurnBlock; a
       {!block.enteredContext && (
         <span style={{ fontSize: 9, color: "#cbd5e1", flexShrink: 0 }} title="Session ended before this entered context">∅</span>
       )}
+    </div>
+  );
+}
+
+// ─── synthesizeCompactTurn —— 把 CompactEvent 包装成 UserTurn-shape 数据 ──────
+// 让 UserTurnDetailPanel 可以"完全复用"渲染 Compact 详情。映射要点：
+//
+//   UserTurn.userInput          ← `/compact [args]` 或 `/compact`
+//   UserTurn.userInputLineIdx   ← ev.commandLineIdx（用户敲命令那一行）
+//   UserTurn.finalOutput        ← ev.summaryText（注入到下次推理 prompt 的 summary 文本）
+//   UserTurn.calls              ← 1 个合成 LlmCall，承载 summarization LLM call 的数据
+//                                  来源是 proxy_requests 富化；jsonl 端无 assistant 事件
+//   call.intervalEvents         ← jsonl 端 3 条相关事件（boundary / summary / 可选 command）
+//                                  按行号排序，让 IntervalEventRow 顺序渲染
+//
+// 标志位 hasCompaction=true 保证 risk badge 显示 "compaction"。
+// turn.id 用极小负数避开和真实 turn 撞 key（左 rail 不用这个 turn 渲染，但下游
+// flatMap(t => t.calls) 会扫描所有 turns —— 我们没把合成 turn 加入 turns 数组，
+// 只是直接喂给 UserTurnDetailPanel，所以撞 key 实际上不会发生）。
+function synthesizeCompactTurn(ev: CompactEvent): UserTurn {
+  const synthCallId = -(ev.index + 1) * 1000; // 极小负 id，跨真实 turn 都不会撞
+  // intervalEvents：boundary / summary 必有，command 可选。按 lineIdx 升序排。
+  const ies: IntervalEvent[] = [];
+  if (ev.commandLineIdx !== null) {
+    ies.push({
+      kind: "user:command",
+      lineIdx: ev.commandLineIdx,
+      timestamp: ev.timestamp,
+      contentPreview: ev.userInstructions
+        ? `/compact ${ev.userInstructions}`
+        : "/compact",
+      contentSize: (ev.userInstructions?.length ?? 0) + "/compact".length + 1,
+      rawJson: JSON.stringify({ type: "user", commandName: "/compact", commandArgs: ev.userInstructions ?? "" }),
+    });
+  }
+  ies.push({
+    kind: "system:compact_boundary",
+    lineIdx: ev.boundaryLineIdx,
+    timestamp: ev.timestamp,
+    contentPreview: `compact_boundary · trigger=${ev.trigger} · ${ev.preTokens}→${ev.postTokens} tokens · ${ev.durationMs}ms`,
+    contentSize: 0,
+    rawJson: JSON.stringify({
+      type: "system",
+      subtype: "compact_boundary",
+      uuid: ev.boundaryUuid,
+      compactMetadata: {
+        trigger: ev.trigger,
+        preTokens: ev.preTokens,
+        postTokens: ev.postTokens,
+        durationMs: ev.durationMs,
+      },
+    }),
+  });
+  if (ev.summaryLineIdx !== null && ev.summaryText !== null) {
+    ies.push({
+      kind: "user:compact_summary",
+      lineIdx: ev.summaryLineIdx,
+      timestamp: ev.timestamp,
+      contentPreview: ev.summaryText,
+      contentSize: ev.summaryText.length,
+      rawJson: JSON.stringify({
+        type: "user",
+        isCompactSummary: true,
+        uuid: ev.summaryUuid,
+        message: { role: "user", content: ev.summaryText },
+      }),
+    });
+  }
+  ies.sort((a, b) => a.lineIdx - b.lineIdx);
+
+  // 合成 LlmCall：来源 = proxy 富化。proxy 缺失时降级为零值。
+  const proxyData = ev.proxy ? {
+    requestId: ev.proxy.proxyRequestId,
+    reqMessageCount: null,
+    reqHasTools: null,
+    resInputTokens: ev.proxy.inputTokens,
+    resOutputTokens: ev.proxy.outputTokens,
+    resCacheCreation: 0,
+    resCacheRead: ev.proxy.cacheReadTokens,
+    resStopReason: "end_turn",
+    errorClass: null,
+    durationMs: ev.proxy.durationMs,
+  } : null;
+
+  const syntheticCall: LlmCall = {
+    id: synthCallId,
+    indexInTurn: 1,
+    messageId: null,
+    apiRequestId: ev.proxy?.requestId ?? null,
+    jsonlLineIdx: null,
+    jsonlFrameLineIdxs: [],
+    contextSize: ev.preTokens,
+    outputTokens: ev.proxy?.outputTokens ?? 0,
+    cacheRead: ev.proxy?.cacheReadTokens ?? 0,
+    cacheWrite: 0,
+    timestamp: ev.proxy?.startedAt ?? ev.timestamp,
+    model: ev.proxy?.model ?? "",
+    stopReason: "end_turn",
+    isCompaction: true,
+    isUnknownHeavy: false,
+    freshIn: ev.proxy?.inputTokens ?? 0,
+    isSignificant: true,
+    significantDelta: ev.postTokens - ev.preTokens,
+    proxy: proxyData,
+    proxyMatchMode: ev.proxy ? "exact" : "unmatched",
+    subAgents: [],
+    incomingDiff: [],
+    toolNames: [],
+    toolCalls: [],
+    assistantText: ev.summaryText?.slice(0, 500) ?? "",
+    intervalEvents: ies,
+  };
+
+  return {
+    id: -(ev.index + 1),    // 负 id，避开真实 turn
+    userInput: ev.userInstructions ? `/compact ${ev.userInstructions}` : "/compact",
+    userInputLineIdx: ev.commandLineIdx,
+    finalOutput: ev.summaryText,
+    midTurnInjections: [],
+    startedAt: ev.timestamp,
+    endedAt: ev.timestamp,
+    durationMs: ev.durationMs,
+    llmCallCount: 1,
+    toolCallCount: 0,
+    netContextDelta: ev.postTokens - ev.preTokens,
+    peakContext: ev.preTokens,
+    cacheRead: ev.proxy?.cacheReadTokens ?? 0,
+    cacheWrite: 0,
+    unknownDelta: 0,
+    hasCompaction: true,
+    hasUnknownSpike: false,
+    errorCount: 0,
+    calls: [syntheticCall],
+  };
+}
+
+// ─── CompactEventPanel —— /compact 详情面板 ───────────────────────────────────
+// 风格上类 InterTurnBlockPanel：header 统计块 + body 顺序事件行。
+// 数据来源严格基于 CompactEvent 的三源（boundary / summary / command / proxy），
+// 不读 jsonl 原始文件 —— parser 已经把所有必需信息序列化进 CompactEvent。
+//
+// 内容分四个"逻辑事件"按时间顺序展示：
+//   1. /compact command  ← jsonl 的 user.<command-name>/compact</command-name> 行
+//                          带 userInstructions（如果用户指定了 args）
+//   2. boundary marker   ← jsonl 的 system.compact_boundary 行，含 metadata
+//   3. summarization LLM call  ← proxy_requests 富化（model / tokens / duration）
+//                                jsonl 端无对应 assistant 事件，但调用真实发生过
+//   4. summary injection ← jsonl 的 user.isCompactSummary=true 行
+//                          这是 post-compact 第一次推理 prompt 里的 user message
+//
+// 复用 InterTurnBlockDetail 的"kindLabel + monospace row"行风格，但不直接调用
+// InterTurnBlockDetail —— 后者吃的是 IntervalEvent[]，CompactEvent 不在那个数据通路里。
+function CompactEventPanel({ ev }: { ev: CompactEvent }) {
+  const fmtTokens = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
+  const ratioPct = ev.preTokens > 0
+    ? Math.max(0, Math.round((1 - ev.postTokens / ev.preTokens) * 100))
+    : 0;
+  const triggerLabel = ev.trigger === "manual" ? "manual"
+                      : ev.trigger === "auto"   ? "auto"
+                      : ev.trigger === "micro"  ? "micro"
+                      : ev.trigger;
+  const belongingLabel = ev.belonging.kind === "between-turns"
+    ? `T${ev.belonging.afterTurnId} → T${ev.belonging.beforeTurnId}`
+    : ev.belonging.kind === "post-session"
+      ? `T${ev.belonging.afterTurnId} → session end`
+      : ev.belonging.kind === "pre-session"
+        ? `session start → T${ev.belonging.beforeTurnId}`
+        : `(other)`;
+  return (
+    <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
+      {/* Header */}
+      <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid #f3f4f6" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#c2410c" }}>
+            🗜 Compact
+          </span>
+          <span style={{ fontSize: 10, color: "#9a3412", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 4, padding: "1px 6px", fontWeight: 600 }}>
+            {triggerLabel}
+          </span>
+          <span style={{ fontSize: 11, color: "#9ca3af" }}>· system-level maintenance event ·</span>
+          <span style={{ fontSize: 11, color: "#9ca3af" }}>{belongingLabel}</span>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {[
+            { label: "Pre→Post", value: `${fmtTokens(ev.preTokens)} → ${fmtTokens(ev.postTokens)}` },
+            { label: "Ratio", value: `-${ratioPct}%`, color: ratioPct >= 80 ? "#16a34a" : "#c2410c" },
+            { label: "Duration", value: `${(ev.durationMs / 1000).toFixed(1)}s` },
+            ...(ev.proxy ? [
+              { label: "Model", value: ev.proxy.model || "—" },
+              { label: "Out tokens", value: fmtTokens(ev.proxy.outputTokens) },
+              { label: "Cache read", value: fmtTokens(ev.proxy.cacheReadTokens) },
+            ] : [{ label: "Proxy", value: "unmatched", color: "#94a3b8" }]),
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{
+              display: "flex", flexDirection: "column", alignItems: "center",
+              padding: "5px 10px", background: "#fff7ed", borderRadius: 6,
+              border: "1px solid #fed7aa", minWidth: 64,
+            }}>
+              <span style={{ fontSize: 9, color: "#9ca3af", marginBottom: 2 }}>{label}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: color ?? "#c2410c" }}>{value}</span>
+            </div>
+          ))}
+        </div>
+        {ev.userInstructions && (
+          <div style={{ marginTop: 12, padding: "8px 12px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: "#92400e", letterSpacing: "0.08em", marginBottom: 4 }}>
+              USER INSTRUCTIONS（/compact 附加指令）
+            </div>
+            <div style={{ fontSize: 12, color: "#78350f", fontFamily: "monospace", wordBreak: "break-word" }}>
+              {ev.userInstructions}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Event sequence —— jsonl 顺序 + LLM call 在 boundary 前 */}
+      <div style={{ border: "1px solid #fed7aa", borderRadius: 8, background: "#fff7ed", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #fed7aa", background: "#ffedd5" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#c2410c" }}>Event sequence</span>
+          <span style={{ fontSize: 10, color: "#fb923c" }}>·</span>
+          <span style={{ fontSize: 10, color: "#fb923c", fontStyle: "italic" }}>
+            jsonl events + the (jsonl-invisible) summarization LLM call
+          </span>
+        </div>
+
+        <div style={{ padding: "8px 12px" }}>
+          {/* 1. /compact command (可选) */}
+          {ev.commandLineIdx !== null && (
+            <CompactEventRow
+              tag="cmd"
+              lineRef={`L${ev.commandLineIdx + 1}`}
+              text={ev.userInstructions
+                ? `/compact ${ev.userInstructions}`
+                : "/compact"}
+              note="user typed slash command"
+            />
+          )}
+
+          {/* 2. boundary marker */}
+          <CompactEventRow
+            tag="bound"
+            lineRef={`L${ev.boundaryLineIdx + 1}`}
+            text={`compact_boundary · trigger=${ev.trigger} · ${fmtTokens(ev.preTokens)} → ${fmtTokens(ev.postTokens)} · ${(ev.durationMs / 1000).toFixed(1)}s`}
+            note={`uuid=${ev.boundaryUuid.slice(0, 8)}…`}
+          />
+
+          {/* 3. summarization LLM call —— jsonl 端没有对应 assistant 事件，
+              这一行的数据全部来自 proxy_requests 富化。这是 UI 上的"幽灵 call"，
+              显式标出"proxy-only"避免用户以为它该出现在 turn 的 call 列表里。 */}
+          {ev.proxy ? (
+            <CompactEventRow
+              tag="llm"
+              lineRef={`proxy#${ev.proxy.proxyRequestId}`}
+              text={`${ev.proxy.model} · in=${fmtTokens(ev.proxy.inputTokens)} cache=${fmtTokens(ev.proxy.cacheReadTokens)} out=${fmtTokens(ev.proxy.outputTokens)} · ${(ev.proxy.durationMs / 1000).toFixed(1)}s`}
+              note="summarization call · not in jsonl"
+            />
+          ) : (
+            <CompactEventRow
+              tag="llm"
+              lineRef="—"
+              text="summarization LLM call (not matched in proxy_requests)"
+              note="jsonl never records this call as an assistant event"
+              muted
+            />
+          )}
+
+          {/* 4. injected summary —— L22, isCompactSummary=true */}
+          {ev.summaryLineIdx !== null && ev.summaryText && (
+            <CompactEventRow
+              tag="summary"
+              lineRef={`L${ev.summaryLineIdx + 1}`}
+              text={ev.summaryText}
+              note={`isCompactSummary · injected into next call's prompt · ${ev.summaryText.length}b`}
+              monospaceBlock
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 单行渲染，复用 InterTurnBlockDetail 的 "kindLabel chip + monospace text" 风格，
+// 但 chip 用橙色色板与 InterTurn 紫色区分。
+function CompactEventRow({
+  tag, lineRef, text, note, muted, monospaceBlock,
+}: {
+  tag: string;
+  lineRef: string;
+  text: string;
+  note?: string;
+  muted?: boolean;
+  monospaceBlock?: boolean;
+}) {
+  return (
+    <div style={{ padding: "6px 0", borderBottom: "1px solid #ffedd5", display: "flex", gap: 8, alignItems: "flex-start" }}>
+      <span style={{
+        fontSize: 9, fontWeight: 700, color: muted ? "#94a3b8" : "#c2410c",
+        background: muted ? "#f1f5f9" : "#ffedd5", borderRadius: 3, padding: "1px 5px",
+        flexShrink: 0, marginTop: 2, minWidth: 42, textAlign: "center",
+      }}>
+        {tag}
+      </span>
+      <span style={{
+        fontSize: 9, fontWeight: 600, color: "#9ca3af",
+        flexShrink: 0, marginTop: 3, minWidth: 56, textAlign: "left", fontFamily: "monospace",
+      }}>
+        {lineRef}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {monospaceBlock ? (
+          <pre style={{
+            margin: 0, fontSize: 11, color: muted ? "#94a3b8" : "#374151",
+            fontFamily: "monospace", lineHeight: 1.45, whiteSpace: "pre-wrap",
+            wordBreak: "break-word", maxHeight: 360, overflowY: "auto",
+            padding: "6px 8px", background: "#fff", border: "1px solid #fed7aa", borderRadius: 4,
+          }}>
+            {text}
+          </pre>
+        ) : (
+          <div style={{ fontSize: 11, color: muted ? "#94a3b8" : "#374151", fontFamily: "monospace", wordBreak: "break-all", lineHeight: 1.5 }}>
+            {text}
+          </div>
+        )}
+        {note && (
+          <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2, fontStyle: "italic" }}>{note}</div>
+        )}
+      </div>
     </div>
   );
 }

@@ -23,9 +23,12 @@ export const EVENT_PALETTES: Record<IntervalEventKind, EventPalette> = {
   "user:command":             { bg: "#fffbeb", border: "#fde68a", fg: "#d97706" },
   // skill_injection：用 attachment:skill_listing 同款灰，与右侧 proxy 视图对齐
   "user:skill_injection":     { bg: "#f8fafc", border: "#e2e8f0", fg: "#475569" },
+  // Compact 类事件统一橙色色板：与 left rail 的 🗜 行 / CompactEventNavItem 对齐。
+  "user:compact_summary":     { bg: "#fff7ed", border: "#fed7aa", fg: "#c2410c" },
 
   "system:api_error":         { bg: "#fef2f2", border: "#fca5a5", fg: "#dc2626" },
   "system:local_command":     SLATE_NEUTRAL,
+  "system:compact_boundary":  { bg: "#ffedd5", border: "#fdba74", fg: "#9a3412" },
   "system:turn_duration":     SLATE_NEUTRAL,
   "system:stop_hook_summary": SLATE_NEUTRAL,
   "system:away_summary":      { bg: "#fefce8", border: "#fde68a", fg: "#92400e" },

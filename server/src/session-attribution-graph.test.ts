@@ -129,9 +129,11 @@ describe("annotateJsonlFromCallConsumers — jsonl event 维度的消费历史�
       "s",
       makeEvents(),
       [{ callId: 10, consumedLineIdxs: [0] }],
-      [{ callId: 11, reason: "proxy reqBody unavailable" }],
+      [{ callId: 11, kind: "no-proxy", reason: "proxy reqBody unavailable" }],
     );
-    expect(g.unauditedCallIds).toEqual([{ callId: 11, reason: "proxy reqBody unavailable" }]);
+    expect(g.unauditedCallIds).toEqual([
+      { callId: 11, kind: "no-proxy", reason: "proxy reqBody unavailable" },
+    ]);
   });
 
   it("audit-gap detection: marks firstSeenIsAfterAuditGap when there's an unaudited prefix", () => {
@@ -149,7 +151,7 @@ describe("annotateJsonlFromCallConsumers — jsonl event 维度的消费历史�
       // Unaudited calls 1-69 (only one shown for brevity; the test only
       // requires ONE unaudited call before the min audited call to trip
       // the flag).
-      [{ callId: 1, reason: "proxy reqBody unavailable for this call" }],
+      [{ callId: 1, kind: "no-proxy", reason: "proxy reqBody unavailable for this call" }],
     );
     const l0 = g.events.find((e) => e.lineIdx === 0)!;
     expect(l0.firstSeenInCall).toBe(70);
@@ -166,7 +168,7 @@ describe("annotateJsonlFromCallConsumers — jsonl event 维度的消费历史�
         { callId: 70, consumedLineIdxs: [1] },  // 70 references L1, not L0
         { callId: 80, consumedLineIdxs: [0] },  // L0 first seen at 80
       ],
-      [{ callId: 1, reason: "proxy reqBody unavailable for this call" }],
+      [{ callId: 1, kind: "no-proxy", reason: "proxy reqBody unavailable for this call" }],
     );
     const l0 = g.events.find((e) => e.lineIdx === 0)!;
     expect(l0.firstSeenInCall).toBe(80);
