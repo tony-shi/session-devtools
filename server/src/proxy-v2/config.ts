@@ -2,6 +2,7 @@
 // 路径常量在 paths.ts；这里只放运行时函数和类型。
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { PROXY_SERVER_PATHS } from "./paths";
+import { normalizeHost } from "./host-normalize";
 
 export const LISTEN_HOST = "127.0.0.1";
 export const DEBUG = !!process.env.API_DASHBOARD_PROXY_DEBUG;
@@ -68,9 +69,12 @@ function buildMitmWhitelist(): Set<string> {
 
   const baseUrl = process.env.ANTHROPIC_BASE_URL;
   if (baseUrl) {
+    // ANTHROPIC_BASE_URL 一定带 schema，复用 URL ctor 即可；保留独立分支因为
+    // env 来源是 trusted，没必要再过 normalizeHost 的全规则（trailing slash
+    // 等都被 URL ctor 直接吃掉）。
     try {
       const hostname = new URL(baseUrl).hostname;
-      if (hostname) hosts.add(hostname);
+      if (hostname) hosts.add(hostname.toLowerCase());
     } catch {}
   }
 
@@ -78,8 +82,12 @@ function buildMitmWhitelist(): Set<string> {
     try {
       const raw = JSON.parse(readFileSync(PROXY_SERVER_PATHS.mitmHostsFile, "utf8"));
       if (Array.isArray(raw.hosts)) {
+        // 用户写入的内容统一过 normalizeHost：旧版本可能残留 `https://...`、
+        // `host/path` 这类脏数据，proxy 实际是字符串相等比对，不 normalize 就
+        // 静默 miss。
         for (const h of raw.hosts) {
-          if (typeof h === "string" && h.trim()) hosts.add(h.trim());
+          const n = normalizeHost(h);
+          if (n) hosts.add(n);
         }
       }
     } catch {}

@@ -44,6 +44,20 @@ export default function App() {
   useEffect(() => { fetchV2(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { fetchV2Sessions(v2Page, v2PageSize, v2Search); }, [v2Page, v2PageSize, v2Search]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Cross-component nav: any descendant can ask App to switch tabs via
+  //   window.dispatchEvent(new CustomEvent("dashboard:navigate", { detail: { tab: "proxy-v2" } }))
+  // We don't have a router; this glue is the minimum to let in-detail
+  // links (e.g. "去启动 →", "打开代理设置 →" in ProxyMissingEmptyState)
+  // jump out to the Proxy tab without prop-drilling setTab through 6 levels.
+  useEffect(() => {
+    const onNav = (e: Event) => {
+      const detail = (e as CustomEvent<{ tab?: Tab }>).detail;
+      if (detail?.tab) setTab(detail.tab);
+    };
+    window.addEventListener("dashboard:navigate", onNav);
+    return () => window.removeEventListener("dashboard:navigate", onNav);
+  }, []);
+
   // Debounce search input: only fire API after 350ms of inactivity
   useEffect(() => {
     const id = setTimeout(() => {

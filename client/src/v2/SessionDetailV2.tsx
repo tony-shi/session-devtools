@@ -4946,15 +4946,27 @@ function AttributionSection({
   );
 }
 
+// ─── no-proxy 视觉统一组件 ───────────────────────────────────────────────────
+// 同一颗黄圆点同时出现在 (a) 左侧 nav 中 unmatched 的 LLM 调用条目末尾，
+// (b) 右侧 chrome 区 hasProxy=false 时的 inline 标记。左右两处共用一个组件，
+// 视觉、tooltip 一致。
+function NoProxyDot({ size = 8, title }: { size?: number; title?: string }) {
+  return (
+    <span
+      title={title}
+      style={{
+        width: size, height: size, borderRadius: 999,
+        background: "#f59e0b", flexShrink: 0,
+        display: "inline-block",
+      }}
+    />
+  );
+}
+
 // ─── 无 proxy 数据时的空状态 ──────────────────────────────────────────────────
 // raw tab 在 callDetail.proxyRequestId == null 时整页渲染本组件。
 // 配图位置：client/src/assets/proxy-missing.png（占位文件可为空 0 字节；
 // onError 会自动隐藏 <img>，不会出现破图标）。
-//
-// 改进点（本次）：原来无脑指引用户去 Proxy tab 启动，路径绕；现在主动 fetch
-// /api/proxy-v2/status，分两种情形给不同文案：
-//   - proxy 未启动 → 内置「启动代理」按钮 + 重启 Claude Code 提示
-//   - proxy 已在跑 → 解释为什么这条 call 仍然没数据（启动前发生 / 没重启 CC）
 type ProxyV2Phase = "idle" | "starting" | "running" | "stopping";
 
 interface ProxyV2Status {
@@ -4962,6 +4974,52 @@ interface ProxyV2Status {
   active: boolean;
   port: number;
   pid: number | null;
+}
+
+function navigateToProxyTab() {
+  window.dispatchEvent(new CustomEvent("dashboard:navigate", { detail: { tab: "proxy-v2" } }));
+}
+
+// 状态徽标：绿点 = 代理运行中；灰点 = 代理未启动。比之前那个橙色 warning box
+// 更克制，"运行中" 和 "未启动" 用同一种 pill 容器，只换颜色。
+function ProxyStatusPill({ running, label }: { running: boolean; label: string }) {
+  const dotColor = running ? "#10b981" : "#9ca3af";
+  const textColor = running ? "#047857" : "#6b7280";
+  const bg       = running ? "#ecfdf5" : "#f3f4f6";
+  const border   = running ? "#a7f3d0" : "#e5e7eb";
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 6,
+      padding: "3px 10px", borderRadius: 999,
+      background: bg, border: `1px solid ${border}`,
+      color: textColor, fontSize: 11, fontWeight: 600,
+    }}>
+      <span style={{
+        width: 7, height: 7, borderRadius: 999, background: dotColor,
+        boxShadow: running ? "0 0 0 3px rgba(16,185,129,0.15)" : "none",
+      }} />
+      {label}
+    </span>
+  );
+}
+
+// 内联 link 风格：用于「打开代理设置 →」「去启动」等跳转，使代理 tab 一键可达。
+function InlineLink({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        border: "none", background: "transparent", padding: 0,
+        color: "#6366f1", fontWeight: 600, fontSize: "inherit",
+        cursor: "pointer", textDecoration: "none",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}
+    >
+      {children}
+    </button>
+  );
 }
 
 function ProxyMissingEmptyState() {
@@ -5001,17 +5059,31 @@ function ProxyMissingEmptyState() {
   // running = phase 是 running 或 starting；都视作"代理已在工作 / 即将工作"
   const isRunning = status?.phase === "running" || status?.phase === "starting";
 
+  // 列表项：左侧一个柔和的小圆点充当 marker，避免直接使用 ⚠ / · 这种突兀符号。
+  const renderBullet = (content: React.ReactNode) => (
+    <li style={{
+      display: "flex", gap: 10, alignItems: "flex-start",
+      fontSize: 12, lineHeight: 1.65, color: "#4b5563",
+    }}>
+      <span style={{
+        width: 5, height: 5, borderRadius: 999, background: "#cbd5e1",
+        marginTop: 8, flexShrink: 0,
+      }} />
+      <span style={{ flex: 1 }}>{content}</span>
+    </li>
+  );
+
   return (
     <div style={{
       display: "flex", flexDirection: "column", alignItems: "center",
-      textAlign: "center", padding: "32px 24px", gap: 14,
+      textAlign: "center", padding: "32px 24px", gap: 16,
     }}>
       {imgOk && (
         <img
           src={proxyMissingUrl}
           alt=""
           onError={() => setImgOk(false)}
-          style={{ maxWidth: 240, width: "100%", height: "auto", opacity: 0.95 }}
+          style={{ maxWidth: 220, width: "100%", height: "auto", opacity: 0.95 }}
         />
       )}
 
@@ -5020,25 +5092,50 @@ function ProxyMissingEmptyState() {
           {t("rawTab.noProxyStatusChecking")}
         </div>
       ) : isRunning ? (
-        // 代理已在运行 —— 解释为什么这条 call 仍然没有数据
+        // ─── 代理已在运行 ───────────────────────────────────────────────────
+        // 解释为什么这条 call 仍然没数据，并给出两条 actionable 建议（重启 /
+        // 配置第三方域名）。第二条带 inline link 直跳代理 tab。
         <>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "#1f2937" }}>
             {t("rawTab.noProxyTitleRunning")}
           </div>
-          <div style={{ fontSize: 12, lineHeight: 1.6, color: "#4b5563", maxWidth: 460 }}>
-            {t("rawTab.noProxyBodyRunning")}
-          </div>
-          <div style={{ fontSize: 11, color: "#9ca3af", maxWidth: 460 }}>
-            {t("rawTab.noProxyManageHint", { tab: t("nav.proxy") })}
-          </div>
+          <ProxyStatusPill running label={t("rawTab.noProxyStatusRunning")} />
+          <ul style={{
+            listStyle: "none", padding: 0, margin: "4px 0 0 0",
+            maxWidth: 480, textAlign: "left",
+            display: "flex", flexDirection: "column", gap: 8,
+          }}>
+            {renderBullet(t("rawTab.noProxyRunningHintRestart"))}
+            {renderBullet(
+              <>
+                {t("rawTab.noProxyRunningHintThirdParty", {
+                  tab: t("nav.proxy"),
+                  section: t("proxyTraffic.captureTargets"),
+                })}{" "}
+                <InlineLink onClick={navigateToProxyTab}>
+                  {t("rawTab.noProxyOpenProxyTab")}
+                </InlineLink>
+              </>,
+            )}
+          </ul>
         </>
       ) : (
-        // 代理未启动 —— 主动给一个启动按钮 + 重启 Claude Code 提示
+        // ─── 代理未启动 ─────────────────────────────────────────────────────
+        // 主 CTA = 内置「启动代理」按钮；副 CTA = 「去启动」inline link 跳到
+        // 代理 tab 让用户看更多上下文后再启动。重启提示作为 bullet 收敛。
         <>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "#374151" }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: "#1f2937" }}>
             {t("rawTab.noProxyTitleStopped")}
           </div>
-          <div style={{ fontSize: 12, lineHeight: 1.6, color: "#4b5563", maxWidth: 460 }}>
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 10,
+          }}>
+            <ProxyStatusPill running={false} label={t("rawTab.noProxyStatusStopped")} />
+            <InlineLink onClick={navigateToProxyTab}>
+              {t("rawTab.noProxyGoStart")} →
+            </InlineLink>
+          </div>
+          <div style={{ fontSize: 12, lineHeight: 1.65, color: "#4b5563", maxWidth: 480 }}>
             {t("rawTab.noProxyBodyStopped")}
           </div>
           <button
@@ -5060,22 +5157,18 @@ function ProxyMissingEmptyState() {
             <div style={{
               fontSize: 11, color: "#991b1b",
               background: "#fef2f2", border: "1px solid #fecaca",
-              borderRadius: 6, padding: "6px 10px", maxWidth: 460,
+              borderRadius: 6, padding: "6px 10px", maxWidth: 480,
             }}>
               {t("rawTab.noProxyStartFailed", { error: startError })}
             </div>
           )}
-          <div style={{
-            fontSize: 11, color: "#92400e",
-            background: "#fffbeb", border: "1px solid #fde68a",
-            borderRadius: 6, padding: "8px 12px", maxWidth: 460,
-            lineHeight: 1.55,
+          <ul style={{
+            listStyle: "none", padding: 0, margin: "4px 0 0 0",
+            maxWidth: 480, textAlign: "left",
+            display: "flex", flexDirection: "column", gap: 8,
           }}>
-            ⚠ {t("rawTab.noProxyRestartHint")}
-          </div>
-          <div style={{ fontSize: 11, color: "#9ca3af", maxWidth: 460 }}>
-            {t("rawTab.noProxyManageHint", { tab: t("nav.proxy") })}
-          </div>
+            {renderBullet(t("rawTab.noProxyRestartHint"))}
+          </ul>
         </>
       )}
     </div>
@@ -5342,9 +5435,7 @@ function LlmCallDetailPanel({
               <span style={{ fontSize: 9, color: "#6b7280" }}>{call.proxy.durationMs >= 1000 ? `${(call.proxy.durationMs / 1000).toFixed(1)}s` : `${call.proxy.durationMs}ms`}</span>
             )}
             {!callDetailLoading && !hasProxy && (
-              <span style={{ fontSize: 9, color: "#d97706", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 3, padding: "1px 6px" }}>
-                no proxy
-              </span>
+              <NoProxyDot title={t("rawTab.noProxyDotTooltip")} />
             )}
             {/* Single chevron toggles ledger collapse/expand. Lives in the
                 title row so the position is stable across both states (the
@@ -6112,21 +6203,14 @@ export function SessionDetailV2({ session, onClose }: Props) {
                       const callNavBadges: StatusBadge[] = call.isCompaction
                         ? [{ kind: "compaction", count: 1, tooltip: t("sessionOverview.badges.compaction") }]
                         : [];
-                      // Proxy-link quality dot: only render when unmatched, so
-                      // good calls stay visually quiet.
-                      const proxyDot = call.proxyMatchMode === "unmatched"
-                        ? { color: "#9ca3af", title: "No proxy request linked to this call." }
-                        : null;
-                      const badgesNode = (proxyDot || callNavBadges.length > 0) ? (
+                      // Proxy-link quality dot: 与右侧 chrome 的 NoProxyDot
+                      // 同色同形 —— 让 sidebar 和 detail 顶部对同一条 call 的
+                      // "无 proxy" 提示完全一致。
+                      const hasProxyDot = call.proxyMatchMode === "unmatched";
+                      const badgesNode = (hasProxyDot || callNavBadges.length > 0) ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                          {proxyDot && (
-                            <span
-                              title={proxyDot.title}
-                              style={{
-                                width: 6, height: 6, borderRadius: 999,
-                                background: proxyDot.color, flexShrink: 0,
-                              }}
-                            />
+                          {hasProxyDot && (
+                            <NoProxyDot size={8} title={t("rawTab.noProxyDotTooltip")} />
                           )}
                           {callNavBadges.length > 0 && (
                             <StatusBadgeStrip badges={callNavBadges} size="compact" renderIcon={renderStatusIcon} />

@@ -5,6 +5,7 @@ import { StringDecoder } from "node:string_decoder";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { getDb } from "./db.ts";
 import { getColdIndexProgress } from "./proxy-v2/log/cold-indexer.ts";
+import { normalizeHosts } from "./proxy-v2/host-normalize.ts";
 
 function parseJsonField<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -198,20 +199,26 @@ export class ProxyTrafficController {
   }
 
   // ── Proxy whitelist GET ───────────────────────────────────────────────────────
+  // 读出时也跑一次 normalize，旧 mitm-hosts.json 里如果残留 `https://...` 之类
+  // 脏数据，前端看到的就是规范化后的版本，从源头消除 UI 显示 / proxy 实际匹配
+  // 不一致带来的误解。
   @Get("whitelist")
   async whitelistGet() {
     const { PROXY_SERVER_PATHS } = await import("./proxy-v2/paths.ts");
-    let hosts: string[] = [];
+    let raw: unknown[] = [];
     if (existsSync(PROXY_SERVER_PATHS.mitmHostsFile)) {
       try {
-        const raw = JSON.parse(readFileSync(PROXY_SERVER_PATHS.mitmHostsFile, "utf8")) as { hosts?: string[] };
-        if (Array.isArray(raw.hosts)) hosts = raw.hosts;
+        const parsed = JSON.parse(readFileSync(PROXY_SERVER_PATHS.mitmHostsFile, "utf8")) as { hosts?: unknown };
+        if (Array.isArray(parsed.hosts)) raw = parsed.hosts;
       } catch { /* ignore */ }
     }
+    const hosts = normalizeHosts(raw);
     return { hosts: ["api.anthropic.com", ...hosts], base: ["api.anthropic.com"], user: hosts };
   }
 
   // ── Proxy whitelist SET ───────────────────────────────────────────────────────
+  // 防御纵深：前端已经规范化过；这里再跑一遍，CLI / curl 直接 POST 也能落到
+  // 同一规约。任何无法规范化的条目（空、含空格、URL 解析失败）被静默丢弃。
   @Post("whitelist")
   async whitelistSet(@Req() req: FastifyRequest) {
     const body = req.body as { hosts?: unknown } | null;
@@ -220,7 +227,7 @@ export class ProxyTrafficController {
     }
     const { PROXY_SERVER_PATHS } = await import("./proxy-v2/paths.ts");
     mkdirSync(PROXY_SERVER_PATHS.home, { recursive: true, mode: 0o700 });
-    const userHosts = (body.hosts as string[]).filter((h) => h !== "api.anthropic.com");
+    const userHosts = normalizeHosts(body.hosts as unknown[]);
     writeFileSync(PROXY_SERVER_PATHS.mitmHostsFile, JSON.stringify({ hosts: userHosts }, null, 2) + "\n");
     return { ok: true, hosts: userHosts };
   }

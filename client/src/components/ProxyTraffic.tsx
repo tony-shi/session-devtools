@@ -363,60 +363,163 @@ function HeaderTable({ headers }: { headers: Record<string, string> }) {
 }
 
 // ── Capture Targets ───────────────────────────────────────────────────────────
+// 行为：添加 / 删除主机时 *立即* 发起 POST 持久化，结果通过 Toast 反馈，
+// 不再有「保存」按钮 —— 旧版本的「先添加到 chip，再点保存」两步流程在用户
+// 反馈中被认为是无意义的多余 confirm。chip × 删除同理：直接生效。
+type ToastTone = "info" | "success" | "error";
 
-function CaptureTargets({ onSaved }: { onSaved: () => void }) {
+// 规范化用户输入到 proxy 白名单可直接 lookup 的 host 字符串。
+// 与服务端 server/src/proxy-v2/host-normalize.ts 保持同规则；客户端这边内联
+// 一份，免去多 build/打包目标共享代码的麻烦。规则：
+//   - 已含 http(s):// → URL.parse 取 host
+//   - 否则补 http:// 再 parse 取 host
+//   - 大小写不敏感，统一小写；path / query / hash 自动剥离
+//   - 解析失败 / 空 / 非字符串 → null（调用方负责报错）
+function normalizeHost(input: string): string | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  const tryParse = (s: string): string | null => {
+    try {
+      const u = new URL(s);
+      return u.host ? u.host.toLowerCase() : null;
+    } catch {
+      return null;
+    }
+  };
+  return /^https?:\/\//i.test(raw)
+    ? tryParse(raw)
+    : tryParse(`http://${raw}`);
+}
+
+function CaptureTargets() {
   const { t } = useTranslation();
   const [hosts, setHosts] = useState<string[]>([]);
   const [newHost, setNewHost] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState<{ text: string; tone: ToastTone } | null>(null);
+  const toastTimer = useRef<number | null>(null);
 
   useEffect(() => {
     fetch("/api/proxy/whitelist").then((r) => r.json()).then((d) => setHosts(d.user ?? [])).catch(() => {});
   }, []);
 
-  const save = async () => {
-    setSaving(true);
+  const showToast = useCallback((text: string, tone: ToastTone = "success") => {
+    setToast({ text, tone });
+    if (toastTimer.current != null) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2200);
+  }, []);
+
+  useEffect(() => () => {
+    if (toastTimer.current != null) window.clearTimeout(toastTimer.current);
+  }, []);
+
+  // 单一 commit：所有写入都走这里 —— 拿到下一份 hosts，POST 后写回 state。
+  // 失败时不更新 state、不发 success toast，把错误 message 暴露给调用者。
+  const commit = async (nextHosts: string[]): Promise<string | null> => {
+    setBusy(true);
     try {
-      await fetch("/api/proxy/whitelist", {
+      const r = await fetch("/api/proxy/whitelist", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hosts }),
+        body: JSON.stringify({ hosts: nextHosts }),
       });
-      setSaved(true); setTimeout(() => setSaved(false), 3000); onSaved();
-    } catch { void 0; }
-    setSaving(false);
+      if (!r.ok) {
+        const text = await r.text().catch(() => "");
+        return text || `HTTP ${r.status}`;
+      }
+      setHosts(nextHosts);
+      return null;
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const addHost = () => {
-    const h = newHost.trim();
-    if (!h || hosts.includes(h)) return;
-    setHosts([...hosts, h]); setNewHost("");
+  const handleAdd = async () => {
+    const original = newHost.trim();
+    const host = normalizeHost(newHost);
+    if (!host) {
+      showToast(t("proxyTraffic.hostInvalid"), "error");
+      return;
+    }
+    if (hosts.includes(host) || host === "api.anthropic.com") {
+      showToast(t("proxyTraffic.hostDuplicate", { host }), "info");
+      return;
+    }
+    const err = await commit([...hosts, host]);
+    if (err) {
+      showToast(t("proxyTraffic.saveFailed", { error: err }), "error");
+      return;
+    }
+    setNewHost("");
+    // 规范化后的值与用户原始输入不同 —— 用 info 色提示用户实际入库的是什么，
+    // 避免用户疑惑「我输入的明明是 https://...，为什么 chip 上显示的不是」。
+    if (original !== host) {
+      showToast(
+        t("proxyTraffic.hostNormalizedAdded", { host, original }),
+        "info",
+      );
+    } else {
+      showToast(t("proxyTraffic.hostAdded", { host }), "success");
+    }
+  };
+
+  const handleRemove = async (h: string) => {
+    const err = await commit(hosts.filter((x) => x !== h));
+    if (err) {
+      showToast(t("proxyTraffic.saveFailed", { error: err }), "error");
+      return;
+    }
+    showToast(t("proxyTraffic.hostRemoved", { host: h }), "success");
+  };
+
+  const toastStyles: Record<ToastTone, { bg: string; border: string; color: string }> = {
+    success: { bg: "#ecfdf5", border: "#a7f3d0", color: "#047857" },
+    info:    { bg: "#eef2ff", border: "#c7d2fe", color: "#4338ca" },
+    error:   { bg: "#fef2f2", border: "#fecaca", color: "#991b1b" },
   };
 
   return (
-    <div style={{ background: "#fff", borderRadius: 8, padding: "14px 18px", border: "1px solid #e5e7eb" }}>
+    <div style={{ background: "#fff", borderRadius: 8, padding: "14px 18px", border: "1px solid #e5e7eb", position: "relative" }}>
       <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 14 }}>{t("proxyTraffic.captureTargets")}</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
         <HostChip label="api.anthropic.com" removable={false} />
         {hosts.map((h) => (
-          <HostChip key={h} label={h} removable onRemove={() => setHosts(hosts.filter((x) => x !== h))} />
+          <HostChip key={h} label={h} removable onRemove={() => { void handleRemove(h); }} />
         ))}
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <input
           value={newHost} onChange={(e) => setNewHost(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && addHost()}
+          onKeyDown={(e) => { if (e.key === "Enter") { void handleAdd(); } }}
           placeholder="127.0.0.1:8742 / my-gw.example.com"
+          disabled={busy}
           style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid #e5e7eb", fontSize: 13 }}
         />
-        <button onClick={addHost} style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#f3f4f6", cursor: "pointer", fontSize: 13 }}>
-          {t("proxyTraffic.addHost")}
-        </button>
-        <button onClick={save} disabled={saving} style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#6366f1", color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
-          {saving ? "…" : t("proxyTraffic.saveTargets")}
+        <button
+          onClick={() => { void handleAdd(); }}
+          disabled={busy}
+          style={{
+            padding: "6px 14px", borderRadius: 6, border: "none",
+            background: busy ? "#c7d2fe" : "#6366f1", color: "#fff",
+            cursor: busy ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 600,
+          }}
+        >
+          {busy ? "…" : t("proxyTraffic.addHost")}
         </button>
       </div>
-      {saved && <div style={{ marginTop: 6, fontSize: 12, color: "#10b981" }}>{t("proxyTraffic.targetsSaved")}</div>}
+      {toast && (
+        <div style={{
+          marginTop: 8,
+          padding: "6px 10px", borderRadius: 6,
+          fontSize: 12, lineHeight: 1.4,
+          background: toastStyles[toast.tone].bg,
+          border: `1px solid ${toastStyles[toast.tone].border}`,
+          color: toastStyles[toast.tone].color,
+        }}>
+          {toast.text}
+        </div>
+      )}
     </div>
   );
 }
@@ -611,7 +714,7 @@ export function ProxyTraffic() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <CaptureTargets onSaved={() => {}} />
+      <CaptureTargets />
 
       <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb", overflow: "hidden" }}>
         {/* 工具栏 */}
