@@ -7,6 +7,15 @@ import { AggregateLedger } from "./shared/AggregateLedger";
 import { Button } from "./shared/Button";
 import { Input } from "@/components/ui/input";
 import {
+  Pagination as PaginationNav,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationPrevious,
+  PaginationNext,
+  PaginationEllipsis,
+} from "@/components/ui/pagination";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -207,10 +216,12 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
     pageNums.push(totalPages - 1);
   }
 
+  const prevDisabled = page === 0 || loading;
+  const nextDisabled = page >= totalPages - 1 || loading;
+
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-      {/* Page size selector */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginRight: 4 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span style={{ fontSize: 11, color: "#9ca3af" }}>{t("dashboard.perPage")}</span>
         <Select
           value={String(pageSize)}
@@ -228,24 +239,46 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
         </Select>
       </div>
 
-      {/* Prev button */}
-      <Button disabled={page === 0 || loading} onClick={() => onChange(page - 1)}>‹</Button>
+      <PaginationNav className="mx-0 w-auto justify-start">
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              href="#"
+              aria-disabled={prevDisabled}
+              className={prevDisabled ? "pointer-events-none opacity-40 h-7 text-xs" : "h-7 text-xs"}
+              onClick={(e) => { e.preventDefault(); if (!prevDisabled) onChange(page - 1); }}
+            />
+          </PaginationItem>
+          {pageNums.map((p, i) =>
+            p === "…" ? (
+              <PaginationItem key={`ellipsis-${i}`}>
+                <PaginationEllipsis className="h-7" />
+              </PaginationItem>
+            ) : (
+              <PaginationItem key={p}>
+                <PaginationLink
+                  href="#"
+                  isActive={p === page}
+                  className="h-7 min-w-7 text-xs"
+                  onClick={(e) => { e.preventDefault(); if (p !== page) onChange(p); }}
+                >
+                  {p + 1}
+                </PaginationLink>
+              </PaginationItem>
+            )
+          )}
+          <PaginationItem>
+            <PaginationNext
+              href="#"
+              aria-disabled={nextDisabled}
+              className={nextDisabled ? "pointer-events-none opacity-40 h-7 text-xs" : "h-7 text-xs"}
+              onClick={(e) => { e.preventDefault(); if (!nextDisabled) onChange(page + 1); }}
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </PaginationNav>
 
-      {/* Page number buttons */}
-      {pageNums.map((p, i) =>
-        p === "…" ? (
-          <span key={`ellipsis-${i}`} style={{ fontSize: 12, color: "#9ca3af", padding: "0 4px" }}>…</span>
-        ) : (
-          <Button key={p} active={p === page} onClick={() => p !== page && onChange(p)}>
-            {p + 1}
-          </Button>
-        )
-      )}
-
-      {/* Next button */}
-      <Button disabled={page >= totalPages - 1 || loading} onClick={() => onChange(page + 1)}>›</Button>
-
-      <span style={{ fontSize: 11, color: "#9ca3af", marginLeft: 2 }}>
+      <span style={{ fontSize: 11, color: "#9ca3af" }}>
         {t("dashboard.pageInfo", { page: page + 1, total: totalPages, count: total })}
       </span>
     </div>

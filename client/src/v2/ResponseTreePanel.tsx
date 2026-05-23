@@ -144,8 +144,7 @@ function BlockTable({
               cursor: "pointer", textAlign: "left",
               transition: "background 0.1s",
             }}
-            onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = "#f9fafb"; }}
-            onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.background = "transparent"; }}
+            className={!isSel ? "hover:bg-gray-50" : ""}
           >
             <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.marker, flexShrink: 0 }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 80 }}>

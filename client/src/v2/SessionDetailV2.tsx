@@ -43,6 +43,10 @@ import { CHART_COLORS, TOOLTIP_PRESET, brandAreaGradient } from "./shared/chart-
 import { CodeBlock } from "./shared/CodeBlock";
 import { EVENT_PALETTES } from "./shared/eventPalette";
 import { NoProxyDot } from "./shared/NoProxyDot";
+import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 // Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
 type MockDiffEntry = DiffEntry;
@@ -1346,12 +1350,7 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
   // blue/green bubbles so it still reads as a conversation.
   return (
     <div
-      style={{
-        border: "1px solid #e5e7eb", borderRadius: 8,
-        background: "#fff", overflow: "hidden",
-      }}
-      onMouseEnter={e => { e.currentTarget.style.borderColor = "#6366f1"; }}
-      onMouseLeave={e => { e.currentTarget.style.borderColor = "#e5e7eb"; }}
+      className="border border-gray-200 hover:border-indigo-500 transition-colors rounded-lg bg-white overflow-hidden"
     >
       {/* ── Header — same layout as Call card header ── */}
       <div
@@ -1706,8 +1705,7 @@ function AgentLoopTimeline({
                           cursor: onSubAgentClick ? "pointer" : "default",
                           textAlign: "left", display: "flex", flexDirection: "column", gap: 3,
                         }}
-                        onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "linear-gradient(135deg, #ede9fe 0%, #f3e8ff 100%)"; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = "linear-gradient(135deg, #f5f3ff 0%, #faf5ff 100%)"; }}
+                        className={onSubAgentClick ? "hover:[background:linear-gradient(135deg,_#ede9fe_0%,_#f3e8ff_100%)] transition-colors" : ""}
                       >
                         {/* Row 1: branch icon + type + stats + arrow */}
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -2142,8 +2140,7 @@ function AgentLoopFlow({
                   minWidth: 0, cursor: onSubAgentClick ? "pointer" : "default",
                   textAlign: "left",
                 }}
-                onMouseEnter={e => { if (onSubAgentClick) e.currentTarget.style.background = "linear-gradient(135deg, #ede9fe 0%, #f3e8ff 100%)"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "linear-gradient(135deg, #f5f3ff 0%, #faf5ff 100%)"; }}
+                className={onSubAgentClick ? "hover:[background:linear-gradient(135deg,_#ede9fe_0%,_#f3e8ff_100%)] transition-colors" : ""}
               >
                 <ForkIcon size={11} color="#7c3aed" />
                 <span style={{ fontSize: 9, fontWeight: 700, color: "#5b21b6", whiteSpace: "nowrap" }}>
@@ -2578,25 +2575,34 @@ type TurnView = "classic" | "flow";
 
 function TurnViewToggle({ view, onChange }: { view: TurnView; onChange: (v: TurnView) => void }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
       <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.05em" }}>VIEW</span>
-      {(["classic", "flow"] as TurnView[]).map(v => {
-        const active = view === v;
-        const label = v === "classic" ? "Classic" : "Hybrid Flow";
-        const desc  = v === "classic" ? "Vertical timeline + context strip" : "Call checkpoints + transition bridges · LLM ↔ Tool causality";
-        return (
-          <button key={v} onClick={() => onChange(v)} title={desc} style={{
-            padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: active ? 700 : 400,
-            cursor: "pointer",
-            background: active ? "#6366f1" : "#f9fafb",
-            color:  active ? "#fff" : "#6b7280",
-            border: `1px solid ${active ? "#6366f1" : "#e5e7eb"}`,
-            transition: "all 0.12s",
-          }}>
-            {label}
-          </button>
-        );
-      })}
+      <ToggleGroup
+        type="single"
+        value={view}
+        onValueChange={(v) => { if (v) onChange(v as TurnView); }}
+        variant="outline"
+        size="sm"
+        className="h-7"
+      >
+        {(["classic", "flow"] as TurnView[]).map(v => {
+          const label = v === "classic" ? "Classic" : "Hybrid Flow";
+          const desc  = v === "classic" ? "Vertical timeline + context strip" : "Call checkpoints + transition bridges · LLM ↔ Tool causality";
+          return (
+            <Tooltip key={v}>
+              <TooltipTrigger asChild>
+                <ToggleGroupItem
+                  value={v}
+                  className="text-[11px] data-[state=on]:bg-indigo-500 data-[state=on]:text-white data-[state=on]:border-indigo-500 px-3"
+                >
+                  {label}
+                </ToggleGroupItem>
+              </TooltipTrigger>
+              <TooltipContent>{desc}</TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </ToggleGroup>
       <span style={{ fontSize: 10, color: "#d1d5db", marginLeft: 4 }}>
         {view === "classic" ? "Vertical timeline + context strip" : "Call checkpoints + transition bridges"}
       </span>
@@ -2783,8 +2789,7 @@ function ChainNarrativeNode({
                 type="button"
                 onClick={handleJump}
                 title={`打开 call #${jumpTarget} 的 Request 视图，自动定位这条 user_input 对应的 leaf`}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "#4338ca"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "#4f46e5"; }}
+                className="hover:bg-indigo-700 transition-colors"
                 style={{
                   marginLeft: "auto",
                   display: "inline-flex", alignItems: "center", gap: 5,
@@ -3425,27 +3430,30 @@ function JsonlCallChain({
                       </span>
                     )}
                     {!linkedPanelMode && (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); onSelectCall(call); }}
-                        title="查看完整 request / response / 原始结构"
-                        onMouseEnter={(e) => { e.currentTarget.style.background = "#4338ca"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = "#4f46e5"; }}
-                        style={{
-                          marginLeft: "auto",
-                          display: "inline-flex", alignItems: "center", gap: 5,
-                          border: "none", background: "#4f46e5", color: "#fff",
-                          borderRadius: 4,
-                          padding: "3px 9px", fontSize: 10, fontWeight: 700,
-                          lineHeight: 1.3, letterSpacing: "0.02em",
-                          cursor: "pointer",
-                          boxShadow: "0 1px 2px rgba(79,70,229,0.25)",
-                          transition: "background 0.12s",
-                        }}
-                      >
-                        <LinkIcon />
-                        {t("terms.viewDetails")}
-                      </button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onSelectCall(call); }}
+                            className="hover:bg-indigo-700 transition-colors"
+                            style={{
+                              marginLeft: "auto",
+                              display: "inline-flex", alignItems: "center", gap: 5,
+                              border: "none", background: "#4f46e5", color: "#fff",
+                              borderRadius: 4,
+                              padding: "3px 9px", fontSize: 10, fontWeight: 700,
+                              lineHeight: 1.3, letterSpacing: "0.02em",
+                              cursor: "pointer",
+                              boxShadow: "0 1px 2px rgba(79,70,229,0.25)",
+                              transition: "background 0.12s",
+                            }}
+                          >
+                            <LinkIcon />
+                            {t("terms.viewDetails")}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>查看完整 request / response / 原始结构</TooltipContent>
+                      </Tooltip>
                     )}
                   </div>
 
@@ -3585,8 +3593,7 @@ function JsonlCallChain({
                                 type="button"
                                 onClick={() => onSubAgentClick(sa)}
                                 title={t("sessionOverview.subAgent.viewSubAgentDetailTooltip", { agentType: sa.agentType })}
-                                onMouseEnter={(e) => { e.currentTarget.style.background = "#6d28d9"; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.background = "#7c3aed"; }}
+                                className="hover:bg-violet-700 transition-colors"
                                 style={{
                                   display: "inline-flex", alignItems: "center", gap: 5,
                                   border: "none", background: "#7c3aed", color: "#fff",
@@ -3616,8 +3623,7 @@ function JsonlCallChain({
                                     lineIdx != null ? { lineIdx } : undefined);
                                 }}
                                 title={t("sessionOverview.subAgent.jumpToConsumerTooltip", { callId: consumerCall.id })}
-                                onMouseEnter={(e) => { e.currentTarget.style.background = "#1d4ed8"; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.background = "#2563eb"; }}
+                                className="hover:bg-blue-700 transition-colors"
                                 style={{
                                   display: "inline-flex", alignItems: "center", gap: 5,
                                   border: "none", background: "#2563eb", color: "#fff",
@@ -3836,18 +3842,22 @@ function UserTurnDetailPanel({
               {t("terms.turnExpand")}
             </button>
             {onClose && (
-              <button
-                type="button"
-                onClick={onClose}
-                title="关闭"
-                style={{
-                  border: "1px solid #e5e7eb", background: "#fff", color: "#64748b",
-                  borderRadius: 6, padding: "1px 7px", fontSize: 14, lineHeight: 1,
-                  cursor: "pointer", fontWeight: 700,
-                }}
-              >
-                ×
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    style={{
+                      border: "1px solid #e5e7eb", background: "#fff", color: "#64748b",
+                      borderRadius: 6, padding: "1px 7px", fontSize: 14, lineHeight: 1,
+                      cursor: "pointer", fontWeight: 700,
+                    }}
+                  >
+                    ×
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>关闭</TooltipContent>
+              </Tooltip>
             )}
           </div>
         </div>
@@ -3883,42 +3893,54 @@ function UserTurnDetailPanel({
           {(linkedPanelMode || onOpenAsMain || onClose) && (
             <div style={{ position: "absolute", top: 4, right: 4, display: "flex", alignItems: "center", gap: 6 }}>
               {onOpenAsMain && (
-                <button
-                  type="button"
-                  onClick={onOpenAsMain}
-                  title="Promote linked content into the main view"
-                  style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
-                >
-                  {t("terms.openAsMain")}
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={onOpenAsMain}
+                      style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
+                    >
+                      {t("terms.openAsMain")}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>Promote linked content into the main view</TooltipContent>
+                </Tooltip>
               )}
               {linkedPanelMode && (
-                <button
-                  type="button"
-                  onClick={() => setSummaryCollapsed(true)}
-                  title="折叠 turn 概览"
-                  style={{
-                    background: "transparent", border: "none",
-                    cursor: "pointer", fontSize: 11, color: "#9ca3af",
-                    padding: "2px 6px",
-                  }}
-                >
-                  折叠 ▴
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setSummaryCollapsed(true)}
+                      style={{
+                        background: "transparent", border: "none",
+                        cursor: "pointer", fontSize: 11, color: "#9ca3af",
+                        padding: "2px 6px",
+                      }}
+                    >
+                      折叠 ▴
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>折叠 turn 概览</TooltipContent>
+                </Tooltip>
               )}
               {onClose && (
-                <button
-                  type="button"
-                  onClick={onClose}
-                  title="关闭"
-                  style={{
-                    border: "1px solid #e5e7eb", background: "#fff", color: "#64748b",
-                    borderRadius: 6, padding: "1px 7px", fontSize: 14, lineHeight: 1,
-                    cursor: "pointer", fontWeight: 700,
-                  }}
-                >
-                  ×
-                </button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={onClose}
+                      style={{
+                        border: "1px solid #e5e7eb", background: "#fff", color: "#64748b",
+                        borderRadius: 6, padding: "1px 7px", fontSize: 14, lineHeight: 1,
+                        cursor: "pointer", fontWeight: 700,
+                      }}
+                    >
+                      ×
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>关闭</TooltipContent>
+                </Tooltip>
               )}
             </div>
           )}
@@ -4085,9 +4107,9 @@ function AttributionFlowOverview({ ranges, bridges, onSelectRange }: {
                   </span>
                 </div>
                 {entries.slice(0, 2).map(r => (
-                  <div key={r.id} onClick={() => onSelectRange(r)} style={{ fontSize: 10, color: "#6b7280", padding: "2px 6px", borderRadius: 3, cursor: "pointer", marginBottom: 2, background: "#fff", border: "1px solid #f3f4f6" }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "#eff6ff"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "#fff"; }}>
+                  <div key={r.id} onClick={() => onSelectRange(r)}
+                    className="hover:bg-blue-50 transition-colors"
+                    style={{ fontSize: 10, color: "#6b7280", padding: "2px 6px", borderRadius: 3, cursor: "pointer", marginBottom: 2, background: "#fff", border: "1px solid #f3f4f6" }}>
                     <span style={{ color: CATEGORY_COLORS[r.category] ?? "#6b7280" }}>●</span>{" "}
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", maxWidth: "90%" }}>
                       {r.textPreview.slice(0, 45)}…
@@ -4145,8 +4167,7 @@ function AttributedDiffTable({ ranges, selectedId, onSelect }: {
                     cursor: "pointer",
                     transition: "background 0.1s",
                   }}
-                  onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#f9fafb"; }}
-                  onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = isSelected ? "#eff6ff" : cfg.bg; }}>
+                  className={!isSelected ? "hover:bg-gray-50" : ""}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
                       {/* Category dot */}
                       <div style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, marginTop: 3, background: CATEGORY_COLORS[r.category] ?? "#e5e7eb" }} />
@@ -4449,8 +4470,7 @@ function PayloadMapTab({ segments, selectedSegId, onSelect }: {
                 outline: selectedSegId === seg.id ? "2px solid #6366f1" : "none",
                 transition: "opacity 0.1s",
               }}
-              onMouseEnter={e => { e.currentTarget.style.opacity = "1"; }}
-              onMouseLeave={e => { e.currentTarget.style.opacity = selectedSegId === seg.id ? "1" : "0.75"; }}
+              className="hover:opacity-100 transition-opacity"
             />
           ))}
         </div>
@@ -4479,8 +4499,7 @@ function PayloadMapTab({ segments, selectedSegId, onSelect }: {
               background: isSelected ? "#eff6ff" : "transparent",
               borderLeft: isSelected ? "3px solid #6366f1" : "3px solid transparent",
             }}
-            onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#f9fafb"; }}
-            onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}>
+            className={!isSelected ? "hover:bg-gray-50 transition-colors" : ""}>
               <div style={{ overflow: "hidden" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <div style={{ width: 7, height: 7, borderRadius: 1, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb", flexShrink: 0 }} />
@@ -4574,8 +4593,7 @@ function PayloadCompositionBar({ segments, selectedId, onSelect }: {
               transition: "opacity 0.1s",
               minWidth: seg.tokens / total > 0.01 ? undefined : 2,
             }}
-            onMouseEnter={e => { e.currentTarget.style.opacity = "1"; }}
-            onMouseLeave={e => { e.currentTarget.style.opacity = selectedId === seg.id ? "1" : selectedId ? "0.5" : "0.85"; }}
+            className="hover:opacity-100 transition-opacity"
           />
         ))}
       </div>
@@ -4652,8 +4670,7 @@ function AttributionTab({
               background: isSelected ? "#eff6ff" : "transparent",
               borderLeft: isSelected ? "3px solid #6366f1" : "3px solid transparent",
             }}
-            onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "#f9fafb"; }}
-            onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}>
+            className={!isSelected ? "hover:bg-gray-50 transition-colors" : ""}>
               <div style={{ overflow: "hidden" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <div style={{ width: 7, height: 7, borderRadius: 1, background: CATEGORY_COLORS[seg.category] ?? "#e5e7eb", flexShrink: 0 }} />
@@ -4995,13 +5012,12 @@ function InlineLink({ children, onClick }: { children: React.ReactNode; onClick:
     <button
       type="button"
       onClick={onClick}
+      className="hover:underline"
       style={{
         border: "none", background: "transparent", padding: 0,
         color: "#6366f1", fontWeight: 600, fontSize: "inherit",
-        cursor: "pointer", textDecoration: "none",
+        cursor: "pointer",
       }}
-      onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}
     >
       {children}
     </button>
@@ -5189,8 +5205,7 @@ function RawCopyButton({ text }: { text: string }) {
         flexShrink: 0,
         transition: "background 0.12s, border-color 0.12s, color 0.12s",
       }}
-      onMouseEnter={(e) => { if (!isCopied) { e.currentTarget.style.borderColor = "#9ca3af"; e.currentTarget.style.color = "#374151"; } }}
-      onMouseLeave={(e) => { if (!isCopied) { e.currentTarget.style.borderColor = "#d1d5db"; e.currentTarget.style.color = "#9ca3af"; } }}
+      className={!isCopied ? "hover:!border-gray-400 hover:!text-gray-700" : ""}
     >
       {isCopied ? (
         <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -5441,17 +5456,21 @@ function LlmCallDetailPanel({
               {summaryCollapsed ? "ledger ▾" : "ledger ▴"}
             </button>
             {onClose && (
-              <button
-                onClick={onClose}
-                title="关闭"
-                style={{
-                  border: "1px solid #e5e7eb", background: "#fff", color: "#64748b",
-                  borderRadius: 6, padding: "1px 7px", fontSize: 14, lineHeight: 1,
-                  cursor: "pointer", fontWeight: 700,
-                }}
-              >
-                ×
-              </button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={onClose}
+                    style={{
+                      border: "1px solid #e5e7eb", background: "#fff", color: "#64748b",
+                      borderRadius: 6, padding: "1px 7px", fontSize: 14, lineHeight: 1,
+                      cursor: "pointer", fontWeight: 700,
+                    }}
+                  >
+                    ×
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>关闭</TooltipContent>
+              </Tooltip>
             )}
           </div>
         </div>
@@ -5540,17 +5559,23 @@ function LlmCallDetailPanel({
               tree gets more vertical room. The chevron in the collapsed
               summary lets users re-expand. */}
           <div onClickCapture={collapseSummary} style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", marginBottom: 14, gap: 0 }}>
-            {TAB_DEFS.map(({ id, label }) => (
-              <button key={id} onClick={() => { setTab(id); collapseSummary(); }} style={{
-                padding: "6px 12px", fontSize: 11, fontWeight: tab === id ? 700 : 400,
-                color: tab === id ? "#6366f1" : "#6b7280",
-                background: "none", border: "none",
-                borderBottom: tab === id ? "2px solid #6366f1" : "2px solid transparent",
-                cursor: "pointer", marginBottom: -1, whiteSpace: "nowrap",
-              }}>{label}</button>
-            ))}
-          </div>
+          <Tabs
+            value={tab}
+            onValueChange={(v) => { setTab(v as CallTab); collapseSummary(); }}
+            className="mb-3.5"
+          >
+            <TabsList variant="line" className="h-auto border-b border-border w-full justify-start gap-0 rounded-none p-0">
+              {TAB_DEFS.map(({ id, label }) => (
+                <TabsTrigger
+                  key={id}
+                  value={id}
+                  className="text-[11px] font-normal data-[state=active]:font-bold data-[state=active]:text-indigo-500 text-muted-foreground px-3 py-1.5 -mb-px after:bg-indigo-500"
+                >
+                  {label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
 
           {/* ══ Attribution — 多 lens 统一视图（来源 / Diff / 缓存 / Audit） ══ */}
           {tab === "attribution" && (
@@ -6033,11 +6058,11 @@ export function SessionDetailV2({ session, onClose }: Props) {
 
   return (
     <AttributionGraphProvider sessionId={session.session_id} onJumpToCall={onJumpToCall}>
-    <div
-      style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "flex-start", justifyContent: "flex-end" }}
-      onClick={onClose}
-    >
-      <div
+    <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <SheetContent
+        side="right"
+        showCloseButton={false}
+        className="!max-w-none p-0 gap-0 sm:max-w-none"
         style={{
           // Drawer width is responsive to "how much canvas does this state
           // need":
@@ -6047,24 +6072,17 @@ export function SessionDetailV2({ session, onClose }: Props) {
           //     own 200px left nav + breadcrumb + amber notice
           //   · default (session / turn / call) → 1480px so unified lens
           //     view has room to breathe (旧版 1200 太挤；用户反馈调宽)
-          // The viewport-relative form (calc(100vw - Npx)) is the lower
-          // bound when the screen is narrow; the maxWidth caps it on a
-          // wide screen so the drawer doesn't stretch to absurd widths.
           width: linkedPanel
             ? "calc(100vw - 64px)"
             : navLevel === "subagent"
               ? "calc(100vw - 96px)"
               : "calc(100vw - 120px)",
-          maxWidth: linkedPanel ? 1560 : navLevel === "subagent" ? 1480 : 1480,
-          height: "100%",
-          background: "#fff",
-          boxShadow: "-4px 0 24px rgba(0,0,0,0.12)",
-          display: "flex",
-          flexDirection: "column",
+          maxWidth: linkedPanel ? 1560 : 1480,
           transition: "width 180ms ease, max-width 180ms ease",
         }}
-        onClick={e => e.stopPropagation()}
       >
+        <SheetTitle className="sr-only">{title}</SheetTitle>
+        <SheetDescription className="sr-only">Session detail drawer for {session.session_id}</SheetDescription>
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 20px", borderBottom: "1px solid #e5e7eb", flexShrink: 0, background: "#fff", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
@@ -6343,8 +6361,8 @@ export function SessionDetailV2({ session, onClose }: Props) {
           />
 
         </div>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
     </AttributionGraphProvider>
   );
 }
@@ -6517,8 +6535,7 @@ function NavItem({
         display: "flex", justifyContent: "space-between", alignItems: "center",
         gap: 4,
       }}
-      onMouseEnter={e => { if (!active) e.currentTarget.style.background = "#f3f4f6"; }}
-      onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+      className={!active ? "hover:bg-gray-100 transition-colors" : ""}
     >
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{
@@ -6571,8 +6588,7 @@ function CompactEventNavItem({ ev, active, onClick }: { ev: CompactEvent; active
         borderLeft: active ? "2px solid #f97316" : "2px solid transparent",
         display: "flex", alignItems: "center", gap: 6,
       }}
-      onMouseEnter={e => { if (!active) e.currentTarget.style.background = "#fffbeb"; }}
-      onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+      className={!active ? "hover:bg-amber-50 transition-colors" : ""}
       title={`Compact · ${ev.trigger} · ${fmtTokens(ev.preTokens)} → ${fmtTokens(ev.postTokens)} (-${ratioPct}%)`}
     >
       <span style={{ fontSize: 11, flexShrink: 0 }}>🗜</span>
@@ -6614,8 +6630,7 @@ function InterTurnNavItem({ block, active, onClick }: { block: InterTurnBlock; a
         borderLeft: active ? "2px solid #a78bfa" : "2px solid transparent",
         display: "flex", alignItems: "center", gap: 5,
       }}
-      onMouseEnter={e => { if (!active) e.currentTarget.style.background = "#f9fafb"; }}
-      onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
+      className={!active ? "hover:bg-gray-50 transition-colors" : ""}
     >
       <span style={{ fontSize: 9, color: exitLabel ? "#94a3b8" : "#a78bfa", flexShrink: 0 }}>
         {exitLabel ? "⏎" : "⌘"}

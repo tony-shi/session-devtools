@@ -30,6 +30,8 @@ import { EVENT_PALETTES } from "./shared/eventPalette";
 import type { IntervalEventKind } from "./drilldown-types";
 import { useAttributionGraph } from "./attribution-graph-context";
 import { sectionPalette, UNKNOWN_FILL as PALETTE_UNKNOWN_FILL } from "./lens-palette";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 // ─── 类型与配色 ─────────────────────────────────────────────────────────────
 
@@ -467,8 +469,7 @@ function SectionTable({
               cursor: "pointer", textAlign: "left",
               transition: "background 0.1s",
             }}
-            onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = "#f9fafb"; }}
-            onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.background = "transparent"; }}
+            className={!isSel ? "hover:bg-gray-50" : ""}
           >
             <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.marker, flexShrink: 0 }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 90 }}>{meta.label}</span>
@@ -543,8 +544,9 @@ export function LeafTable({
           <div key={l.nodeId} style={{ position: "relative" }}>
           <button
             onClick={() => onSelect(l.nodeId)}
-            onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = "#f9fafb"; if (skillListing) setHoveredId(l.nodeId); }}
-            onMouseLeave={(e) => { if (!isSel) e.currentTarget.style.background = "transparent"; if (skillListing) setHoveredId(null); }}
+            onMouseEnter={() => { if (skillListing) setHoveredId(l.nodeId); }}
+            onMouseLeave={() => { if (skillListing) setHoveredId(null); }}
+            className={!isSel ? "hover:bg-gray-50" : ""}
             style={{
               display: "flex", alignItems: "center", gap: 12,
               padding: "6px 8px",
@@ -1129,8 +1131,7 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
             type="button"
             title={jumpTooltip}
             onClick={(e) => { e.stopPropagation(); handleJumpSource(); }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = "#4338ca"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "#4f46e5"; }}
+            className="hover:bg-indigo-700 transition-colors"
             style={{
               display: "inline-flex", alignItems: "center", gap: 5,
               border: "none", background: "#4f46e5", color: "#fff",
@@ -1283,11 +1284,10 @@ function AuditBadge({
     onClick?: () => void; title?: string;
   }) {
     const clickable = onClick !== undefined;
-    return (
+    const btn = (
       <button
         type="button"
         onClick={onClick}
-        title={title}
         disabled={!clickable}
         style={{
           display: "inline-flex", alignItems: "baseline", gap: 6,
@@ -1303,6 +1303,13 @@ function AuditBadge({
         <span style={{ fontWeight: 600, color: "#1f2937" }}>{value}</span>
         <span style={{ color: "#6b7280" }}>{label}</span>
       </button>
+    );
+    if (!title) return btn;
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{btn}</TooltipTrigger>
+        <TooltipContent className="max-w-xs">{title}</TooltipContent>
+      </Tooltip>
     );
   }
 
@@ -1334,18 +1341,22 @@ function AuditBadge({
         引用 / 全程无引用 / 只在部分窗口引用"，把诊断粒度下沉到 event。
         现阶段先用本 call 视图凑合，等需要诊断具体哪条 jsonl event 丢了再做 turn 视图。
       */}
-      <span
-        title="TODO: missing jsonl 更适合放在 turn 视图（按 jsonl event 行展示）。call 视图是 last-call 视角的近似。详见源码 TODO(audit-missing-belongs-on-turn-view)。"
-        style={{
-          fontSize: 10, color: "#a16207",
-          padding: "1px 6px", borderRadius: 3,
-          background: "#fef3c7", border: "1px dashed #fcd34d",
-          cursor: "help",
-          userSelect: "none",
-        }}
-      >
-        TODO: 应移至 turn 视图
-      </span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            style={{
+              fontSize: 10, color: "#a16207",
+              padding: "1px 6px", borderRadius: 3,
+              background: "#fef3c7", border: "1px dashed #fcd34d",
+              cursor: "help",
+              userSelect: "none",
+            }}
+          >
+            TODO: 应移至 turn 视图
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-md">TODO: missing jsonl 更适合放在 turn 视图（按 jsonl event 行展示）。call 视图是 last-call 视角的近似。详见源码 TODO(audit-missing-belongs-on-turn-view)。</TooltipContent>
+      </Tooltip>
     </div>
   );
 }
@@ -1433,9 +1444,11 @@ export function AttributionTreePanel({
     return <div style={{ padding: "32px 0", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>{t("attribution.loading")}</div>;
   }
   if (error) {
-    return <div style={{ padding: 16, fontSize: 11, color: "#b91c1c", background: "#fef2f2", borderRadius: 6, border: "1px solid #fecaca" }}>
-      {t("attribution.loadFailed", { error })}
-    </div>;
+    return (
+      <Alert variant="destructive" className="text-xs">
+        <AlertDescription>{t("attribution.loadFailed", { error })}</AlertDescription>
+      </Alert>
+    );
   }
   if (!result?.snapshot) {
     return (

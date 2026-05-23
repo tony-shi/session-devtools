@@ -6,6 +6,7 @@ import { ProxyV2Setup } from "./components/ProxyV2Setup";
 import { SummaryCardsV2 } from "./v2/SummaryCardsV2";
 import { SessionListV2 } from "./v2/SessionListV2";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import type { SessionsV2Response, SummaryV2 } from "./v2/types";
 
 type Tab = "sessions-v2" | "proxy-v2" | "trends";
@@ -157,14 +158,13 @@ export default function App() {
           <button
             onClick={() => setNavOpen((v) => !v)}
             title={navOpen ? "Collapse" : "Expand"}
+            className="text-gray-300 hover:text-gray-400 transition-colors"
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               padding: "6px", borderRadius: 6, border: "none",
-              background: "transparent", cursor: "pointer", color: "#d1d5db",
+              background: "transparent", cursor: "pointer",
               flexShrink: 0, marginBottom: 2,
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = "#9ca3af")}
-            onMouseLeave={(e) => (e.currentTarget.style.color = "#d1d5db")}
           >
             <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               {navOpen
@@ -202,13 +202,12 @@ export default function App() {
             </>
           )}
           {tab === "trends" && (
-            <div style={{
-              background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb",
-              padding: "40px", textAlign: "center",
-            }}>
-              <p style={{ fontSize: 16, fontWeight: 600, color: "#374151", marginBottom: 8 }}>Trends</p>
-              <p style={{ fontSize: 13, color: "#9ca3af" }}>DOING — day-level token and usage trend charts coming soon.</p>
-            </div>
+            <Card className="py-12">
+              <CardHeader className="text-center items-center">
+                <CardTitle className="text-base">Trends</CardTitle>
+                <CardDescription>DOING — day-level token and usage trend charts coming soon.</CardDescription>
+              </CardHeader>
+            </Card>
           )}
           {tab === "proxy-v2" && <ProxyV2Setup />}
         </main>

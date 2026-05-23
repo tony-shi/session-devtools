@@ -1,29 +1,19 @@
-// LedgerExplainer —— Token 账本整体 hover 时弹出的解释 popover。
+// LedgerExplainer —— Token 账本 hover 时弹出的解释 popover。
 //
-// 替代之前散落在各处的 `title={ratioTooltip(...)}` 原生浏览器 tooltip。
-// 原生 tooltip 的问题：触发慢（~700ms）、样式不可控、不支持结构化排版、
-// 多行文本经常被 OS 截断。这里改成纯前端 styled popover：
+// 历史背景：之前用 createPortal + 手写 boundingClientRect 计算 + 上下翻转
+// 共 ~365 行；现已迁移到 shadcn HoverCard（Radix 底层），自动处理 portal、
+// collision detection、翻转、视口纠偏、focus/keyboard 可达性。
 //
-//   - 整个 ledger 任意位置悬停就出现（onMouseEnter/Leave 挂在外层）
-//   - 用 4 个色点 row 配 metric 名 + 当次实际数值 + 一行简短解读
-//   - Cache Ratio 给出完整代入公式
-//   - 区分 "input 四桶 / output 一桶"，把 Anthropic API 计费档位讲清楚
-//   - aggregate 版本额外标 Σ 累加语义
-//
-// 渲染策略：通过 createPortal 把 popover 节点挂在 document.body，定位用
-// position:fixed + 由 wrapper 测量的 boundingClientRect 计算。这样可以
-// 完全逃出任何 overflow:hidden 祖先（Turn card / Call card 都有），
-// 不被裁切。视口空间不够时自动上下翻转。
+// 仍保留：
+//   - 4 色点 metric row（cache_read / cache_write / fresh_input / output）
+//   - Cache Ratio 公式段
+//   - call / aggregate 两个 variant 的不同提示文案
+//   - i18n footer 用 dangerouslySetInnerHTML 渲染 <strong>
 
-import React, { useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import React from "react";
 import { useTranslation } from "react-i18next";
 import { TOKEN_METRICS } from "../metricRegistry";
-
-const POP_WIDTH = 460;
-const POP_EST_HEIGHT = 360; // 用于上下翻转的粗略估计；之后用真实测高校正
-const POP_GAP = 6;
-const VIEWPORT_PADDING = 8;
+import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 
 function fmtK(n: number): string {
   const abs = Math.abs(n);
@@ -46,15 +36,13 @@ export interface LedgerExplainerProps {
   output: number;
   /** 已计算好的 cache ratio (0-100)；null 表示输入侧无数据。 */
   ratio: number | null;
-  /** Wrapper 测出的锚点矩形（screen coords）。popover 自身负责上下翻转 + 越界纠偏。 */
-  anchorRect: DOMRect;
-  /** 偏好方向：默认 below。空间不足时仍会自动翻转。 */
-  preferredAnchor?: "above" | "below";
 }
 
-export function LedgerExplainer({
-  variant, freshIn, cacheRead, cacheWrite, output, ratio, anchorRect,
-  preferredAnchor = "below",
+/**
+ * 纯内容渲染——不含 portal/定位逻辑，由 HoverCardContent 或调用者负责挂载。
+ */
+export function LedgerExplainerBody({
+  variant, freshIn, cacheRead, cacheWrite, output, ratio,
 }: LedgerExplainerProps) {
   const { t } = useTranslation();
   const M = TOKEN_METRICS;
@@ -67,8 +55,6 @@ export function LedgerExplainer({
       ? `${fmtK(cacheRead)} / (${fmtK(cacheRead)} + ${fmtK(cacheWrite)} + ${fmtK(freshIn)}) = ${fmtPct(ratio)}`
       : null;
 
-  // 输入侧 3 行：cache_read / cache_write / fresh_input
-  // 顺序对齐 ledger 本体的列序：read → write → fresh
   const inputRows: ExplainerRow[] = [
     {
       color: M.cache_read.color,
@@ -99,40 +85,8 @@ export function LedgerExplainer({
     },
   ];
 
-  // ── Portal 定位：fixed + 视口感知 ────────────────────────────────────────
-  // 先按"上方优先"放，如果上方空间不够（rect.top 不够装下 popover），翻到下方。
-  // 横向：右对齐 anchor.right；若右对齐导致左边越界，则左对齐 anchor.left。
-  // 渲染后用真实高度做一次校正（防止估算偏差）。
-  const popRef = useRef<HTMLDivElement | null>(null);
-  const [pos, setPos] = useState<{ top: number; left: number }>(() =>
-    computePosition(anchorRect, POP_EST_HEIGHT, preferredAnchor));
-
-  useLayoutEffect(() => {
-    if (!popRef.current) return;
-    const h = popRef.current.offsetHeight;
-    setPos(computePosition(anchorRect, h, preferredAnchor));
-  }, [anchorRect.top, anchorRect.bottom, anchorRect.left, anchorRect.right, preferredAnchor]);
-
-  const node = (
-    <div
-      ref={popRef}
-      role="tooltip"
-      style={{
-        position: "fixed",
-        top: pos.top,
-        left: pos.left,
-        zIndex: 1000,
-        width: POP_WIDTH,
-        background: "#fff",
-        border: "1px solid #e5e7eb",
-        borderRadius: 8,
-        boxShadow: "0 8px 24px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.06)",
-        padding: "12px 14px",
-        fontSize: 11, color: "#374151", lineHeight: 1.5,
-        // 让 popover 自身 hover 也能保持显示（光标移过去看公式时不消失）
-        pointerEvents: "auto",
-      }}
-    >
+  return (
+    <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.5 }}>
       {/* Title */}
       <div style={{
         display: "flex", alignItems: "center", gap: 6,
@@ -202,38 +156,6 @@ export function LedgerExplainer({
       />
     </div>
   );
-
-  return createPortal(node, document.body);
-}
-
-function computePosition(
-  rect: DOMRect,
-  popHeight: number,
-  preferred: "above" | "below",
-): { top: number; left: number } {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-
-  // 偏好方向先放；空间不够再翻转（只在确实装不下时翻，否则尊重 preferred）。
-  const need = popHeight + POP_GAP + VIEWPORT_PADDING;
-  const spaceAbove = rect.top;
-  const spaceBelow = vh - rect.bottom;
-  let placeAbove: boolean;
-  if (preferred === "above") {
-    placeAbove = spaceAbove >= need || spaceAbove >= spaceBelow;
-  } else {
-    placeAbove = !(spaceBelow >= need || spaceBelow >= spaceAbove);
-  }
-  let top = placeAbove ? rect.top - popHeight - POP_GAP : rect.bottom + POP_GAP;
-  // 视口纠偏
-  top = Math.max(VIEWPORT_PADDING, Math.min(top, vh - popHeight - VIEWPORT_PADDING));
-
-  // 横向：右对齐 anchor.right；若导致 left < padding，则改为 left = padding。
-  let left = rect.right - POP_WIDTH;
-  if (left < VIEWPORT_PADDING) left = VIEWPORT_PADDING;
-  if (left + POP_WIDTH > vw - VIEWPORT_PADDING) left = vw - POP_WIDTH - VIEWPORT_PADDING;
-
-  return { top, left };
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -286,22 +208,11 @@ function RowList({ rows }: { rows: ExplainerRow[] }) {
   );
 }
 
-// ─── Hover wrapper ───────────────────────────────────────────────────────────
-//
-// 包装外壳 + 状态：把 onMouseEnter/Leave 挂在外层 div，hover 时测量自身
-// boundingClientRect 并交给 LedgerExplainer 通过 portal 渲染到 body。
-// 这样不论外层 card 是否 overflow:hidden 都不会被裁切。
-//
-// 用法：
-//   <LedgerHoverWrapper variant="call" freshIn={...} ...>
-//     {/* 原来 ledger 的 JSX */}
-//   </LedgerHoverWrapper>
+// ─── Hover wrapper (back-compat pass-through) ────────────────────────────────
 
-export interface LedgerHoverWrapperProps extends Omit<LedgerExplainerProps, "anchorRect"> {
+export interface LedgerHoverWrapperProps extends LedgerExplainerProps {
   children: React.ReactNode;
-  /** 外层 wrapper 的样式补丁。 */
   style?: React.CSSProperties;
-  /** 兼容旧调用：`anchor="below-right"` 映射到 preferredAnchor="below"，"above-right" 同理。 */
   anchor?: "above-right" | "below-right";
 }
 
@@ -317,49 +228,38 @@ export function LedgerHoverWrapper({
 }
 
 /**
- * Inline info trigger that pops the LedgerExplainer when hovered. Place
- * wherever the icon makes semantic sense (e.g. just after the CACHE RATIO
- * chip). Owns its own ref + portal lifecycle.
+ * Inline info trigger that pops the ledger explainer on hover. Uses shadcn
+ * HoverCard under the hood (Radix portal + collision detection).
  */
 export function LedgerInfoIcon({
   preferredAnchor = "below",
   ...explainerProps
-}: Omit<LedgerExplainerProps, "anchorRect">) {
-  const iconRef = useRef<HTMLSpanElement | null>(null);
-  const [rect, setRect] = useState<DOMRect | null>(null);
-
-  const open = () => {
-    if (iconRef.current) setRect(iconRef.current.getBoundingClientRect());
-  };
-  const close = () => setRect(null);
-
+}: LedgerExplainerProps & { preferredAnchor?: "above" | "below" }) {
   return (
-    <>
-      <span
-        ref={iconRef}
-        onMouseEnter={open}
-        onMouseLeave={close}
-        title="hover 查看 token ledger 公式"
-        style={{
-          display: "inline-flex", alignItems: "center", justifyContent: "center",
-          width: 16, height: 16, borderRadius: "50%",
-          background: "#eef2ff", color: "#4338ca",
-          border: "1px solid #c7d2fe",
-          fontSize: 11, fontWeight: 700, fontStyle: "italic",
-          fontFamily: "'Georgia', 'Times New Roman', serif",
-          lineHeight: 1, cursor: "help", userSelect: "none",
-          flexShrink: 0,
-        }}
+    <HoverCard openDelay={120} closeDelay={80}>
+      <HoverCardTrigger asChild>
+        <span
+          style={{
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            width: 16, height: 16, borderRadius: "50%",
+            background: "#eef2ff", color: "#4338ca",
+            border: "1px solid #c7d2fe",
+            fontSize: 11, fontWeight: 700, fontStyle: "italic",
+            fontFamily: "'Georgia', 'Times New Roman', serif",
+            lineHeight: 1, cursor: "help", userSelect: "none",
+            flexShrink: 0,
+          }}
+        >
+          i
+        </span>
+      </HoverCardTrigger>
+      <HoverCardContent
+        side={preferredAnchor === "above" ? "top" : "bottom"}
+        align="end"
+        className="w-[460px] p-3"
       >
-        i
-      </span>
-      {rect && (
-        <LedgerExplainer
-          {...explainerProps}
-          anchorRect={rect}
-          preferredAnchor={preferredAnchor}
-        />
-      )}
-    </>
+        <LedgerExplainerBody {...explainerProps} />
+      </HoverCardContent>
+    </HoverCard>
   );
 }

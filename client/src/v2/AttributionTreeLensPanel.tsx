@@ -48,6 +48,7 @@ import {
 import type { DiffSection, DiffTreeResult, PinInfo } from "./diff-tree-types";
 import { SelectedDiffDetail } from "./DiffPanel";
 import { diffUnderlineFor, sectionFrame } from "./lens-palette";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 // Diff 现在是真正的 lens（在 lens-framework.ts 里定义为 diffLens），不再是
 // "虚拟"的 chip 切换 + DiffPanel 替换。这套老 DIFF_LENS_ID 常量已废除。
@@ -337,8 +338,7 @@ function LensSectionTable({
               transition: "background 0.1s",
               opacity: dimmed ? 0.45 : 1,
             }}
-            onMouseEnter={(e) => { if (!dimmed) e.currentTarget.style.background = "#f9fafb"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+            className={!dimmed ? "hover:bg-gray-50" : ""}
           >
             <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.marker, flexShrink: 0 }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 90 }}>{meta.label}</span>
@@ -433,8 +433,7 @@ function DiffUnavailableBanner({
             cursor: "pointer", whiteSpace: "nowrap",
             flexShrink: 0,
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}
+          className="hover:underline"
         >
           {t("attribution.lensBanner.goSetup")}
         </button>
@@ -726,9 +725,9 @@ export function AttributionTreeLensPanel({
   }
   if (error) {
     return (
-      <div style={{ padding: 16, fontSize: 11, color: "#b91c1c", background: "#fef2f2", borderRadius: 6, border: "1px solid #fecaca" }}>
-        {t("attribution.loadFailed")}: {error}
-      </div>
+      <Alert variant="destructive" className="text-xs">
+        <AlertDescription>{t("attribution.loadFailed")}: {error}</AlertDescription>
+      </Alert>
     );
   }
   if (!result?.snapshot) {

@@ -732,8 +732,7 @@ function SectionDiffTable({
               cursor: "pointer", textAlign: "left",
               transition: "background 0.1s",
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = "#f9fafb"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+            className="hover:bg-gray-50"
           >
             <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.marker, flexShrink: 0 }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 90 }}>{meta.label}</span>
@@ -932,8 +931,7 @@ function DiffLeafRow({
         opacity: isKept ? 0.55 : 1,  // ← unchanged 行整行置灰，让有变化的行更醒目
         transition: "background 0.1s, opacity 0.1s",
       }}
-      onMouseEnter={(e) => { if (!selected) e.currentTarget.style.background = "#f9fafb"; }}
-      onMouseLeave={(e) => { if (!selected) e.currentTarget.style.background = "transparent"; }}
+      className={!selected ? "hover:bg-gray-50" : ""}
     >
       <span style={{ width: 8, height: 8, borderRadius: 2, background: fill, flexShrink: 0 }} />
       <span

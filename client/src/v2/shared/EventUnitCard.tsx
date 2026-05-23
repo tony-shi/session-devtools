@@ -289,12 +289,7 @@ export function EventUnitCard(props: EventUnitCardProps) {
               ? `${jumpTooltip ?? ""}\n\n⚠ 数据可能不准 — 当前 jump 目标只是 audit 数据里能看到的最早 call。早期一些 call 没有 proxy 数据（unaudited），真正首次消费这条 event 的 call 可能在那段空白里。`.trim()
               : jumpTooltip}
             onClick={(e) => { e.stopPropagation(); effectiveOnJump(); }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = auditGapped ? "#b45309" : "#4338ca";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = auditGapped ? "#d97706" : "#4f46e5";
-            }}
+            className={auditGapped ? "hover:!bg-amber-700 transition-colors" : "hover:!bg-indigo-700 transition-colors"}
             style={{
               display: "inline-flex", alignItems: "center", gap: 5,
               border: "none",

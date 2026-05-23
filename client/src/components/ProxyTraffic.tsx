@@ -326,8 +326,7 @@ function CopyButton({ text }: { text: string }) {
         flexShrink: 0,
         transition: "background 0.12s, border-color 0.12s, color 0.12s",
       }}
-      onMouseEnter={(e) => { if (!isCopied) { e.currentTarget.style.borderColor = "#d1d5db"; e.currentTarget.style.color = "#6b7280"; } }}
-      onMouseLeave={(e) => { if (!isCopied) { e.currentTarget.style.borderColor = "#e5e7eb"; e.currentTarget.style.color = "#d1d5db"; } }}
+      className={!isCopied ? "hover:!border-gray-300 hover:!text-gray-500" : ""}
     >
       {isCopied ? (
         <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
@@ -350,14 +349,11 @@ function HeaderTable({ headers }: { headers: Record<string, string> }) {
     <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
       <tbody>
         {entries.map(([k, v]) => (
-          <tr key={k} style={{ borderBottom: "1px solid #f3f4f6" }}
-            onMouseEnter={(e) => { const btn = e.currentTarget.querySelector<HTMLElement>(".copy-btn"); if (btn) btn.style.visibility = "visible"; }}
-            onMouseLeave={(e) => { const btn = e.currentTarget.querySelector<HTMLElement>(".copy-btn"); if (btn) btn.style.visibility = "hidden"; }}
-          >
+          <tr key={k} className="group" style={{ borderBottom: "1px solid #f3f4f6" }}>
             <td style={{ padding: "3px 10px 3px 0", color: "#9ca3af", whiteSpace: "nowrap", verticalAlign: "top", width: 1 }}>{k}</td>
             <td style={{ padding: "3px 0", wordBreak: "break-all", color: "#374151" }}>{v}</td>
             <td style={{ padding: "3px 0 3px 8px", verticalAlign: "top", width: 1 }}>
-              <span className="copy-btn" style={{ visibility: "hidden", display: "inline-block" }}>
+              <span className="copy-btn invisible group-hover:visible inline-block">
                 <CopyButton text={v} />
               </span>
             </td>
@@ -773,9 +769,8 @@ export function ProxyTraffic() {
                     <tr
                       key={r.id}
                       onClick={() => setSelected(r)}
+                      className="hover:bg-neutral-50 transition-colors"
                       style={{ cursor: "pointer", borderBottom: "1px solid #f3f4f6" }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = "#fafafa")}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = "")}
                     >
                       <td style={tdStyle}>
                         <span style={{
