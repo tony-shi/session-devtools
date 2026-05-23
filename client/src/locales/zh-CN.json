@@ -191,8 +191,12 @@
     "crashCount": "连续崩溃 {{n}} 次",
     "warningsTitle": "⚠ 清理 warnings（不阻断完成）",
     "preflightTitle": "preflight warnings（已通过）",
-    "logTitle": "日志（最近 50 条）",
-    "logEmpty": "(暂无日志)"
+    "logTitle": "日志",
+    "logEmpty": "(暂无日志)",
+    "logCount": "({{n}} 条)",
+    "configTitle": "配置",
+    "collapse": "收起",
+    "expand": "展开"
   },
   "sessionOverview": {
     "nav": {

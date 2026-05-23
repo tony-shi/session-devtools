@@ -267,11 +267,14 @@ interface Props {
   sessionId: string;
   /** Present iff rendering a sub-agent call — routes to sub-agent endpoint. */
   agentFileId?: string;
+  /** Present iff rendering a compact summarization call — routes to compact endpoint.
+   *  互斥于 agentFileId（compact 不在 sub-agent 内）。 */
+  compactIdx?: number;
   callId: number;
   onLinkCall?: (callId: number) => void;
 }
 
-export function ResponseTreePanel({ sessionId, agentFileId, callId, onLinkCall }: Props) {
+export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, callId, onLinkCall }: Props) {
   const [data, setData] = useState<ResponseTreeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -279,13 +282,15 @@ export function ResponseTreePanel({ sessionId, agentFileId, callId, onLinkCall }
   useEffect(() => {
     setLoading(true);
     setSelectedId(null);
-    const fetcher = agentFileId
-      ? apiV2.subAgentResponseTree(sessionId, agentFileId, callId)
-      : apiV2.responseTree(sessionId, callId);
+    const fetcher = compactIdx != null
+      ? apiV2.compactResponseTree(sessionId, compactIdx)
+      : agentFileId
+        ? apiV2.subAgentResponseTree(sessionId, agentFileId, callId)
+        : apiV2.responseTree(sessionId, callId);
     fetcher
       .then((d) => { setData(d); setLoading(false); })
       .catch(() => { setData(null); setLoading(false); });
-  }, [sessionId, agentFileId, callId]);
+  }, [sessionId, agentFileId, compactIdx, callId]);
 
   // Pending-focus consumption: when a Turn-view tool_use jump lands here
   // with `{ toolUseId }`, find the matching response block and select it.

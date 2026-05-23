@@ -34,12 +34,12 @@ export function realVisibilityDeps(): VisibilityDeps {
       return out;
     },
 
-    computeRenderedSet(meta: SessionMeta): Set<string> {
+    async computeRenderedSet(meta: SessionMeta): Promise<Set<string>> {
       const db = getDb();
       const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`)
         .get(meta.sessionId) as Record<string, unknown> | undefined;
       if (!row) return new Set();
-      const drilldown = parseSessionDrilldown(meta.sourceFile, meta.sessionId, row, db);
+      const drilldown = await parseSessionDrilldown(meta.sourceFile, meta.sessionId, row, db);
       const set = new Set<string>();
       for (const turn of drilldown.turns) {
         for (const call of turn.calls) {

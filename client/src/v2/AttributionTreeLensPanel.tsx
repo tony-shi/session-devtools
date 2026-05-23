@@ -444,11 +444,15 @@ function DiffUnavailableBanner({
 }
 
 export function AttributionTreeLensPanel({
-  sessionId, agentFileId, callId, prevCallId, hideDiff, onLinkSource, onLeafSelect, prelude,
+  sessionId, agentFileId, compactIdx, callId, prevCallId, hideDiff, onLinkSource, onLeafSelect, prelude,
 }: {
   sessionId: string;
   /** Present iff rendering a sub-agent call — routes to sub-agent endpoint. */
   agentFileId?: string;
+  /** Present iff rendering a compact summarization call — routes to compact endpoint.
+   *  互斥于 agentFileId。compact 没有 diffTree 端点（语义上"和上一条 call diff"
+   *  对 compact 价值不大），diffData 自然落 null，Diff lens 自动退化展示。 */
+  compactIdx?: number;
   callId: number;
   /** Optional previous-call id — required for the Diff lens. */
   prevCallId?: number | null;
@@ -512,15 +516,17 @@ export function AttributionTreeLensPanel({
     let cancelled = false;
     setLoading(true); setError(null);
     setSelectedSection(null); setSelectedNodeId(null); setBucketFilters({});
-    const fetcher = agentFileId
-      ? apiV2.subAgentAttributionTree(sessionId, agentFileId, callId)
-      : apiV2.attributionTree(sessionId, callId);
+    const fetcher = compactIdx != null
+      ? apiV2.compactAttributionTree(sessionId, compactIdx)
+      : agentFileId
+        ? apiV2.subAgentAttributionTree(sessionId, agentFileId, callId)
+        : apiV2.attributionTree(sessionId, callId);
     fetcher
       .then((r) => { if (!cancelled) setResult(r); })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sessionId, agentFileId, callId]);
+  }, [sessionId, agentFileId, compactIdx, callId]);
 
   // 并行拉 diff-tree，用 leafId 把 diffKind 合并到 attribution leaves 上。
   // Diff lens / Diff 视角的双层 bar / Removed footer 都依赖这份数据。
@@ -538,6 +544,12 @@ export function AttributionTreeLensPanel({
   // 暂缓不实施（复杂度中等，先收敛当前 UI 体验）。
   const [diffData, setDiffData] = useState<import("./diff-tree-types").DiffTreeResult | null>(null);
   useEffect(() => {
+    // compact 没有 diffTree 端点（语义上和 "上一条 call diff" 价值不大）——
+    // 直接 null，Diff lens 退化展示，整体不影响 attribution。
+    if (compactIdx != null) {
+      setDiffData(null);
+      return;
+    }
     let cancelled = false;
     const fetcher = agentFileId
       ? apiV2.subAgentDiffTree(sessionId, agentFileId, callId)
@@ -546,7 +558,7 @@ export function AttributionTreeLensPanel({
       .then((r) => { if (!cancelled) setDiffData(r); })
       .catch(() => { if (!cancelled) setDiffData(null); }); // diff 失败不阻塞 attribution
     return () => { cancelled = true; };
-  }, [sessionId, agentFileId, callId]);
+  }, [sessionId, agentFileId, compactIdx, callId]);
 
   const allLeaves = useMemo(() => {
     if (!result) return [];

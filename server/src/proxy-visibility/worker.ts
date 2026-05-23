@@ -1,11 +1,13 @@
 import type { VisibilityService } from "./service.ts";
 
-// 单进程内的极简任务队列。parser 是同步的，所以这里也是同步执行，关键是
-// setImmediate 让出事件循环 —— 请求线程立刻返回 'computing'，parser 在
-// 后续 tick 里跑，不会阻塞 /api/proxy/requests 响应。
+// 单进程内的极简任务队列。parser 现在异步（compact 匹配要读 traffic.jsonl
+// body），所以 tick 也得 await。关键依然是 setImmediate 让出事件循环 ——
+// 请求线程立刻返回 'computing'，parser 在后续 tick 里跑，不会阻塞
+// /api/proxy/requests 响应。
 //
-// 并发=1：parser 同步、读 jsonl 走文件 IO，没有真并行收益；如果将来发现
-// 队列堆积，可以换成 worker_threads 或加并发，这里保持最简。
+// 并发=1：parser 内部已经在 gzip 解码层做了 IO 并行，串行调度避免重复打开
+// 同一份 traffic.jsonl 文件。如果将来发现队列堆积，可以换 worker_threads
+// 或加并发，这里保持最简。
 export class VisibilityWorker {
   private readonly queue: string[] = [];
   private readonly seen = new Set<string>();
@@ -24,16 +26,16 @@ export class VisibilityWorker {
     if (this.isRunning) return;
     if (this.queue.length === 0) return;
     this.isRunning = true;
-    setImmediate(() => this.tick());
+    setImmediate(() => { void this.tick(); });
   }
 
-  private tick(): void {
+  private async tick(): Promise<void> {
     const id = this.queue.shift();
     if (!id) { this.isRunning = false; return; }
     this.seen.delete(id);
-    try { this.service.compute(id); } catch { /* compute 自己已经吞了 */ }
+    try { await this.service.compute(id); } catch { /* compute 自己已经吞了 */ }
     if (this.queue.length > 0) {
-      setImmediate(() => this.tick());
+      setImmediate(() => { void this.tick(); });
     } else {
       this.isRunning = false;
     }

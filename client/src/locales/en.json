@@ -194,8 +194,12 @@
     "crashCount": "{{n}} consecutive crashes",
     "warningsTitle": "⚠ Cleanup warnings (non-blocking)",
     "preflightTitle": "preflight warnings (passed)",
-    "logTitle": "Log (last 50 lines)",
-    "logEmpty": "(no log yet)"
+    "logTitle": "Log",
+    "logEmpty": "(no log yet)",
+    "logCount": "({{n}})",
+    "configTitle": "Config",
+    "collapse": "Collapse",
+    "expand": "Expand"
   },
   "sessionOverview": {
     "nav": {

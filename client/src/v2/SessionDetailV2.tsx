@@ -4433,7 +4433,7 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
 }
 
 function LlmCallDetailPanel({
-  call, prevCall, sessionId, agentFileId, mode = "main", requestedTab, jumpVersion,
+  call, prevCall, sessionId, agentFileId, compactIdx, mode = "main", requestedTab, jumpVersion,
   onShowTurnContext, onLinkCall, onLinkSource,
   onClose, onOpenAsMain,
 }: {
@@ -4447,6 +4447,10 @@ function LlmCallDetailPanel({
    *  panel API calls (callDetail / attributionTree / responseTree / diffTree)
    *  through their sub-agent variants. Parent (main) sessions leave undefined. */
   agentFileId?: string;
+  /** Present iff rendering a compact summarization call. 互斥于 agentFileId。
+   *  路由 callDetail / attributionTree / responseTree 走 compact 专用端点；
+   *  diffTree 端点没有，AttributionTreeLensPanel 会自动跳过 diff fetch。 */
+  compactIdx?: number;
   mode?: "main" | "panel";
   /** Initial / forced tab. When `jumpVersion` bumps, this overrides the
    *  user's prior manual tab choice — so a fresh "返回于 call #N Response"
@@ -4492,14 +4496,16 @@ function LlmCallDetailPanel({
   useEffect(() => {
     if (callDetail?.callId === call.id) return;
     setCallDetailLoading(true);
-    const fetcher = agentFileId
-      ? apiV2.subAgentCallDetail(sessionId, agentFileId, call.id)
-      : apiV2.callDetail(sessionId, call.id);
+    const fetcher = compactIdx != null
+      ? apiV2.compactCallDetail(sessionId, compactIdx)
+      : agentFileId
+        ? apiV2.subAgentCallDetail(sessionId, agentFileId, call.id)
+        : apiV2.callDetail(sessionId, call.id);
     fetcher
       .then(d => setCallDetail(d))
       .catch(() => setCallDetail(null))
       .finally(() => setCallDetailLoading(false));
-  }, [call.id, sessionId, agentFileId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [call.id, sessionId, agentFileId, compactIdx]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset summary state when switching to a different call (panel reuse).
   // Re-initializes per mode (panel = collapsed, main = expanded).
@@ -4740,6 +4746,7 @@ function LlmCallDetailPanel({
             <AttributionTreeLensPanel
               sessionId={sessionId}
               agentFileId={agentFileId}
+              compactIdx={compactIdx}
               callId={call.id}
               prevCallId={prevCallId}
               onLinkSource={onLinkSource}
@@ -4751,6 +4758,7 @@ function LlmCallDetailPanel({
             <ResponseTreePanel
               sessionId={sessionId}
               agentFileId={agentFileId}
+              compactIdx={compactIdx}
               callId={call.id}
               onLinkCall={onLinkCall}
             />
@@ -5004,7 +5012,7 @@ function SubAgentSessionPanel({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-type NavLevel = "session" | "turn" | "inter-turn" | "call" | "subagent" | "compact-event";
+type NavLevel = "session" | "turn" | "inter-turn" | "call" | "subagent" | "compact-event" | "compact-call";
 
 type InspectorState =
   | { type: "hotspots" }
@@ -5267,6 +5275,34 @@ export function SessionDetailV2({ session, onClose }: Props) {
                 </span>
               </>
             )}
+            {/* Compact-event 进入后挂在 breadcrumb 上 —— 跟 turn/call 平行。
+                "压缩 N" 是 compact-event 自身；如果再点进 call detail 还会追加
+                "压缩调用" 子级。点回可以跳回上一级。 */}
+            {selectedCompactEventIdx !== null
+              && (navLevel === "compact-event" || navLevel === "compact-call") && (
+              <>
+                <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
+                <button
+                  onClick={() => setNavLevel("compact-event")}
+                  style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}
+                >
+                  <span style={{
+                    fontSize: 13, fontWeight: 600,
+                    color: navLevel === "compact-event" ? "#c2410c" : "#374151",
+                  }}>
+                    {t("sessionOverview.compact.label")} {selectedCompactEventIdx + 1}
+                  </span>
+                </button>
+                {navLevel === "compact-call" && (
+                  <>
+                    <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#c2410c", flexShrink: 0 }}>
+                      {t("sessionOverview.compact.callLabel")}
+                    </span>
+                  </>
+                )}
+              </>
+            )}
             {selectedSubAgent && navLevel === "subagent" && (
               <>
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
@@ -5442,11 +5478,32 @@ export function SessionDetailV2({ session, onClose }: Props) {
               && compactEvents[selectedCompactEventIdx] && (
               <UserTurnDetailPanel
                 turn={synthesizeCompactTurn(compactEvents[selectedCompactEventIdx])}
-                onSelectCall={() => { /* 合成 call 没有真实 jsonl line，暂不接入 call detail */ }}
+                onSelectCall={() => {
+                  // 合成 call 没有真实 jsonl line，但 compact 端点能用 idx 反查；
+                  // 直接进 compact-call 子级，LlmCallDetailPanel 走 compactIdx 分支。
+                  setNavLevel("compact-call");
+                }}
                 isMockSession={false}
                 sessionId={session.session_id}
               />
             )}
+            {navLevel === "compact-call" && selectedCompactEventIdx !== null
+              && compactEvents[selectedCompactEventIdx] && (() => {
+              // 这里现合成一次 turn 是为了拿到合成 call —— synthesizeCompactTurn
+              // 是纯函数，开销可忽略。
+              const synthTurn = synthesizeCompactTurn(compactEvents[selectedCompactEventIdx]);
+              const synthCall = synthTurn.calls[0];
+              return (
+                <LlmCallDetailPanel
+                  call={synthCall}
+                  prevCall={null}
+                  onSelectEntry={handleSelectEntry}
+                  sessionId={session.session_id}
+                  compactIdx={selectedCompactEventIdx}
+                  onClose={() => setNavLevel("compact-event")}
+                />
+              );
+            })()}
             {navLevel === "call" && selectedCall && (
               <LlmCallDetailPanel
                 call={selectedCall}

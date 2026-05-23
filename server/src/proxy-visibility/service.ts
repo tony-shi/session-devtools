@@ -29,8 +29,11 @@ export interface VisibilityDeps {
   // 单批调用，所以即使 50 行 proxy 也只一次 DB 命中。
   loadMetas(sessionIds: string[]): Map<string, SessionMeta>;
   // 跑 parser，返回该 session 在 UI 上会渲染的所有 apiRequestId 集合。
+  // parser 现在异步（compact-proxy 精确匹配需要读 traffic.jsonl body），所以
+  // 这个接口也是 Promise；worker 那一侧已经在 setImmediate 上排队执行，
+  // 切到 async 后队列变成"上一条完成才调下一条"，避免并发解 gzip。
   // 抛错时 service 不污染缓存，下次 enqueue 时重试。
-  computeRenderedSet(meta: SessionMeta): Set<string>;
+  computeRenderedSet(meta: SessionMeta): Promise<Set<string>>;
 }
 
 export class VisibilityService {
@@ -85,14 +88,15 @@ export class VisibilityService {
     return "computing";
   }
 
-  // 由 worker 调用，单 session 同步计算（worker 已经把它调度到 setImmediate 上）。
-  compute(sessionId: string): void {
+  // 由 worker 调用：parser 现在异步（compact 匹配要读 traffic.jsonl body），
+  // worker 已经把它调度到 setImmediate 上并且并发=1，所以一条 await 完才走下一条。
+  async compute(sessionId: string): Promise<void> {
     const metas = this.deps.loadMetas([sessionId]);
     const meta = metas.get(sessionId);
     if (!meta || !meta.sourcePresent) return;
 
     try {
-      const set = this.deps.computeRenderedSet(meta);
+      const set = await this.deps.computeRenderedSet(meta);
       this.cache.set(sessionId, {
         jsonlMtime: meta.fileMtime,
         requestIdSet: set,

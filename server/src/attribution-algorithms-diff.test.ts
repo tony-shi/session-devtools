@@ -46,7 +46,7 @@ maybeDescribe(`attribution algorithms diff: ${FIXTURE_SESSION_ID ?? "(skipped)"}
     if (!row) throw new Error(`session ${sessionId} not in sessions_meta_v2`);
     const sourceFile = row.source_file as string;
 
-    const drilldown = parseSessionDrilldown(sourceFile, sessionId, row, db);
+    const drilldown = await parseSessionDrilldown(sourceFile, sessionId, row, db);
     const allCalls = drilldown.turns.flatMap((t) => t.calls.map((c) => ({ call: c, turnId: t.id })));
     const targetCalls = allCalls.slice(-FIXTURE_LAST_N);
 

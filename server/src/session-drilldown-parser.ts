@@ -1,8 +1,9 @@
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join, dirname, basename } from "path";
 import type { Database } from "better-sqlite3";
-import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData, ModelStats, SubAgentSummary, InterTurnBlock, IntervalEvent, CompactEvent, CompactProxyInfo, EventBelonging } from "./session-drilldown-types.ts";
+import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData, ModelStats, SubAgentSummary, InterTurnBlock, IntervalEvent, CompactEvent, EventBelonging } from "./session-drilldown-types.ts";
 import { normaliseModelName } from "./model-info.ts";
+import { matchCompactCallsForSession, type CompactBoundaryEvidence } from "./compact-proxy-matcher.ts";
 
 // ─── JSONL record shapes (loose, best-effort) ────────────────────────────────
 
@@ -623,13 +624,13 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
 
 // ─── Core parser ─────────────────────────────────────────────────────────────
 
-export function parseSessionDrilldown(
+export async function parseSessionDrilldown(
   sourceFile: string,
   sessionId: string,
   sessionRow: Record<string, unknown>,
   db: Database,
   opts: { treatSidechainAsMain?: boolean } = {},
-): SessionDrilldown {
+): Promise<SessionDrilldown> {
   // ── 1. Title (same multi-fallback as SessionListV2) ──────────────────────
   const title = (sessionRow.custom_title as string | null)
     ?? (sessionRow.ai_title as string | null)
@@ -1295,35 +1296,9 @@ export function parseSessionDrilldown(
   // 段提取用户附加 instructions（如 `/compact focus on parser` → "focus on parser"）。
   const compactEvents: CompactEvent[] = [];
   {
-    // 准备 proxy lookup statement。注意：req_body 内容不存在 SQL column 里
-    // （proxy v2 把 body 写进外部 traffic.jsonl 文件，column 里只剩 file offset），
-    // 所以不能用 `LIKE '%Your task is to create...%'` 做 prompt 指纹匹配。
-    //
-    // 改用确定性的"时间 + 时长双因子"匹配：
-    //   factor 1: 同 session_id
-    //   factor 2: |proxy.started_at + duration_ms - boundary.ts| < 3000ms
-    //   factor 3: |proxy.duration_ms - boundary.compactMetadata.durationMs| < 2000ms
-    // boundary.ts 是 compact 完成时刻；proxy.started_at + duration_ms 也是完成时刻。
-    // duration 双向夹挤 → 在同一 session 同一时刻不会有第二条 LLM call 同时匹配，
-    // 双因子下假阳性概率 ≈ 0。
-    let proxyLookup: ((sessionId: string, boundaryTsMs: number, expectedDurMs: number) => unknown) | null = null;
-    try {
-      const stmt = db.prepare(`
-        SELECT id, request_id, model, res_input_tokens, res_output_tokens,
-               res_cache_read_tokens, duration_ms, started_at
-        FROM proxy_requests
-        WHERE session_id = ?
-          AND duration_ms IS NOT NULL
-          AND ABS((strftime('%s', started_at) * 1000.0 + (strftime('%f', started_at) * 1000 - strftime('%S', started_at) * 1000))
-                  + duration_ms - ?) < 3000
-          AND ABS(duration_ms - ?) < 2000
-        ORDER BY ABS(duration_ms - ?) ASC
-        LIMIT 1
-      `);
-      proxyLookup = (sid, btsMs, durMs) => stmt.get(sid, btsMs, durMs, durMs);
-    } catch {
-      proxyLookup = null;
-    }
+    // proxy 富化已经抽到 compact-proxy-matcher.ts —— 这里只构造 CompactEvent
+    // 骨架（proxy 先填 null），离开本 loop 后调用 matcher 做批量精确匹配。
+    // 详见 docs/inner/claude-take.md 的机制说明与匹配算法。
 
     for (let i = 0; i < events.length; i++) {
       const ev = events[i];
@@ -1408,39 +1383,6 @@ export function parseSessionDrilldown(
         belonging = { kind: "post-session", afterTurnId: 0 };
       }
 
-      // Proxy 富化（best-effort）
-      let proxy: CompactProxyInfo | null = null;
-      const boundaryTsMs = Date.parse(timestamp);
-      const expectedDurMs = metadata.durationMs ?? 0;
-      if (proxyLookup && !Number.isNaN(boundaryTsMs) && expectedDurMs > 0) {
-        try {
-          const row = proxyLookup(sessionId, boundaryTsMs, expectedDurMs) as {
-            id?: number;
-            request_id?: string | null;
-            model?: string | null;
-            res_input_tokens?: number | null;
-            res_output_tokens?: number | null;
-            res_cache_read_tokens?: number | null;
-            duration_ms?: number | null;
-            started_at?: string | null;
-          } | undefined;
-          if (row && row.id !== undefined) {
-            proxy = {
-              proxyRequestId: row.id,
-              requestId: row.request_id ?? null,
-              model: row.model ?? "",
-              inputTokens: row.res_input_tokens ?? 0,
-              outputTokens: row.res_output_tokens ?? 0,
-              cacheReadTokens: row.res_cache_read_tokens ?? 0,
-              durationMs: row.duration_ms ?? 0,
-              startedAt: row.started_at ?? "",
-            };
-          }
-        } catch {
-          // ignore — proxy 富化是 best-effort
-        }
-      }
-
       compactEvents.push({
         index: compactEvents.length,
         belonging,
@@ -1456,8 +1398,23 @@ export function parseSessionDrilldown(
         summaryText,
         commandLineIdx,
         userInstructions,
-        proxy,
+        proxy: null, // 离开 loop 后由 matchCompactCallsForSession 批量填充
       });
+    }
+
+    // 批量精确匹配 + 反向归因。0 boundary 时 matcher 早退、不发 SQL / 不读 body。
+    // orphanCompactRowIds 暂未被消费 —— 留口子给未来的 reverse-attribution UI
+    // （proxy 流量视图想标注"这条是 compact 但没归属到任何 boundary"时直接用）。
+    if (compactEvents.length > 0) {
+      const evidence: CompactBoundaryEvidence[] = compactEvents.map((ev) => ({
+        index: ev.index,
+        boundaryTsMs: Date.parse(ev.timestamp),
+        expectedDurMs: ev.durationMs,
+      }));
+      const matches = await matchCompactCallsForSession(db, sessionId, evidence);
+      for (const ev of compactEvents) {
+        ev.proxy = matches.byBoundaryIndex.get(ev.index) ?? null;
+      }
     }
   }
 
@@ -1571,10 +1528,10 @@ export function parseSessionDrilldown(
 // Parses a sub-agent JSONL as a standalone SessionDrilldown so the frontend
 // can display it with the same components as a regular session.
 
-export function parseSubAgentDrilldown(
+export async function parseSubAgentDrilldown(
   parentSourceFile: string,
   agentFileId: string,
-): SessionDrilldown {
+): Promise<SessionDrilldown> {
   const sessionBase = basename(parentSourceFile, ".jsonl");
   const subagentsDir = join(dirname(parentSourceFile), sessionBase, "subagents");
   const agentPath = join(subagentsDir, `agent-${agentFileId}.jsonl`);

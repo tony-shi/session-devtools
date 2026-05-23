@@ -173,7 +173,7 @@ export class SessionsV2Controller {
   }
 
   @Get("sessions/:id/drilldown")
-  sessionDrilldown(@Param("id") id: string) {
+  async sessionDrilldown(@Param("id") id: string) {
     const db = getDb();
     const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as Record<string, unknown> | undefined;
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
@@ -181,7 +181,7 @@ export class SessionsV2Controller {
     const sourceFile = row.source_file as string;
     let drilldown;
     try {
-      drilldown = parseSessionDrilldown(sourceFile, id, row, db);
+      drilldown = await parseSessionDrilldown(sourceFile, id, row, db);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       throw Object.assign(new Error(`Failed to parse session: ${msg}`), { status: 500 });
@@ -206,11 +206,11 @@ export class SessionsV2Controller {
   }
 
   @Get("sessions/:id/subagent/:agentFileId/drilldown")
-  subAgentDrilldown(@Param("id") id: string, @Param("agentFileId") agentFileId: string) {
+  async subAgentDrilldown(@Param("id") id: string, @Param("agentFileId") agentFileId: string) {
     const db = getDb();
     const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
-    const drilldown = parseSubAgentDrilldown(row.source_file, agentFileId);
+    const drilldown = await parseSubAgentDrilldown(row.source_file, agentFileId);
 
     // Sub-agent jsonl events have their own Anthropic request-ids, but the
     // proxy_requests rows landed under the *parent* session_id. So we match
@@ -248,7 +248,7 @@ export class SessionsV2Controller {
     const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
 
-    const drilldown = parseSubAgentDrilldown(row.source_file, agentFileId);
+    const drilldown = await parseSubAgentDrilldown(row.source_file, agentFileId);
     const callId = parseInt(callIdStr, 10);
     const allCalls = drilldown.turns.flatMap((t) => t.calls);
     const callIdx = allCalls.findIndex((c) => c.id === callId);
@@ -298,7 +298,7 @@ export class SessionsV2Controller {
     const sessionBase = basename(row.source_file, ".jsonl");
     const subAgentFile = join(dirname(row.source_file), sessionBase, "subagents", `agent-${agentFileId}.jsonl`);
 
-    const drilldown = parseSubAgentDrilldown(row.source_file, agentFileId);
+    const drilldown = await parseSubAgentDrilldown(row.source_file, agentFileId);
     const callId = parseInt(callIdStr, 10);
     const allCalls = drilldown.turns.flatMap((t) => t.calls.map((c) => ({ call: c, turnId: t.id })));
     const idx = allCalls.findIndex((x) => x.call.id === callId);
@@ -375,7 +375,7 @@ export class SessionsV2Controller {
     const sessionBase = basename(row.source_file, ".jsonl");
     const subAgentFile = join(dirname(row.source_file), sessionBase, "subagents", `agent-${agentFileId}.jsonl`);
 
-    const drilldown = parseSubAgentDrilldown(row.source_file, agentFileId);
+    const drilldown = await parseSubAgentDrilldown(row.source_file, agentFileId);
     const callId = parseInt(callIdStr, 10);
     const allCalls = drilldown.turns.flatMap((t) => t.calls.map((c) => ({ call: c, turnId: t.id })));
     const idx = allCalls.findIndex((x) => x.call.id === callId);
@@ -422,7 +422,7 @@ export class SessionsV2Controller {
     const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
 
-    const drilldown = parseSubAgentDrilldown(row.source_file, agentFileId);
+    const drilldown = await parseSubAgentDrilldown(row.source_file, agentFileId);
     const callId = parseInt(callIdStr, 10);
     const allCalls = drilldown.turns.flatMap((t) => t.calls);
     const idx = allCalls.findIndex((c) => c.id === callId);
@@ -464,7 +464,7 @@ export class SessionsV2Controller {
 
     let drilldown;
     try {
-      drilldown = parseSessionDrilldown(row.source_file as string, id, row, db);
+      drilldown = await parseSessionDrilldown(row.source_file as string, id, row, db);
     } catch (err: unknown) {
       throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
     }
@@ -510,7 +510,7 @@ export class SessionsV2Controller {
 
     let drilldown;
     try {
-      drilldown = parseSessionDrilldown(sourceFile, id, row, db);
+      drilldown = await parseSessionDrilldown(sourceFile, id, row, db);
     } catch (err: unknown) {
       throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
     }
@@ -618,7 +618,7 @@ export class SessionsV2Controller {
 
     let drilldown;
     try {
-      drilldown = parseSessionDrilldown(sourceFile, id, row, db);
+      drilldown = await parseSessionDrilldown(sourceFile, id, row, db);
     } catch {
       throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
     }
@@ -690,7 +690,7 @@ export class SessionsV2Controller {
 
     let drilldown;
     try {
-      drilldown = parseSessionDrilldown(sourceFile, id, row, db);
+      drilldown = await parseSessionDrilldown(sourceFile, id, row, db);
     } catch {
       throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
     }
@@ -746,7 +746,7 @@ export class SessionsV2Controller {
 
     let drilldown;
     try {
-      drilldown = parseSessionDrilldown(sourceFile, id, row, db);
+      drilldown = await parseSessionDrilldown(sourceFile, id, row, db);
     } catch (err: unknown) {
       throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
     }
@@ -778,6 +778,212 @@ export class SessionsV2Controller {
         };
       },
     });
+  }
+
+  // ── Compact-as-call endpoints ─────────────────────────────────────────────
+  // compact_boundary 实际上是一次独立的 summarization LLM call，但 JSONL 端没有
+  // assistant 事件，没法走 :callId 路由（合成 call id 是负 sentinel）。这里独占
+  // 一组 :idx 寻址的端点，CallDetail-shape 输出的 callId 仍是 `-(idx+1)` 与
+  // frontend synthesizeCompactTurn 那侧约定一致。详见 docs/inner/claude-take.md。
+
+  @Get("sessions/:id/compact/:idx/detail")
+  async compactDetail(@Param("id") id: string, @Param("idx") idxStr: string) {
+    const db = getDb();
+    const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+
+    let drilldown;
+    try {
+      drilldown = await parseSessionDrilldown(row.source_file as string, id, row, db);
+    } catch {
+      throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
+    }
+
+    const idx = parseInt(idxStr, 10);
+    const ev = drilldown.compactEvents?.[idx];
+    if (!ev) throw Object.assign(new Error("compact event not found"), { status: 404 });
+
+    const syntheticCallId = -(ev.index + 1);
+    const tokens = {
+      contextSize: ev.preTokens,
+      cacheRead: ev.proxy?.cacheReadTokens ?? 0,
+      cacheWrite: 0,
+      freshIn: ev.proxy?.inputTokens ?? 0,
+      outputTokens: ev.proxy?.outputTokens ?? 0,
+    };
+    const base = {
+      callId: syntheticCallId,
+      sessionId: id,
+      model: ev.proxy?.model ?? "",
+      stopReason: "end_turn",
+      timestamp: ev.proxy?.startedAt ?? ev.timestamp,
+      tokens,
+    };
+    if (!ev.proxy) {
+      return { ...base, proxyRequestId: null, proxyMatchMode: "unmatched" as const, rawRequestJson: null };
+    }
+    // ev.proxy.requestId 是 Anthropic 的 request-id（或 proxy 注入的 synthetic
+    // proxy-<uuid>），与普通 call 的 apiRequestId 同义，findProxyRowForCall 直接吃。
+    const proxyRow = findProxyRowForCall(db, id, { apiRequestId: ev.proxy.requestId });
+    if (!proxyRow) {
+      return { ...base, proxyRequestId: ev.proxy.proxyRequestId, proxyMatchMode: "exact" as const, rawRequestJson: null };
+    }
+    const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
+    let rawRequestJson: Record<string, unknown> | null = null;
+    if (rec && typeof rec.reqBody === "string") {
+      try { rawRequestJson = JSON.parse(rec.reqBody) as Record<string, unknown>; }
+      catch { /* not JSON */ }
+    }
+    return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: "exact" as const, rawRequestJson };
+  }
+
+  @Get("sessions/:id/compact/:idx/response-tree")
+  async compactResponseTree(@Param("id") id: string, @Param("idx") idxStr: string) {
+    const db = getDb();
+    const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+
+    let drilldown;
+    try {
+      drilldown = await parseSessionDrilldown(row.source_file as string, id, row, db);
+    } catch {
+      throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
+    }
+
+    const idx = parseInt(idxStr, 10);
+    const ev = drilldown.compactEvents?.[idx];
+    if (!ev) throw Object.assign(new Error("compact event not found"), { status: 404 });
+
+    const syntheticCallId = -(ev.index + 1);
+    // loadResponseTree 走 helpers.resolveCallContext —— 我们用 ev.proxy.requestId
+    // 当作 apiRequestId 喂下去，proxy 那边的 resBody 解析路径完全复用。
+    return loadResponseTree(id, syntheticCallId, db, {
+      resolveCallContext: (_sid, _cid) => ({
+        apiRequestId: ev.proxy?.requestId ?? null,
+        proxySessionId: id,
+        // compact prompt 强制 NO_TOOLS，response 一定没有 tool_use 块
+        toolCalls: [],
+        nextCallId: null,
+        stopReason: "end_turn",
+        outputTokens: ev.proxy?.outputTokens ?? 0,
+      }),
+    });
+  }
+
+  @Get("sessions/:id/compact/:idx/attribution-tree")
+  async compactAttributionTree(@Param("id") id: string, @Param("idx") idxStr: string) {
+    const db = getDb();
+    const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as Record<string, unknown> | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+    const sourceFile = row.source_file as string;
+
+    let drilldown;
+    try {
+      drilldown = await parseSessionDrilldown(sourceFile, id, row, db);
+    } catch {
+      throw Object.assign(new Error("drilldown parse failed"), { status: 500 });
+    }
+
+    const idx = parseInt(idxStr, 10);
+    const ev = drilldown.compactEvents?.[idx];
+    if (!ev) throw Object.assign(new Error("compact event not found"), { status: 404 });
+
+    const syntheticCallId = -(ev.index + 1);
+
+    // prevCall = compact_boundary 之前最后一条真实 LLM call。loadAttributionTree
+    // 用它做 diff（cur reqBody vs prev reqBody）—— 对 compact 而言这个 diff 大体
+    // 是 "整个 NO_TOOLS_PREAMBLE 段都是 added"，符合直觉。
+    const boundaryTsMs = Date.parse(ev.timestamp);
+    const allCalls = drilldown.turns.flatMap((t) => t.calls.map((c) => ({ call: c, turnId: t.id })));
+    let prevReal: typeof allCalls[number] | null = null;
+    for (const x of allCalls) {
+      const ts = Date.parse(x.call.timestamp);
+      if (Number.isFinite(ts) && ts < boundaryTsMs) prevReal = x;
+      else break; // calls 按 timestamp 升序，碰到第一个 >= 直接停
+    }
+
+    let cachedEvents: LinkableJsonlEvent[] | null = null;
+    const loadJsonlEvents = (file: string): LinkableJsonlEvent[] | null => {
+      if (file !== sourceFile) return null;
+      if (cachedEvents === null) cachedEvents = readSessionEventsForLinker(file);
+      return cachedEvents;
+    };
+
+    const resolveCallMeta = (_sid: string, cid: number) => {
+      // 只服务合成的 compact callId；任何别的 id 都不该到这条端点
+      if (cid !== syntheticCallId) return null;
+      return {
+        call: {
+          id: syntheticCallId,
+          timestamp: ev.proxy?.startedAt ?? ev.timestamp,
+          // turnId 没有真正的 turn 归属 —— 用 belonging.afterTurnId 当锚
+          turnId: ev.belonging.kind === "between-turns" || ev.belonging.kind === "post-session"
+            ? ev.belonging.afterTurnId
+            : -1,
+          sourceFile,
+          apiRequestId: ev.proxy?.requestId ?? null,
+        },
+        prevCall: prevReal
+          ? { id: prevReal.call.id, timestamp: prevReal.call.timestamp, apiRequestId: prevReal.call.apiRequestId }
+          : null,
+      };
+    };
+
+    const fetchProxyReqBodyAt = async (
+      sid: string,
+      ts: string,
+      excludeProxyId?: number,
+      apiRequestId?: string | null,
+    ) => {
+      const proxyRow = findProxyRowForCall(db, sid, { apiRequestId, excludeProxyId });
+      if (!proxyRow) return null;
+      const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
+      const reqBodyStr = rec?.reqBody as string | undefined;
+      if (typeof reqBodyStr !== "string") return null;
+      let reqBody: Record<string, unknown> | null = null;
+      try { reqBody = JSON.parse(reqBodyStr) as Record<string, unknown>; }
+      catch { return null; }
+      let reqHeaders: Record<string, string> = {};
+      try { reqHeaders = JSON.parse(proxyRow.req_headers ?? "{}") as Record<string, string>; }
+      catch { /* default */ }
+      return { reqBody, reqHeaders, proxyRequestId: proxyRow.id, startedAt: proxyRow.started_at ?? ts };
+    };
+
+    const treeResult = await loadAttributionTree(id, syntheticCallId, db, {
+      resolveCallMeta,
+      fetchProxyReqBodyAt,
+      loadJsonlEvents,
+    });
+
+    // attribution graph enrichment：跟 attributionTree 端点同款。graph 用整 session
+    // 的 calls 计算，compact 的叶子 reverse-attribution 也走同一份 lineIdx → call 的
+    // 索引，无需特殊路径。
+    let graph = getCachedGraph(id);
+    if (!graph) {
+      graph = await computeSessionAttributionGraph(id, db, {
+        listCalls: () => allCalls.map((x) => ({ callId: x.call.id, sourceFile })),
+        loadCallHelpers: {
+          resolveCallMeta: (_sid, cid) => {
+            const cur = allCalls.find((x) => x.call.id === cid);
+            if (!cur) return null;
+            const curIdx = allCalls.indexOf(cur);
+            const prev = curIdx > 0 ? allCalls[curIdx - 1] : null;
+            return {
+              call: { id: cur.call.id, timestamp: cur.call.timestamp, turnId: cur.turnId, sourceFile, apiRequestId: cur.call.apiRequestId },
+              prevCall: prev ? { id: prev.call.id, timestamp: prev.call.timestamp, apiRequestId: prev.call.apiRequestId } : null,
+            };
+          },
+          fetchProxyReqBodyAt,
+          loadJsonlEvents,
+        },
+      });
+      setCachedGraph(id, graph);
+    }
+    const eventByLine = new Map<number, JsonlEventAnnotation>();
+    for (const ev2 of graph.events) eventByLine.set(ev2.lineIdx, ev2);
+    enrichTreeWithGraph(treeResult, eventByLine, syntheticCallId);
+
+    return treeResult;
   }
 
   @Get("sessions/:id/proxy")

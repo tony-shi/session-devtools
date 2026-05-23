@@ -25,7 +25,7 @@ function makeDeps(
       }
       return out;
     }),
-    computeRenderedSet: vi.fn((m: SessionMeta) => renderedSets.get(m.sessionId) ?? new Set()),
+    computeRenderedSet: vi.fn(async (m: SessionMeta) => renderedSets.get(m.sessionId) ?? new Set()),
   };
 }
 
@@ -93,12 +93,12 @@ describe("VisibilityService.classify (synchronous decisions)", () => {
     expect(enqueue).toHaveBeenCalledExactlyOnceWith("s1");
   });
 
-  it("compute 后命中 → visible / hidden 区分", () => {
+  it("compute 后命中 → visible / hidden 区分", async () => {
     const metas = new Map([["s1", makeMeta("s1")]]);
     const rendered = new Map([["s1", new Set(["req_visible"])]]);
     service = new VisibilityService(makeDeps(metas, rendered));
     service.setEnqueueFn(() => {}); // 这里手动驱动 compute
-    service.compute("s1");
+    await service.compute("s1");
 
     const out = service.enrichRows([
       { sessionId: "s1", requestId: "req_visible" },
@@ -107,14 +107,14 @@ describe("VisibilityService.classify (synchronous decisions)", () => {
     expect(out).toEqual(["visible", "hidden"]);
   });
 
-  it("mtime 变化 → 缓存失效，重新报 computing", () => {
+  it("mtime 变化 → 缓存失效，重新报 computing", async () => {
     const metas = new Map([["s1", makeMeta("s1", { fileMtime: 1000 })]]);
     const rendered = new Map([["s1", new Set(["req_a"])]]);
     const deps = makeDeps(metas, rendered);
     service = new VisibilityService(deps);
     const enqueue = vi.fn();
     service.setEnqueueFn(enqueue);
-    service.compute("s1");
+    await service.compute("s1");
 
     // 第一次 enrich：命中
     expect(service.enrichRows([{ sessionId: "s1", requestId: "req_a" }])).toEqual(["visible"]);
@@ -125,16 +125,16 @@ describe("VisibilityService.classify (synchronous decisions)", () => {
     expect(enqueue).toHaveBeenCalledWith("s1");
   });
 
-  it("parser 抛错时不污染缓存", () => {
+  it("parser 抛错时不污染缓存", async () => {
     const deps: VisibilityDeps = {
       loadMetas: () => new Map([["s1", makeMeta("s1")]]),
-      computeRenderedSet: () => { throw new Error("boom"); },
+      computeRenderedSet: async () => { throw new Error("boom"); },
     };
     service = new VisibilityService(deps);
     service.setEnqueueFn(() => {});
 
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    service.compute("s1");
+    await service.compute("s1");
     expect(service.cacheSize()).toBe(0);
     warn.mockRestore();
   });

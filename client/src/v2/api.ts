@@ -78,6 +78,19 @@ export const apiV2 = {
   subAgentDiffTree: (sessionId: string, agentFileId: string, callId: number) =>
     get<DiffTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/subagent/${encodeURIComponent(agentFileId)}/calls/${callId}/diff-tree`),
 
+  // Compact-as-call endpoints. compact_boundary 是一次独立 summarization
+  // LLM call，合成 callId 是 -(idx+1)，所以走专用的 :idx 路由（不混 :callId）。
+  // CallDetail shape 完全一致，前端 LlmCallDetailPanel 收到 `compactIdx` prop
+  // 时把 4 个 fetch 路由切到这一组。
+  compactCallDetail: (sessionId: string, compactIdx: number) =>
+    get<CallDetail>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/compact/${compactIdx}/detail`),
+
+  compactAttributionTree: (sessionId: string, compactIdx: number) =>
+    get<AttributionTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/compact/${compactIdx}/attribution-tree`),
+
+  compactResponseTree: (sessionId: string, compactIdx: number) =>
+    get<ResponseTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/compact/${compactIdx}/response-tree`),
+
   sync: () =>
     get<{ synced: number; skipped: number; errors: number }>("/api/v2/sessions/sync"),
 };

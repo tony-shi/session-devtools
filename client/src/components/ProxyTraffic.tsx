@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { Check, Copy } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
@@ -442,7 +443,7 @@ function normalizeHost(input: string): string | null {
     : tryParse(`http://${raw}`);
 }
 
-function CaptureTargets() {
+export function CaptureTargets() {
   const { t } = useTranslation();
   const [hosts, setHosts] = useState<string[]>([]);
   const [newHost, setNewHost] = useState("");
@@ -672,37 +673,61 @@ function VisibilityFilterBar({ active, onChange }: {
   );
 }
 
-// ── 分页器 ────────────────────────────────────────────────────────────────────
+// ── 表格 footer：页大小选择 + 分页器同一行 ─────────────────────────────────
 
-function Pager({ page, totalPages, loading, onChange }: {
+function TableFooter({ page, totalPages, loading, onPageChange, pageSize, onPageSizeChange }: {
   page: number;
   totalPages: number;
   loading: boolean;
-  onChange: (p: number) => void;
+  onPageChange: (p: number) => void;
+  pageSize: number;
+  onPageSizeChange: (n: number) => void;
 }) {
   const { t } = useTranslation();
-  if (totalPages <= 1) return null;
   const canPrev = page > 1 && !loading;
   const canNext = page < totalPages && !loading;
-  const btn = (enabled: boolean): React.CSSProperties => ({
-    padding: "4px 10px", borderRadius: 6,
-    border: "1px solid #e5e7eb",
-    background: enabled ? "#fff" : "#f9fafb",
-    color: enabled ? "#374151" : "#d1d5db",
-    cursor: enabled ? "pointer" : "not-allowed",
-    fontSize: 12,
-  });
+  const hasPager = totalPages > 1;
   return (
-    <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, fontSize: 12, color: "#6b7280" }}>
-      <button disabled={!canPrev} onClick={() => onChange(page - 1)} style={btn(canPrev)}>
-        {t("proxyTraffic.prevPage")}
-      </button>
-      <span>
-        {loading ? t("proxyTraffic.loadingMore") : t("proxyTraffic.page", { current: page, total: totalPages })}
-      </span>
-      <button disabled={!canNext} onClick={() => onChange(page + 1)} style={btn(canNext)}>
-        {t("proxyTraffic.nextPage")}
-      </button>
+    <div className="flex items-center gap-3 border-t bg-card px-4 py-2 text-xs text-muted-foreground">
+      <label className="inline-flex items-center gap-1.5">
+        {t("proxyTraffic.pageSizeLabel")}
+        <select
+          value={pageSize}
+          onChange={(e) => onPageSizeChange(Number(e.target.value))}
+          className="rounded-md border border-input bg-background px-1.5 py-0.5 text-xs"
+        >
+          {PAGE_SIZE_OPTIONS.map((n) => (
+            <option key={n} value={n}>{n}</option>
+          ))}
+        </select>
+      </label>
+      {hasPager && (
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2.5 text-xs"
+            disabled={!canPrev}
+            onClick={() => onPageChange(page - 1)}
+          >
+            {t("proxyTraffic.prevPage")}
+          </Button>
+          <span>
+            {loading
+              ? t("proxyTraffic.loadingMore")
+              : t("proxyTraffic.page", { current: page, total: totalPages })}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2.5 text-xs"
+            disabled={!canNext}
+            onClick={() => onPageChange(page + 1)}
+          >
+            {t("proxyTraffic.nextPage")}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -840,8 +865,6 @@ export function ProxyTraffic() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <CaptureTargets />
-
       <div style={{ background: "#fff", borderRadius: 8, border: "1px solid #e5e7eb", overflow: "hidden" }}>
         {/* 工具栏 */}
         <div style={{ padding: "12px 16px", borderBottom: "1px solid #f3f4f6", display: "flex", flexDirection: "column", gap: 10 }}>
@@ -865,18 +888,6 @@ export function ProxyTraffic() {
             <button onClick={handleSync} disabled={syncing} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#f3f4f6", cursor: "pointer", fontSize: 12 }}>
               {syncing ? t("proxyTraffic.syncing") : t("proxyTraffic.sync")}
             </button>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6b7280" }}>
-              {t("proxyTraffic.pageSizeLabel")}
-              <select
-                value={pageSize}
-                onChange={(e) => handlePageSizeChange(Number(e.target.value))}
-                style={{ padding: "3px 6px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#fff", fontSize: 12 }}
-              >
-                {PAGE_SIZE_OPTIONS.map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </label>
           </div>
           {/* 分类过滤 */}
           <CategoryTabs active={catFilter} counts={counts} onChange={setCatFilter} />
@@ -962,11 +973,13 @@ export function ProxyTraffic() {
               </tbody>
             </table>
 
-            <Pager
+            <TableFooter
               page={page}
               totalPages={totalPages}
               loading={loadingPage}
-              onChange={setPage}
+              onPageChange={setPage}
+              pageSize={pageSize}
+              onPageSizeChange={handlePageSizeChange}
             />
           </>
         )}

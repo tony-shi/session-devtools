@@ -70,3 +70,4 @@ tmp/
 .agents
 local-scripts
 server/scripts/
+resources/
