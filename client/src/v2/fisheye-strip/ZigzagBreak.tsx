@@ -4,6 +4,7 @@
 // 形成"strip 在此被撕开"的视觉。
 
 import type { CSSProperties } from "react";
+import { BRAND } from "../shared/brand";
 
 interface Props {
   width: number;
@@ -21,7 +22,7 @@ interface Props {
 export function ZigzagBreak({
   width, height,
   tooth = 4, period = 5,
-  stroke = "#6366f1", strokeWidth = 1.2,
+  stroke = BRAND.indigo500, strokeWidth = 1.2,
   style,
 }: Props) {
   if (width <= 0 || height <= 0) return null;

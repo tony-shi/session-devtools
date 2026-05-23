@@ -32,6 +32,8 @@ import { useAttributionGraph } from "./attribution-graph-context";
 import { sectionPalette, UNKNOWN_FILL as PALETTE_UNKNOWN_FILL } from "./lens-palette";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Check, Copy } from "lucide-react";
+import { BRAND } from "./shared/brand";
 
 // ─── 类型与配色 ─────────────────────────────────────────────────────────────
 
@@ -550,7 +552,7 @@ export function LeafTable({
             style={{
               display: "flex", alignItems: "center", gap: 12,
               padding: "6px 8px",
-              background: isSel ? "#eef2ff" : "transparent",
+              background: isSel ? BRAND.indigo50 : "transparent",
               border: "none", borderRadius: 4,
               cursor: "pointer", textAlign: "left",
               width: "100%",
@@ -764,7 +766,7 @@ function SkillListingDetail({
 
   const toggleBtnStyle = (active: boolean): React.CSSProperties => ({
     border: "1px solid #d1d5db",
-    background: active ? "#4338ca" : "#fff",
+    background: active ? BRAND.indigo700 : "#fff",
     color: active ? "#fff" : "#374151",
     padding: "1px 8px",
     fontSize: 11,
@@ -877,7 +879,7 @@ function SkillListingDetail({
                     style={{
                       fontFamily: "ui-monospace, SFMono-Regular, monospace",
                       fontSize: 12.5,
-                      color: "#4338ca",
+                      color: BRAND.indigo700,
                       fontWeight: 500,
                       whiteSpace: "nowrap",
                     }}
@@ -1110,20 +1112,9 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
           }}
         >
           {isCopied ? (
-            <>
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-              已复制
-            </>
+            <><Check size={10} strokeWidth={3} /> 已复制</>
           ) : (
-            <>
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </svg>
-              复制原文
-            </>
+            <><Copy size={10} /> 复制原文</>
           )}
         </button>
         {handleJumpSource && (
@@ -1134,7 +1125,7 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
             className="hover:bg-indigo-700 transition-colors"
             style={{
               display: "inline-flex", alignItems: "center", gap: 5,
-              border: "none", background: "#4f46e5", color: "#fff",
+              border: "none", background: BRAND.indigo600, color: "#fff",
               borderRadius: 4, fontSize: 10, fontWeight: 700,
               padding: "3px 9px", cursor: "pointer", lineHeight: 1.3,
               flexShrink: 0, whiteSpace: "nowrap",
@@ -1169,13 +1160,13 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
           identity, so it stays out of the header. */}
       {leaf.origin.kind === "rule" && leaf.origin.dynamicFields && leaf.origin.dynamicFields.length > 0 && (
         <details style={{ fontSize: 10 }}>
-          <summary style={{ cursor: "pointer", color: "#6366f1" }}>
+          <summary style={{ cursor: "pointer", color: BRAND.indigo500 }}>
             {leaf.origin.dynamicFields.length} dynamic field{leaf.origin.dynamicFields.length > 1 ? "s" : ""}
           </summary>
           <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 4, paddingLeft: 8 }}>
             {leaf.origin.dynamicFields.map((f, i) => (
               <div key={i} style={{ display: "flex", gap: 6, fontSize: 10 }}>
-                <span style={{ fontFamily: "ui-monospace, monospace", color: "#4338ca", minWidth: 100 }}>{f.name}</span>
+                <span style={{ fontFamily: "ui-monospace, monospace", color: BRAND.indigo700, minWidth: 100 }}>{f.name}</span>
                 <span style={{ color: "#6b7280" }}>{f.source}</span>
                 <span style={{ color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {f.valuePreview}
@@ -1204,7 +1195,7 @@ function leafOriginToCardHeader(leaf: LeafLite): {
   const o = leaf.origin;
   if (o.kind === "rule") {
     return {
-      color: "#3b82f6",
+      color: BRAND.blue500,
       kindLabel: "Rule",
       title: o.ruleId.startsWith("wire.") ? `wire · ${o.ruleId.slice(5)}` : o.ruleId,
     };
@@ -1224,7 +1215,7 @@ function leafOriginToCardHeader(leaf: LeafLite): {
     const responseSideColor: Record<string, string> = {
       tool_use:       "#f59e0b",  // response.tool_use marker
       assistant_text: "#22c55e",  // response.text marker
-      thinking:       "#a78bfa",  // response.thinking marker
+      thinking:       BRAND.violet400,  // response.thinking marker
     };
     const color = responseSideColor[src]
       ?? EVENT_PALETTES[jsonlSourceToIntervalKind(src)]?.fg

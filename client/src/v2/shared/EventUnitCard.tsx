@@ -17,6 +17,8 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import JsonView from "@uiw/react-json-view";
+import { TriangleAlert, Link2, ArrowUpRight } from "lucide-react";
+import { BRAND } from "./brand";
 
 export type EventDirection = "in" | "out";
 
@@ -293,7 +295,7 @@ export function EventUnitCard(props: EventUnitCardProps) {
             style={{
               display: "inline-flex", alignItems: "center", gap: 5,
               border: "none",
-              background: auditGapped ? "#d97706" : "#4f46e5",
+              background: auditGapped ? "#d97706" : BRAND.indigo600,
               color: "#fff", borderRadius: 4,
               fontSize: 10, fontWeight: 700,
               padding: "3px 9px",
@@ -436,39 +438,18 @@ function CoordinateChips({ coordinate }: { coordinate: EventCoordinate }) {
 }
 
 function WarningIcon() {
-  // Triangle exclamation mark — universally readable "data may be wrong".
-  return (
-    <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style={{ flexShrink: 0 }}>
-      <path d="M8 1.5 L15 14 L1 14 Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-      <rect x="7.3" y="6" width="1.4" height="4.5" fill="currentColor" />
-      <rect x="7.3" y="11.4" width="1.4" height="1.4" fill="currentColor" />
-    </svg>
-  );
+  return <TriangleAlert size={11} className="shrink-0" />;
 }
 
 export function LinkIcon() {
-  // Outline link/chain icon — visually signals "navigate" without text.
-  return (
-    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8"
-         strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-      <path d="M6.5 9.5 L9.5 6.5" />
-      <path d="M9 4 L10.5 2.5 a2.5 2.5 0 0 1 3.5 3.5 L12.5 7.5" />
-      <path d="M7 8.5 L5.5 10 a2.5 2.5 0 0 1 -3.5 -3.5 L3.5 5" />
-    </svg>
-  );
+  // "navigate (cross-reference inside the same scope)" semantics.
+  return <Link2 size={11} className="shrink-0" />;
 }
 
 export function ForwardArrowIcon() {
-  // Up-right diagonal arrow — visually signals "navigate INTO another scope"
-  // (e.g. open a sub-agent's own detail view), distinct from the chain
-  // LinkIcon which means "cross-reference inside the same scope".
-  return (
-    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8"
-         strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-      <path d="M5 11 L11 5" />
-      <path d="M6 5 L11 5 L11 10" />
-    </svg>
-  );
+  // "navigate INTO another scope" (e.g. open a sub-agent's own detail view) —
+  // distinct from LinkIcon which means "cross-reference inside the same scope".
+  return <ArrowUpRight size={11} className="shrink-0" />;
 }
 
 export function SegmentView({ seg }: { seg: EventSegment }) {
@@ -570,7 +551,7 @@ export function SegmentView({ seg }: { seg: EventSegment }) {
             <button
               onClick={(e) => { e.stopPropagation(); setShowFull(v => !v); }}
               style={{
-                marginTop: 3, fontSize: 10, color: "#6366f1",
+                marginTop: 3, fontSize: 10, color: BRAND.indigo500,
                 background: "none", border: "none", cursor: "pointer", padding: 0,
                 fontWeight: 600,
               }}
@@ -598,8 +579,8 @@ function SegmentModeButton({
       type="button"
       onClick={onClick}
       style={{
-        background: active ? "#eef2ff" : "transparent",
-        color: active ? "#4338ca" : "#9ca3af",
+        background: active ? BRAND.indigo50 : "transparent",
+        color: active ? BRAND.indigo700 : "#9ca3af",
         border: "none",
         padding: "2px 8px",
         fontSize: 9, fontWeight: 700, letterSpacing: "0.04em",

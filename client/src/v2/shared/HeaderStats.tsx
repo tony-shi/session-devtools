@@ -9,6 +9,7 @@
 import React from "react";
 import { AggregateLedger, type AggregateLedgerFullProps } from "./AggregateLedger";
 import { CallLedger, type CallLedgerFullProps } from "./CallLedger";
+import { BRAND } from "./brand";
 
 export interface HeaderStat {
   label: string;
@@ -90,7 +91,7 @@ export interface StatusBadge {
 const STATUS_BADGE_COLORS: Record<StatusBadgeKind, { fg: string; bg: string; border: string }> = {
   compaction: { fg: "#ef4444", bg: "#fef2f2", border: "#fecaca" },
   error:      { fg: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
-  subAgent:   { fg: "#7c3aed", bg: "#faf5ff", border: "#e9d5ff" },
+  subAgent:   { fg: BRAND.violet600, bg: BRAND.violetGradient50, border: "#e9d5ff" },
   command:    { fg: "#d97706", bg: "#fffbeb", border: "#fde68a" },
   unknown:    { fg: "#9ca3af", bg: "#f9fafb", border: "#e5e7eb" },
   noProxy:    { fg: "#d97706", bg: "#fffbeb", border: "#fde68a" },

@@ -4,7 +4,8 @@ import { SessionDetailV2 } from "./SessionDetailV2";
 import type { SessionV2, SessionsV2Response } from "./types";
 import { getSessionTitle, getSessionSubtitle } from "./session-display";
 import { AggregateLedger } from "./shared/AggregateLedger";
-import { Button } from "./shared/Button";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Pagination as PaginationNav,
@@ -15,6 +16,7 @@ import {
   PaginationNext,
   PaginationEllipsis,
 } from "@/components/ui/pagination";
+import { RefreshCw, Search, ChevronRight } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -22,10 +24,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { BRAND } from "./shared/brand";
 
 const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
-  claude: { bg: "#eef2ff", color: "#6366f1" },
-  codex:  { bg: "#dbeafe", color: "#1d4ed8" },
+  claude: { bg: BRAND.indigo50, color: BRAND.indigo500 },
+  codex:  { bg: "#dbeafe", color: BRAND.blue700 },
   gemini: { bg: "#d1fae5", color: "#065f46" },
 };
 
@@ -140,12 +143,9 @@ function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onCl
       {/* Sub agents */}
       <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
         {session.sub_agent_count > 0 ? (
-          <span style={{
-            fontSize: 11, padding: "1px 7px", borderRadius: 8,
-            background: "#faf5ff", color: "#7c3aed", fontWeight: 500,
-          }}>
+          <Badge variant="violet" className="rounded-full px-2 text-[11px] font-medium">
             {session.sub_agent_count}
-          </span>
+          </Badge>
         ) : (
           <span style={{ fontSize: 12, color: "#d1d5db" }}>—</span>
         )}
@@ -175,9 +175,7 @@ function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onCl
 
       {/* 箭头 */}
       <td style={{ padding: "10px 12px", width: 28 }}>
-        <svg width="13" height="13" fill="none" stroke={hovered ? "#6b7280" : "#d1d5db"} viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-        </svg>
+        <ChevronRight size={13} className={hovered ? "text-gray-500" : "text-gray-300"} />
       </td>
     </tr>
   );
@@ -334,11 +332,7 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
               disabled={syncing}
               title="Sync now"
             >
-              <svg width="11" height="11" style={{ animation: syncing ? "spin 1s linear infinite" : "none" }}
-                fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
+              <RefreshCw size={11} className={syncing ? "animate-spin" : ""} />
               {syncing ? t("dashboard.syncing") : t("dashboard.sync")}
             </Button>
           )}
@@ -347,13 +341,7 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {/* Search box */}
           <div className="relative flex items-center">
-            <svg
-              width="13" height="13" fill="none" stroke="#9ca3af" viewBox="0 0 24 24"
-              className="absolute left-2.5 pointer-events-none"
-            >
-              <circle cx="11" cy="11" r="8" strokeWidth={2} />
-              <path strokeLinecap="round" strokeWidth={2} d="M21 21l-4.35-4.35" />
-            </svg>
+            <Search size={13} className="absolute left-2.5 pointer-events-none text-gray-400" />
             <Input
               type="text"
               placeholder={t("dashboard.searchPlaceholder")}
@@ -363,10 +351,10 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
             />
             {search && (
               <Button
-                variant="text"
+                variant="ghost"
                 size="sm"
                 onClick={() => onSearchChange("")}
-                style={{ position: "absolute", right: 4, padding: "0 4px", fontSize: 14 }}
+                className="absolute right-1 h-6 w-6 p-0 text-base text-gray-400 hover:text-gray-600"
               >×</Button>
             )}
           </div>

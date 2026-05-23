@@ -4,6 +4,7 @@
 // control reads as part of one design system across pages.
 
 import React from "react";
+import { BRAND } from "./brand";
 
 export interface SegmentedOption<T extends string> {
   id: T;
@@ -23,9 +24,9 @@ export interface SegmentedToggleProps<T extends string> {
   style?: React.CSSProperties;
 }
 
-const BRAND = "#6366f1";
-const BRAND_WEAK_BG = "#eef2ff";
-const BRAND_WEAK_BORDER = "#c7d2fe";
+const BRAND_FG = BRAND.indigo500;
+const BRAND_WEAK_BG = BRAND.indigo50;
+const BRAND_WEAK_BORDER = BRAND.indigo200;
 
 export function SegmentedToggle<T extends string>({
   options, value, onChange,
@@ -48,8 +49,8 @@ export function SegmentedToggle<T extends string>({
       {options.map((o) => {
         const active = o.id === value;
         const styleActive = variant === "solid"
-          ? { background: BRAND,        color: "#fff",   border: `1px solid ${BRAND}` }
-          : { background: BRAND_WEAK_BG, color: BRAND,    border: `1px solid ${BRAND_WEAK_BORDER}` };
+          ? { background: BRAND_FG,     color: "#fff",   border: `1px solid ${BRAND_FG}` }
+          : { background: BRAND_WEAK_BG, color: BRAND_FG, border: `1px solid ${BRAND_WEAK_BORDER}` };
         const styleIdle = { background: "transparent", color: "#9ca3af", border: "1px solid #e5e7eb" };
         return (
           <button

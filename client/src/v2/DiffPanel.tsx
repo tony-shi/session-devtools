@@ -18,6 +18,7 @@ import type {
   DiffKind, DiffLeaf, DiffSection, DiffSectionId, DiffTreeResult,
   DiffUnavailableReason,
 } from "./diff-tree-types";
+import { BRAND } from "./shared/brand";
 
 // ─── 配色 ─────────────────────────────────────────────────────────────────────
 
@@ -31,9 +32,9 @@ interface SectionMeta {
 
 // 与 AttributionTreePanel 同色（淡蓝 / 蓝 / 紫）
 const SECTION_META: Record<DiffSectionId, SectionMeta> = {
-  system:   { label: "System",   barBg: "#bfdbfe", barText: "#1e3a8a", marker: "#3b82f6", textColor: "#1e40af" },
-  tools:    { label: "Tools",    barBg: "#3b82f6", barText: "#fff",    marker: "#2563eb", textColor: "#1e40af" },
-  messages: { label: "Messages", barBg: "#a78bfa", barText: "#fff",    marker: "#8b5cf6", textColor: "#5b21b6" },
+  system:   { label: "System",   barBg: "#bfdbfe", barText: "#1e3a8a", marker: BRAND.blue500, textColor: "#1e40af" },
+  tools:    { label: "Tools",    barBg: BRAND.blue500, barText: "#fff",    marker: BRAND.blue600, textColor: "#1e40af" },
+  messages: { label: "Messages", barBg: BRAND.violet400, barText: "#fff",    marker: BRAND.violet500, textColor: BRAND.violet800 },
   other:    { label: "Other",    barBg: "#d1d5db", barText: "#374151", marker: "#9ca3af", textColor: "#374151" },
 };
 
@@ -924,7 +925,7 @@ function DiffLeafRow({
       style={{
         display: "flex", alignItems: "center", gap: 10,
         padding: "5px 8px",
-        background: selected ? "#eef2ff" : "transparent",
+        background: selected ? BRAND.indigo50 : "transparent",
         border: "none",
         borderRadius: 4,
         cursor: "pointer", textAlign: "left",

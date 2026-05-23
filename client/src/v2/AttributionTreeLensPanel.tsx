@@ -49,6 +49,7 @@ import type { DiffSection, DiffTreeResult, PinInfo } from "./diff-tree-types";
 import { SelectedDiffDetail } from "./DiffPanel";
 import { diffUnderlineFor, sectionFrame } from "./lens-palette";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { BRAND } from "./shared/brand";
 
 // Diff 现在是真正的 lens（在 lens-framework.ts 里定义为 diffLens），不再是
 // "虚拟"的 chip 切换 + DiffPanel 替换。这套老 DIFF_LENS_ID 常量已废除。
@@ -89,8 +90,8 @@ function LensSwitcher({
               display: "inline-flex", alignItems: "center", gap: 5,
               padding: "3px 9px", borderRadius: 6,
               border: isActive ? "1px solid #6366f1" : "1px solid #e5e7eb",
-              background: isActive ? "#eef2ff" : "transparent",
-              color: isActive ? "#4338ca" : "#6b7280",
+              background: isActive ? BRAND.indigo50 : "transparent",
+              color: isActive ? BRAND.indigo700 : "#6b7280",
               fontWeight: isActive ? 700 : 500,
               fontSize: 11,
               cursor: isBase ? "default" : "pointer",
@@ -101,8 +102,8 @@ function LensSwitcher({
             <span style={{
               display: "inline-flex", alignItems: "center", justifyContent: "center",
               width: 10, height: 10, borderRadius: 2,
-              border: `1px solid ${isActive ? "#6366f1" : "#cbd5e1"}`,
-              background: isActive ? "#6366f1" : "transparent",
+              border: `1px solid ${isActive ? BRAND.indigo500 : "#cbd5e1"}`,
+              background: isActive ? BRAND.indigo500 : "transparent",
               color: "#fff",
               fontSize: 8, fontWeight: 700, lineHeight: 1,
             }}>
@@ -429,7 +430,7 @@ function DiffUnavailableBanner({
           )}
           style={{
             border: "none", background: "transparent", padding: 0,
-            color: "#6366f1", fontWeight: 600, fontSize: 12,
+            color: BRAND.indigo500, fontWeight: 600, fontSize: 12,
             cursor: "pointer", whiteSpace: "nowrap",
             flexShrink: 0,
           }}

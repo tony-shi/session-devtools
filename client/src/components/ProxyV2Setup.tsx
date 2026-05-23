@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ProxyTraffic } from "./ProxyTraffic";
+import { BRAND } from "../v2/shared/brand";
 
 type Target = "STOPPED" | "RUNNING";
 type Phase = "idle" | "starting" | "running" | "stopping";
@@ -73,7 +74,7 @@ export function ProxyV2Setup() {
   // Phase 颜色对齐主站：emerald running / indigo starting / amber stopping / gray idle
   const phaseColor =
     phase === "running"  ? "#10b981" :
-    phase === "starting" ? "#6366f1" :
+    phase === "starting" ? BRAND.indigo500 :
     phase === "stopping" ? "#d97706" : "#9ca3af";
 
   const phaseLabel =
@@ -85,7 +86,7 @@ export function ProxyV2Setup() {
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {/* 信息条 —— 用主站 indigo 配色 */}
       <div style={{
-        background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 8,
+        background: BRAND.indigo50, border: "1px solid #c7d2fe", borderRadius: 8,
         padding: "10px 16px", fontSize: 13, color: "#3730a3",
       }}>
         {t("proxy.intro")}
@@ -175,7 +176,7 @@ export function ProxyV2Setup() {
         {snap && snap.preflightWarnings.length > 0 && (
           <div style={{
             marginTop: 10, padding: "8px 12px", borderRadius: 6,
-            background: "#eef2ff", border: "1px solid #c7d2fe", color: "#3730a3", fontSize: 12,
+            background: BRAND.indigo50, border: "1px solid #c7d2fe", color: "#3730a3", fontSize: 12,
           }}>
             <div style={{ fontWeight: 600, marginBottom: 4 }}>{t("proxy.preflightTitle")}</div>
             <ul style={{ margin: 0, paddingLeft: 18 }}>
@@ -227,7 +228,7 @@ function btnStyle(variant: "primary" | "danger" | "neutral" | "ghost" | "disable
     opacity: disabled ? 0.5 : 1,
   };
   // 主色 indigo / 危险 red / 中性 gray-50 / ghost 边框 —— 全部对齐主站调色板。
-  if (variant === "primary") return { ...base, background: "#6366f1", color: "#fff" };
+  if (variant === "primary") return { ...base, background: BRAND.indigo500, color: "#fff" };
   if (variant === "danger")  return { ...base, background: "#dc2626", color: "#fff" };
   if (variant === "neutral") return { ...base, background: "#f3f4f6", color: "#111827", border: "1px solid #e5e7eb" };
   if (variant === "ghost")   return { ...base, background: "transparent", border: "1px solid #e5e7eb", color: "#374151" };

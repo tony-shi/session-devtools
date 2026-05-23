@@ -6,7 +6,9 @@
 // 不再通过 `lang: Lang` prop 链式传递。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Check, Copy } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import {
   Sheet,
   SheetContent,
@@ -14,6 +16,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
+import { BRAND } from "../v2/shared/brand";
 
 // ── 请求分类 ──────────────────────────────────────────────────────────────────
 
@@ -27,7 +30,7 @@ interface CategoryMeta {
 }
 
 const CATEGORY_META: Record<Category, CategoryMeta> = {
-  llm:       { labelKey: "llm",       color: "#7c3aed", bg: "#f5f0ff" },
+  llm:       { labelKey: "llm",       color: BRAND.violet600, bg: "#f5f0ff" },
   auth:      { labelKey: "auth",      color: "#0369a1", bg: "#e0f2fe" },
   telemetry: { labelKey: "telemetry", color: "#92400e", bg: "#fef3c7" },
   mcp:       { labelKey: "mcp",       color: "#065f46", bg: "#d1fae5" },
@@ -55,6 +58,14 @@ function classifyRequest(url: string, sni: string): Category {
 
 // ── 数据结构 ──────────────────────────────────────────────────────────────────
 
+type Visibility =
+  | "visible"
+  | "hidden"
+  | "session-gone"
+  | "unattributed"
+  | "computing"
+  | "disabled";
+
 interface ProxyRequest {
   id: number;
   ts: string;
@@ -70,6 +81,53 @@ interface ProxyRequest {
   res_headers: Record<string, string> | string;
   sse_event_count: number;
   is_stream: number | boolean;
+  session_id?: string | null;
+  request_id?: string | null;
+  // 由 proxy-visibility 模块在后端打的徽章。disabled 时整列不展示。
+  visibility?: Visibility;
+}
+
+// i18n key 用 camelCase（session-gone → sessionGone），visibility 值是
+// kebab-case。这张表负责两者的映射 + 颜色。
+const VISIBILITY_META: Record<Exclude<Visibility, "disabled">, { color: string; bg: string; border: string; i18nKey: string }> = {
+  "visible":       { color: "#047857", bg: "#ecfdf5", border: "#a7f3d0", i18nKey: "visible" },
+  "hidden":        { color: "#b45309", bg: "#fef3c7", border: "#fcd34d", i18nKey: "hidden" },
+  "session-gone":  { color: "#6b7280", bg: "#f3f4f6", border: "#d1d5db", i18nKey: "sessionGone" },
+  "unattributed":  { color: "#6b7280", bg: "#fff",    border: "#e5e7eb", i18nKey: "unattributed" },
+  "computing":     { color: "#9ca3af", bg: "#f9fafb", border: "#e5e7eb", i18nKey: "computing" },
+};
+
+type VisibilityFilter = "all" | "hidden" | "orphan";
+
+// hidden / orphan 互斥分类：
+//   hidden = 属于已知 session 但 parser 没渲染（典型：sub-agent、合成调用）
+//   orphan = jsonl 不在了 或 没有 session 归属（session-gone + unattributed）
+// 用户想看的两类不同问题：前者诊断 parser 覆盖盲区，后者诊断数据完整性。
+function visibilityMatchesFilter(v: Visibility | undefined, f: VisibilityFilter): boolean {
+  if (f === "all") return true;
+  if (!v || v === "disabled") return false;
+  if (f === "hidden") return v === "hidden";
+  // orphan
+  return v === "session-gone" || v === "unattributed";
+}
+
+function VisibilityBadge({ v }: { v: Visibility | undefined }) {
+  const { t } = useTranslation();
+  if (!v || v === "disabled") return null;
+  const meta = VISIBILITY_META[v];
+  return (
+    <span
+      title={t(`proxyTraffic.visibilityTip.${meta.i18nKey}`)}
+      style={{
+        fontSize: 10, padding: "2px 7px", borderRadius: 8,
+        background: meta.bg, color: meta.color,
+        border: `1px solid ${meta.border}`,
+        fontWeight: 600, whiteSpace: "nowrap",
+      }}
+    >
+      {t(`proxyTraffic.visibility.${meta.i18nKey}`)}
+    </span>
+  );
 }
 
 function parseHeaders(h: Record<string, string> | string): Record<string, string> {
@@ -170,7 +228,7 @@ function LazyBody({ requestId, kind }: { requestId: number; kind: "req" | "res" 
         onClick={handleOpen}
         style={{ background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
       >
-        <span style={{ fontSize: 10, color: "#6366f1" }}>{t("proxyTraffic.loadBody")}</span>
+        <span style={{ fontSize: 10, color: BRAND.indigo500 }}>{t("proxyTraffic.loadBody")}</span>
       </button>
     );
   }
@@ -328,16 +386,7 @@ function CopyButton({ text }: { text: string }) {
       }}
       className={!isCopied ? "hover:!border-gray-300 hover:!text-gray-500" : ""}
     >
-      {isCopied ? (
-        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      ) : (
-        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
-      )}
+      {isCopied ? <Check size={8} strokeWidth={3} /> : <Copy size={8} />}
     </button>
   );
 }
@@ -477,7 +526,7 @@ function CaptureTargets() {
 
   const toastStyles: Record<ToastTone, { bg: string; border: string; color: string }> = {
     success: { bg: "#ecfdf5", border: "#a7f3d0", color: "#047857" },
-    info:    { bg: "#eef2ff", border: "#c7d2fe", color: "#4338ca" },
+    info:    { bg: BRAND.indigo50, border: BRAND.indigo200, color: BRAND.indigo700 },
     error:   { bg: "#fef2f2", border: "#fecaca", color: "#991b1b" },
   };
 
@@ -503,7 +552,7 @@ function CaptureTargets() {
           disabled={busy}
           style={{
             padding: "6px 14px", borderRadius: 6, border: "none",
-            background: busy ? "#c7d2fe" : "#6366f1", color: "#fff",
+            background: busy ? BRAND.indigo200 : BRAND.indigo500, color: "#fff",
             cursor: busy ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 600,
           }}
         >
@@ -533,7 +582,7 @@ function HostChip({ label, removable, onRemove }: { label: string; removable: bo
       padding: "3px 10px", borderRadius: 20,
       background: removable ? "#f0f4ff" : "#f3f4f6",
       border: `1px solid ${removable ? "#c7d7ff" : "#e5e7eb"}`,
-      fontSize: 12, color: removable ? "#2563eb" : "#666",
+      fontSize: 12, color: removable ? BRAND.blue600 : "#666",
     }}>
       {label}
       {removable && onRemove && (
@@ -587,9 +636,81 @@ function CategoryTabs({ active, counts, onChange }: {
   );
 }
 
+// ── visibility 过滤器（segmented） ───────────────────────────────────────────
+
+function VisibilityFilterBar({ active, onChange }: {
+  active: VisibilityFilter;
+  onChange: (v: VisibilityFilter) => void;
+}) {
+  const { t } = useTranslation();
+  const items: Array<{ id: VisibilityFilter; label: string }> = [
+    { id: "all",     label: t("proxyTraffic.visibilityFilterAll") },
+    { id: "hidden",  label: t("proxyTraffic.visibilityFilterHidden") },
+    { id: "orphan",  label: t("proxyTraffic.visibilityFilterOrphan") },
+  ];
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+      <span style={{ color: "#6b7280" }}>{t("proxyTraffic.visibilityFilterLabel")}:</span>
+      <div style={{ display: "inline-flex", borderRadius: 6, overflow: "hidden", border: "1px solid #e5e7eb" }}>
+        {items.map(({ id, label }, i) => (
+          <button
+            key={id}
+            onClick={() => onChange(id)}
+            style={{
+              padding: "4px 10px", border: "none",
+              borderLeft: i > 0 ? "1px solid #e5e7eb" : "none",
+              background: active === id ? BRAND.indigo500 : "#fff",
+              color: active === id ? "#fff" : "#374151",
+              cursor: "pointer", fontSize: 12, fontWeight: active === id ? 600 : 400,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── 分页器 ────────────────────────────────────────────────────────────────────
+
+function Pager({ page, totalPages, loading, onChange }: {
+  page: number;
+  totalPages: number;
+  loading: boolean;
+  onChange: (p: number) => void;
+}) {
+  const { t } = useTranslation();
+  if (totalPages <= 1) return null;
+  const canPrev = page > 1 && !loading;
+  const canNext = page < totalPages && !loading;
+  const btn = (enabled: boolean): React.CSSProperties => ({
+    padding: "4px 10px", borderRadius: 6,
+    border: "1px solid #e5e7eb",
+    background: enabled ? "#fff" : "#f9fafb",
+    color: enabled ? "#374151" : "#d1d5db",
+    cursor: enabled ? "pointer" : "not-allowed",
+    fontSize: 12,
+  });
+  return (
+    <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, fontSize: 12, color: "#6b7280" }}>
+      <button disabled={!canPrev} onClick={() => onChange(page - 1)} style={btn(canPrev)}>
+        {t("proxyTraffic.prevPage")}
+      </button>
+      <span>
+        {loading ? t("proxyTraffic.loadingMore") : t("proxyTraffic.page", { current: page, total: totalPages })}
+      </span>
+      <button disabled={!canNext} onClick={() => onChange(page + 1)} style={btn(canNext)}>
+        {t("proxyTraffic.nextPage")}
+      </button>
+    </div>
+  );
+}
+
 // ── 主组件 ────────────────────────────────────────────────────────────────────
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 200] as const;
+const DEFAULT_PAGE_SIZE = 50;
 
 export function ProxyTraffic() {
   const { t } = useTranslation();
@@ -599,26 +720,46 @@ export function ProxyTraffic() {
   const [syncing, setSyncing] = useState(false);
   // 默认选中 LLM 推理
   const [catFilter, setCatFilter] = useState<Category | "all">("llm");
+  const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>("all");
   const [trafficReady, setTrafficReady] = useState(false);
 
-  // 分页状态：已加载的行数 offset，服务端总数
-  const [offset, setOffset] = useState(PAGE_SIZE);
+  // 分页：当前页 (1-indexed) + 服务端总数 + 每页大小。无限下拉已弃用。
+  // live SSE 还是有用——只是新到的请求会插到当前页头部，超出 pageSize 的会
+  // 自然被截断到下一页；用户翻页时再 fetch 该页的快照。
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [serverTotal, setServerTotal] = useState(0);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadingPage, setLoadingPage] = useState(false);
 
   const evtRef = useRef<EventSource | null>(null);
   const streamCursorRef = useRef<{ startedAt: string; id: number }>({ startedAt: "", id: 0 });
-  // 用于无限滚动的哨兵元素
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
+
+  const totalPages = Math.max(1, Math.ceil(serverTotal / pageSize));
+
+  const fetchPage = useCallback(async (targetPage: number, size: number, updateCursor = false) => {
+    setLoadingPage(true);
+    try {
+      const offset = (targetPage - 1) * size;
+      const d = await fetch(`/api/proxy/requests?limit=${size}&offset=${offset}`).then((r) => r.json());
+      const next = (d.requests ?? []) as ProxyRequest[];
+      setRequests(next);
+      setServerTotal(d.total ?? 0);
+      if (updateCursor && next.length > 0) {
+        const newest = next[0];
+        const maxId = next.reduce((max, req) => Math.max(max, req.id), 0);
+        streamCursorRef.current = { startedAt: requestStartedAt(newest), id: maxId };
+      }
+    } catch { void 0; }
+    setLoadingPage(false);
+  }, []);
 
   useEffect(() => {
-    fetch(`/api/proxy/requests?limit=${PAGE_SIZE}&offset=0`)
+    fetch(`/api/proxy/requests?limit=${DEFAULT_PAGE_SIZE}&offset=0`)
       .then((r) => r.json())
       .then((d) => {
         const initial = (d.requests ?? []) as ProxyRequest[];
         setRequests(initial);
         setServerTotal(d.total ?? 0);
-        setOffset(initial.length);
         const newest = initial[0];
         const maxId = initial.reduce((max, req) => Math.max(max, req.id), 0);
         streamCursorRef.current = newest
@@ -629,9 +770,27 @@ export function ProxyTraffic() {
       .catch(() => setTrafficReady(true));
   }, []);
 
+  // 翻页 / 改 pageSize 时拉取对应页。初始 page=1 + size=DEFAULT 时跳过——
+  // 已经在 mount effect 拉过同样的请求了，重复 fetch 没意义。
   useEffect(() => {
     if (!trafficReady) return;
-    if (!live) { evtRef.current?.close(); evtRef.current = null; return; }
+    if (page === 1 && pageSize === DEFAULT_PAGE_SIZE) return;
+    // fetchPage 内部首行就 setLoadingPage(true)，会触发 set-state-in-effect。
+    // 与 attribution-graph-context.tsx 的 loadGraph 路径同模式，本仓库已接受。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchPage(page, pageSize);
+  }, [page, pageSize, trafficReady, fetchPage]);
+
+  const handlePageSizeChange = (size: number) => {
+    setPageSize(size);
+    setPage(1); // 改大小后回到第 1 页，避免落到不存在的页
+  };
+
+  useEffect(() => {
+    if (!trafficReady) return;
+    // 只在第 1 页打开实时流：用户翻到其他页时，看的是历史快照，
+    // 实时推送只会让分页紊乱。
+    if (!live || page !== 1) { evtRef.current?.close(); evtRef.current = null; return; }
     const cursor = streamCursorRef.current;
     const params = new URLSearchParams();
     if (cursor.id) params.set("since_id", String(cursor.id));
@@ -645,63 +804,25 @@ export function ProxyTraffic() {
         if (rec.id > current.id) {
           streamCursorRef.current = { startedAt: requestStartedAt(rec), id: rec.id };
         }
-        setRequests((prev) => mergeRequests(prev, [rec]));
-        // 新增实时记录时同步更新 total（乐观）
-        setServerTotal((t) => t + 1);
+        // 只把新行 merge 进当前的第 1 页，超出 pageSize 自动尾部丢弃。
+        setRequests((prev) => mergeRequests(prev, [rec]).slice(0, pageSize));
+        setServerTotal((tot) => tot + 1);
       } catch { void 0; }
     };
     return () => { es.close(); evtRef.current = null; };
-  }, [live, trafficReady]);
-
-  // 加载更多（分页）
-  const loadMore = useCallback(async () => {
-    if (loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const d = await fetch(`/api/proxy/requests?limit=${PAGE_SIZE}&offset=${offset}`).then((r) => r.json());
-      const more = (d.requests ?? []) as ProxyRequest[];
-      if (more.length > 0) {
-        setRequests((prev) => mergeRequests(prev, more));
-        setOffset((o) => o + more.length);
-        setServerTotal(d.total ?? serverTotal);
-      }
-    } catch { void 0; }
-    setLoadingMore(false);
-  }, [loadingMore, offset, serverTotal]);
-
-  // IntersectionObserver 实现无限滚动：哨兵元素进入视口时触发加载
-  useEffect(() => {
-    const el = sentinelRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting && requests.length < serverTotal && !loadingMore) {
-          loadMore();
-        }
-      },
-      { rootMargin: "200px" },
-    );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [loadMore, requests.length, serverTotal, loadingMore]);
+  }, [live, trafficReady, page, pageSize]);
 
   const handleSync = async () => {
     setSyncing(true);
     try {
       await fetch("/api/proxy/sync", { method: "POST" });
-      const d = await fetch(`/api/proxy/requests?limit=${PAGE_SIZE}&offset=0`).then((r) => r.json());
-      const next = (d.requests ?? []) as ProxyRequest[];
-      setRequests(next);
-      setServerTotal(d.total ?? 0);
-      setOffset(next.length);
-      const newest = next[0];
-      const maxId = next.reduce((max, req) => Math.max(max, req.id), 0);
-      if (newest) streamCursorRef.current = { startedAt: requestStartedAt(newest), id: maxId };
+      setPage(1);
+      await fetchPage(1, pageSize, true);
     } catch { void 0; }
     setSyncing(false);
   };
 
-  // 分类计数基于已加载的数据（实时计数）
+  // 分类计数基于当前页已加载的数据（仅这一页内的相对计数）
   const counts = requests.reduce<Record<string, number>>((acc, r) => {
     const c = classifyRequest(r.url, r.sni);
     acc[c] = (acc[c] ?? 0) + 1;
@@ -709,8 +830,13 @@ export function ProxyTraffic() {
     return acc;
   }, {});
 
-  const filtered = catFilter === "all" ? requests : requests.filter((r) => classifyRequest(r.url, r.sni) === catFilter);
-  const hasMore = requests.length < serverTotal;
+  const filtered = requests.filter((r) => {
+    if (catFilter !== "all" && classifyRequest(r.url, r.sni) !== catFilter) return false;
+    if (!visibilityMatchesFilter(r.visibility, visibilityFilter)) return false;
+    return true;
+  });
+  // 当前页是否有任何徽章——全列 disabled 时整列隐藏。
+  const showVisibilityCol = requests.some((r) => r.visibility && r.visibility !== "disabled");
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -724,7 +850,7 @@ export function ProxyTraffic() {
               {t("proxyTraffic.title")}
               {serverTotal > 0 && (
                 <span style={{ marginLeft: 6, fontSize: 12, color: "#9ca3af", fontWeight: 400 }}>
-                  {requests.length < serverTotal ? `${requests.length} / ${serverTotal}` : serverTotal}
+                  {serverTotal}
                 </span>
               )}
             </span>
@@ -739,9 +865,25 @@ export function ProxyTraffic() {
             <button onClick={handleSync} disabled={syncing} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#f3f4f6", cursor: "pointer", fontSize: 12 }}>
               {syncing ? t("proxyTraffic.syncing") : t("proxyTraffic.sync")}
             </button>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "#6b7280" }}>
+              {t("proxyTraffic.pageSizeLabel")}
+              <select
+                value={pageSize}
+                onChange={(e) => handlePageSizeChange(Number(e.target.value))}
+                style={{ padding: "3px 6px", borderRadius: 6, border: "1px solid #e5e7eb", background: "#fff", fontSize: 12 }}
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
           </div>
           {/* 分类过滤 */}
           <CategoryTabs active={catFilter} counts={counts} onChange={setCatFilter} />
+          {/* visibility 过滤 —— 只在有徽章时才显示 */}
+          {showVisibilityCol && (
+            <VisibilityFilterBar active={visibilityFilter} onChange={setVisibilityFilter} />
+          )}
         </div>
 
         {/* 列表 */}
@@ -755,9 +897,11 @@ export function ProxyTraffic() {
                   <th style={thStyle}>{t("proxyTraffic.category")}</th>
                   <th style={thStyle}>{t("proxyTraffic.method")}</th>
                   <th style={thStyle}>{t("proxyTraffic.status")}</th>
+                  <th style={thStyle}>{t("proxyTraffic.streamCol")}</th>
                   <th style={{ ...thStyle, width: "99%" }}>{t("proxyTraffic.path")}</th>
                   <th style={thStyle}>{t("proxyTraffic.duration")}</th>
                   <th style={thStyle}>{t("proxyTraffic.size")}</th>
+                  {showVisibilityCol && <th style={thStyle}>{t("proxyTraffic.visibilityCol")}</th>}
                   <th style={thStyle}>{t("proxyTraffic.parseCol")}</th>
                 </tr>
               </thead>
@@ -781,12 +925,16 @@ export function ProxyTraffic() {
                         </span>
                       </td>
                       <td style={tdStyle}>
-                        <span style={{ fontWeight: 600, color: "#6366f1" }}>{r.method}</span>
+                        <span style={{ fontWeight: 600, color: BRAND.indigo500 }}>{r.method}</span>
                       </td>
                       <td style={tdStyle}>
                         <span style={{ color: statusColor(r.status), fontWeight: 600 }}>{r.status ?? "—"}</span>
-                        {(r.is_stream === 1 || r.is_stream === true) && (
-                          <span style={{ marginLeft: 4, fontSize: 10, color: "#7c3aed", background: "#f5f0ff", borderRadius: 3, padding: "1px 4px" }}>SSE</span>
+                      </td>
+                      <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
+                        {(r.is_stream === 1 || r.is_stream === true) ? (
+                          <Badge variant="violet" className="text-[10px] px-1 py-0 rounded-sm">SSE</Badge>
+                        ) : (
+                          <span style={{ color: "#d1d5db" }}>—</span>
                         )}
                       </td>
                       <td style={{ ...tdStyle, maxWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -795,6 +943,11 @@ export function ProxyTraffic() {
                       </td>
                       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{r.duration_ms != null ? `${r.duration_ms}ms` : "—"}</td>
                       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{formatBytes(r.bytes_out || r.bytes_in)}</td>
+                      {showVisibilityCol && (
+                        <td style={tdStyle}>
+                          <VisibilityBadge v={r.visibility} />
+                        </td>
+                      )}
                       <td style={tdStyle}>
                         {/* SSE 响应但事件数为 0：解析不完备，可能连接提前断开或格式非标准 */}
                         {(r.is_stream === 1 || r.is_stream === true) && r.sse_event_count === 0 ? (
@@ -809,16 +962,12 @@ export function ProxyTraffic() {
               </tbody>
             </table>
 
-            {/* 无限滚动哨兵 + 加载状态 */}
-            <div ref={sentinelRef} style={{ padding: "12px 16px", textAlign: "center", fontSize: 12, color: "#9ca3af" }}>
-              {loadingMore
-                ? t("proxyTraffic.loadingMore")
-                : hasMore
-                  ? <button onClick={loadMore} style={{ background: "none", border: "none", cursor: "pointer", color: "#6366f1", fontSize: 12 }}>{t("proxyTraffic.loadMore")}</button>
-                  : requests.length > PAGE_SIZE
-                    ? t("proxyTraffic.noMore")
-                    : null}
-            </div>
+            <Pager
+              page={page}
+              totalPages={totalPages}
+              loading={loadingPage}
+              onChange={setPage}
+            />
           </>
         )}
       </div>

@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
 import type { JsonlEventAnnotation, SessionAttributionGraph, UnauditedCall, UnauditedKind } from "./attribution-graph-types";
 import { NoProxyDot } from "./shared/NoProxyDot";
+import { BRAND } from "./shared/brand";
 
 /** Hint passed to a destination Call detail panel to auto-select a leaf. */
 export type PendingFocus =
@@ -370,7 +371,7 @@ export function AuditBoundaryStatus() {
     if (loading) {
       return (
         <span style={{
-          fontSize: 10, color: "#6366f1", background: "#eef2ff",
+          fontSize: 10, color: BRAND.indigo500, background: BRAND.indigo50,
           border: "1px solid #c7d2fe", borderRadius: 4, padding: "2px 8px",
         }}>
           {t("attribution.loading")}

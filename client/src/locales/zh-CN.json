@@ -130,6 +130,31 @@
     "loadMore": "加载更多",
     "loadingMore": "加载中…",
     "noMore": "已加载全部",
+    "page": "第 {{current}} / {{total}} 页",
+    "prevPage": "上一页",
+    "nextPage": "下一页",
+    "pageSizeLabel": "每页",
+    "streamCol": "流",
+    "visibilityCol": "可见性",
+    "visibilityFilterLabel": "可见性",
+    "visibilityFilterAll": "全部",
+    "visibilityFilterHidden": "未渲染",
+    "visibilityFilterOrphan": "孤儿 / 缺失",
+    "visibility": {
+      "visible": "已渲染",
+      "hidden": "未渲染",
+      "sessionGone": "session 已删除",
+      "unattributed": "无归属",
+      "computing": "计算中…",
+      "disabled": ""
+    },
+    "visibilityTip": {
+      "visible": "request-id 命中 session 解析出的 LLM call —— UI 上能找到对应那条",
+      "hidden": "归属于这个 session，但 parser 没把它输出（典型：sub-agent、内部合成调用、被合并的 frame）",
+      "sessionGone": "对应的 jsonl 文件已被删除",
+      "unattributed": "请求头没有 session-id，或 request-id 是 proxy 注入的合成 ID（永远不会在 jsonl 里出现）",
+      "computing": "后台正在为该 session 跑 parser，稍后刷新"
+    },
     "categories": {
       "llm": "LLM 推理",
       "auth": "认证",
@@ -196,6 +221,10 @@
       "label": "轮次",
       "roleUser": "用户",
       "roleAgent": "Agent"
+    },
+    "compact": {
+      "label": "压缩",
+      "callLabel": "压缩调用"
     },
     "badges": {
       "compaction": "压缩",

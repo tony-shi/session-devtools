@@ -133,6 +133,31 @@
     "loadMore": "Load more",
     "loadingMore": "Loading…",
     "noMore": "All loaded",
+    "page": "Page {{current}} / {{total}}",
+    "prevPage": "Prev",
+    "nextPage": "Next",
+    "pageSizeLabel": "Per page",
+    "streamCol": "Stream",
+    "visibilityCol": "Visibility",
+    "visibilityFilterLabel": "Visibility",
+    "visibilityFilterAll": "All",
+    "visibilityFilterHidden": "Hidden",
+    "visibilityFilterOrphan": "Orphan / missing",
+    "visibility": {
+      "visible": "Rendered",
+      "hidden": "Hidden",
+      "sessionGone": "Session deleted",
+      "unattributed": "Unattributed",
+      "computing": "Computing…",
+      "disabled": ""
+    },
+    "visibilityTip": {
+      "visible": "request-id matched a LLM call surfaced by the session parser — visible in the session UI",
+      "hidden": "Belongs to the session, but parser didn't surface it (typical: sub-agent, internal synthetic calls, merged frames)",
+      "sessionGone": "The corresponding jsonl file has been deleted",
+      "unattributed": "No session-id header, or request-id is a proxy-injected synthetic ID (never appears in jsonl)",
+      "computing": "Parser is running in the background for this session; refresh shortly"
+    },
     "categories": {
       "llm": "LLM",
       "auth": "Auth",
@@ -199,6 +224,10 @@
       "label": "Turn",
       "roleUser": "U",
       "roleAgent": "A"
+    },
+    "compact": {
+      "label": "Compact",
+      "callLabel": "Compaction call"
     },
     "badges": {
       "compaction": "Compaction",

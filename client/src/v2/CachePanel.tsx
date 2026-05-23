@@ -16,13 +16,14 @@ import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
 import { AttributionTreeLensPanel } from "./AttributionTreeLensPanel";
 import type { DiffSection, DiffSectionId, DiffTreeResult, PinInfo } from "./diff-tree-types";
+import { BRAND } from "./shared/brand";
 
 // ─── 配色 — 与 AttributionTreePanel.SECTION_META 完全一致 ────────────────────
 
 const SECTION_META: Record<DiffSectionId, { label: string; bg: string; text: string; marker: string }> = {
-  system:   { label: "System",   bg: "#bfdbfe", text: "#1e3a8a", marker: "#3b82f6" },
-  tools:    { label: "Tools",    bg: "#3b82f6", text: "#ffffff", marker: "#2563eb" },
-  messages: { label: "Messages", bg: "#a78bfa", text: "#ffffff", marker: "#8b5cf6" },
+  system:   { label: "System",   bg: "#bfdbfe", text: "#1e3a8a", marker: BRAND.blue500 },
+  tools:    { label: "Tools",    bg: BRAND.blue500, text: "#ffffff", marker: BRAND.blue600 },
+  messages: { label: "Messages", bg: BRAND.violet400, text: "#ffffff", marker: BRAND.violet500 },
   other:    { label: "Other",    bg: "#d1d5db", text: "#374151", marker: "#9ca3af" },
 };
 

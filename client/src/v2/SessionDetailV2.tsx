@@ -47,375 +47,36 @@ import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Check, Copy } from "lucide-react";
+import { BRAND } from "./shared/brand";
+import {
+  fmtK, fmtPct, fmtDateShort, fmtDuration, fmtBytes, charsToTokens, tryParseJson,
+  shortModelName, modelColor, shortToolUseId, shortMessageId, formatJsonlLines,
+  callDescription, toolUseIdsFromIntervalEvent,
+} from "./lib/format";
 
-// Local aliases for brevity (same as drilldown-types, no local re-declaration needed)
-type MockDiffEntry = DiffEntry;
-// LlmCall fields added in drilldown-types are optional in the raw fallback
-// data below; normalizeTurns() fills them in.
-type RawMockCall = Omit<LlmCall,
-  "indexInTurn" | "messageId" | "apiRequestId" | "jsonlLineIdx" | "jsonlFrameLineIdxs" |
-  "model" | "stopReason" | "proxy" | "proxyMatchMode" | "subAgents" |
-  "isCompaction" | "isUnknownHeavy" | "isSignificant" | "significantDelta" | "freshIn" |
-  "toolNames" | "toolCalls" | "assistantText" | "intervalEvents"
-> & {
-  isCompaction?: boolean; isUnknownHeavy?: boolean; isSignificant?: boolean;
-  significantDelta?: number; freshIn?: number; toolNames?: string[];
-};
-type RawMockTurn = Omit<UserTurn, "startedAt" | "endedAt" | "hasCompaction" | "hasUnknownSpike" | "finalOutput" | "durationMs" | "midTurnInjections" | "errorCount" | "userInputLineIdx" | "calls"> & {
-  hasCompaction?: boolean; hasUnknownSpike?: boolean; errorCount?: number; midTurnInjections?: UserTurn["midTurnInjections"]; userInputLineIdx?: number | null; calls: RawMockCall[];
-};
-type MockLlmCall = LlmCall;
-type MockUserTurn = UserTurn;
-
-function normalizeTurns(raw: RawMockTurn[]): UserTurn[] {
-  return raw.map((t) => ({
-    startedAt: "",
-    endedAt: "",
-    finalOutput: null,
-    durationMs: 0,
-    userInputLineIdx: t.userInputLineIdx ?? null,
-    hasCompaction: t.hasCompaction ?? false,
-    hasUnknownSpike: t.hasUnknownSpike ?? false,
-    errorCount: t.errorCount ?? 0,
-    ...t,
-    midTurnInjections: t.midTurnInjections ?? [],
-    calls: t.calls.map((c, ci) => ({
-      ...c,
-      indexInTurn: ci + 1,
-      messageId: null,
-      apiRequestId: null,
-      jsonlLineIdx: null,
-      jsonlFrameLineIdxs: [],
-      model: "claude-opus-4-7",
-      stopReason: "end_turn" as const,
-      proxy: null,
-      proxyMatchMode: "unmatched" as const,
-      subAgents: [],
-      freshIn: c.freshIn ?? 0,
-      isCompaction: c.isCompaction ?? false,
-      isUnknownHeavy: c.isUnknownHeavy ?? false,
-      isSignificant: c.isSignificant ?? false,
-      significantDelta: c.significantDelta ?? 0,
-      toolNames: c.toolNames ?? [],
-      toolCalls: [],
-      assistantText: "",
-      intervalEvents: [],
-    })),
-  }));
-}
-
-// ─── Fallback Mock Data (used when API is unavailable) ───────────────────────
-
-function buildFallbackTurns(): UserTurn[] {
-  const raw: RawMockTurn[] = [
-    {
-      id: 1,
-      userInput: "初始化项目，帮我搭一个 Express + TypeScript 的后端框架",
-      llmCallCount: 4,
-      toolCallCount: 6,
-      netContextDelta: 18400,
-      peakContext: 62000,
-      cacheRead: 14200,
-      cacheWrite: 8100,
-      unknownDelta: 400,
-      calls: [
-        {
-          id: 1, contextSize: 42000, outputTokens: 1200, cacheRead: 0, cacheWrite: 8100, timestamp: "14:01:02",
-          incomingDiff: [
-            { id: "d1", category: "System", label: "system prompt", delta: 31000, changeType: "added", cause: "initial", confidence: "High", evidence: "First call in session" },
-            { id: "d2", category: "Tool Schemas", label: "tool schemas", delta: 9400, changeType: "added", cause: "initial", confidence: "High" },
-            { id: "d3", category: "User Messages", label: "user input", delta: 1600, changeType: "added", cause: "user input", confidence: "High", evidence: "Matched user turn content" },
-          ],
-        },
-        {
-          id: 2, contextSize: 54200, outputTokens: 980, cacheRead: 6800, cacheWrite: 0, timestamp: "14:01:18", isSignificant: true, significantDelta: 12200,
-          incomingDiff: [
-            { id: "d4", category: "Tool Output", label: "Bash(mkdir -p src/routes)", delta: 840, changeType: "added", cause: "tool result", confidence: "High", evidence: "tool_call_id: toolu_01A" },
-            { id: "d5", category: "Tool Output", label: "Write(src/index.ts)", delta: 4800, changeType: "added", cause: "tool result", confidence: "High", evidence: "tool_call_id: toolu_01B" },
-            { id: "d6", category: "Tool Output", label: "Write(tsconfig.json)", delta: 1200, changeType: "added", cause: "tool result", confidence: "High" },
-            { id: "d7", category: "Assistant History", label: "assistant response #1", delta: 5360, changeType: "added", cause: "assistant output", confidence: "High" },
-          ],
-        },
-        {
-          id: 3, contextSize: 58900, outputTokens: 720, cacheRead: 4200, cacheWrite: 0, timestamp: "14:01:35",
-          incomingDiff: [
-            { id: "d8", category: "Tool Output", label: "Read(package.json)", delta: 2100, changeType: "added", cause: "tool result", confidence: "High", evidence: "tool_call_id: toolu_01C" },
-            { id: "d9", category: "Tool Output", label: "Bash(npm install)", delta: 2600, changeType: "added", cause: "tool result", confidence: "Medium", evidence: "Matched bash output pattern" },
-          ],
-        },
-        {
-          id: 4, contextSize: 62000, outputTokens: 540, cacheRead: 3200, cacheWrite: 0, timestamp: "14:01:52",
-          incomingDiff: [
-            { id: "d10", category: "Assistant History", label: "assistant response #2", delta: 3100, changeType: "added", cause: "assistant output", confidence: "High" },
-          ],
-        },
-      ],
-    },
-    {
-      id: 2,
-      userInput: "review 当前 context 展示逻辑，看看哪里有性能问题",
-      llmCallCount: 17,
-      toolCallCount: 9,
-      netContextDelta: 81600,
-      peakContext: 143000,
-      cacheRead: 121000,
-      cacheWrite: 2100,
-      unknownDelta: 2300,
-      hasUnknownSpike: true,
-      calls: [
-        { id: 12, contextSize: 90000, outputTokens: 1100, cacheRead: 18000, cacheWrite: 0, timestamp: "14:22:01", incomingDiff: [
-          { id: "e1", category: "User Messages", label: "user input (turn 2)", delta: 820, changeType: "added", cause: "user input", confidence: "High" },
-          { id: "e2", category: "Tool Output", label: "retained bash outputs", delta: 6200, changeType: "retained", cause: "retained", confidence: "High" },
-        ]},
-        { id: 13, contextSize: 103000, outputTokens: 1400, cacheRead: 22000, cacheWrite: 0, timestamp: "14:22:18", isSignificant: true, significantDelta: 12800, incomingDiff: [
-          { id: "e3", category: "Tool Output", label: "Read(server/src/context.ts)", delta: 12800, changeType: "added", cause: "tool result", confidence: "High", evidence: "tool_call_id: toolu_02A · source: JSONL line 1842 · proxy request: req_abc123" },
-          { id: "e4", category: "Assistant History", label: "assistant step #3", delta: 180, changeType: "added", cause: "assistant output", confidence: "High" },
-        ]},
-        { id: 14, contextSize: 106000, outputTokens: 880, cacheRead: 19000, cacheWrite: 0, timestamp: "14:22:34", incomingDiff: [
-          { id: "e5", category: "Tool Output", label: "Read(server/src/parser.ts)", delta: 3100, changeType: "added", cause: "tool result", confidence: "High" },
-        ]},
-        { id: 15, contextSize: 109000, outputTokens: 760, cacheRead: 21000, cacheWrite: 0, timestamp: "14:22:51", incomingDiff: [
-          { id: "e6", category: "Tool Output", label: "Bash(grep -n performance)", delta: 2800, changeType: "added", cause: "tool result", confidence: "Medium" },
-        ]},
-        { id: 16, contextSize: 143000, outputTokens: 2100, cacheRead: 24000, cacheWrite: 0, timestamp: "14:23:08", isSignificant: true, significantDelta: 3400, incomingDiff: [
-          { id: "e7", category: "Tool Output", label: "Bash test output", delta: 3400, changeType: "added", cause: "tool result", confidence: "High", evidence: "tool_call_id: toolu_02B" },
-          { id: "e8", category: "Unknown", label: "unattributed delta +1.2k", delta: 1200, changeType: "added", cause: "unknown", confidence: "Unknown" },
-        ]},
-        { id: 17, contextSize: 102000, outputTokens: 1800, cacheRead: 0, cacheWrite: 2100, timestamp: "14:23:22", isCompaction: true, incomingDiff: [
-          { id: "e9", category: "Compaction Summary", label: "compaction summary injected", delta: 4200, changeType: "added", cause: "compaction", confidence: "High" },
-          { id: "e10", category: "Tool Output", label: "previous tool outputs (removed)", delta: -41200, changeType: "removed", cause: "compaction", confidence: "High" },
-          { id: "e11", category: "Assistant History", label: "prior assistant history (removed)", delta: -4000, changeType: "removed", cause: "compaction", confidence: "High" },
-        ]},
-        { id: 18, contextSize: 118000, outputTokens: 1200, cacheRead: 17000, cacheWrite: 0, timestamp: "14:23:38", isSignificant: true, significantDelta: 2100, incomingDiff: [
-          { id: "e12", category: "Skills / Task Injection", label: "task reminder re-injected", delta: 2100, changeType: "added", cause: "skill injection", confidence: "Medium", evidence: "Matched skill/task pattern in system context" },
-          { id: "e13", category: "Unknown", label: "environment delta", delta: 1100, changeType: "changed", cause: "unknown", confidence: "Low" },
-        ]},
-        ...([19,20,21,22,23,24,25,26,27,28].map(id => ({
-          id, contextSize: 118000 + (id - 18) * 1200, outputTokens: 600, cacheRead: 15000, cacheWrite: 0, timestamp: `14:2${id}:00`, incomingDiff: [
-            { id: `minor-${id}`, category: "Assistant History", label: "incremental assistant step", delta: 400 + id * 30, changeType: "added" as const, cause: "assistant output", confidence: "High" as const },
-          ],
-        }))),
-      ],
-    },
-    {
-      id: 3,
-      userInput: "把 ContextTimeline 组件拆分为更小的子组件",
-      llmCallCount: 8,
-      toolCallCount: 12,
-      netContextDelta: 24200,
-      peakContext: 138000,
-      cacheRead: 98000,
-      cacheWrite: 1200,
-      unknownDelta: 600,
-      hasCompaction: true,
-      calls: [
-        { id: 29, contextSize: 118000, outputTokens: 900, cacheRead: 19000, cacheWrite: 0, timestamp: "15:10:01", incomingDiff: [
-          { id: "f1", category: "User Messages", label: "user input (turn 3)", delta: 740, changeType: "added", cause: "user input", confidence: "High" },
-        ]},
-        { id: 30, contextSize: 128000, outputTokens: 1300, cacheRead: 22000, cacheWrite: 0, timestamp: "15:10:18", isSignificant: true, significantDelta: 9800, incomingDiff: [
-          { id: "f2", category: "Tool Output", label: "Read(ContextTimeline/index.tsx)", delta: 9800, changeType: "added", cause: "tool result", confidence: "High", evidence: "tool_call_id: toolu_03A" },
-        ]},
-        { id: 31, contextSize: 138000, outputTokens: 1100, cacheRead: 20000, cacheWrite: 0, timestamp: "15:10:35", isSignificant: true, significantDelta: 7200, incomingDiff: [
-          { id: "f3", category: "Tool Output", label: "Read(ContextTimeline/types.ts)", delta: 4100, changeType: "added", cause: "tool result", confidence: "High" },
-          { id: "f4", category: "Tool Output", label: "Read(StackedAreaChart.tsx)", delta: 3100, changeType: "added", cause: "tool result", confidence: "High" },
-        ]},
-        { id: 32, contextSize: 91000, outputTokens: 800, cacheRead: 0, cacheWrite: 1200, timestamp: "15:10:52", isCompaction: true, incomingDiff: [
-          { id: "f5", category: "Compaction Summary", label: "compaction summary", delta: 3800, changeType: "added", cause: "compaction", confidence: "High" },
-          { id: "f6", category: "Tool Output", label: "large tool reads (removed)", delta: -38000, changeType: "removed", cause: "compaction", confidence: "High" },
-        ]},
-        ...([33,34,35,36].map(id => ({
-          id, contextSize: 91000 + (id - 32) * 3000, outputTokens: 700, cacheRead: 14000, cacheWrite: 0, timestamp: `15:11:${(id - 32) * 15}`, incomingDiff: [
-            { id: `f-minor-${id}`, category: "Tool Output", label: `Write(new-component-${id - 32}.tsx)`, delta: 2800 + id * 20, changeType: "added" as const, cause: "tool result", confidence: "High" as const },
-          ],
-        }))),
-      ],
-    },
-    {
-      id: 4,
-      userInput: "运行测试，确认没有回归",
-      llmCallCount: 3,
-      toolCallCount: 2,
-      netContextDelta: 4800,
-      peakContext: 108000,
-      cacheRead: 76000,
-      cacheWrite: 0,
-      unknownDelta: 0,
-      calls: [
-        { id: 37, contextSize: 103000, outputTokens: 600, cacheRead: 18000, cacheWrite: 0, timestamp: "15:32:01", incomingDiff: [
-          { id: "g1", category: "User Messages", label: "user input (turn 4)", delta: 420, changeType: "added", cause: "user input", confidence: "High" },
-        ]},
-        { id: 38, contextSize: 106000, outputTokens: 820, cacheRead: 29000, cacheWrite: 0, timestamp: "15:32:15", isSignificant: true, significantDelta: 3200, incomingDiff: [
-          { id: "g2", category: "Tool Output", label: "Bash(npm test)", delta: 3200, changeType: "added", cause: "tool result", confidence: "High", evidence: "tool_call_id: toolu_04A · Matched test runner output pattern" },
-        ]},
-        { id: 39, contextSize: 108000, outputTokens: 540, cacheRead: 29000, cacheWrite: 0, timestamp: "15:32:30", incomingDiff: [
-          { id: "g3", category: "Assistant History", label: "final summary", delta: 1600, changeType: "added", cause: "assistant output", confidence: "High" },
-        ]},
-      ],
-    },
-    {
-      id: 5,
-      userInput: "更新 README，补充 context 追踪模块的说明",
-      llmCallCount: 5,
-      toolCallCount: 3,
-      netContextDelta: 6100,
-      peakContext: 112000,
-      cacheRead: 84000,
-      cacheWrite: 0,
-      unknownDelta: 300,
-      calls: [
-        { id: 40, contextSize: 108000, outputTokens: 700, cacheRead: 20000, cacheWrite: 0, timestamp: "16:05:01", incomingDiff: [
-          { id: "h1", category: "User Messages", label: "user input (turn 5)", delta: 380, changeType: "added", cause: "user input", confidence: "High" },
-        ]},
-        { id: 41, contextSize: 110000, outputTokens: 900, cacheRead: 22000, cacheWrite: 0, timestamp: "16:05:18", isSignificant: true, significantDelta: 2400, incomingDiff: [
-          { id: "h2", category: "Tool Output", label: "Read(README.md)", delta: 2400, changeType: "added", cause: "tool result", confidence: "High" },
-        ]},
-        { id: 42, contextSize: 111000, outputTokens: 1100, cacheRead: 21000, cacheWrite: 0, timestamp: "16:05:35", incomingDiff: [
-          { id: "h3", category: "Tool Output", label: "Write(README.md)", delta: 1200, changeType: "changed", cause: "tool result", confidence: "Medium" },
-        ]},
-        { id: 43, contextSize: 112000, outputTokens: 640, cacheRead: 21000, cacheWrite: 0, timestamp: "16:05:52", incomingDiff: [
-          { id: "h4", category: "Unknown", label: "environment block update", delta: 300, changeType: "changed", cause: "unknown", confidence: "Low" },
-        ]},
-        { id: 44, contextSize: 114000, outputTokens: 480, cacheRead: 0, cacheWrite: 0, timestamp: "16:06:08", incomingDiff: [
-          { id: "h5", category: "Assistant History", label: "closing summary", delta: 1800, changeType: "added", cause: "assistant output", confidence: "High" },
-        ]},
-      ],
-    },
-  ];
-  return normalizeTurns(raw);
-}
-
-// ─── Category Colors ─────────────────────────────────────────────────────────
-
-const CATEGORY_COLORS: Record<string, string> = {
-  "System": "#6366f1",
-  "Tool Schemas": "#6b7280",
-  "User Messages": "#3b82f6",
-  "Assistant History": "#22c55e",
-  "Tool Output": "#f59e0b",
-  "Memory / Project Context": "#a855f7",
-  "Skills / Task Injection": "#f97316",
-  "Compaction Summary": "#ef4444",
-  "Unknown": "#94a3b8",
-};
-
-// ─── Utilities ────────────────────────────────────────────────────────────────
-
-function fmtK(n: number): string {
-  const abs = Math.abs(n);
-  if (abs >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (abs >= 1_000) return (n / 1_000).toFixed(1) + "k";
-  return String(n);
-}
-
-function fmtPct(n: number | null): string {
-  if (n === null || !Number.isFinite(n)) return "—";
-  if (n >= 99.95 && n < 100) return "99.9%";
-  return n >= 10 ? `${n.toFixed(1)}%` : `${n.toFixed(2)}%`;
-}
-
-function fmtDateShort(iso: string): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  const now = new Date();
-  const sameYear = d.getFullYear() === now.getFullYear();
-  const month = d.toLocaleString("en", { month: "short" });
-  const day = d.getDate();
-  const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  return sameYear ? `${month} ${day} ${hhmm}` : `${month} ${day}, ${d.getFullYear()}`;
-}
+import type { MockDiffEntry, MockLlmCall, MockUserTurn, RawMockTurn } from "./lib/mock-data";
+import { buildFallbackTurns } from "./lib/mock-data";
+import {
+  CATEGORY_COLORS, ALL_KINDS, KIND_LABEL, KIND_COLOR, RAW_ONLY_KINDS,
+  CONF_COLOR, CONF_ICON,
+} from "./lib/palettes";
+import {
+  ForkIcon, MockBadge, renderStatusIcon, RiskBadge, ChangeTypeIcon,
+  HotspotCard, HotspotChip, CompressionCapsule, SummaryMetricStrip, type MetricCard,
+  SectionLabel, TrustBadge,
+} from "./shared/SessionBadges";
+import { ProxyMissingEmptyState, navigateToProxyTab } from "./proxy/ProxyMissingEmptyState";
+import { NavItem, CompactEventNavItem, InterTurnNavItem } from "./session/nav";
+import {
+  synthesizeCompactTurn, CompactEventPanel, InterTurnBlockDetail, InterTurnBlockPanel,
+} from "./compact/CompactEventPanel";
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 // ─── Badge icon registry ──────────────────────────────────────────────────────
 // Single place to swap icons for all session badges.
 // Each entry is a function (size, color) => ReactNode so it works at any scale.
-
-function ForkIcon({ size = 12, color = "#7c3aed" }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 12 12" fill="none" style={{ display: "inline-block", verticalAlign: "middle", flexShrink: 0 }}>
-      <line x1="4" y1="1" x2="4" y2="11" stroke={color} strokeWidth="1.5" strokeLinecap="round" />
-      <path d="M4 5 Q4 3 9 3" stroke={color} strokeWidth="1.5" strokeLinecap="round" fill="none" />
-      <circle cx="9" cy="3" r="1.5" fill={color} />
-      <circle cx="4" cy="1" r="1.5" fill={color} />
-    </svg>
-  );
-}
-
-// To swap any icon: edit the corresponding entry here.
-const BADGE_ICONS = {
-  compaction: (size: number, color: string) => (
-    <span style={{ fontSize: size, fontWeight: 700, lineHeight: 1, color }}>C</span>
-  ),
-  error: (size: number, color: string) => (
-    <span style={{ fontSize: size, fontWeight: 700, lineHeight: 1, color }}>⚠</span>
-  ),
-  subAgent: (size: number, color: string) => (
-    <ForkIcon size={size} color={color} />
-  ),
-  command: (size: number, color: string) => (
-    <span style={{ fontSize: size, fontWeight: 700, lineHeight: 1, color }}>/</span>
-  ),
-  unknown: (size: number, color: string) => (
-    <span style={{ fontSize: size, fontWeight: 700, lineHeight: 1, color }}>?</span>
-  ),
-  noProxy: (_size: number, color: string) => (
-    <span style={{
-      width: 5, height: 5, borderRadius: "50%",
-      background: color, display: "inline-block", flexShrink: 0,
-    }} />
-  ),
-} as const;
-
-function MockBadge() {
-  return (
-    <span style={{
-      fontSize: 9, fontWeight: 700, color: "#9ca3af", border: "1px dashed #d1d5db",
-      borderRadius: 3, padding: "1px 4px", letterSpacing: "0.05em", marginLeft: 4,
-    }}>MOCK</span>
-  );
-}
-
-// Bridge between StatusBadgeStrip (which takes a renderIcon callback so the
-// shared module doesn't depend on SessionDetailV2) and BADGE_ICONS above.
-function renderStatusIcon(kind: StatusBadgeKind, px: number, color: string): React.ReactNode {
-  switch (kind) {
-    case "compaction": return BADGE_ICONS.compaction(px, color);
-    case "error":      return BADGE_ICONS.error(px, color);
-    case "subAgent":   return BADGE_ICONS.subAgent(px, color);
-    case "command":    return BADGE_ICONS.command(px, color);
-    case "unknown":    return BADGE_ICONS.unknown(px, color);
-    case "noProxy":    return BADGE_ICONS.noProxy(px, color);
-  }
-}
-
-function RiskBadge({ type }: { type: "compaction" | "unknown-spike" | "large-growth" | "tool-heavy" | "near-limit" }) {
-  const configs = {
-    "compaction": { label: "Compaction", bg: "#fef2f2", color: "#dc2626", border: "#fecaca" },
-    "unknown-spike": { label: "Unknown Spike", bg: "#f8fafc", color: "#64748b", border: "#cbd5e1" },
-    "large-growth": { label: "Large Growth", bg: "#fffbeb", color: "#d97706", border: "#fde68a" },
-    "tool-heavy": { label: "Tool Heavy", bg: "#fffbeb", color: "#d97706", border: "#fde68a" },
-    "near-limit": { label: "Near Limit", bg: "#fff7ed", color: "#ea580c", border: "#fdba74" },
-  };
-  const c = configs[type];
-  return (
-    <span style={{
-      fontSize: 10, fontWeight: 600, background: c.bg, color: c.color,
-      border: `1px solid ${c.border}`, borderRadius: 4, padding: "2px 6px",
-    }}>{c.label}</span>
-  );
-}
-
-function ChangeTypeIcon({ type }: { type: MockDiffEntry["changeType"] }) {
-  const configs = {
-    added: { symbol: "+", color: "#16a34a" },
-    removed: { symbol: "−", color: "#dc2626" },
-    changed: { symbol: "~", color: "#d97706" },
-    retained: { symbol: "·", color: "#9ca3af" },
-  };
-  const c = configs[type];
-  return <span style={{ color: c.color, fontWeight: 700, fontSize: 13, width: 14, display: "inline-block" }}>{c.symbol}</span>;
-}
 
 // ─── Inspector Panels ─────────────────────────────────────────────────────────
 
@@ -433,7 +94,7 @@ function SessionHotspotsPanel({ turns }: { turns: MockUserTurn[] }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <HotspotCard icon="↑" label={t("sessionOverview.hotspots.largestGrowth")} value={`${t("sessionOverview.turn.label")} ${biggestTurn.id} · +${fmtK(biggestTurn.netContextDelta)}`} color="#d97706" />
-        <HotspotCard icon="▲" label={t("sessionOverview.hotspots.peakContext")} value={`${t("sessionOverview.turn.label")} ${biggestPeak.id} · ${fmtK(biggestPeak.peakContext)}`} color="#6366f1" />
+        <HotspotCard icon="▲" label={t("sessionOverview.hotspots.peakContext")} value={`${t("sessionOverview.turn.label")} ${biggestPeak.id} · ${fmtK(biggestPeak.peakContext)}`} color={BRAND.indigo500} />
         <HotspotCard icon="?" label={t("sessionOverview.hotspots.largestUnknown")} value={`${t("sessionOverview.turn.label")} ${unknownTurn.id} · +${fmtK(unknownTurn.unknownDelta)}`} color="#94a3b8" />
         {compactionTurns.length > 0 && (
           <HotspotCard icon="◆" label={t("sessionOverview.hotspots.compactionTurns")} value={compactionTurns.map(turn => `${t("sessionOverview.turn.label")} ${turn.id}`).join(", ")} color="#ef4444" />
@@ -457,18 +118,6 @@ function SessionHotspotsPanel({ turns }: { turns: MockUserTurn[] }) {
             </div>
           ))}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function HotspotCard({ icon, label, value, color }: { icon: string; label: string; value: string; color: string }) {
-  return (
-    <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-      <span style={{ fontSize: 13, color, lineHeight: 1.4, width: 16, flexShrink: 0 }}>{icon}</span>
-      <div>
-        <div style={{ fontSize: 10, color: "#9ca3af" }}>{label}</div>
-        <div style={{ fontSize: 12, color: "#374151", fontWeight: 500 }}>{value}</div>
       </div>
     </div>
   );
@@ -500,7 +149,7 @@ function TurnRollupPanel({ turn }: { turn: MockUserTurn }) {
           {significantCalls.map(c => (
             <div key={c.id} style={{ fontSize: 11, color: "#374151", padding: "4px 0", borderBottom: "1px solid #f9fafb", display: "flex", justifyContent: "space-between" }}>
               <span>Call #{c.id}</span>
-              <span style={{ color: c.isCompaction ? "#ef4444" : "#3b82f6" }}>
+              <span style={{ color: c.isCompaction ? "#ef4444" : BRAND.blue500 }}>
                 {c.isCompaction ? "compaction" : `+${fmtK(c.significantDelta ?? 0)}`}
               </span>
             </div>
@@ -703,8 +352,8 @@ function SessionOverviewPanel({
                 style={{
                   display: "flex", alignItems: "center", gap: 5,
                   fontSize: 11, padding: "3px 8px", borderRadius: 6,
-                  border: "1px solid #e5e7eb", background: modelsExpanded ? "#eef2ff" : "#f9fafb",
-                  color: modelsExpanded ? "#6366f1" : "#6b7280", cursor: "pointer",
+                  border: "1px solid #e5e7eb", background: modelsExpanded ? BRAND.indigo50 : "#f9fafb",
+                  color: modelsExpanded ? BRAND.indigo500 : "#6b7280", cursor: "pointer",
                 }}
               >
                 {t("sessionOverview.activity.models", { n: Object.keys(modelBreakdown!).length })}
@@ -773,7 +422,7 @@ function SessionOverviewPanel({
 
         {turns.map((turn) => {
           // Spine dot color: red on hard problems, indigo otherwise.
-          const dotColor = (turn.hasCompaction || turn.errorCount > 0) ? "#ef4444" : "#6366f1";
+          const dotColor = (turn.hasCompaction || turn.errorCount > 0) ? "#ef4444" : BRAND.indigo500;
           return (
             <div key={turn.id} style={{ position: "relative", zIndex: 1, marginBottom: 12 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
@@ -800,23 +449,6 @@ function SessionOverviewPanel({
 }
 
 // Model name display: strip provider prefix, keep version suffix
-function shortModelName(m: string): string {
-  return m.replace(/^(aws|gcp|azure)\./i, "").replace("claude-", "");
-}
-
-const MODEL_COLORS: Record<string, string> = {
-  "opus":    "#6366f1",
-  "sonnet":  "#3b82f6",
-  "haiku":   "#22c55e",
-};
-function modelColor(m: string): string {
-  const lower = m.toLowerCase();
-  for (const [key, color] of Object.entries(MODEL_COLORS)) {
-    if (lower.includes(key)) return color;
-  }
-  return "#94a3b8";
-}
-
 function ModelBreakdownBlock({
   breakdown,
 }: { breakdown: Record<string, ModelStats> }) {
@@ -919,56 +551,6 @@ function ModelBreakdownBlock({
 // summary to the parent. These helpers quantify that "compression" so a single
 // glance answers: "how much context did this branch save the main thread?"
 
-interface SubAgentCompression {
-  consumed: number;       // total tokens the sub agent dealt with internally (proxy)
-  returned: number;       // tokens written back into the parent context
-  savedRatio: number;     // 1 - returned/consumed, clamped 0..1
-}
-
-function deriveSubAgentCompression(sa: SubAgentSummary): SubAgentCompression | null {
-  // cacheRead is the dominant component of internal processing volume; it's the
-  // same number we surface as "Cache R" elsewhere, so the math stays explainable.
-  const consumed = sa.totalCacheRead;
-  const returned = sa.totalOutputTokens;
-  if (consumed <= 0 || returned <= 0 || returned >= consumed) return null;
-  const savedRatio = Math.max(0, Math.min(1, 1 - returned / consumed));
-  return { consumed, returned, savedRatio };
-}
-
-function CompressionCapsule({ sa, compact = false }: { sa: SubAgentSummary; compact?: boolean }) {
-  const comp = deriveSubAgentCompression(sa);
-  if (!comp) return null;
-  const pct = Math.round(comp.savedRatio * 100);
-  const barW = compact ? 36 : 56;
-  return (
-    <span
-      title={`Sub agent processed ${fmtK(comp.consumed)} ctx internally and returned ${fmtK(comp.returned)} — main thread avoided ${fmtK(comp.consumed - comp.returned)} ctx.`}
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 4,
-        fontSize: 9, color: "#047857",
-        background: "#ecfdf5", border: "1px solid #a7f3d0",
-        borderRadius: 3, padding: "1px 5px", whiteSpace: "nowrap",
-      }}
-    >
-      <span style={{ width: barW, height: 4, background: "#d1fae5", borderRadius: 2, overflow: "hidden", position: "relative" }}>
-        <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct}%`, background: "#10b981" }} />
-      </span>
-      <span style={{ fontWeight: 700 }}>{pct}%</span>
-      {!compact && <span style={{ color: "#059669" }}>saved</span>}
-    </span>
-  );
-}
-
-function HotspotChip({ icon, label, value, color }: { icon: string; label: string; value: string; color: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6 }}>
-      <span style={{ color, fontSize: 12 }}>{icon}</span>
-      <span style={{ fontSize: 11, color: "#6b7280" }}>{label}:</span>
-      <span style={{ fontSize: 11, fontWeight: 600, color }}>{value}</span>
-    </div>
-  );
-}
-
 type TimelineXMode = "linear" | "time";
 
 function ContextTimelineChart({
@@ -1025,7 +607,7 @@ function ContextTimelineChart({
           position: "top" as const,
           ...labelStyle,
           color: CHART_COLORS.brand,
-          backgroundColor: "#eef2ff",
+          backgroundColor: BRAND.indigo50,
         },
       });
       // final point (skip if same as max)
@@ -1293,15 +875,6 @@ function ContextTimelineChart({
 const INPUT_PREVIEW_CHARS = 120;
 const OUTPUT_PREVIEW_CHARS = 200;
 
-function fmtDuration(ms: number): string {
-  if (ms <= 0) return "";
-  if (ms < 1000) return `${ms}ms`;
-  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
-  const m = Math.floor(ms / 60000);
-  const s = Math.round((ms % 60000) / 1000);
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
-}
-
 function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }) {
   const { t } = useTranslation();
   const [inputExpanded, setInputExpanded] = useState(false);
@@ -1419,7 +992,7 @@ function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }
             {inputNeedsExpand && (
               <button
                 onClick={e => { e.stopPropagation(); setInputExpanded(v => !v); }}
-                style={{ marginTop: 4, fontSize: 11, color: "#3b82f6", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                style={{ marginTop: 4, fontSize: 11, color: BRAND.blue500, background: "none", border: "none", cursor: "pointer", padding: 0 }}
               >
                 {inputExpanded ? "Show less ↑" : "Show more ↓"}
               </button>
@@ -1578,13 +1151,13 @@ function AgentLoopTimeline({
       <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
         {/* User Input node */}
         <AgentLoopNode
-          icon="👤" color="#6366f1" label={t("terms.userInput")}
+          icon="👤" color={BRAND.indigo500} label={t("terms.userInput")}
           secondary={fmtDuration(turn.durationMs) || undefined}
           expandable={inputNeedsExpand}
           expanded={inputExpanded}
           onToggle={inputNeedsExpand ? () => setInputExpanded(v => !v) : undefined}
         >
-          <div style={{ fontSize: 12, color: "#374151", lineHeight: 1.5, background: "#f5f3ff", borderRadius: 6, padding: "8px 10px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          <div style={{ fontSize: 12, color: "#374151", lineHeight: 1.5, background: BRAND.violet50, borderRadius: 6, padding: "8px 10px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
             {inputShown}
           </div>
         </AgentLoopNode>
@@ -1602,7 +1175,7 @@ function AgentLoopTimeline({
               {/* LLM Call node */}
               <AgentLoopNode
                 icon={call.isCompaction ? "◆" : "⬡"}
-                color={call.isCompaction ? "#ef4444" : call.isSignificant ? "#3b82f6" : "#6b7280"}
+                color={call.isCompaction ? "#ef4444" : call.isSignificant ? BRAND.blue500 : "#6b7280"}
                 label={`Call #${call.id}`}
                 secondary={`${fmtK(call.contextSize)} ctx`}
                 badge={call.significantDelta > 0 ? `+${fmtK(call.significantDelta)}` : call.significantDelta < 0 ? fmtK(call.significantDelta) : undefined}
@@ -1613,7 +1186,7 @@ function AgentLoopTimeline({
                 {/* Mini context bar */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
                   <div style={{ flex: 1, height: 3, background: "#f3f4f6", borderRadius: 2, overflow: "hidden", maxWidth: 120 }}>
-                    <div style={{ width: `${ctxPct}%`, height: "100%", background: call.isCompaction ? "#ef4444" : "#6366f1", opacity: 0.6 }} />
+                    <div style={{ width: `${ctxPct}%`, height: "100%", background: call.isCompaction ? "#ef4444" : BRAND.indigo500, opacity: 0.6 }} />
                   </div>
                   <span style={{ fontSize: 10, color: "#9ca3af" }}>
                     {Math.round(call.cacheRead / (call.contextSize || 1) * 100)}% cached
@@ -1631,7 +1204,7 @@ function AgentLoopTimeline({
               {tg && !isLast && (
                 <AgentLoopNode
                   icon="⚙"
-                  color={tg.tools.some(t => t.status !== "ok") ? "#dc2626" : tg.isParallel ? "#8b5cf6" : "#f59e0b"}
+                  color={tg.tools.some(t => t.status !== "ok") ? "#dc2626" : tg.isParallel ? BRAND.violet500 : "#f59e0b"}
                   label={
                     tg.isParallel
                       ? `${tg.tools.length}× parallel tool calls`
@@ -1655,7 +1228,7 @@ function AgentLoopTimeline({
                           border: `1px solid ${t.status !== "ok" ? "#fecaca" : "#f3f4f6"}`,
                         }}>
                           {tg.isParallel && (
-                            <span style={{ fontSize: 9, color: "#8b5cf6", fontWeight: 700 }}>∥</span>
+                            <span style={{ fontSize: 9, color: BRAND.violet500, fontWeight: 700 }}>∥</span>
                           )}
                           <span style={{ fontSize: 11, fontWeight: 600, color: "#374151", width: 44, flexShrink: 0 }}>{t.tool}</span>
                           <span style={{ fontSize: 11, color: "#6b7280", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.input}</span>
@@ -1709,13 +1282,13 @@ function AgentLoopTimeline({
                       >
                         {/* Row 1: branch icon + type + stats + arrow */}
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <ForkIcon size={11} color="#7c3aed" />
-                          <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6" }}>{sa.agentType}</span>
-                          <span style={{ fontSize: 9, color: "#7c3aed" }}>{sa.llmCallCount}c · {sa.toolCallCount}t</span>
+                          <ForkIcon size={11} color={BRAND.violet600} />
+                          <span style={{ fontSize: 10, fontWeight: 700, color: BRAND.violet800 }}>{sa.agentType}</span>
+                          <span style={{ fontSize: 9, color: BRAND.violet600 }}>{sa.llmCallCount}c · {sa.toolCallCount}t</span>
                           <span style={{ fontSize: 9, color: "#9ca3af" }}>{fmtDuration(sa.durationMs)}</span>
-                          <span style={{ fontSize: 9, color: "#5b21b6", background: "#ede9fe", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
+                          <span style={{ fontSize: 9, color: BRAND.violet800, background: BRAND.violet100, borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
                           <CompressionCapsule sa={sa} />
-                          {onSubAgentClick && <span style={{ fontSize: 10, color: "#a5b4fc", marginLeft: "auto" }}>›</span>}
+                          {onSubAgentClick && <span style={{ fontSize: 10, color: BRAND.indigo300, marginLeft: "auto" }}>›</span>}
                         </div>
                         {/* Row 2: description */}
                         {sa.description && (
@@ -1741,7 +1314,7 @@ function AgentLoopTimeline({
         {/* Terminal node — shows final output inline */}
         <AgentLoopNode
           icon={agentLoop.status === "completed" ? "✓" : agentLoop.status === "interrupted" ? "⚠" : "→"}
-          color={agentLoop.status === "completed" ? "#16a34a" : agentLoop.status === "interrupted" ? "#d97706" : "#6366f1"}
+          color={agentLoop.status === "completed" ? "#16a34a" : agentLoop.status === "interrupted" ? "#d97706" : BRAND.indigo500}
           label={agentLoop.status === "completed" ? "Completed" : agentLoop.status === "interrupted" ? "Interrupted" : "Continued"}
           expandable={outputNeedsExpand}
           expanded={outputExpanded}
@@ -1823,68 +1396,6 @@ function AgentLoopNode({
         </div>
         {children && <div>{children}</div>}
       </div>
-    </div>
-  );
-}
-
-// ─── Shared SummaryMetricStrip ────────────────────────────────────────────────
-// Used by both Session Overview and Turn Detail for consistent metric language.
-
-interface MetricCard {
-  label: string;
-  value: string;
-  sub?: string;          // small secondary value below main number
-  color?: string;        // override value text color
-  alert?: boolean;       // red background
-  mock?: boolean;
-  tooltip?: string;
-}
-
-function SummaryMetricStrip({ cards, columns = 4 }: { cards: MetricCard[]; columns?: number }) {
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: `repeat(${columns}, 1fr)`, gap: 8 }}>
-      {cards.map(({ label, value, sub, color, alert, mock, tooltip }) => (
-        <div key={label} title={tooltip} style={{
-          background: alert ? "#fef2f2" : "#f9fafb",
-          border: `1px solid ${alert ? "#fecaca" : "#e5e7eb"}`,
-          borderRadius: 8, padding: "7px 10px", minWidth: 0,
-        }}>
-          <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {label}{mock && <MockBadge />}
-          </div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: alert ? "#dc2626" : (color ?? "#111827"), lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {value}
-            {sub && <span style={{ fontSize: 10, fontWeight: 400, color: "#9ca3af", marginLeft: 5 }}>{sub}</span>}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ─── Status Badge ─────────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: "completed" | "interrupted" | "continued" }) {
-  const cfg = {
-    completed:   { color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0", label: "Completed" },
-    interrupted: { color: "#d97706", bg: "#fffbeb", border: "#fde68a", label: "Interrupted" },
-    continued:   { color: "#6366f1", bg: "#eff6ff", border: "#c7d2fe", label: "Continued" },
-  }[status];
-  return (
-    <span style={{
-      fontSize: 11, fontWeight: 600, color: cfg.color,
-      background: cfg.bg, border: `1px solid ${cfg.border}`,
-      borderRadius: 4, padding: "2px 7px",
-    }}>{cfg.label}</span>
-  );
-}
-
-// ─── Section heading ──────────────────────────────────────────────────────────
-
-function SectionLabel({ children, mock }: { children: React.ReactNode; mock?: boolean }) {
-  return (
-    <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
-      {children}{mock && <MockBadge />}
     </div>
   );
 }
@@ -2048,7 +1559,7 @@ function AgentLoopFlow({
                       style={{
                         position: "absolute", bottom: -2, right: -2,
                         minWidth: 14, height: 14, padding: "0 3px", borderRadius: 6,
-                        background: "#7c3aed", border: "2px solid #fff",
+                        background: BRAND.violet600, border: "2px solid #fff",
                         display: "flex", alignItems: "center", justifyContent: "center",
                         gap: 1,
                       }}
@@ -2142,11 +1653,11 @@ function AgentLoopFlow({
                 }}
                 className={onSubAgentClick ? "hover:[background:linear-gradient(135deg,_#ede9fe_0%,_#f3e8ff_100%)] transition-colors" : ""}
               >
-                <ForkIcon size={11} color="#7c3aed" />
-                <span style={{ fontSize: 9, fontWeight: 700, color: "#5b21b6", whiteSpace: "nowrap" }}>
+                <ForkIcon size={11} color={BRAND.violet600} />
+                <span style={{ fontSize: 9, fontWeight: 700, color: BRAND.violet800, whiteSpace: "nowrap" }}>
                   {sa.agentType}
                 </span>
-                <span style={{ fontSize: 9, color: "#7c3aed", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: 9, color: BRAND.violet600, whiteSpace: "nowrap" }}>
                   {sa.llmCallCount}c · {sa.toolCallCount}t
                 </span>
                 <span style={{ fontSize: 9, color: "#9ca3af", whiteSpace: "nowrap" }}>
@@ -2155,11 +1666,11 @@ function AgentLoopFlow({
                 <span style={{ fontSize: 9, color: "#374151", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
                   {sa.description}
                 </span>
-                <span style={{ fontSize: 9, color: "#5b21b6", background: "#ede9fe", borderRadius: 3, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
+                <span style={{ fontSize: 9, color: BRAND.violet800, background: BRAND.violet100, borderRadius: 3, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
                   +{fmtK(sa.totalOutputTokens)}
                 </span>
                 <CompressionCapsule sa={sa} compact />
-                {onSubAgentClick && <span style={{ fontSize: 9, color: "#a5b4fc" }}>›</span>}
+                {onSubAgentClick && <span style={{ fontSize: 9, color: BRAND.indigo300 }}>›</span>}
               </button>
               {mergeCall && saIdx === cp.call.subAgents.length - 1 && (
                 <>
@@ -2198,13 +1709,13 @@ function AgentLoopFlow({
       {/* ── Legend ─────────────────────────────────────────── */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "6px 12px", borderTop: "1px solid #f3f4f6", background: "#f9fafb" }}>
         {[
-          { color: "#a5b4fc", label: "Cache read" },
-          { color: "#6366f1", label: "Cache write" },
-          { color: "#3b82f6", label: "Significant Δ" },
+          { color: BRAND.indigo300, label: "Cache read" },
+          { color: BRAND.indigo500, label: "Cache write" },
+          { color: BRAND.blue500, label: "Significant Δ" },
           { color: "#ef4444", label: "◆ compaction" },
-          { color: "#7c3aed", label: "∥ parallel" },
+          { color: BRAND.violet600, label: "∥ parallel" },
           { color: "#d97706", label: "Bash" },
-          { color: "#3b82f6", label: "Read" },
+          { color: BRAND.blue500, label: "Read" },
           { color: "#16a34a", label: "Write/Edit" },
         ].map(({ color, label }) => (
           <div key={label} style={{ display: "flex", alignItems: "center", gap: 3 }}>
@@ -2286,10 +1797,10 @@ function D3ContextStrip({ calls, checkpoints, onSelectCall }: D3ContextStripProp
         })}
 
         {/* Area fill */}
-        <path d={areaD} fill="#6366f1" opacity={0.07} />
+        <path d={areaD} fill={BRAND.indigo500} opacity={0.07} />
 
         {/* Line */}
-        <path d={pathD} fill="none" stroke="#6366f1" strokeWidth={1.5} />
+        <path d={pathD} fill="none" stroke={BRAND.indigo500} strokeWidth={1.5} />
 
         {/* Dots at significant points */}
         {checkpoints.map((cp, i) => {
@@ -2298,7 +1809,7 @@ function D3ContextStrip({ calls, checkpoints, onSelectCall }: D3ContextStripProp
           const y = yScale(cp.call.contextSize);
           return (
             <circle key={cp.call.id} cx={x} cy={y} r={3}
-              fill={cp.call.isCompaction ? "#ef4444" : "#3b82f6"} />
+              fill={cp.call.isCompaction ? "#ef4444" : BRAND.blue500} />
           );
         })}
 
@@ -2323,14 +1834,14 @@ function D3ContextStrip({ calls, checkpoints, onSelectCall }: D3ContextStripProp
 type FlowNodeKind = "user" | "normal" | "significant" | "danger" | "compaction" | "terminal-ok" | "terminal-warn" | "terminal-info";
 
 const FLOW_NODE_STYLE: Record<FlowNodeKind, { border: string; bg: string; labelColor: string }> = {
-  user:          { border: "#6366f1", bg: "#f5f3ff", labelColor: "#6366f1" },
+  user:          { border: BRAND.indigo500, bg: BRAND.violet50, labelColor: BRAND.indigo500 },
   normal:        { border: "#e5e7eb", bg: "#f9fafb", labelColor: "#374151" },
-  significant:   { border: "#93c5fd", bg: "#eff6ff", labelColor: "#2563eb" },
+  significant:   { border: "#93c5fd", bg: "#eff6ff", labelColor: BRAND.blue600 },
   danger:        { border: "#fdba74", bg: "#fff7ed", labelColor: "#ea580c" },
   compaction:    { border: "#fca5a5", bg: "#fef2f2", labelColor: "#dc2626" },
   "terminal-ok":   { border: "#86efac", bg: "#f0fdf4", labelColor: "#16a34a" },
   "terminal-warn": { border: "#fde68a", bg: "#fffbeb", labelColor: "#d97706" },
-  "terminal-info": { border: "#c7d2fe", bg: "#eff6ff", labelColor: "#6366f1" },
+  "terminal-info": { border: BRAND.indigo200, bg: "#eff6ff", labelColor: BRAND.indigo500 },
 };
 
 function FlowCallNode({
@@ -2380,7 +1891,7 @@ function FlowCallNode({
         {(cacheReadPct > 0 || cacheWritePct > 0) && (
           <div style={{ width: "80%", display: "flex", flexDirection: "column", gap: 2, flex: 1, justifyContent: "center" }}>
             <div style={{ height: 4, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
-              <div style={{ width: `${Math.min(cacheReadPct * 100, 100)}%`, height: "100%", background: "#a5b4fc" }} />
+              <div style={{ width: `${Math.min(cacheReadPct * 100, 100)}%`, height: "100%", background: BRAND.indigo300 }} />
             </div>
             <div style={{ height: 4, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
               <div style={{ width: `${Math.min(cacheWritePct * 100, 100)}%`, height: "100%", background: "#6366f180" }} />
@@ -2448,8 +1959,8 @@ function TransitionBridge({
   const durationMs = group.tools.reduce((s, t) => s + t.durationMs, 0);
   const bridgeH    = height; // D3 sqrt-scale computed by parent
 
-  const border = selected ? "#6366f1" : hasError ? "#fca5a5" : group.isParallel ? "#c4b5fd" : "#fde68a";
-  const bg     = selected ? "#eff6ff" : hasError ? "#fef2f2" : group.isParallel ? "#f5f3ff" : "#fffbeb";
+  const border = selected ? BRAND.indigo500 : hasError ? "#fca5a5" : group.isParallel ? "#c4b5fd" : "#fde68a";
+  const bg     = selected ? "#eff6ff" : hasError ? "#fef2f2" : group.isParallel ? BRAND.violet50 : "#fffbeb";
 
   // Aggregate tool chips
   const toolCounts = group.tools.reduce((acc, t) => {
@@ -2481,7 +1992,7 @@ function TransitionBridge({
       >
         {/* Header row */}
         <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-          {group.isParallel && <span style={{ fontSize: 9, fontWeight: 800, color: "#7c3aed" }}>∥</span>}
+          {group.isParallel && <span style={{ fontSize: 9, fontWeight: 800, color: BRAND.violet600 }}>∥</span>}
           {Object.entries(toolCounts).map(([toolName, count]) => {
             const tc = toolChipStyle(toolName);
             return (
@@ -2527,7 +2038,7 @@ function TransitionDrawer({
           </span>
           <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtDuration(dur)} total</span>
           <span style={{ fontSize: 10, color: "#9ca3af" }}>+{fmtK(group.totalOutputSize)} output</span>
-          {group.isParallel && <span style={{ fontSize: 10, color: "#7c3aed", fontWeight: 700 }}>∥ parallel</span>}
+          {group.isParallel && <span style={{ fontSize: 10, color: BRAND.violet600, fontWeight: 700 }}>∥ parallel</span>}
         </div>
         <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", color: "#9ca3af", fontSize: 14, padding: 0 }}>×</button>
       </div>
@@ -2545,7 +2056,7 @@ function TransitionDrawer({
               border: `1px solid ${t.status !== "ok" ? "#fecaca" : "#f3f4f6"}`,
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                {group.isParallel && <span style={{ fontSize: 8, color: "#7c3aed", fontWeight: 800 }}>∥</span>}
+                {group.isParallel && <span style={{ fontSize: 8, color: BRAND.violet600, fontWeight: 800 }}>∥</span>}
                 <span style={{ fontSize: 10, fontWeight: 700, color: tc.fg, background: tc.bg, borderRadius: 3, padding: "1px 5px", border: `1px solid ${tc.border}` }}>
                   {t.tool}
                 </span>
@@ -2616,124 +2127,7 @@ function toolChip(name: string) {
   return getToolPalette(name);
 }
 
-function fmtBytes(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1_000)     return (n / 1_000).toFixed(1) + "k";
-  return String(n);
-}
-
-// Best-effort JSON parse for hand-off to the JSON tree viewer. Returns
-// `undefined` on failure so the segment falls back to text-only mode
-// (no "原始 JSON" toggle shown). Avoids surfacing parse errors to the UI.
-function tryParseJson(s: string): unknown {
-  if (!s) return undefined;
-  try { return JSON.parse(s); } catch { return undefined; }
-}
-
 // ── Filter list (all known kinds; user can toggle) ────────────────────────────
-const ALL_KINDS: IntervalEventKind[] = [
-  "user:human", "user:tool_result", "user:command",
-  "system:api_error", "system:local_command", "system:turn_duration",
-  "system:stop_hook_summary", "system:away_summary",
-  "attachment:skill_listing", "attachment:task_reminder", "attachment:queued_command",
-  "attachment:edited_text_file", "attachment:file",
-  "file-history-snapshot", "last-prompt", "unknown",
-];
-
-const KIND_LABEL: Record<IntervalEventKind, string> = {
-  "user:human":               "User input",
-  "user:tool_result":         "Tool result",
-  "user:command":             "Command",
-  "user:skill_injection":     "激活 SKILL",
-  "user:compact_summary":     "Compact summary",
-  "system:api_error":         "API error",
-  "system:local_command":     "Local cmd",
-  "system:compact_boundary":  "Compact boundary",
-  "system:turn_duration":     "Turn duration",
-  "system:stop_hook_summary": "Stop hook",
-  "system:away_summary":      "Away summary",
-  "attachment:skill_listing": "Skills",
-  "attachment:task_reminder": "Task reminder",
-  "attachment:queued_command": "Queued msg",
-  "attachment:edited_text_file": "File edited",
-  "attachment:file":          "File attach",
-  "file-history-snapshot":    "File snapshot",
-  "last-prompt":              "Last prompt",
-  "unknown":                  "Unknown",
-};
-
-const KIND_COLOR = EVENT_PALETTES;
-
-// ── callDescription: one-line semantic summary of what a call did ─────────────
-function callDescription(call: MockLlmCall): string {
-  const tcs = call.toolCalls;
-  if (tcs.length === 0) {
-    if (call.assistantText) return "answered";
-    if (call.stopReason === "end_turn") return "end_turn";
-    return call.stopReason ?? "";
-  }
-  // Group tool names; count parallels
-  const counts: Record<string, number> = {};
-  for (const tc of tcs) counts[tc.name] = (counts[tc.name] ?? 0) + 1;
-  const parts = Object.entries(counts).map(([name, n]) => n > 1 ? `${name} ×${n}` : name);
-  return parts.join(" + ");
-}
-
-function toolUseIdsFromIntervalEvent(ev: IntervalEvent): string[] {
-  // 关联键有两条独立路径，hover 联动需同时覆盖：
-  //   1) content[].tool_use_id  — tool_result block（user.kind="user:tool_result"），
-  //      映射 Skill / 任意 tool_use → 对应 tool_result 行
-  //   2) 外层 sourceToolUseID    — cli.js SkillTool 通过 tagMessagesWithToolUseID
-  //      给 skill 注入的所有 user / attachment 行打上的归属字段。
-  //      这条路径覆盖 SKILL.md body + command_permissions 等所有副作用行 ——
-  //      hover Skill ToolCallRow 时整个 envelope 全亮。
-  const ids: string[] = [];
-  try {
-    const obj = JSON.parse(ev.rawJson) as { sourceToolUseID?: string; message?: { content?: unknown } };
-    if (typeof obj.sourceToolUseID === "string") {
-      ids.push(obj.sourceToolUseID);
-    }
-    if (ev.kind === "user:tool_result") {
-      const content = obj.message?.content;
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          const b = block as { type?: string; tool_use_id?: string };
-          if (b?.type === "tool_result" && typeof b.tool_use_id === "string") {
-            ids.push(b.tool_use_id);
-          }
-        }
-      }
-    }
-  } catch {
-    return [];
-  }
-  return ids;
-}
-
-function shortToolUseId(id: string): string {
-  return id.length > 14 ? `${id.slice(0, 10)}...` : id;
-}
-
-function shortMessageId(id: string | null | undefined): string {
-  if (!id) return "";
-  return id.length > 18 ? `${id.slice(0, 10)}...${id.slice(-5)}` : id;
-}
-
-function formatJsonlLines(call: MockLlmCall): string {
-  const rawLines = call.jsonlFrameLineIdxs?.length
-    ? call.jsonlFrameLineIdxs
-    : call.jsonlLineIdx != null
-      ? [call.jsonlLineIdx]
-      : [];
-  const lines = [...new Set(rawLines.map(i => i + 1))].sort((a, b) => a - b);
-  if (!lines.length) return "";
-  if (lines.length === 1) return `L${lines[0]}`;
-
-  const contiguous = lines.every((line, idx) => idx === 0 || line === lines[idx - 1] + 1);
-  if (contiguous) return `L${lines[0]}-${lines[lines.length - 1]}`;
-  return lines.slice(0, 3).map(line => `L${line}`).join(", ") + (lines.length > 3 ? ` +${lines.length - 3}` : "");
-}
-
 function ChainNarrativeNode({
   kind, label, text, meta, lineIdx,
 }: {
@@ -2755,7 +2149,7 @@ function ChainNarrativeNode({
   const needsExpand = text.length > limit;
   const shown = needsExpand && !expanded ? text.slice(0, limit) + "..." : text;
   const tone = kind === "user"
-    ? { bg: "#eff6ff", border: "#bfdbfe", fg: "#1e3a5f", dot: "#3b82f6" }
+    ? { bg: "#eff6ff", border: "#bfdbfe", fg: "#1e3a5f", dot: BRAND.blue500 }
     : kind === "interrupt"
       ? { bg: "#fffbeb", border: "#fcd34d", fg: "#78350f", dot: "#d97706" }
       : { bg: "#f0fdf4", border: "#bbf7d0", fg: "#14532d", dot: "#16a34a" };
@@ -2793,7 +2187,7 @@ function ChainNarrativeNode({
                 style={{
                   marginLeft: "auto",
                   display: "inline-flex", alignItems: "center", gap: 5,
-                  border: "none", background: "#4f46e5", color: "#fff",
+                  border: "none", background: BRAND.indigo600, color: "#fff",
                   borderRadius: 4, padding: "3px 9px",
                   fontSize: 10, fontWeight: 700, lineHeight: 1.3,
                   cursor: "pointer",
@@ -2961,12 +2355,6 @@ function ToolCallRow({
 // less readable. For `unknown` the preview is the truncated raw JSON itself,
 // so the toggle is even more confusing. These rows default to the JSON tree
 // view and hide the toggle entirely.
-const RAW_ONLY_KINDS: ReadonlySet<IntervalEventKind> = new Set([
-  "unknown",
-  "system:api_error",
-  "system:stop_hook_summary",
-]);
-
 // ── IntervalEventRow: non-tool JSONL events between calls ─────────────────────
 function IntervalEventRow({
   ev, producingCallId, activeToolUseId, onHoverToolUse,
@@ -3250,14 +2638,14 @@ function JsonlCallChain({
           onClick={() => setFilterOpen(v => !v)}
           style={{
             fontSize: 10, padding: "3px 10px", borderRadius: 6, cursor: "pointer",
-            border: "1px solid #e5e7eb", background: filterOpen ? "#6366f1" : "#f9fafb",
+            border: "1px solid #e5e7eb", background: filterOpen ? BRAND.indigo500 : "#f9fafb",
             color: filterOpen ? "#fff" : "#6b7280", fontWeight: 600,
           }}
         >
           {t("terms.filterEventGraph")} {hiddenKinds.size > 0 && t("terms.hiddenCount", { n: hiddenKinds.size })}
         </button>
         {hiddenKinds.size > 0 && (
-          <button onClick={() => setHiddenKinds(new Set())} style={{ fontSize: 10, color: "#6366f1", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+          <button onClick={() => setHiddenKinds(new Set())} style={{ fontSize: 10, color: BRAND.indigo500, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
             {t("terms.showAll")}
           </button>
         )}
@@ -3270,7 +2658,7 @@ function JsonlCallChain({
         {foldedSubAgentResultCount > 0 && (
           <button
             onClick={() => setShowFoldedSubAgentResults(v => !v)}
-            style={{ fontSize: 10, color: "#4f46e5", background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 6, cursor: "pointer", padding: "3px 8px", fontWeight: 700 }}
+            style={{ fontSize: 10, color: BRAND.indigo600, background: BRAND.indigo50, border: "1px solid #c7d2fe", borderRadius: 6, cursor: "pointer", padding: "3px 8px", fontWeight: 700 }}
           >
             {showFoldedSubAgentResults
               ? t("terms.foldSubAgentResults")
@@ -3392,7 +2780,7 @@ function JsonlCallChain({
                 <div style={{ flexShrink: 0, marginTop: 10, width: 24, display: "flex", justifyContent: "center" }}>
                   <div style={{
                     width: 14, height: 14, borderRadius: "50%", border: "2px solid #fff",
-                    background: call.isCompaction ? "#ef4444" : call.isSignificant ? "#3b82f6" : "#6366f1",
+                    background: call.isCompaction ? "#ef4444" : call.isSignificant ? BRAND.blue500 : BRAND.indigo500,
                     boxShadow: "0 0 0 2px " + (call.isCompaction ? "#ef444440" : "#6366f140"),
                   }} />
                 </div>
@@ -3420,8 +2808,12 @@ function JsonlCallChain({
                           : jsonlLines ? `jsonl ${jsonlLines}` : undefined
                       }
                     >
-                      {t("terms.callLabel")} {call.id}
-                      {call.isCompaction && <span style={{ marginLeft: 5, fontSize: 10, color: "#ef4444" }}>◆</span>}
+                      {/* 合成 compact call 的 id 是负 sentinel，不能直接 print；
+                          换成 i18n 化的 "压缩调用" 标签。普通 call 走 `${callLabel} ${id}`。 */}
+                      {call.isCompaction && call.id < 0
+                        ? t("sessionOverview.compact.callLabel")
+                        : (<>{t("terms.callLabel")} {call.id}</>)}
+                      {call.isCompaction && call.id >= 0 && <span style={{ marginLeft: 5, fontSize: 10, color: "#ef4444" }}>◆</span>}
                     </span>
                     <span style={{ fontSize: 11, color: "#9ca3af", lineHeight: 1 }}>{fmtK(call.contextSize)}</span>
                     {delta !== 0 && (
@@ -3439,7 +2831,7 @@ function JsonlCallChain({
                             style={{
                               marginLeft: "auto",
                               display: "inline-flex", alignItems: "center", gap: 5,
-                              border: "none", background: "#4f46e5", color: "#fff",
+                              border: "none", background: BRAND.indigo600, color: "#fff",
                               borderRadius: 4,
                               padding: "3px 9px", fontSize: 10, fontWeight: 700,
                               lineHeight: 1.3, letterSpacing: "0.02em",
@@ -3523,12 +2915,12 @@ function JsonlCallChain({
 	                      only the color differentiates intent. */}
 		              {call.subAgents.length > 0 && (
 	                <div style={{ marginLeft: 32, marginTop: 3 }}>
-                    <div style={{ fontSize: 9, color: "#818cf8", fontWeight: 800, letterSpacing: "0.04em", margin: "0 0 3px 0" }}>
+                    <div style={{ fontSize: 9, color: BRAND.indigo400, fontWeight: 800, letterSpacing: "0.04em", margin: "0 0 3px 0" }}>
                       ↳ {t("terms.subAgentEvents")}
                     </div>
 	                  {call.subAgents.map(sa => {
                       const active = activeToolUseId === sa.toolUseId;
-                      const branchColor = active ? "#f59e0b" : "#6366f1";
+                      const branchColor = active ? "#f59e0b" : BRAND.indigo500;
                       const handleHoverEnter = () => setActiveToolUseId(sa.toolUseId);
                       const handleHoverLeave = () => setActiveToolUseId(null);
                       const expanded = expandedSubAgentIds.has(sa.toolUseId);
@@ -3561,9 +2953,9 @@ function JsonlCallChain({
                           padding: "5px 9px",
                           borderBottom: (sa.description || sa.resultPreview) ? "1px solid #f3f4f6" : "none",
                         }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: "#4338ca" }}>{sa.agentType}</span>
-                          <span style={{ fontSize: 9, color: "#6366f1" }}>{sa.llmCallCount}c · {sa.toolCallCount}t · {fmtDuration(sa.durationMs)}</span>
-                          <span style={{ fontSize: 9, color: "#6366f1", background: "#eff6ff", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: BRAND.indigo700 }}>{sa.agentType}</span>
+                          <span style={{ fontSize: 9, color: BRAND.indigo500 }}>{sa.llmCallCount}c · {sa.toolCallCount}t · {fmtDuration(sa.durationMs)}</span>
+                          <span style={{ fontSize: 9, color: BRAND.indigo500, background: "#eff6ff", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
                           <span style={{ fontSize: 9, color: active ? "#d97706" : "#c4c9d4" }}>{shortToolUseId(sa.toolUseId)}</span>
                           <div style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 6 }}>
                             {/* Expand / collapse toggle — plain text + arrow,
@@ -3596,7 +2988,7 @@ function JsonlCallChain({
                                 className="hover:bg-violet-700 transition-colors"
                                 style={{
                                   display: "inline-flex", alignItems: "center", gap: 5,
-                                  border: "none", background: "#7c3aed", color: "#fff",
+                                  border: "none", background: BRAND.violet600, color: "#fff",
                                   borderRadius: 4, padding: "3px 9px",
                                   fontSize: 10, fontWeight: 700, lineHeight: 1.3,
                                   letterSpacing: "0.02em",
@@ -3626,7 +3018,7 @@ function JsonlCallChain({
                                 className="hover:bg-blue-700 transition-colors"
                                 style={{
                                   display: "inline-flex", alignItems: "center", gap: 5,
-                                  border: "none", background: "#2563eb", color: "#fff",
+                                  border: "none", background: BRAND.blue600, color: "#fff",
                                   borderRadius: 4, padding: "3px 9px",
                                   fontSize: 10, fontWeight: 700, lineHeight: 1.3,
                                   letterSpacing: "0.02em",
@@ -3660,7 +3052,7 @@ function JsonlCallChain({
                             {sa.resultPreview && (
                               <div style={{
                                 fontSize: 10, color: "#374151",
-                                background: "#f5f3ff", borderRadius: 4, padding: "4px 7px",
+                                background: BRAND.violet50, borderRadius: 4, padding: "4px 7px",
                                 ...(expanded
                                   ? { whiteSpace: "pre-wrap", wordBreak: "break-word" }
                                   : { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }),
@@ -3738,6 +3130,15 @@ function UserTurnDetailPanel({
 }) {
   const { t } = useTranslation();
 
+  // synthesizeCompactTurn 用负 id 避开真实 turn 的 key 撞车；这里把它翻译回
+  // 用户友好的 "压缩 N" 标签，不让 sentinel 漏到 UI。判定条件：hasCompaction
+  // + 负 id —— 仅合成 turn 满足，真实 turn 即使有 compaction 也是正 id。
+  const isCompactSyntheticTurn = turn.hasCompaction && turn.id < 0;
+  const turnHeadLabel = isCompactSyntheticTurn
+    ? t("sessionOverview.compact.label")
+    : t("sessionOverview.turn.label");
+  const turnHeadValue = isCompactSyntheticTurn ? String(-turn.id) : String(turn.id);
+
   const callsWithSubAgents = turn.calls.map((c, ci) => {
     // For mock sessions, inject mock sub-agent if none present
     const mockSa = isMockSession && c.subAgents.length === 0
@@ -3812,7 +3213,7 @@ function UserTurnDetailPanel({
           background: "#fafafa", border: "1px solid #f3f4f6", borderRadius: 6,
           fontSize: 11, color: "#6b7280",
         }}>
-          <span style={{ fontWeight: 700, color: "#374151" }}>{t("sessionOverview.turn.label")} {turn.id}</span>
+          <span style={{ fontWeight: 700, color: "#374151" }}>{turnHeadLabel} {turnHeadValue}</span>
           <span>{turn.llmCallCount} {t("terms.callsSuffix")}</span>
           <span>{turn.toolCallCount} {t("terms.toolsSuffix")}</span>
           {turnSubAgents.length > 0 && <span style={{ color: "#a855f7" }}>{turnSubAgents.length} {t("terms.subAgentsSuffix")}</span>}
@@ -3824,7 +3225,7 @@ function UserTurnDetailPanel({
                 type="button"
                 onClick={onOpenAsMain}
                 title={t("terms.openAsMain")}
-                style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
+                style={{ border: "1px solid #c7d2fe", background: BRAND.indigo50, color: BRAND.indigo700, borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
               >
                 {t("terms.openAsMain")}
               </button>
@@ -3835,7 +3236,7 @@ function UserTurnDetailPanel({
               title={t("terms.turnExpand")}
               style={{
                 background: "transparent", border: "none",
-                cursor: "pointer", fontSize: 11, color: "#6366f1", fontWeight: 600,
+                cursor: "pointer", fontSize: 11, color: BRAND.indigo500, fontWeight: 600,
                 padding: "0 4px",
               }}
             >
@@ -3864,7 +3265,7 @@ function UserTurnDetailPanel({
       ) : (
         <div style={{ position: "relative" }}>
           <UnifiedHeader
-            leadingLabel={{ label: t("sessionOverview.turn.label"), value: String(turn.id) }}
+            leadingLabel={{ label: turnHeadLabel, value: turnHeadValue }}
             stats={[
               { label: t("sessionOverview.activity.llmCalls"),  value: String(turn.llmCallCount) },
               { label: t("sessionOverview.activity.toolCalls"), value: String(turn.toolCallCount) },
@@ -3898,7 +3299,7 @@ function UserTurnDetailPanel({
                     <button
                       type="button"
                       onClick={onOpenAsMain}
-                      style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
+                      style={{ border: "1px solid #c7d2fe", background: BRAND.indigo50, color: BRAND.indigo700, borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
                     >
                       {t("terms.openAsMain")}
                     </button>
@@ -4004,32 +3405,7 @@ function UserTurnDetailPanel({
 
 // ─── LLM Call Detail Panel (v2) ───────────────────────────────────────────────
 
-// ─── Trust badge ─────────────────────────────────────────────────────────────
-
-function TrustBadge({ mode, proxy }: { mode: TrustMode; proxy?: MockLlmCall["proxy"] }) {
-  const cfg: Record<TrustMode, { icon: string; label: string; detail: string; bg: string; border: string; color: string }> = {
-    "proxy-exact": { icon: "✓", label: "Proxy exact",     detail: proxy ? `duration: ${fmtDuration(proxy.durationMs ?? 0)} · stop: ${proxy.resStopReason ?? "—"}` : "", bg: "#f0fdf4", border: "#bbf7d0", color: "#16a34a" },
-    "jsonl-only":  { icon: "⚠", label: "JSONL observed",  detail: "Attribution estimated · No exact request payload · Link proxy to upgrade", bg: "#fffbeb", border: "#fde68a", color: "#d97706" },
-    "mixed":       { icon: "~", label: "Mixed",            detail: "Partial proxy coverage · Some ranges estimated",                           bg: "#f0f9ff", border: "#bae6fd", color: "#0284c7" },
-    "mock":        { icon: "◎", label: "Mock data",        detail: "UI mock — not computed from real session",                                 bg: "#f9fafb", border: "#e5e7eb", color: "#9ca3af" },
-  };
-  const c = cfg[mode];
-  return (
-    <div style={{ fontSize: 10, background: c.bg, border: `1px solid ${c.border}`, borderRadius: 6, padding: "5px 10px", marginBottom: 10, display: "flex", gap: 6, alignItems: "center" }}>
-      <span style={{ fontWeight: 700, color: c.color }}>{c.icon} {c.label}</span>
-      {c.detail && <span style={{ color: "#6b7280" }}>· {c.detail}</span>}
-    </div>
-  );
-}
-
 // ─── Confidence level helpers ─────────────────────────────────────────────────
-
-const CONF_COLOR: Record<ConfidenceLevel, string> = {
-  exact: "#16a34a", high: "#16a34a", medium: "#d97706", low: "#dc2626", unknown: "#9ca3af",
-};
-const CONF_ICON: Record<ConfidenceLevel, string> = {
-  exact: "✓✓", high: "✓", medium: "~", low: "!", unknown: "?",
-};
 
 // ─── Attribution Flow (bridge-events overview) ────────────────────────────────
 
@@ -4039,7 +3415,7 @@ function AttributionFlowOverview({ ranges, bridges, onSelectRange }: {
   onSelectRange: (r: AttributedDiffRange) => void;
 }) {
   const BRIDGE_CFG: Record<BridgeEventKind, { color: string; bg: string; icon: string }> = {
-    user_input:         { color: "#6366f1", bg: "#f5f3ff", icon: "👤" },
+    user_input:         { color: BRAND.indigo500, bg: BRAND.violet50, icon: "👤" },
     tool_use:           { color: "#d97706", bg: "#fffbeb", icon: "⚙" },
     tool_result:        { color: "#d97706", bg: "#fffbeb", icon: "📄" },
     system_injection:   { color: "#6b7280", bg: "#f9fafb", icon: "⚡" },
@@ -4137,8 +3513,8 @@ function AttributedDiffTable({ ranges, selectedId, onSelect }: {
     removed:      { color: "#dc2626", icon: "−", bg: "#fef2f2" },
     changed:      { color: "#d97706", icon: "~", bg: "#fffbeb" },
     retained:     { color: "#9ca3af", icon: "·", bg: "transparent" },
-    reclassified: { color: "#7c3aed", icon: "⇄", bg: "#faf5ff" },
-    moved:        { color: "#3b82f6", icon: "→", bg: "#eff6ff" },
+    reclassified: { color: BRAND.violet600, icon: "⇄", bg: BRAND.violetGradient50 },
+    moved:        { color: BRAND.blue500, icon: "→", bg: "#eff6ff" },
   };
 
   const groups: ChangeType[] = ["added", "changed", "removed", "reclassified", "retained"];
@@ -4339,7 +3715,7 @@ function AttributedRangeEvidenceDrawer({ range, onClear }: { range: AttributedDi
   const CHANGE_CFG: Record<ChangeType, { color: string; icon: string }> = {
     added: { color: "#16a34a", icon: "+" }, removed: { color: "#dc2626", icon: "−" },
     changed: { color: "#d97706", icon: "~" }, retained: { color: "#9ca3af", icon: "·" },
-    reclassified: { color: "#7c3aed", icon: "⇄" }, moved: { color: "#3b82f6", icon: "→" },
+    reclassified: { color: BRAND.violet600, icon: "⇄" }, moved: { color: BRAND.blue500, icon: "→" },
   };
   const cfg = CHANGE_CFG[range.changeType];
 
@@ -4415,27 +3791,25 @@ const SECTION_LABEL: Record<string, string> = {
   system: "System", tools: "Tools", messages: "Messages", metadata: "Metadata", unknown: "Unknown",
 };
 const SECTION_COLOR: Record<string, string> = {
-  system: "#6366f1", tools: "#6b7280", messages: "#3b82f6", metadata: "#a855f7", unknown: "#94a3b8",
+  system: BRAND.indigo500, tools: "#6b7280", messages: BRAND.blue500, metadata: "#a855f7", unknown: "#94a3b8",
 };
 // Muted fill variants for sub-bar segments (same hue, lighter)
 const SECTION_FILL: Record<string, string> = {
-  system: "#c7d2fe", tools: "#d1d5db", messages: "#bfdbfe", metadata: "#e9d5ff", unknown: "#e2e8f0",
+  system: BRAND.indigo200, tools: "#d1d5db", messages: "#bfdbfe", metadata: "#e9d5ff", unknown: "#e2e8f0",
 };
 const CACHE_BADGE: Record<string, { label: string; color: string; bg: string; border: string }> = {
-  read:  { label: "cached",       color: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
+  read:  { label: "cached",       color: BRAND.blue600, bg: "#eff6ff", border: "#bfdbfe" },
   write: { label: "cache write",  color: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
 };
-
-function charsToTokens(chars: number): number { return Math.round(chars / 4); }
 
 // Infer segment meta from category/label for display enrichment
 
 const NATURE_BADGE: Record<string, { label: string; color: string; bg: string; border: string }> = {
   "static":        { label: "static",       color: "#374151", bg: "#f3f4f6", border: "#e5e7eb" },
   "dynamic":       { label: "dynamic",      color: "#d97706", bg: "#fffbeb", border: "#fde68a" },
-  "rule-injected": { label: "rule",         color: "#7c3aed", bg: "#f5f3ff", border: "#ddd6fe" },
+  "rule-injected": { label: "rule",         color: BRAND.violet600, bg: BRAND.violet50, border: BRAND.violet200 },
   "tool-result":   { label: "tool_result",  color: "#b45309", bg: "#fef3c7", border: "#fde68a" },
-  "assistant":     { label: "assistant",    color: "#1d4ed8", bg: "#eff6ff", border: "#bfdbfe" },
+  "assistant":     { label: "assistant",    color: BRAND.blue700, bg: "#eff6ff", border: "#bfdbfe" },
   "user":          { label: "user",         color: "#047857", bg: "#f0fdf4", border: "#bbf7d0" },
 };
 
@@ -4970,213 +4344,6 @@ function AttributionSection({
 // raw tab 在 callDetail.proxyRequestId == null 时整页渲染本组件。
 // 配图位置：client/src/assets/proxy-missing.png（占位文件可为空 0 字节；
 // onError 会自动隐藏 <img>，不会出现破图标）。
-type ProxyV2Phase = "idle" | "starting" | "running" | "stopping";
-
-interface ProxyV2Status {
-  phase: ProxyV2Phase;
-  active: boolean;
-  port: number;
-  pid: number | null;
-}
-
-function navigateToProxyTab() {
-  window.dispatchEvent(new CustomEvent("dashboard:navigate", { detail: { tab: "proxy-v2" } }));
-}
-
-// 状态徽标：绿点 = 代理运行中；灰点 = 代理未启动。比之前那个橙色 warning box
-// 更克制，"运行中" 和 "未启动" 用同一种 pill 容器，只换颜色。
-function ProxyStatusPill({ running, label }: { running: boolean; label: string }) {
-  const dotColor = running ? "#10b981" : "#9ca3af";
-  const textColor = running ? "#047857" : "#6b7280";
-  const bg       = running ? "#ecfdf5" : "#f3f4f6";
-  const border   = running ? "#a7f3d0" : "#e5e7eb";
-  return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 6,
-      padding: "3px 10px", borderRadius: 999,
-      background: bg, border: `1px solid ${border}`,
-      color: textColor, fontSize: 11, fontWeight: 600,
-    }}>
-      <span style={{
-        width: 7, height: 7, borderRadius: 999, background: dotColor,
-        boxShadow: running ? "0 0 0 3px rgba(16,185,129,0.15)" : "none",
-      }} />
-      {label}
-    </span>
-  );
-}
-
-// 内联 link 风格：用于「打开代理设置 →」「去启动」等跳转，使代理 tab 一键可达。
-function InlineLink({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="hover:underline"
-      style={{
-        border: "none", background: "transparent", padding: 0,
-        color: "#6366f1", fontWeight: 600, fontSize: "inherit",
-        cursor: "pointer",
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ProxyMissingEmptyState() {
-  const { t } = useTranslation();
-  const [imgOk, setImgOk] = useState(true);
-  const [status, setStatus] = useState<ProxyV2Status | null>(null);
-  const [loadingStatus, setLoadingStatus] = useState(true);
-  const [starting, setStarting] = useState(false);
-  const [startError, setStartError] = useState<string | null>(null);
-
-  // 拉一次当前 proxy 状态。后续如果用户点了「启动」，按钮内部会主动再拉。
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/proxy-v2/status")
-      .then((r) => r.json())
-      .then((d: ProxyV2Status) => { if (!cancelled) setStatus(d); })
-      .catch(() => { /* 网络错误也算 stopped 处理 */ })
-      .finally(() => { if (!cancelled) setLoadingStatus(false); });
-    return () => { cancelled = true; };
-  }, []);
-
-  const handleStart = async () => {
-    setStarting(true);
-    setStartError(null);
-    try {
-      const r = await fetch("/api/proxy-v2/start", { method: "POST" });
-      const next = await r.json() as ProxyV2Status & { lastError?: string | null };
-      setStatus(next);
-      if (next.lastError) setStartError(next.lastError);
-    } catch (e) {
-      setStartError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setStarting(false);
-    }
-  };
-
-  // running = phase 是 running 或 starting；都视作"代理已在工作 / 即将工作"
-  const isRunning = status?.phase === "running" || status?.phase === "starting";
-
-  // 列表项：左侧一个柔和的小圆点充当 marker，避免直接使用 ⚠ / · 这种突兀符号。
-  const renderBullet = (content: React.ReactNode) => (
-    <li style={{
-      display: "flex", gap: 10, alignItems: "flex-start",
-      fontSize: 12, lineHeight: 1.65, color: "#4b5563",
-    }}>
-      <span style={{
-        width: 5, height: 5, borderRadius: 999, background: "#cbd5e1",
-        marginTop: 8, flexShrink: 0,
-      }} />
-      <span style={{ flex: 1 }}>{content}</span>
-    </li>
-  );
-
-  return (
-    <div style={{
-      display: "flex", flexDirection: "column", alignItems: "center",
-      textAlign: "center", padding: "32px 24px", gap: 16,
-    }}>
-      {imgOk && (
-        <img
-          src={proxyMissingUrl}
-          alt=""
-          onError={() => setImgOk(false)}
-          style={{ maxWidth: 220, width: "100%", height: "auto", opacity: 0.95 }}
-        />
-      )}
-
-      {loadingStatus ? (
-        <div style={{ fontSize: 12, color: "#9ca3af" }}>
-          {t("rawTab.noProxyStatusChecking")}
-        </div>
-      ) : isRunning ? (
-        // ─── 代理已在运行 ───────────────────────────────────────────────────
-        // 解释为什么这条 call 仍然没数据，并给出两条 actionable 建议（重启 /
-        // 配置第三方域名）。第二条带 inline link 直跳代理 tab。
-        <>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "#1f2937" }}>
-            {t("rawTab.noProxyTitleRunning")}
-          </div>
-          <ProxyStatusPill running label={t("rawTab.noProxyStatusRunning")} />
-          <ul style={{
-            listStyle: "none", padding: 0, margin: "4px 0 0 0",
-            maxWidth: 480, textAlign: "left",
-            display: "flex", flexDirection: "column", gap: 8,
-          }}>
-            {renderBullet(t("rawTab.noProxyRunningHintRestart"))}
-            {renderBullet(
-              <>
-                {t("rawTab.noProxyRunningHintThirdParty", {
-                  tab: t("nav.proxy"),
-                  section: t("proxyTraffic.captureTargets"),
-                })}{" "}
-                <InlineLink onClick={navigateToProxyTab}>
-                  {t("rawTab.noProxyOpenProxyTab")}
-                </InlineLink>
-              </>,
-            )}
-          </ul>
-        </>
-      ) : (
-        // ─── 代理未启动 ─────────────────────────────────────────────────────
-        // 主 CTA = 内置「启动代理」按钮；副 CTA = 「去启动」inline link 跳到
-        // 代理 tab 让用户看更多上下文后再启动。重启提示作为 bullet 收敛。
-        <>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "#1f2937" }}>
-            {t("rawTab.noProxyTitleStopped")}
-          </div>
-          <div style={{
-            display: "inline-flex", alignItems: "center", gap: 10,
-          }}>
-            <ProxyStatusPill running={false} label={t("rawTab.noProxyStatusStopped")} />
-            <InlineLink onClick={navigateToProxyTab}>
-              {t("rawTab.noProxyGoStart")} →
-            </InlineLink>
-          </div>
-          <div style={{ fontSize: 12, lineHeight: 1.65, color: "#4b5563", maxWidth: 480 }}>
-            {t("rawTab.noProxyBodyStopped")}
-          </div>
-          <button
-            type="button"
-            onClick={handleStart}
-            disabled={starting}
-            style={{
-              padding: "8px 18px", borderRadius: 8,
-              border: "none",
-              background: starting ? "#c7d2fe" : "#6366f1",
-              color: "#fff", fontWeight: 600, fontSize: 13,
-              cursor: starting ? "not-allowed" : "pointer",
-              minWidth: 120,
-            }}
-          >
-            {starting ? t("rawTab.noProxyStartButtonBusy") : t("rawTab.noProxyStartButton")}
-          </button>
-          {startError && (
-            <div style={{
-              fontSize: 11, color: "#991b1b",
-              background: "#fef2f2", border: "1px solid #fecaca",
-              borderRadius: 6, padding: "6px 10px", maxWidth: 480,
-            }}>
-              {t("rawTab.noProxyStartFailed", { error: startError })}
-            </div>
-          )}
-          <ul style={{
-            listStyle: "none", padding: 0, margin: "4px 0 0 0",
-            maxWidth: 480, textAlign: "left",
-            display: "flex", flexDirection: "column", gap: 8,
-          }}>
-            {renderBullet(t("rawTab.noProxyRestartHint"))}
-          </ul>
-        </>
-      )}
-    </div>
-  );
-}
-
 // ─── 原始数据 tab ─────────────────────────────────────────────────────────────
 
 function RawCopyButton({ text }: { text: string }) {
@@ -5207,16 +4374,7 @@ function RawCopyButton({ text }: { text: string }) {
       }}
       className={!isCopied ? "hover:!border-gray-400 hover:!text-gray-700" : ""}
     >
-      {isCopied ? (
-        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-      ) : (
-        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-        </svg>
-      )}
+      {isCopied ? <Check size={8} strokeWidth={3} /> : <Copy size={8} />}
       {isCopied ? "已复制" : "复制"}
     </button>
   );
@@ -5412,13 +4570,13 @@ function LlmCallDetailPanel({
             {onOpenAsMain ? (
               <button
                 onClick={onOpenAsMain}
-                style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
+                style={{ border: "1px solid #c7d2fe", background: BRAND.indigo50, color: BRAND.indigo700, borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
                 title={t("terms.openAsMain")}
               >
                 {t("terms.openAsMain")}
               </button>
             ) : onShowTurnContext && (
-              <button onClick={onShowTurnContext} style={{ border: "1px solid #c7d2fe", background: "#eef2ff", color: "#6366f1", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+              <button onClick={onShowTurnContext} style={{ border: "1px solid #c7d2fe", background: BRAND.indigo50, color: BRAND.indigo500, borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
                 {t("terms.showInTurn")}
               </button>
             )}
@@ -5693,23 +4851,23 @@ function SubAgentSessionPanel({
         {onReturnToParent && parentLabel && (
           <div style={{
             display: "flex", alignItems: "center", gap: 8,
-            padding: "6px 16px", background: "#faf5ff",
+            padding: "6px 16px", background: BRAND.violetGradient50,
             borderBottom: "1px dashed #c4b5fd", flexShrink: 0,
           }}>
             <button
               onClick={onReturnToParent}
               style={{
                 display: "inline-flex", alignItems: "center", gap: 4,
-                fontSize: 11, fontWeight: 600, color: "#5b21b6",
-                background: "#ede9fe", border: "1px solid #c4b5fd",
+                fontSize: 11, fontWeight: 600, color: BRAND.violet800,
+                background: BRAND.violet100, border: "1px solid #c4b5fd",
                 borderRadius: 4, padding: "2px 8px", cursor: "pointer",
               }}
             >
               <span style={{ fontSize: 12, lineHeight: 1 }}>↩</span>
               {t("sessionOverview.subAgent.backTo", { name: parentLabel })}
             </button>
-            <span style={{ fontSize: 10, color: "#7c3aed", letterSpacing: "0.04em" }}>
-              <ForkIcon size={10} color="#7c3aed" /> {t("sessionOverview.subAgent.sideBranch")} · {turns.length} · {drilldown.subAgents.length > 0 ? t("sessionOverview.subAgent.nested", { n: drilldown.subAgents.length }) : t("sessionOverview.subAgent.leaf")}
+            <span style={{ fontSize: 10, color: BRAND.violet600, letterSpacing: "0.04em" }}>
+              <ForkIcon size={10} color={BRAND.violet600} /> {t("sessionOverview.subAgent.sideBranch")} · {turns.length} · {drilldown.subAgents.length > 0 ? t("sessionOverview.subAgent.nested", { n: drilldown.subAgents.length }) : t("sessionOverview.subAgent.leaf")}
             </span>
             {/* Mini inline breadcrumb so the position inside the sub-agent
                 is always visible — parallels the main session's header. */}
@@ -5718,7 +4876,7 @@ function SubAgentSessionPanel({
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
                 <span style={{
                   fontSize: 11, fontWeight: 600,
-                  color: !innerCall ? "#6366f1" : "#374151",
+                  color: !innerCall ? BRAND.indigo500 : "#374151",
                   cursor: innerCall ? "pointer" : "default",
                 }}
                   onClick={() => { if (innerCall) setInnerCall(null); }}
@@ -5730,7 +4888,7 @@ function SubAgentSessionPanel({
             {innerCall && (
               <>
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
-                <span style={{ fontSize: 11, fontWeight: 600, color: "#6366f1" }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.indigo500 }}>
                   {callPrefix} {innerCall.id}
                 </span>
               </>
@@ -5754,7 +4912,7 @@ function SubAgentSessionPanel({
               const preview = turnInput.slice(0, 16).trimEnd() + (turnInput.length > 16 ? "…" : "");
               const turnLabel = (
                 <>
-                  <strong style={{ fontWeight: 700, color: isThisTurnSelected ? "#4338ca" : "#111827" }}>
+                  <strong style={{ fontWeight: 700, color: isThisTurnSelected ? BRAND.indigo700 : "#111827" }}>
                     {turnPrefix} {turn.id}
                   </strong>
                   {preview && (
@@ -6087,7 +5245,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 20px", borderBottom: "1px solid #e5e7eb", flexShrink: 0, background: "#fff", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
             <button onClick={handleNavSession} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: navLevel === "session" ? "#6366f1" : "#111827" }}>{title}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: navLevel === "session" ? BRAND.indigo500 : "#111827" }}>{title}</span>
             </button>
             {title !== session.session_id && (
               <span style={{ fontSize: 10, color: "#9ca3af", fontFamily: "monospace", flexShrink: 0 }}>{session.session_id}</span>
@@ -6097,14 +5255,14 @@ export function SessionDetailV2({ session, onClose }: Props) {
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
                 <button onClick={() => navLevel === "subagent" ? handleReturnFromSubAgent() : handleNavTurn(selectedTurn)}
                   style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: navLevel === "turn" && !selectedCall ? "#6366f1" : "#374151" }}>{t("sessionOverview.turn.label")} {selectedTurn.id}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: navLevel === "turn" && !selectedCall ? BRAND.indigo500 : "#374151" }}>{t("sessionOverview.turn.label")} {selectedTurn.id}</span>
                 </button>
               </>
             )}
             {selectedCall && (
               <>
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#6366f1", flexShrink: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.indigo500, flexShrink: 0 }}>
                   {t("terms.callLabel")} {selectedCall.id}
                 </span>
               </>
@@ -6112,8 +5270,8 @@ export function SessionDetailV2({ session, onClose }: Props) {
             {selectedSubAgent && navLevel === "subagent" && (
               <>
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 600, color: "#7c3aed", flexShrink: 0 }}>
-                  <ForkIcon size={12} color="#7c3aed" />
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 13, fontWeight: 600, color: BRAND.violet600, flexShrink: 0 }}>
+                  <ForkIcon size={12} color={BRAND.violet600} />
                   {selectedSubAgent.agentType}
                 </span>
               </>
@@ -6121,7 +5279,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {loadState === "loading" && (
-              <span style={{ fontSize: 10, color: "#6366f1", background: "#eff6ff", borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.loading")}</span>
+              <span style={{ fontSize: 10, color: BRAND.indigo500, background: "#eff6ff", borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.loading")}</span>
             )}
             {loadState === "error" && (
               <span style={{ fontSize: 10, color: "#dc2626", background: "#fef2f2", borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.error")}</span>
@@ -6155,7 +5313,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
                 // the user-input preview is lighter weight + muted grey.
                 const turnLabel = (
                   <>
-                    <strong style={{ fontWeight: 700, color: isThisTurnSelected ? "#4338ca" : "#111827" }}>
+                    <strong style={{ fontWeight: 700, color: isThisTurnSelected ? BRAND.indigo700 : "#111827" }}>
                       {turnPrefix} {turn.id}
                     </strong>
                     {preview && (
@@ -6454,8 +5612,8 @@ function linkedPanelButtonStyle(kind: "primary" | "active" | "neutral" | "ghost"
     cursor: "pointer",
     whiteSpace: "nowrap",
   };
-  if (kind === "primary") return { ...base, border: "1px solid #c7d2fe", background: "#eef2ff", color: "#4338ca" };
-  if (kind === "active") return { ...base, border: "1px solid #c4b5fd", background: "#f5f3ff", color: "#6d28d9" };
+  if (kind === "primary") return { ...base, border: "1px solid #c7d2fe", background: BRAND.indigo50, color: BRAND.indigo700 };
+  if (kind === "active") return { ...base, border: "1px solid #c4b5fd", background: BRAND.violet50, color: BRAND.violet700 };
   if (kind === "neutral") return { ...base, border: "1px solid #e5e7eb", background: "#fff", color: "#64748b" };
   return { ...base, border: "1px solid #e5e7eb", background: "#fff", color: "#94a3b8", fontSize: 14, lineHeight: 1, padding: "1px 7px" };
 }
@@ -6511,550 +5669,3 @@ function LinkedTurnExcerptPanel({
 // across renders (avoids tripping UserTurnDetailPanel's memoization).
 const NOOP_SELECT_CALL = () => { /* panel-mode: clicks are inert */ };
 
-function NavItem({
-  label, sublabel, active, badge, badgeColor, badges, onClick, indent,
-}: {
-  /** ReactNode so callers can split the label into a bold prefix + a lighter
-   *  preview (e.g. `<strong>轮次 1</strong> 考虑现在的…`). Plain strings still
-   *  work for the simpler "Overview" entries. */
-  label: React.ReactNode;
-  sublabel?: string; active: boolean;
-  badge?: string; badgeColor?: string;
-  badges?: React.ReactNode;  // multi-badge slot replaces single badge when provided
-  onClick: () => void;
-  indent?: boolean;
-}) {
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        padding: indent ? "5px 10px 5px 28px" : "7px 12px 7px 16px",
-        cursor: "pointer",
-        background: active ? "#eff6ff" : "transparent",
-        borderLeft: active ? "2px solid #6366f1" : "2px solid transparent",
-        display: "flex", justifyContent: "space-between", alignItems: "center",
-        gap: 4,
-      }}
-      className={!active ? "hover:bg-gray-100 transition-colors" : ""}
-    >
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{
-          fontSize: indent ? 11 : 12,
-          color: active ? "#6366f1" : "#374151",
-          fontWeight: active ? 600 : 400,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-        }}>{label}</div>
-        {sublabel && (
-          <div style={{
-            fontSize: 10, color: "#9ca3af", marginTop: 1,
-            // Nav is fixed at 200px — long stat strings would otherwise wrap to
-            // a second line and break the row rhythm. Truncate instead.
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>{sublabel}</div>
-        )}
-      </div>
-      {badges
-        ? <div style={{
-            display: "flex", alignItems: "center", gap: 3,
-            flexShrink: 0,
-            // The badge strip itself wraps internally; keep the container on
-            // one line so the NavItem height stays uniform.
-            maxWidth: 80, overflow: "hidden",
-          }}>{badges}</div>
-        : badge && <span style={{ fontSize: 10, color: badgeColor, fontWeight: 700, flexShrink: 0 }}>{badge}</span>
-      }
-    </div>
-  );
-}
-
-// CompactEventNavItem —— 在左侧 Turn 列表中作为 sibling 行渲染。
-// 视觉规则：跟 turn / call 都不同，凸显"非 turn 的系统级事件"。
-//   - 橙色色板（不与 turn 蓝 / call 灰 / interTurn 紫冲突）
-//   - 🗜 icon + "Compact" + 压缩比一行表达
-//   - userInstructions 非空时作为副标题展示（"focus on parser" 这类语义意图必须可见）
-function CompactEventNavItem({ ev, active, onClick }: { ev: CompactEvent; active: boolean; onClick: () => void }) {
-  const ratioPct = ev.preTokens > 0
-    ? Math.max(0, Math.round((1 - ev.postTokens / ev.preTokens) * 100))
-    : 0;
-  const fmtTokens = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
-  const triggerTag = ev.trigger === "manual" ? "M" : ev.trigger === "auto" ? "A" : ev.trigger === "micro" ? "μ" : "?";
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        padding: "5px 12px 5px 16px",
-        cursor: "pointer",
-        background: active ? "#fff7ed" : "transparent",
-        borderLeft: active ? "2px solid #f97316" : "2px solid transparent",
-        display: "flex", alignItems: "center", gap: 6,
-      }}
-      className={!active ? "hover:bg-amber-50 transition-colors" : ""}
-      title={`Compact · ${ev.trigger} · ${fmtTokens(ev.preTokens)} → ${fmtTokens(ev.postTokens)} (-${ratioPct}%)`}
-    >
-      <span style={{ fontSize: 11, flexShrink: 0 }}>🗜</span>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{
-          fontSize: 11, color: active ? "#c2410c" : "#9a3412",
-          fontWeight: 600,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-        }}>
-          Compact
-          <span style={{ fontWeight: 400, color: "#c2410c", marginLeft: 6, fontSize: 9 }}>{triggerTag}</span>
-          <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 6, fontSize: 10 }}>
-            {fmtTokens(ev.preTokens)} → {fmtTokens(ev.postTokens)}
-          </span>
-        </div>
-        <div style={{
-          fontSize: 10, color: "#9ca3af", marginTop: 1,
-          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          fontStyle: ev.userInstructions ? "normal" : "italic",
-        }}>
-          {ev.userInstructions
-            ? `"${ev.userInstructions}"`
-            : `-${ratioPct}% · ${(ev.durationMs / 1000).toFixed(1)}s${ev.proxy ? ` · ${ev.proxy.model}` : ""}`}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function InterTurnNavItem({ block, active, onClick }: { block: InterTurnBlock; active: boolean; onClick: () => void }) {
-  const exitLabel = block.label.includes("/exit") || !block.enteredContext;
-  return (
-    <div
-      onClick={onClick}
-      style={{
-        padding: "3px 12px 3px 22px",
-        cursor: "pointer",
-        background: active ? "#faf5ff" : "transparent",
-        borderLeft: active ? "2px solid #a78bfa" : "2px solid transparent",
-        display: "flex", alignItems: "center", gap: 5,
-      }}
-      className={!active ? "hover:bg-gray-50 transition-colors" : ""}
-    >
-      <span style={{ fontSize: 9, color: exitLabel ? "#94a3b8" : "#a78bfa", flexShrink: 0 }}>
-        {exitLabel ? "⏎" : "⌘"}
-      </span>
-      <span style={{
-        fontSize: 10,
-        color: active ? "#7c3aed" : "#9ca3af",
-        fontStyle: "italic",
-        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-        flex: 1,
-      }}>
-        {block.label}
-      </span>
-      {!block.enteredContext && (
-        <span style={{ fontSize: 9, color: "#cbd5e1", flexShrink: 0 }} title="Session ended before this entered context">∅</span>
-      )}
-    </div>
-  );
-}
-
-// ─── synthesizeCompactTurn —— 把 CompactEvent 包装成 UserTurn-shape 数据 ──────
-// 让 UserTurnDetailPanel 可以"完全复用"渲染 Compact 详情。映射要点：
-//
-//   UserTurn.userInput          ← `/compact [args]` 或 `/compact`
-//   UserTurn.userInputLineIdx   ← ev.commandLineIdx（用户敲命令那一行）
-//   UserTurn.finalOutput        ← ev.summaryText（注入到下次推理 prompt 的 summary 文本）
-//   UserTurn.calls              ← 1 个合成 LlmCall，承载 summarization LLM call 的数据
-//                                  来源是 proxy_requests 富化；jsonl 端无 assistant 事件
-//   call.intervalEvents         ← jsonl 端 3 条相关事件（boundary / summary / 可选 command）
-//                                  按行号排序，让 IntervalEventRow 顺序渲染
-//
-// 标志位 hasCompaction=true 保证 risk badge 显示 "compaction"。
-// turn.id 用极小负数避开和真实 turn 撞 key（左 rail 不用这个 turn 渲染，但下游
-// flatMap(t => t.calls) 会扫描所有 turns —— 我们没把合成 turn 加入 turns 数组，
-// 只是直接喂给 UserTurnDetailPanel，所以撞 key 实际上不会发生）。
-function synthesizeCompactTurn(ev: CompactEvent): UserTurn {
-  const synthCallId = -(ev.index + 1) * 1000; // 极小负 id，跨真实 turn 都不会撞
-  // intervalEvents：boundary / summary 必有，command 可选。按 lineIdx 升序排。
-  const ies: IntervalEvent[] = [];
-  if (ev.commandLineIdx !== null) {
-    ies.push({
-      kind: "user:command",
-      lineIdx: ev.commandLineIdx,
-      timestamp: ev.timestamp,
-      contentPreview: ev.userInstructions
-        ? `/compact ${ev.userInstructions}`
-        : "/compact",
-      contentSize: (ev.userInstructions?.length ?? 0) + "/compact".length + 1,
-      rawJson: JSON.stringify({ type: "user", commandName: "/compact", commandArgs: ev.userInstructions ?? "" }),
-    });
-  }
-  ies.push({
-    kind: "system:compact_boundary",
-    lineIdx: ev.boundaryLineIdx,
-    timestamp: ev.timestamp,
-    contentPreview: `compact_boundary · trigger=${ev.trigger} · ${ev.preTokens}→${ev.postTokens} tokens · ${ev.durationMs}ms`,
-    contentSize: 0,
-    rawJson: JSON.stringify({
-      type: "system",
-      subtype: "compact_boundary",
-      uuid: ev.boundaryUuid,
-      compactMetadata: {
-        trigger: ev.trigger,
-        preTokens: ev.preTokens,
-        postTokens: ev.postTokens,
-        durationMs: ev.durationMs,
-      },
-    }),
-  });
-  if (ev.summaryLineIdx !== null && ev.summaryText !== null) {
-    ies.push({
-      kind: "user:compact_summary",
-      lineIdx: ev.summaryLineIdx,
-      timestamp: ev.timestamp,
-      contentPreview: ev.summaryText,
-      contentSize: ev.summaryText.length,
-      rawJson: JSON.stringify({
-        type: "user",
-        isCompactSummary: true,
-        uuid: ev.summaryUuid,
-        message: { role: "user", content: ev.summaryText },
-      }),
-    });
-  }
-  ies.sort((a, b) => a.lineIdx - b.lineIdx);
-
-  // 合成 LlmCall：来源 = proxy 富化。proxy 缺失时降级为零值。
-  const proxyData = ev.proxy ? {
-    requestId: ev.proxy.proxyRequestId,
-    reqMessageCount: null,
-    reqHasTools: null,
-    resInputTokens: ev.proxy.inputTokens,
-    resOutputTokens: ev.proxy.outputTokens,
-    resCacheCreation: 0,
-    resCacheRead: ev.proxy.cacheReadTokens,
-    resStopReason: "end_turn",
-    errorClass: null,
-    durationMs: ev.proxy.durationMs,
-  } : null;
-
-  const syntheticCall: LlmCall = {
-    id: synthCallId,
-    indexInTurn: 1,
-    messageId: null,
-    apiRequestId: ev.proxy?.requestId ?? null,
-    jsonlLineIdx: null,
-    jsonlFrameLineIdxs: [],
-    contextSize: ev.preTokens,
-    outputTokens: ev.proxy?.outputTokens ?? 0,
-    cacheRead: ev.proxy?.cacheReadTokens ?? 0,
-    cacheWrite: 0,
-    timestamp: ev.proxy?.startedAt ?? ev.timestamp,
-    model: ev.proxy?.model ?? "",
-    stopReason: "end_turn",
-    isCompaction: true,
-    isUnknownHeavy: false,
-    freshIn: ev.proxy?.inputTokens ?? 0,
-    isSignificant: true,
-    significantDelta: ev.postTokens - ev.preTokens,
-    proxy: proxyData,
-    proxyMatchMode: ev.proxy ? "exact" : "unmatched",
-    subAgents: [],
-    incomingDiff: [],
-    toolNames: [],
-    toolCalls: [],
-    assistantText: ev.summaryText?.slice(0, 500) ?? "",
-    intervalEvents: ies,
-  };
-
-  return {
-    id: -(ev.index + 1),    // 负 id，避开真实 turn
-    userInput: ev.userInstructions ? `/compact ${ev.userInstructions}` : "/compact",
-    userInputLineIdx: ev.commandLineIdx,
-    finalOutput: ev.summaryText,
-    midTurnInjections: [],
-    startedAt: ev.timestamp,
-    endedAt: ev.timestamp,
-    durationMs: ev.durationMs,
-    llmCallCount: 1,
-    toolCallCount: 0,
-    netContextDelta: ev.postTokens - ev.preTokens,
-    peakContext: ev.preTokens,
-    cacheRead: ev.proxy?.cacheReadTokens ?? 0,
-    cacheWrite: 0,
-    unknownDelta: 0,
-    hasCompaction: true,
-    hasUnknownSpike: false,
-    errorCount: 0,
-    calls: [syntheticCall],
-  };
-}
-
-// ─── CompactEventPanel —— /compact 详情面板 ───────────────────────────────────
-// 风格上类 InterTurnBlockPanel：header 统计块 + body 顺序事件行。
-// 数据来源严格基于 CompactEvent 的三源（boundary / summary / command / proxy），
-// 不读 jsonl 原始文件 —— parser 已经把所有必需信息序列化进 CompactEvent。
-//
-// 内容分四个"逻辑事件"按时间顺序展示：
-//   1. /compact command  ← jsonl 的 user.<command-name>/compact</command-name> 行
-//                          带 userInstructions（如果用户指定了 args）
-//   2. boundary marker   ← jsonl 的 system.compact_boundary 行，含 metadata
-//   3. summarization LLM call  ← proxy_requests 富化（model / tokens / duration）
-//                                jsonl 端无对应 assistant 事件，但调用真实发生过
-//   4. summary injection ← jsonl 的 user.isCompactSummary=true 行
-//                          这是 post-compact 第一次推理 prompt 里的 user message
-//
-// 复用 InterTurnBlockDetail 的"kindLabel + monospace row"行风格，但不直接调用
-// InterTurnBlockDetail —— 后者吃的是 IntervalEvent[]，CompactEvent 不在那个数据通路里。
-function CompactEventPanel({ ev }: { ev: CompactEvent }) {
-  const fmtTokens = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
-  const ratioPct = ev.preTokens > 0
-    ? Math.max(0, Math.round((1 - ev.postTokens / ev.preTokens) * 100))
-    : 0;
-  const triggerLabel = ev.trigger === "manual" ? "manual"
-                      : ev.trigger === "auto"   ? "auto"
-                      : ev.trigger === "micro"  ? "micro"
-                      : ev.trigger;
-  const belongingLabel = ev.belonging.kind === "between-turns"
-    ? `T${ev.belonging.afterTurnId} → T${ev.belonging.beforeTurnId}`
-    : ev.belonging.kind === "post-session"
-      ? `T${ev.belonging.afterTurnId} → session end`
-      : ev.belonging.kind === "pre-session"
-        ? `session start → T${ev.belonging.beforeTurnId}`
-        : `(other)`;
-  return (
-    <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
-      {/* Header */}
-      <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid #f3f4f6" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: "#c2410c" }}>
-            🗜 Compact
-          </span>
-          <span style={{ fontSize: 10, color: "#9a3412", background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 4, padding: "1px 6px", fontWeight: 600 }}>
-            {triggerLabel}
-          </span>
-          <span style={{ fontSize: 11, color: "#9ca3af" }}>· system-level maintenance event ·</span>
-          <span style={{ fontSize: 11, color: "#9ca3af" }}>{belongingLabel}</span>
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {[
-            { label: "Pre→Post", value: `${fmtTokens(ev.preTokens)} → ${fmtTokens(ev.postTokens)}` },
-            { label: "Ratio", value: `-${ratioPct}%`, color: ratioPct >= 80 ? "#16a34a" : "#c2410c" },
-            { label: "Duration", value: `${(ev.durationMs / 1000).toFixed(1)}s` },
-            ...(ev.proxy ? [
-              { label: "Model", value: ev.proxy.model || "—" },
-              { label: "Out tokens", value: fmtTokens(ev.proxy.outputTokens) },
-              { label: "Cache read", value: fmtTokens(ev.proxy.cacheReadTokens) },
-            ] : [{ label: "Proxy", value: "unmatched", color: "#94a3b8" }]),
-          ].map(({ label, value, color }) => (
-            <div key={label} style={{
-              display: "flex", flexDirection: "column", alignItems: "center",
-              padding: "5px 10px", background: "#fff7ed", borderRadius: 6,
-              border: "1px solid #fed7aa", minWidth: 64,
-            }}>
-              <span style={{ fontSize: 9, color: "#9ca3af", marginBottom: 2 }}>{label}</span>
-              <span style={{ fontSize: 12, fontWeight: 700, color: color ?? "#c2410c" }}>{value}</span>
-            </div>
-          ))}
-        </div>
-        {ev.userInstructions && (
-          <div style={{ marginTop: 12, padding: "8px 12px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6 }}>
-            <div style={{ fontSize: 9, fontWeight: 700, color: "#92400e", letterSpacing: "0.08em", marginBottom: 4 }}>
-              USER INSTRUCTIONS（/compact 附加指令）
-            </div>
-            <div style={{ fontSize: 12, color: "#78350f", fontFamily: "monospace", wordBreak: "break-word" }}>
-              {ev.userInstructions}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Event sequence —— jsonl 顺序 + LLM call 在 boundary 前 */}
-      <div style={{ border: "1px solid #fed7aa", borderRadius: 8, background: "#fff7ed", overflow: "hidden" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #fed7aa", background: "#ffedd5" }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: "#c2410c" }}>Event sequence</span>
-          <span style={{ fontSize: 10, color: "#fb923c" }}>·</span>
-          <span style={{ fontSize: 10, color: "#fb923c", fontStyle: "italic" }}>
-            jsonl events + the (jsonl-invisible) summarization LLM call
-          </span>
-        </div>
-
-        <div style={{ padding: "8px 12px" }}>
-          {/* 1. /compact command (可选) */}
-          {ev.commandLineIdx !== null && (
-            <CompactEventRow
-              tag="cmd"
-              lineRef={`L${ev.commandLineIdx + 1}`}
-              text={ev.userInstructions
-                ? `/compact ${ev.userInstructions}`
-                : "/compact"}
-              note="user typed slash command"
-            />
-          )}
-
-          {/* 2. boundary marker */}
-          <CompactEventRow
-            tag="bound"
-            lineRef={`L${ev.boundaryLineIdx + 1}`}
-            text={`compact_boundary · trigger=${ev.trigger} · ${fmtTokens(ev.preTokens)} → ${fmtTokens(ev.postTokens)} · ${(ev.durationMs / 1000).toFixed(1)}s`}
-            note={`uuid=${ev.boundaryUuid.slice(0, 8)}…`}
-          />
-
-          {/* 3. summarization LLM call —— jsonl 端没有对应 assistant 事件，
-              这一行的数据全部来自 proxy_requests 富化。这是 UI 上的"幽灵 call"，
-              显式标出"proxy-only"避免用户以为它该出现在 turn 的 call 列表里。 */}
-          {ev.proxy ? (
-            <CompactEventRow
-              tag="llm"
-              lineRef={`proxy#${ev.proxy.proxyRequestId}`}
-              text={`${ev.proxy.model} · in=${fmtTokens(ev.proxy.inputTokens)} cache=${fmtTokens(ev.proxy.cacheReadTokens)} out=${fmtTokens(ev.proxy.outputTokens)} · ${(ev.proxy.durationMs / 1000).toFixed(1)}s`}
-              note="summarization call · not in jsonl"
-            />
-          ) : (
-            <CompactEventRow
-              tag="llm"
-              lineRef="—"
-              text="summarization LLM call (not matched in proxy_requests)"
-              note="jsonl never records this call as an assistant event"
-              muted
-            />
-          )}
-
-          {/* 4. injected summary —— L22, isCompactSummary=true */}
-          {ev.summaryLineIdx !== null && ev.summaryText && (
-            <CompactEventRow
-              tag="summary"
-              lineRef={`L${ev.summaryLineIdx + 1}`}
-              text={ev.summaryText}
-              note={`isCompactSummary · injected into next call's prompt · ${ev.summaryText.length}b`}
-              monospaceBlock
-            />
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// 单行渲染，复用 InterTurnBlockDetail 的 "kindLabel chip + monospace text" 风格，
-// 但 chip 用橙色色板与 InterTurn 紫色区分。
-function CompactEventRow({
-  tag, lineRef, text, note, muted, monospaceBlock,
-}: {
-  tag: string;
-  lineRef: string;
-  text: string;
-  note?: string;
-  muted?: boolean;
-  monospaceBlock?: boolean;
-}) {
-  return (
-    <div style={{ padding: "6px 0", borderBottom: "1px solid #ffedd5", display: "flex", gap: 8, alignItems: "flex-start" }}>
-      <span style={{
-        fontSize: 9, fontWeight: 700, color: muted ? "#94a3b8" : "#c2410c",
-        background: muted ? "#f1f5f9" : "#ffedd5", borderRadius: 3, padding: "1px 5px",
-        flexShrink: 0, marginTop: 2, minWidth: 42, textAlign: "center",
-      }}>
-        {tag}
-      </span>
-      <span style={{
-        fontSize: 9, fontWeight: 600, color: "#9ca3af",
-        flexShrink: 0, marginTop: 3, minWidth: 56, textAlign: "left", fontFamily: "monospace",
-      }}>
-        {lineRef}
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {monospaceBlock ? (
-          <pre style={{
-            margin: 0, fontSize: 11, color: muted ? "#94a3b8" : "#374151",
-            fontFamily: "monospace", lineHeight: 1.45, whiteSpace: "pre-wrap",
-            wordBreak: "break-word", maxHeight: 360, overflowY: "auto",
-            padding: "6px 8px", background: "#fff", border: "1px solid #fed7aa", borderRadius: 4,
-          }}>
-            {text}
-          </pre>
-        ) : (
-          <div style={{ fontSize: 11, color: muted ? "#94a3b8" : "#374151", fontFamily: "monospace", wordBreak: "break-all", lineHeight: 1.5 }}>
-            {text}
-          </div>
-        )}
-        {note && (
-          <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2, fontStyle: "italic" }}>{note}</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── InterTurnBlock detail (shared between inline Turn view and full panel) ───
-
-function InterTurnBlockDetail({ block }: { block: InterTurnBlock }) {
-  const kindLabel: Record<string, string> = {
-    "user:command": "cmd",
-    "system:local_command": "sys",
-    "user:human": "inject",
-    "file-history-snapshot": "snapshot",
-  };
-  return (
-    <div style={{ border: "1px solid #e9d5ff", borderRadius: 8, background: "#faf5ff", overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #e9d5ff", background: "#f3e8ff" }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#7c3aed" }}>{block.label}</span>
-        <span style={{ fontSize: 10, color: "#a78bfa" }}>·</span>
-        <span style={{ fontSize: 10, color: "#a78bfa" }}>{block.events.length} event{block.events.length > 1 ? "s" : ""}</span>
-        {!block.enteredContext && (
-          <span style={{ fontSize: 10, color: "#94a3b8", marginLeft: "auto", fontStyle: "italic" }}>did not enter context (session ended)</span>
-        )}
-        {block.enteredContext && (
-          <span style={{ fontSize: 10, color: "#a78bfa", marginLeft: "auto", fontStyle: "italic" }}>entered context in next turn</span>
-        )}
-      </div>
-      <div style={{ padding: "8px 12px" }}>
-        {block.events.map((ev, i) => (
-          <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "4px 0", borderBottom: i < block.events.length - 1 ? "1px solid #f3e8ff" : "none" }}>
-            <span style={{
-              fontSize: 9, fontWeight: 700, color: "#a78bfa",
-              background: "#ede9fe", borderRadius: 3, padding: "1px 4px",
-              flexShrink: 0, marginTop: 2,
-            }}>
-              {kindLabel[ev.kind] ?? ev.kind.split(":")[1] ?? ev.kind}
-            </span>
-            <span style={{ fontSize: 11, color: "#374151", wordBreak: "break-all", fontFamily: "monospace", lineHeight: 1.5 }}>
-              {ev.contentPreview || <span style={{ color: "#d1d5db" }}>—</span>}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ─── Full-page inter-turn block panel (shown in main canvas) ─────────────────
-
-function InterTurnBlockPanel({ block }: { block: InterTurnBlock }) {
-  return (
-    <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
-      <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid #f3f4f6" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: "#7c3aed" }}>
-            {block.label}
-          </span>
-          <span style={{ fontSize: 11, color: "#9ca3af" }}>inter-turn commands</span>
-        </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {[
-            { label: "Events", value: String(block.events.length) },
-            { label: "After Turn", value: block.prevTurnId !== null ? `T${block.prevTurnId}` : "session start",
-              color: block.prevTurnId === null ? "#9ca3af" : undefined },
-            { label: "Before Turn", value: block.nextTurnId !== null ? `T${block.nextTurnId}` : "session end",
-              color: block.nextTurnId === null ? "#9ca3af" : undefined },
-            { label: "Entered Context", value: block.enteredContext ? "yes" : "no",
-              color: block.enteredContext ? "#16a34a" : "#94a3b8" },
-          ].map(({ label, value, color }) => (
-            <div key={label} style={{
-              display: "flex", flexDirection: "column", alignItems: "center",
-              padding: "5px 10px", background: "#faf5ff", borderRadius: 6,
-              border: "1px solid #e9d5ff", minWidth: 64,
-            }}>
-              <span style={{ fontSize: 9, color: "#9ca3af", marginBottom: 2 }}>{label}</span>
-              <span style={{ fontSize: 12, fontWeight: 700, color: color ?? "#7c3aed" }}>{value}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-      <InterTurnBlockDetail block={block} />
-    </div>
-  );
-}

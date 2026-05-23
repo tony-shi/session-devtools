@@ -6,6 +6,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { getDb } from "./db.ts";
 import { getColdIndexProgress } from "./proxy-v2/log/cold-indexer.ts";
 import { normalizeHosts } from "./proxy-v2/host-normalize.ts";
+import { getVisibilityService } from "./proxy-visibility/index.ts";
 
 function parseJsonField<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -78,13 +79,22 @@ export class ProxyTrafficController {
     const rows = db.prepare(`
       SELECT id, ts, started_at, sni, method, url, status,
              bytes_in, bytes_out, duration_ms,
-             req_headers, res_headers, sse_event_count, is_stream
+             req_headers, res_headers, sse_event_count, is_stream,
+             session_id, request_id
       FROM proxy_requests ${where}
       ORDER BY COALESCE(started_at, ts) DESC, id DESC
       LIMIT ? OFFSET ?
-    `).all([...params, limit, offset]);
+    `).all([...params, limit, offset]) as Array<{ session_id: string | null; request_id: string | null } & Record<string, unknown>>;
 
-    return { requests: rows, total, limit, offset, indexProgress: getColdIndexProgress() };
+    // 用 RenderedSetService 给每行打 visibility 徽章。整条路径独立模块，
+    // 不在核心查询链路上：disabled 时直接全部回 'disabled'，零开销。
+    const visService = getVisibilityService();
+    const visibilities = visService.enrichRows(
+      rows.map((r) => ({ sessionId: r.session_id, requestId: r.request_id })),
+    );
+    const enriched = rows.map((r, i) => ({ ...r, visibility: visibilities[i] }));
+
+    return { requests: enriched, total, limit, offset, indexProgress: getColdIndexProgress() };
   }
 
   // ── Proxy request body (lazy fetch from file) ─────────────────────────────────

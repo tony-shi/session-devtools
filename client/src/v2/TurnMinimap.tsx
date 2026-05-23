@@ -24,6 +24,7 @@ import { CanvasRenderer } from "echarts/renderers";
 import type { LlmCall, UserTurn } from "./drilldown-types";
 import { getToolPalette } from "./shared/toolRegistry";
 import { CHART_COLORS, TOOLTIP_PRESET, brandAreaGradient } from "./shared/chart-theme";
+import { Badge } from "@/components/ui/badge";
 
 echarts.use([
   LineChart,
@@ -689,9 +690,9 @@ export function TurnMinimap({ turn, onSelectCall, onHoverCall }: TurnMinimapProp
           </span>
         </div>
         {turn.calls.length > ZOOM_THRESHOLD && (
-          <span style={{ fontSize: 10, color: "#be123c", background: "#fff1f2", border: "1px solid #fecdd3", borderRadius: 4, padding: "1px 6px" }}>
+          <Badge variant="rose" className="text-[10px] px-1.5 py-0">
             {t("sessionOverview.minimap.dragWindow")}
-          </span>
+          </Badge>
         )}
         <span style={{ marginLeft: "auto", fontSize: 10, color: "#cbd5e1" }}>
           {turn.calls.length} {t("sessionOverview.minimap.llmCalls", "LLM calls")} · {data.totalToolEvents} {t("sessionOverview.activity.toolCalls").toLowerCase()} · req {fmtK(data.totalInputSize)} · resp {fmtK(data.totalOutputSize)}

@@ -14,6 +14,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { TOKEN_METRICS } from "../metricRegistry";
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
+import { BRAND } from "./brand";
 
 function fmtK(n: number): string {
   const abs = Math.abs(n);
@@ -96,8 +97,8 @@ export function LedgerExplainerBody({
       }}>
         <span>{t("ledgerExplainer.title")}</span>
         <span style={{
-          fontSize: 9, fontWeight: 600, color: "#6366f1",
-          background: "#eef2ff", border: "1px solid #c7d2fe",
+          fontSize: 9, fontWeight: 600, color: BRAND.indigo500,
+          background: BRAND.indigo50, border: "1px solid #c7d2fe",
           borderRadius: 3, padding: "1px 5px", letterSpacing: 0,
           textTransform: "none",
         }}>
@@ -242,7 +243,7 @@ export function LedgerInfoIcon({
           style={{
             display: "inline-flex", alignItems: "center", justifyContent: "center",
             width: 16, height: 16, borderRadius: "50%",
-            background: "#eef2ff", color: "#4338ca",
+            background: BRAND.indigo50, color: BRAND.indigo700,
             border: "1px solid #c7d2fe",
             fontSize: 11, fontWeight: 700, fontStyle: "italic",
             fontFamily: "'Georgia', 'Times New Roman', serif",

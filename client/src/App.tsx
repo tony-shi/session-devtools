@@ -7,7 +7,9 @@ import { SummaryCardsV2 } from "./v2/SummaryCardsV2";
 import { SessionListV2 } from "./v2/SessionListV2";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { BarChart3, TrendingUp, Zap, ChevronLeft, ChevronRight } from "lucide-react";
 import type { SessionsV2Response, SummaryV2 } from "./v2/types";
+import { BRAND } from "./v2/shared/brand";
 
 type Tab = "sessions-v2" | "proxy-v2" | "trends";
 
@@ -77,36 +79,9 @@ export default function App() {
   }
 
   const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    {
-      id: "sessions-v2",
-      label: t("nav.sessions"),
-      icon: (
-        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-        </svg>
-      ),
-    },
-    {
-      id: "trends",
-      label: t("nav.trends"),
-      icon: (
-        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-        </svg>
-      ),
-    },
-    {
-      id: "proxy-v2",
-      label: t("nav.proxy"),
-      icon: (
-        <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-            d="M13 10V3L4 14h7v7l9-11h-7z" />
-        </svg>
-      ),
-    },
+    { id: "sessions-v2", label: t("nav.sessions"), icon: <BarChart3 size={15} /> },
+    { id: "trends",      label: t("nav.trends"),   icon: <TrendingUp size={15} /> },
+    { id: "proxy-v2",    label: t("nav.proxy"),    icon: <Zap size={15} /> },
   ];
 
   return (
@@ -140,14 +115,14 @@ export default function App() {
                   display: "flex", alignItems: "center", gap: navOpen ? 8 : 0,
                   justifyContent: navOpen ? "flex-start" : "center",
                   padding: "6px 8px", borderRadius: 6, border: "none",
-                  background: active ? "#eef2ff" : "transparent",
-                  color: active ? "#6366f1" : "#4b5563",
+                  background: active ? BRAND.indigo50 : "transparent",
+                  color: active ? BRAND.indigo500 : "#4b5563",
                   cursor: "pointer", fontSize: 12, fontWeight: active ? 600 : 400,
                   textAlign: "left", width: "100%", whiteSpace: "nowrap",
                   transition: "background 0.1s",
                 }}
               >
-                <span style={{ color: active ? "#6366f1" : "#9ca3af", flexShrink: 0 }}>{icon}</span>
+                <span style={{ color: active ? BRAND.indigo500 : "#9ca3af", flexShrink: 0 }}>{icon}</span>
                 {navOpen && label}
               </button>
             );
@@ -166,12 +141,7 @@ export default function App() {
               flexShrink: 0, marginBottom: 2,
             }}
           >
-            <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              {navOpen
-                ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              }
-            </svg>
+            {navOpen ? <ChevronLeft size={13} /> : <ChevronRight size={13} />}
           </button>
         </nav>
 

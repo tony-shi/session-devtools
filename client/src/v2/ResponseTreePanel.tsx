@@ -12,6 +12,8 @@ import { apiV2 } from "./api";
 import { useAttributionGraph } from "./attribution-graph-context";
 import { FisheyeStrip } from "./fisheye-strip";
 import { EventUnitCard } from "./shared/EventUnitCard";
+import { BRAND } from "./shared/brand";
+import { Badge } from "@/components/ui/badge";
 import type {
   ResponseTreeResult,
   ResponseTreeDataSource,
@@ -31,7 +33,7 @@ interface SlotMeta {
 }
 
 const SLOT_META: Record<Exclude<ResponseSlotType, "response">, SlotMeta> = {
-  "response.thinking":  { label: "Thinking",  barBg: "#a78bfa", barText: "#fff", rowBg: "#f5f3ff", marker: "#a78bfa", textColor: "#5b21b6" },
+  "response.thinking":  { label: "Thinking",  barBg: BRAND.violet400, barText: "#fff", rowBg: BRAND.violet50, marker: BRAND.violet400, textColor: BRAND.violet800 },
   "response.text":      { label: "Text",      barBg: "#22c55e", barText: "#fff", rowBg: "#f0fdf4", marker: "#22c55e", textColor: "#15803d" },
   "response.tool_use":  { label: "Tool Use",  barBg: "#f59e0b", barText: "#fff", rowBg: "#fffbeb", marker: "#f59e0b", textColor: "#92400e" },
 };
@@ -165,7 +167,7 @@ function BlockTable({
               {n.preview}
             </span>
             {n.linkedToolResult?.nextCallId != null && (
-              <span style={{ fontSize: 9, color: "#6366f1", flexShrink: 0 }}>
+              <span style={{ fontSize: 9, color: BRAND.indigo500, flexShrink: 0 }}>
                 → #{n.linkedToolResult.nextCallId}
               </span>
             )}
@@ -354,9 +356,7 @@ export function ResponseTreePanel({ sessionId, agentFileId, callId, onLinkCall }
           blocks: <strong style={{ color: "#374151" }}>{blocks.length}</strong>
         </span>
         {data.truncated && (
-          <span style={{ fontSize: 10, color: "#b45309", background: "#fef3c7", padding: "1px 6px", borderRadius: 3 }}>
-            SSE 流中断
-          </span>
+          <Badge variant="amber" className="text-[10px] px-1.5 py-0 rounded-sm">SSE 流中断</Badge>
         )}
         <span style={{ marginLeft: "auto", fontSize: 9, color: "#d1d5db" }}>
           source: {dataSourceLabel(data.dataSource)}
