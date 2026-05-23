@@ -5,6 +5,14 @@ import type { SessionV2, SessionsV2Response } from "./types";
 import { getSessionTitle, getSessionSubtitle } from "./session-display";
 import { AggregateLedger } from "./shared/AggregateLedger";
 import { Button } from "./shared/Button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
   claude: { bg: "#eef2ff", color: "#6366f1" },
@@ -202,25 +210,22 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
       {/* Page size selector */}
-      <div style={{ display: "flex", alignItems: "center", gap: 4, marginRight: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginRight: 4 }}>
         <span style={{ fontSize: 11, color: "#9ca3af" }}>{t("dashboard.perPage")}</span>
-        <select
-          value={pageSize}
-          onChange={(e) => onPageSizeChange(Number(e.target.value))}
+        <Select
+          value={String(pageSize)}
+          onValueChange={(v) => onPageSizeChange(Number(v))}
           disabled={loading}
-          style={{
-            padding: "3px 6px", borderRadius: 6, border: "1px solid #e5e7eb",
-            background: "#fff", fontSize: 12, color: "#374151", cursor: "pointer",
-            outline: "none", appearance: "none", paddingRight: 20,
-            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
-            backgroundRepeat: "no-repeat", backgroundPosition: "right 4px center",
-          }}
         >
-          {PAGE_SIZE_OPTIONS.map((s) => (
-            <option key={s} value={s}>{s}</option>
-          ))}
-        </select>
-        <span style={{ fontSize: 11, color: "#9ca3af" }}></span>
+          <SelectTrigger size="sm" className="h-7 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PAGE_SIZE_OPTIONS.map((s) => (
+              <SelectItem key={s} value={String(s)} className="text-xs">{s}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Prev button */}
@@ -308,23 +313,20 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {/* Search box */}
-          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-            <svg width="13" height="13" fill="none" stroke="#9ca3af" viewBox="0 0 24 24" style={{ position: "absolute", left: 8, pointerEvents: "none" }}>
+          <div className="relative flex items-center">
+            <svg
+              width="13" height="13" fill="none" stroke="#9ca3af" viewBox="0 0 24 24"
+              className="absolute left-2.5 pointer-events-none"
+            >
               <circle cx="11" cy="11" r="8" strokeWidth={2} />
               <path strokeLinecap="round" strokeWidth={2} d="M21 21l-4.35-4.35" />
             </svg>
-            <input
+            <Input
               type="text"
               placeholder={t("dashboard.searchPlaceholder")}
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
-              style={{
-                paddingLeft: 28, paddingRight: 28, paddingTop: 5, paddingBottom: 5,
-                fontSize: 12, borderRadius: 6, border: "1px solid #e5e7eb",
-                outline: "none", width: 200, color: "#374151",
-                background: search ? "#eef2ff" : "#fff",
-                borderColor: search ? "#6366f1" : "#e5e7eb",
-              }}
+              className={`h-7 w-[200px] pl-8 pr-8 text-xs ${search ? "border-indigo-500 bg-indigo-50" : ""}`}
             />
             {search && (
               <Button

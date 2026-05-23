@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
 import { FisheyeStrip } from "./fisheye-strip";
 import { CodeBlock } from "./shared/CodeBlock";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type {
   DiffKind, DiffLeaf, DiffSection, DiffSectionId, DiffTreeResult,
   DiffUnavailableReason,
@@ -181,22 +182,30 @@ export function DiffPanel({
                 {t("diff.segmentsChanged", { count: changedSegments })}
               </span>
               <span style={{ color: "#9ca3af" }}>·</span>
-              <span
-                title={t("diff.charsTooltip")}
-                style={{
-                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                  color: sum.netCharDelta > 0
-                    ? DIFF_TEXT_COLOR.added
-                    : sum.netCharDelta < 0
-                      ? DIFF_TEXT_COLOR.removed
-                      : "#6b7280",
-                  fontWeight: 700,
-                }}
-              >{fmtDelta(sum.netCharDelta)}</span>
-              <span
-                title={t("diff.charsTooltip")}
-                style={{ color: "#9ca3af", cursor: "help", borderBottom: "1px dotted #d1d5db" }}
-              >{t("diff.charsLabel")}</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    style={{
+                      fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                      color: sum.netCharDelta > 0
+                        ? DIFF_TEXT_COLOR.added
+                        : sum.netCharDelta < 0
+                          ? DIFF_TEXT_COLOR.removed
+                          : "#6b7280",
+                      fontWeight: 700,
+                    }}
+                  >{fmtDelta(sum.netCharDelta)}</span>
+                </TooltipTrigger>
+                <TooltipContent>{t("diff.charsTooltip")}</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    style={{ color: "#9ca3af", cursor: "help", borderBottom: "1px dotted #d1d5db" }}
+                  >{t("diff.charsLabel")}</span>
+                </TooltipTrigger>
+                <TooltipContent>{t("diff.charsTooltip")}</TooltipContent>
+              </Tooltip>
             </>
           ) : (
             <>

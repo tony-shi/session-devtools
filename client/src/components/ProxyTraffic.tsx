@@ -6,6 +6,14 @@
 // 不再通过 `lang: Lang` prop 链式传递。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 
 // ── 请求分类 ──────────────────────────────────────────────────────────────────
 
@@ -231,57 +239,55 @@ function RequestDetail({ req, onClose }: { req: ProxyRequest; onClose: () => voi
   const catMeta = CATEGORY_META[cat];
 
   return (
-    <div style={{
-      position: "fixed", top: 0, right: 0, bottom: 0, width: "min(640px, 100vw)",
-      background: "#fff", boxShadow: "-4px 0 32px rgba(0,0,0,0.14)",
-      zIndex: 1000, display: "flex", flexDirection: "column",
-    }}>
-      {/* 固定头部 */}
-      <div style={{ padding: "16px 20px", borderBottom: "1px solid #f3f4f6", flexShrink: 0 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontWeight: 700, fontSize: 15 }}>{req.method}</span>
-              <span style={{ color: statusColor(req.status), fontWeight: 600, fontSize: 15 }}>{req.status ?? "—"}</span>
-              <span style={{
-                fontSize: 11, padding: "2px 7px", borderRadius: 8,
-                background: catMeta.bg, color: catMeta.color, fontWeight: 600,
-              }}>
-                {categoryLabel(t, cat)}
+    <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <SheetContent
+        side="right"
+        className="w-[min(640px,100vw)] sm:max-w-none p-0 flex flex-col gap-0"
+      >
+        <SheetHeader className="px-5 py-4 border-b border-border space-y-1.5">
+          <SheetTitle className="flex items-center gap-2 text-[15px] font-bold">
+            <span>{req.method}</span>
+            <span style={{ color: statusColor(req.status) }}>{req.status ?? "—"}</span>
+            <span
+              className="text-[11px] font-semibold rounded-lg px-1.5 py-0.5"
+              style={{ background: catMeta.bg, color: catMeta.color }}
+            >
+              {categoryLabel(t, cat)}
+            </span>
+            {(req.is_stream === 1 || req.is_stream === true) && (
+              <span className="text-[10px] rounded-lg px-1.5 py-0.5 bg-muted text-muted-foreground font-normal">
+                SSE
               </span>
-              {(req.is_stream === 1 || req.is_stream === true) && (
-                <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 8, background: "#f3f4f6", color: "#6b7280" }}>SSE</span>
-              )}
-            </div>
-            <div style={{ fontSize: 12, color: "#6b7280", wordBreak: "break-all" }}>{req.url}</div>
-            <div style={{ fontSize: 11, color: "#9ca3af" }}>
-              {requestStartedAt(req)} · {req.duration_ms != null ? `${req.duration_ms}ms` : "—"} · {formatBytes(req.bytes_out || req.bytes_in)}
-              {req.sse_event_count > 0 && ` · ${req.sse_event_count} ${t("proxyTraffic.sseEventsSuffix")}`}
-            </div>
+            )}
+          </SheetTitle>
+          <SheetDescription className="text-xs text-muted-foreground break-all">
+            {req.url}
+          </SheetDescription>
+          <div className="text-[11px] text-muted-foreground/80">
+            {requestStartedAt(req)} · {req.duration_ms != null ? `${req.duration_ms}ms` : "—"} · {formatBytes(req.bytes_out || req.bytes_in)}
+            {req.sse_event_count > 0 && ` · ${req.sse_event_count} ${t("proxyTraffic.sseEventsSuffix")}`}
           </div>
-          <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 22, color: "#9ca3af", flexShrink: 0, marginLeft: 12 }}>✕</button>
+        </SheetHeader>
+
+        <div className="flex-1 overflow-auto px-5 py-4 flex flex-col gap-4">
+          <DetailSection title={t("proxyTraffic.reqHeaders")}>
+            <HeaderTable headers={reqHeaders} />
+          </DetailSection>
+
+          <DetailSection title={t("proxyTraffic.reqBody")}>
+            <LazyBody requestId={req.id} kind="req" />
+          </DetailSection>
+
+          <DetailSection title={t("proxyTraffic.resHeaders")}>
+            <HeaderTable headers={resHeaders} />
+          </DetailSection>
+
+          <DetailSection title={t("proxyTraffic.resBody")}>
+            <LazyBody requestId={req.id} kind="res" />
+          </DetailSection>
         </div>
-      </div>
-
-      {/* 滚动内容区 */}
-      <div style={{ flex: 1, overflow: "auto", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
-        <DetailSection title={t("proxyTraffic.reqHeaders")}>
-          <HeaderTable headers={reqHeaders} />
-        </DetailSection>
-
-        <DetailSection title={t("proxyTraffic.reqBody")}>
-          <LazyBody requestId={req.id} kind="req" />
-        </DetailSection>
-
-        <DetailSection title={t("proxyTraffic.resHeaders")}>
-          <HeaderTable headers={resHeaders} />
-        </DetailSection>
-
-        <DetailSection title={t("proxyTraffic.resBody")}>
-          <LazyBody requestId={req.id} kind="res" />
-        </DetailSection>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -559,31 +565,29 @@ function CategoryTabs({ active, counts, onChange }: {
   ];
 
   return (
-    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-      {tabs.map(({ id, label, color }) => {
-        const cnt = counts[id] ?? 0;
-        const isActive = active === id;
-        return (
-          <button key={id} onClick={() => onChange(id)} style={{
-            padding: "4px 10px", borderRadius: 20, border: "1.5px solid",
-            borderColor: isActive ? (color ?? "#6366f1") : "#e5e7eb",
-            background: isActive ? (color ?? "#6366f1") : "#fff",
-            color: isActive ? "#fff" : (color ?? "#555"),
-            cursor: "pointer", fontSize: 12, fontWeight: isActive ? 600 : 400,
-            display: "flex", alignItems: "center", gap: 5,
-          }}>
-            {label}
-            {cnt > 0 && (
-              <span style={{
-                background: isActive ? "rgba(255,255,255,0.3)" : "#f3f4f6",
-                color: isActive ? "#fff" : "#666",
-                borderRadius: 8, padding: "0 5px", fontSize: 10, fontWeight: 600,
-              }}>{cnt}</span>
-            )}
-          </button>
-        );
-      })}
-    </div>
+    <Tabs value={active} onValueChange={(v) => onChange(v as Category | "all")}>
+      <TabsList>
+        {tabs.map(({ id, label, color }) => {
+          const cnt = counts[id] ?? 0;
+          return (
+            <TabsTrigger key={id} value={id} className="gap-1.5">
+              {color && (
+                <span
+                  className="inline-block size-1.5 rounded-full"
+                  style={{ background: color }}
+                />
+              )}
+              <span>{label}</span>
+              {cnt > 0 && (
+                <span className="rounded-md bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground data-[active=true]:bg-background/30 data-[active=true]:text-foreground">
+                  {cnt}
+                </span>
+              )}
+            </TabsTrigger>
+          );
+        })}
+      </TabsList>
+    </Tabs>
   );
 }
 

@@ -4,6 +4,12 @@ dist/
 server/public/
 server/src/proxy/dist/
 
+# Lockfiles from other package managers (this repo is npm-only)
+bun.lock
+bun.lockb
+pnpm-lock.yaml
+yarn.lock
+
 # Local databases (各用户自己 ~/.api-dashboard/，不入 git)
 *.db
 *.sqlite

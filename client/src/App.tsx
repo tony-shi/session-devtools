@@ -5,6 +5,7 @@ import { Header } from "./components/Header";
 import { ProxyV2Setup } from "./components/ProxyV2Setup";
 import { SummaryCardsV2 } from "./v2/SummaryCardsV2";
 import { SessionListV2 } from "./v2/SessionListV2";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { SessionsV2Response, SummaryV2 } from "./v2/types";
 
 type Tab = "sessions-v2" | "proxy-v2" | "trends";
@@ -108,6 +109,7 @@ export default function App() {
   ];
 
   return (
+    <TooltipProvider delayDuration={150}>
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: "#f0f2f5" }}>
       <Header />
 
@@ -212,5 +214,6 @@ export default function App() {
         </main>
       </div>
     </div>
+    </TooltipProvider>
   );
 }
