@@ -51,7 +51,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Check, Copy } from "lucide-react";
 import { BRAND } from "./shared/brand";
 import {
-  fmtK, fmtPct, fmtDateShort, fmtDuration, fmtBytes, charsToTokens, tryParseJson,
+  fmtK, fmtPct, fmtDateShort, fmtDuration, fmtGap, fmtBytes, charsToTokens, tryParseJson,
   shortModelName, modelColor, shortToolUseId, shortMessageId, formatJsonlLines,
   callDescription, toolUseIdsFromIntervalEvent,
 } from "./lib/format";
@@ -1208,8 +1208,11 @@ function AgentLoopTimeline({
                 color={call.isCompaction ? "#ef4444" : call.isSignificant ? BRAND.blue500 : "#6b7280"}
                 label={`Call #${call.id}`}
                 secondary={`${fmtK(call.contextSize)} ctx`}
-                badge={call.significantDelta > 0 ? `+${fmtK(call.significantDelta)}` : call.significantDelta < 0 ? fmtK(call.significantDelta) : undefined}
-                badgeColor={call.significantDelta > 2000 ? "#d97706" : call.significantDelta < 0 ? "#16a34a" : "#9ca3af"}
+                // On a cache miss the negative significantDelta is a cache-read
+                // re-accounting artifact, NOT content shrinkage — surface the
+                // miss instead of a misleading green "-Nk".
+                badge={call.cacheMiss ? "CACHE MISS" : call.significantDelta > 0 ? `+${fmtK(call.significantDelta)}` : call.significantDelta < 0 ? fmtK(call.significantDelta) : undefined}
+                badgeColor={call.cacheMiss ? "#d97706" : call.significantDelta > 2000 ? "#d97706" : call.significantDelta < 0 ? "#16a34a" : "#9ca3af"}
                 onClick={() => onSelectCall(call)}
                 interactive
               >
@@ -1218,9 +1221,15 @@ function AgentLoopTimeline({
                   <div style={{ flex: 1, height: 3, background: "#f3f4f6", borderRadius: 2, overflow: "hidden", maxWidth: 120 }}>
                     <div style={{ width: `${ctxPct}%`, height: "100%", background: call.isCompaction ? "#ef4444" : BRAND.indigo500, opacity: 0.6 }} />
                   </div>
-                  <span style={{ fontSize: 10, color: "#9ca3af" }}>
-                    {Math.round(call.cacheRead / (call.contextSize || 1) * 100)}% cached
-                  </span>
+                  {call.cacheMiss ? (
+                    <span style={{ fontSize: 10, color: "#d97706", fontWeight: 600 }}>
+                      ⚠ cache miss{call.gapSincePrevMs != null ? ` · ${fmtGap(call.gapSincePrevMs)} gap` : ""}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 10, color: "#9ca3af" }}>
+                      {Math.round(call.cacheRead / (call.contextSize || 1) * 100)}% cached
+                    </span>
+                  )}
                   {call.stopReason && call.stopReason !== "tool_use" && (
                     <span style={{ fontSize: 10, color: "#16a34a", fontWeight: 600 }}>
                       {call.stopReason === "end_turn" ? "✓ end_turn" : call.stopReason}
@@ -4711,15 +4720,19 @@ function LlmCallDetailPanel({
                   color: nearLimit ? "#ea580c" : undefined,
                   tooltip: "Total input context (fresh + cache_read + cache_write)" },
                 ...(isFirstCall ? [] : [{
-                  label: "Δ vs prev",
+                  label: call.cacheMiss ? "Δ (cache miss)" : "Δ vs prev",
                   value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`,
-                  color: call.significantDelta > 10000 ? "#dc2626" : call.significantDelta > 2000 ? "#d97706" : call.significantDelta < -2000 ? "#16a34a" : undefined,
-                  // The Δ reflects *total prompt size* change, including
-                  // content loaded from cache. So a first-after-compaction
-                  // call can show a huge Δ (e.g. +130k) even when "Input"
-                  // is tiny (e.g. 6) — the bulk came from cache_read, not
-                  // fresh tokens. This tooltip surfaces that distinction.
-                  tooltip: "Prompt size delta vs previous call. Includes cache_read + cache_write, so it can be much larger than Input when most content is served from cache (e.g. first call after a compaction).",
+                  // On a cache miss the negative Δ is a cache_read re-accounting
+                  // artifact (accumulated cache_read snaps back to the clean
+                  // re-created count), NOT content shrinkage — show it neutral/
+                  // amber, never the green "content shrank" tint.
+                  color: call.cacheMiss ? "#d97706"
+                    : call.significantDelta > 10000 ? "#dc2626"
+                    : call.significantDelta > 2000 ? "#d97706"
+                    : call.significantDelta < -2000 ? "#16a34a" : undefined,
+                  tooltip: call.cacheMiss
+                    ? `缓存失效${call.gapSincePrevMs != null ? `（距上次调用 ${fmtGap(call.gapSincePrevMs)}，超过 ~1h 服务端缓存 TTL）` : ""}：整段前缀按 cache_creation 重算。累积命中的 cache_read 会比干净重建的计数略高，所以这个负 Δ 是缓存记账修正，不代表上下文内容缩水（内容增删请看 Diff）。`
+                    : "Prompt size delta vs previous call. Includes cache_read + cache_write, so it can be much larger than Input when most content is served from cache (e.g. first call after a compaction).",
                 }]),
                 { label: "Tool Calls", value: String(call.toolCalls?.length ?? 0) },
               ]}
@@ -4730,6 +4743,10 @@ function LlmCallDetailPanel({
                 cacheWrite: call.cacheWrite,
                 output: call.outputTokens,
                 cacheRatio,
+                cacheMiss: call.cacheMiss,
+                gapMs: call.gapSincePrevMs,
+                ephemeral1h: call.cacheEphemeral1h,
+                ephemeral5m: call.cacheEphemeral5m,
               }}
               rightSlot={callBadges.length > 0
                 ? <StatusBadgeStrip badges={callBadges} renderIcon={renderStatusIcon} />

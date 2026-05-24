@@ -53,6 +53,16 @@ export function fmtDuration(ms: number): string {
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
+// Coarse gap formatter for inter-call waits: hours/days for large gaps so a
+// 14h cache-expiry gap reads "14h", not "840m". Use fmtDuration for sub-minute.
+export function fmtGap(ms: number): string {
+  if (ms <= 0) return "";
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  if (ms < 86_400_000) return `${(ms / 3_600_000).toFixed(1)}h`;
+  return `${(ms / 86_400_000).toFixed(1)}d`;
+}
+
 // ─── JSON ─────────────────────────────────────────────────────────────────────
 
 // Best-effort JSON parse for hand-off to the JSON tree viewer. Returns

@@ -48,6 +48,12 @@ interface JAssistantEvent {
       output_tokens?: number;
       cache_creation_input_tokens?: number;
       cache_read_input_tokens?: number;
+      // Split of cache_creation_input_tokens by server cache TTL. Present on
+      // recent Claude Code versions; absent on older logs.
+      cache_creation?: {
+        ephemeral_1h_input_tokens?: number;
+        ephemeral_5m_input_tokens?: number;
+      };
     };
   };
   timestamp?: string;
@@ -799,6 +805,9 @@ export async function parseSessionDrilldown(
       const cacheWrite = usage.cache_creation_input_tokens ?? 0;
       // input_tokens = non-cached tokens the model processed fresh this call.
       const inputTokens = usage.input_tokens ?? 0;
+      // cache_creation TTL split (undefined on older logs without the breakdown).
+      const cacheEphemeral1h = usage.cache_creation?.ephemeral_1h_input_tokens;
+      const cacheEphemeral5m = usage.cache_creation?.ephemeral_5m_input_tokens;
       const stopReason = aev.message?.stop_reason ?? null;
       const rawModel = aev.message?.model ?? "";
       const model = rawModel === "<synthetic>" ? "" : normaliseModelName(rawModel);
@@ -1042,6 +1051,18 @@ export async function parseSessionDrilldown(
       // Independent from significantDelta (prompt-size delta).
       const callFreshIn = inputTokens;
 
+      // Cache MISS: a prior call existed (cached prefix SHOULD have been
+      // readable) but this call read 0 from cache and re-created a prefix.
+      // First call of a session (no prev) is initial creation, not a miss.
+      const cacheMiss = prevCall != null && cacheRead === 0 && cacheWrite > 0;
+      // Wall-clock gap since the previous call — explains a miss when it
+      // exceeds the server cache TTL (~1h).
+      const prevTs = prevCall ? tsOf(prevCall) : null;
+      const curTs = tsOf(aev);
+      const gapSincePrevMs = (prevTs && curTs)
+        ? new Date(curTs).getTime() - new Date(prevTs).getTime()
+        : null;
+
       return {
         id: globalCallIndex,
         indexInTurn: callIdx + 1,
@@ -1053,6 +1074,10 @@ export async function parseSessionDrilldown(
         outputTokens: freshOut,
         cacheRead,
         cacheWrite,
+        cacheEphemeral1h,
+        cacheEphemeral5m,
+        cacheMiss,
+        gapSincePrevMs,
         timestamp: tsOf(aev),
         model,
         stopReason,

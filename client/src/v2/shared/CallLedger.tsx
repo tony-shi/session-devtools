@@ -24,6 +24,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { TOKEN_METRICS } from "../metricRegistry";
 import { LedgerHoverWrapper, LedgerInfoIcon } from "./LedgerExplainer";
+import { fmtGap } from "../lib/format";
 
 function fmtK(n: number): string {
   const abs = Math.abs(n);
@@ -39,7 +40,19 @@ function fmtPct(n: number): string {
 // ratioTooltip 已被 LedgerExplainer (popover) 取代；旧的 native title=
 // 字符串已经下线，不再需要这个函数。删除避免遗留死代码。
 
-export interface CallLedgerFullProps {
+// Optional cache-detail extras. All optional → existing call sites that don't
+// pass them render exactly as before (other pages unaffected).
+export interface CacheDetailProps {
+  // Cache MISS this call (cacheRead===0 with a prior cached prefix). Shows a chip.
+  cacheMiss?: boolean;
+  // Wall-clock gap since previous call (ms) — annotates the miss reason.
+  gapMs?: number | null;
+  // cache_creation split by TTL (ephemeral_1h / ephemeral_5m). Sums to cacheWrite.
+  ephemeral1h?: number;
+  ephemeral5m?: number;
+}
+
+export interface CallLedgerFullProps extends CacheDetailProps {
   size: "full";
   freshIn: number;
   cacheRead: number;
@@ -49,7 +62,7 @@ export interface CallLedgerFullProps {
   noTopPadding?: boolean;
 }
 
-export interface CallLedgerCompactProps {
+export interface CallLedgerCompactProps extends CacheDetailProps {
   size: "compact";
   freshIn: number;
   cacheRead: number;
@@ -64,17 +77,20 @@ export type CallLedgerProps = CallLedgerFullProps | CallLedgerCompactProps;
 export function CallLedger(p: CallLedgerProps) {
   const inputTotal = p.freshIn + p.cacheRead + p.cacheWrite;
   const ratio = p.cacheRatio ?? (inputTotal > 0 ? (p.cacheRead / inputTotal) * 100 : null);
+  const cache: CacheDetailProps = {
+    cacheMiss: p.cacheMiss, gapMs: p.gapMs, ephemeral1h: p.ephemeral1h, ephemeral5m: p.ephemeral5m,
+  };
   if (p.size === "full") {
     return <FullView freshIn={p.freshIn} cacheRead={p.cacheRead} cacheWrite={p.cacheWrite}
-      output={p.output} ratio={ratio} inputTotal={inputTotal} noTopPadding={p.noTopPadding} />;
+      output={p.output} ratio={ratio} inputTotal={inputTotal} noTopPadding={p.noTopPadding} {...cache} />;
   }
   return <CompactView freshIn={p.freshIn} cacheRead={p.cacheRead} cacheWrite={p.cacheWrite}
-    output={p.output} ratio={ratio} inputTotal={inputTotal} maxTotal={p.maxTotal} />;
+    output={p.output} ratio={ratio} inputTotal={inputTotal} maxTotal={p.maxTotal} {...cache} />;
 }
 
 // ─── Full ─────────────────────────────────────────────────────────────────────
 
-interface ViewBase {
+interface ViewBase extends CacheDetailProps {
   freshIn: number;
   cacheRead: number;
   cacheWrite: number;
@@ -83,10 +99,12 @@ interface ViewBase {
   inputTotal: number;
 }
 
-function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding }:
+function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding,
+                    cacheMiss, gapMs, ephemeral1h, ephemeral5m }:
                   ViewBase & { noTopPadding?: boolean }) {
   const M = TOKEN_METRICS;
   const { t } = useTranslation();
+  const hasEphemeral = ephemeral1h != null || ephemeral5m != null;
 
   return (
     <LedgerHoverWrapper
@@ -108,6 +126,16 @@ function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding 
               percentage, no Σ in any view. */}
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 6 }}>
             <span style={sectionHeaderStyle}>INPUT</span>
+            {cacheMiss && (
+              <span style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                fontSize: 9, fontWeight: 700, color: "#b45309",
+                background: "#fffbeb", border: "1px solid #fcd34d",
+                borderRadius: 4, padding: "1px 5px",
+              }}>
+                ⚠ CACHE MISS{gapMs != null ? ` · ${fmtGap(gapMs)} gap` : ""}
+              </span>
+            )}
             {ratio != null && (
               <>
                 <div style={{ width: 1, height: 12, background: "#e5e7eb" }} />
@@ -144,6 +172,11 @@ function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding 
                 <Stat label={M.cache_write.label} value={cacheWrite} color={M.cache_write.color} />
                 <Stat label={M.fresh_input.label} value={freshIn}    color={M.fresh_input.color} />
               </div>
+              {hasEphemeral && (
+                <div style={{ fontSize: 9, color: "#9ca3af", marginTop: 3, whiteSpace: "nowrap" }}>
+                  cache TTL · 1h {fmtK(ephemeral1h ?? 0)} / 5m {fmtK(ephemeral5m ?? 0)}
+                </div>
+              )}
             </Group>
           </div>
         </div>

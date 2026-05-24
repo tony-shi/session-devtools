@@ -172,6 +172,20 @@ export interface LlmCall {
   outputTokens: number;
   cacheRead: number;
   cacheWrite: number;
+  // cache_creation split by server-side cache TTL (from JSONL usage.cache_creation).
+  // ephemeral_1h = tokens written into the 1h-TTL cache; ephemeral_5m = 5m-TTL.
+  // Sums to cacheWrite. Undefined when the JSONL usage lacks the breakdown.
+  cacheEphemeral1h?: number;
+  cacheEphemeral5m?: number;
+  // Cache MISS = a prior call existed (so a cached prefix SHOULD have been
+  // available) but this call read nothing from cache and had to re-create a
+  // substantial prefix (cacheRead === 0 && cacheWrite > 0). The first call of
+  // a session (no prev) is initial cache creation, NOT a miss → false.
+  // Optional so synthesized/mock calls need not set it (treated as no-miss).
+  cacheMiss?: boolean;
+  // Wall-clock gap since the previous call (ms). Explains a cache miss when it
+  // exceeds the server cache TTL (~1h). null/undefined for the first call.
+  gapSincePrevMs?: number | null;
   timestamp: string;
   model: string;
   stopReason: string | null;
