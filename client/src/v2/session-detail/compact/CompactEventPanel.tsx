@@ -142,6 +142,7 @@ export function synthesizeCompactTurn(ev: CompactEvent): UserTurn {
     userInputLineIdx: ev.commandLineIdx,
     finalOutput: ev.summaryText,
     midTurnInjections: [],
+    leadingEvents: [],
     startedAt: ev.timestamp,
     endedAt: ev.timestamp,
     durationMs: ev.durationMs,

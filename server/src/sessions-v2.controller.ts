@@ -4,6 +4,7 @@ import { runSyncV2 } from "./sync-v2.ts";
 import { parseJsonField } from "./parser-utils.ts";
 import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
 import { loadCallDetail, readProxyRecord, findProxyRowForCall, computeCallProxyMatchModes } from "./call-detail.ts";
+import { resolveAiTitleProxies } from "./ghost-attribution.ts";
 import { loadAttributionTree, readSessionEventsForLinker } from "./attribution-service.ts";
 import { computeSessionAttributionGraph, type JsonlEventAnnotation, type SessionAttributionGraph } from "./session-attribution-graph.ts";
 import { enrichTreeWithGraph } from "./attribution-tree-enrich.ts";
@@ -199,6 +200,30 @@ export class SessionsV2Controller {
       for (const call of turn.calls) {
         const m = modes.get(call.id);
         if (m) call.proxyMatchMode = m;
+      }
+    }
+
+    // 协同归因（残差指纹）：transcript call 已被精确认领（exclude），对剩下的
+    // 残差 proxy 做指纹识别，把 generate_session_title 的标题回填到 ai-title 行，
+    // 让前端能从 ai-title 跳到生成它的后台 Haiku 请求。值匹配 aiTitle === 响应 .title。
+    const excludeRequestIds = new Set<string>(
+      flatCalls.map((c) => c.apiRequestId).filter((r): r is string => !!r),
+    );
+    const titleProxies = await resolveAiTitleProxies(db, id, excludeRequestIds);
+    if (titleProxies.length > 0) {
+      const byTitle = new Map<string, number>();
+      for (const tp of titleProxies) if (!byTitle.has(tp.title)) byTitle.set(tp.title, tp.proxyRequestId);
+      const backfill = (ev: { kind: string; rawJson: string; generatedByProxyRequestId?: number }) => {
+        if (ev.kind !== "ai-title") return;
+        let aiTitle: string | undefined;
+        try { aiTitle = (JSON.parse(ev.rawJson) as { aiTitle?: string }).aiTitle; } catch { /* skip */ }
+        if (!aiTitle) return;
+        const pid = byTitle.get(aiTitle);
+        if (pid != null) ev.generatedByProxyRequestId = pid;
+      };
+      for (const turn of drilldown.turns) {
+        turn.leadingEvents.forEach(backfill);
+        for (const call of turn.calls) call.intervalEvents.forEach(backfill);
       }
     }
 

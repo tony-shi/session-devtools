@@ -21,8 +21,8 @@ export type RawMockCall = Omit<LlmCall,
   significantDelta?: number; freshIn?: number; toolNames?: string[];
 };
 
-export type RawMockTurn = Omit<UserTurn, "startedAt" | "endedAt" | "hasCompaction" | "hasUnknownSpike" | "finalOutput" | "durationMs" | "midTurnInjections" | "errorCount" | "userInputLineIdx" | "calls"> & {
-  hasCompaction?: boolean; hasUnknownSpike?: boolean; errorCount?: number; midTurnInjections?: UserTurn["midTurnInjections"]; userInputLineIdx?: number | null; calls: RawMockCall[];
+export type RawMockTurn = Omit<UserTurn, "startedAt" | "endedAt" | "hasCompaction" | "hasUnknownSpike" | "finalOutput" | "durationMs" | "midTurnInjections" | "leadingEvents" | "errorCount" | "userInputLineIdx" | "calls"> & {
+  hasCompaction?: boolean; hasUnknownSpike?: boolean; errorCount?: number; midTurnInjections?: UserTurn["midTurnInjections"]; leadingEvents?: UserTurn["leadingEvents"]; userInputLineIdx?: number | null; calls: RawMockCall[];
 };
 
 export type MockLlmCall = LlmCall;
@@ -40,6 +40,7 @@ export function normalizeTurns(raw: RawMockTurn[]): UserTurn[] {
     errorCount: t.errorCount ?? 0,
     ...t,
     midTurnInjections: t.midTurnInjections ?? [],
+    leadingEvents: t.leadingEvents ?? [],
     calls: t.calls.map((c, ci) => ({
       ...c,
       indexInTurn: ci + 1,

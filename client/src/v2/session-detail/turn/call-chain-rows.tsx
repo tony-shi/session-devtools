@@ -367,6 +367,14 @@ export function IntervalEventRow({
     ? t("terms.openAttributionAtLine", { callId: consumerJumpTarget })
     : undefined;
 
+  // ── ai-title → 生成它的后台 proxy 请求 ───────────────────────────────────
+  // 指纹归因（ghost-attribution）把 ai-title 连到了生成它的 Haiku 请求。
+  // 注意：ai-title 是纯元数据，反向归因常把它标为 "skipped"，而 EventUnitCard 在
+  // skipped 时会抹掉 onJump（line 193）——所以这个连接 chip **不走** EventUnitCard
+  // 的 jump 机制，单独渲染在卡片下方，保证恒显。本期只建立连接（展示 proxy#<id>），
+  // 点击暂不接跳转/面板（留待后续版本）。
+  const titleProxyId = ev.kind === "ai-title" ? ev.generatedByProxyRequestId : undefined;
+
   return (
     <div
       data-jsonl-line={ev.lineIdx}
@@ -421,6 +429,33 @@ export function IntervalEventRow({
         jumpLabel={jumpLabel}
         jumpTooltip={jumpTooltip}
       />
+      {/* ai-title → 生成它的后台 proxy 请求：恒显连接 chip（不受 EventUnitCard
+          skipped 门控影响）。本期点击 no-op，真正的跳转/面板留待后续。 */}
+      {titleProxyId != null && (
+        <button
+          type="button"
+          title={t("terms.aiTitleGeneratedBy", { defaultValue: `已连接生成此标题的后台 Haiku 请求 proxy#${titleProxyId}（跳转待实现）` })}
+          onClick={() => { /* TODO: 接 proxy 详情跳转 */ }}
+          style={{
+            marginTop: 2,
+            marginLeft: 18,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            border: "none",
+            background: BRAND.indigo600,
+            color: "#fff",
+            borderRadius: 4,
+            fontSize: 10,
+            fontWeight: 700,
+            padding: "2px 8px",
+            cursor: "pointer",
+            letterSpacing: "0.02em",
+          }}
+        >
+          → proxy#{titleProxyId}
+        </button>
+      )}
       {/* forked 模式 footnote: "跳转 sub-agent：TODO" 占位文字（最简实现，无跳转） */}
       {skillFormat?.footnote && (
         <div style={{

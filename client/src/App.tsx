@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate, useMatch } from "react-router-dom";
 import { SessionDetailV2 } from "./v2/SessionDetailV2";
+import { DemoStage } from "./v2/walkthrough/DemoStage";
 import { apiV2 } from "./v2/api";
 import { Header } from "./components/Header";
 import { ProxyV2Setup } from "./components/ProxyV2Setup";
@@ -282,6 +283,8 @@ function AppShell() {
               }
             />
             <Route path="/proxy" element={<ProxyV2Setup />} />
+            {/* 独立教学画板，不在主导航里 —— 普通用户走不到 */}
+            <Route path="/demo/:storyId" element={<DemoStage />} />
           </Routes>
         </main>
       </div>

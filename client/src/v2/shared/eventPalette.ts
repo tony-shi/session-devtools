@@ -41,6 +41,8 @@ export const EVENT_PALETTES: Record<IntervalEventKind, EventPalette> = {
 
   "file-history-snapshot":    SLATE_MUTED,
   "last-prompt":              SLATE_NEUTRAL,
+  // ai-title：标题由后台 Haiku 生成，用浅靛色区别于普通 slate 元数据。
+  "ai-title":                 { bg: "#eef2ff", border: "#c7d2fe", fg: "#4f46e5" },
   "unknown":                  SLATE_MUTED,
 };
 

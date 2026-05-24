@@ -36,7 +36,7 @@ export const ALL_KINDS: IntervalEventKind[] = [
   "system:stop_hook_summary", "system:away_summary",
   "attachment:skill_listing", "attachment:task_reminder", "attachment:queued_command",
   "attachment:edited_text_file", "attachment:file",
-  "file-history-snapshot", "last-prompt", "unknown",
+  "file-history-snapshot", "last-prompt", "ai-title", "unknown",
 ];
 
 export const KIND_LABEL: Record<IntervalEventKind, string> = {
@@ -58,6 +58,7 @@ export const KIND_LABEL: Record<IntervalEventKind, string> = {
   "attachment:file":          "File attach",
   "file-history-snapshot":    "File snapshot",
   "last-prompt":              "Last prompt",
+  "ai-title":                 "AI title",
   "unknown":                  "Unknown",
 };
 

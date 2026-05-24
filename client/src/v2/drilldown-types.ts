@@ -83,7 +83,7 @@ export type IntervalEventKind =
   | "system:stop_hook_summary" | "system:away_summary"
   | "attachment:skill_listing" | "attachment:task_reminder" | "attachment:queued_command"
   | "attachment:edited_text_file" | "attachment:file"
-  | "file-history-snapshot" | "last-prompt" | "unknown";
+  | "file-history-snapshot" | "last-prompt" | "ai-title" | "unknown";
 
 export interface IntervalEvent {
   kind: IntervalEventKind;
@@ -96,6 +96,9 @@ export interface IntervalEvent {
   sourceToolUseID?: string;
   /** parser 回填：sourceToolUseID 命中本 turn name="Skill" 的 tool_use 时填 skill 名。 */
   skillName?: string;
+  /** 仅 kind="ai-title"：经指纹归因解析出的、生成这条标题的后台 Haiku proxy 行 id。
+   *  前端据此提供「→ 查看生成请求」跳转。controller 富化阶段回填。 */
+  generatedByProxyRequestId?: number;
 }
 
 export interface ToolCallSlot {
@@ -212,6 +215,9 @@ export interface UserTurn {
   finalOutput: string | null;
   // User messages injected while LLM was executing tool calls within this turn
   midTurnInjections: MidTurnInjection[];
+  /** 元数据型事件，出现在 turn-opener user 与首个 LLM call 之间（如 ai-title）。
+   *  渲染在 USER INPUT 节点之后、首个 call 卡之前。与 server 端保持同步。 */
+  leadingEvents: IntervalEvent[];
   startedAt: string;
   endedAt: string;
   // Wall-clock ms from first user event to last assistant end_turn

@@ -92,6 +92,7 @@ export type IntervalEventKind =
   | "attachment:file"
   | "file-history-snapshot"
   | "last-prompt"
+  | "ai-title"
   | "unknown";           // catch-all for future JSONL types
 
 export interface IntervalEvent {
@@ -109,6 +110,10 @@ export interface IntervalEvent {
   // 当 sourceToolUseID 命中本 turn 内 name="Skill" 的 tool_use 时，反查到的
   // skill 名（即该 tool_use.input.skill）。parser 在 turn 构建阶段一次性填好。
   skillName?: string;
+  // 仅 kind="ai-title"：经指纹归因（ghost-attribution）解析出的、生成这条标题的
+  // 后台 Haiku proxy 请求行 id。前端据此提供「→ 查看生成请求」跳转。
+  // 由 controller 富化阶段回填（值匹配 aiTitle === proxy 响应 .title）。
+  generatedByProxyRequestId?: number;
 }
 
 // One tool_use block paired with its tool_result (if found in the next user event)
@@ -233,6 +238,14 @@ export interface UserTurn {
   userInputLineIdx: number | null;
   finalOutput: string | null;
   midTurnInjections: MidTurnInjection[];
+  /**
+   * 元数据型事件出现在「turn-opener user」与「首个 LLM call」之间的间隙里
+   * （如 ai-title —— 标题在首条 user 提交时就用 Haiku 生成，常早于首个主轮次落盘）。
+   * 这段间隙不被任何 call 的 intervalEvents 覆盖（post-call 扫描从 firstLineIdx+1 起），
+   * 故单独收集，由前端渲染在 USER INPUT 节点之后、首个 call 卡之前 —— 即其真实位置。
+   * 只含纯元数据（已排除 user/assistant/attachment 等请求内容）。
+   */
+  leadingEvents: IntervalEvent[];
   startedAt: string;
   endedAt: string;
   durationMs: number;
