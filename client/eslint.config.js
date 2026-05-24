@@ -3,12 +3,14 @@ import globals from 'globals'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
+import sonarjs from 'eslint-plugin-sonarjs'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
   globalIgnores(['dist']),
   {
     files: ['**/*.{ts,tsx}'],
+    plugins: { sonarjs },
     extends: [
       js.configs.recommended,
       tseslint.configs.recommended,
@@ -20,6 +22,20 @@ export default defineConfig([
       globals: globals.browser,
     },
     rules: {
+      // ── 复杂度雷达（全部 warn，只报告不挡构建；构建链路 vite/tsc 不跑 eslint）──
+      // 物理尺寸：单文件 > 500 行通常是 bad smell，值得人工 review。
+      'max-lines': ['warn', { max: 500, skipBlankLines: true, skipComments: true }],
+      'complexity': ['warn', 15],          // 圈复杂度：函数分支路径数
+      'max-depth': ['warn', 4],            // 嵌套深度
+      'max-params': ['warn', 5],           // 参数个数
+      // 认知复杂度：嵌套加权，比圈复杂度更贴近"人读起来有多累"。
+      'sonarjs/cognitive-complexity': ['warn', 15],
+      // 高价值坏味道（Sonar 风味）：
+      'sonarjs/no-identical-functions': 'warn',
+      'sonarjs/no-identical-expressions': 'warn',
+      'sonarjs/no-collapsible-if': 'warn',
+      'sonarjs/no-redundant-boolean': 'warn',
+      'sonarjs/no-all-duplicated-branches': 'warn',
       // `_`-前缀的变量 / 参数 / 解构丢弃是"刻意不用"的约定（如 `const { mode: _m, ...rest }`）。
       '@typescript-eslint/no-unused-vars': ['error', {
         argsIgnorePattern: '^_',
