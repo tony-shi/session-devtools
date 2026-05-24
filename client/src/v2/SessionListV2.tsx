@@ -48,11 +48,6 @@ function useRelativeTime() {
   };
 }
 
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + "k";
-  return String(n);
-}
 
 const TH: React.CSSProperties = {
   padding: "8px 12px", fontSize: 11, fontWeight: 600, color: "#9ca3af",
@@ -63,7 +58,6 @@ const TH: React.CSSProperties = {
 
 function SessionRowV2({ session, onClick, maxTotal, selected = false }: { session: SessionV2; onClick: () => void; maxTotal: number; selected?: boolean }) {
   const [hovered, setHovered] = useState(false);
-  const { t } = useTranslation();
   const fmtRelative = useRelativeTime();
   const badge = TOOL_BADGE[session.tool] ?? { bg: "#f3f4f6", color: "#374151" };
 

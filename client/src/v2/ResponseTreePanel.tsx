@@ -274,7 +274,7 @@ interface Props {
   onLinkCall?: (callId: number) => void;
 }
 
-export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, callId, onLinkCall }: Props) {
+export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, callId }: Props) {
   const [data, setData] = useState<ResponseTreeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);

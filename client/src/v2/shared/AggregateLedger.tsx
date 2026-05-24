@@ -83,7 +83,7 @@ interface ViewBase {
   inputTotal: number;
 }
 
-function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, inputTotal, noTopPadding }:
+function FullView({ freshIn, cacheRead, cacheWrite, output, ratio, noTopPadding }:
                   ViewBase & { noTopPadding?: boolean }) {
   const M = TOKEN_METRICS;
 

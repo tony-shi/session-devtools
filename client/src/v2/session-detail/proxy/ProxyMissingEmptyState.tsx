@@ -12,9 +12,9 @@
 
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import proxyMissingUrl from "../../assets/proxy-missing.png";
-import { BRAND } from "../shared/brand";
-import { InlineLink, ProxyStatusPill } from "../shared/SessionBadges";
+import proxyMissingUrl from "../../../assets/proxy-missing.png";
+import { BRAND } from "../../shared/brand";
+import { InlineLink, ProxyStatusPill } from "../../shared/SessionBadges";
 
 type ProxyV2Phase = "idle" | "starting" | "running" | "stopping";
 

@@ -78,14 +78,6 @@ function shortSlot(s: string): string {
  *  reqBody.tools[10]                  → tools[10]
  *  fallback: 截断尾巴
  */
-function shortJsonPath(path: string | undefined): string {
-  if (!path) return "?";
-  let s = path.replace(/^reqBody\./, "");
-  s = s.replace(/^system\[/, "sys[");
-  s = s.replace(/^messages\[/, "msg[");
-  s = s.replace(/\.content\[/g, "[");
-  return s;
-}
 
 // ─── 主入口：DiffPanel ───────────────────────────────────────────────────────
 
@@ -810,7 +802,6 @@ function SectionDrillIn({
   selectedLeafId: string | null;
   onSelectLeaf: (id: string | null) => void;
 }) {
-  const { t } = useTranslation();
   // 不再合并 bin —— 每个 leaf 都是独立 item。unchanged 用浅色置灰，方便用户找到
   // 被 pin 命中的 leaf（之前 bin 折叠会把 pin 藏起来）。
   const items: DiffStripItem[] = useMemo(

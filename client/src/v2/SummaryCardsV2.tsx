@@ -22,12 +22,6 @@ function Skeleton({ w = "100%", h = 20 }: { w?: string | number; h?: number }) {
 
 // ─── Tool colors ──────────────────────────────────────────────────────────────
 
-const TOOL_COLORS: Record<string, { bg: string; color: string }> = {
-  claude: { bg: "#eef2ff", color: "#6366f1" },
-  codex:  { bg: "#dbeafe", color: "#1d4ed8" },
-  gemini: { bg: "#d1fae5", color: "#065f46" },
-};
-
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 interface Props {

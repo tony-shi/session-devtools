@@ -24,7 +24,6 @@ import type {
 } from "./attribution-tree-types";
 import { coverageStateOf } from "./attribution-tree-types";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
-import { CodeBlock } from "./shared/CodeBlock";
 import { LinkIcon, SegmentView } from "./shared/EventUnitCard";
 import { EVENT_PALETTES } from "./shared/eventPalette";
 import type { IntervalEventKind } from "./drilldown-types";
@@ -730,7 +729,6 @@ function SkillListingDetail({
   const { t } = useTranslation();
   const [mode, setMode] = useState<"parsed" | "raw">("parsed");
   const [copied, setCopied] = useState(false);
-  const [tooltipOpen, setTooltipOpen] = useState(false);
 
   if (leaf.origin.kind !== "rule" || !leaf.origin.payload?.skillListing) return null;
   const sl = leaf.origin.payload.skillListing;
@@ -940,6 +938,14 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
    *  缺省时富展示只显示绝对字符数，不显示百分比。 */
   totalContextChars?: number;
 }) {
+  // Hooks 必须无条件调用——放在下面 skill_listing early-return 之前。
+  // 否则 skillListing 分支会跳过这些 hook，违反 rules-of-hooks。
+  const { t } = useTranslation();
+  const { flashEvent, flashCall, flashToolUse } = useAttributionGraph();
+  // copy 按钮的"已复制"短暂反馈状态。复制的内容是 rawText（完整原文）；
+  // 仅当后端未带 rawText 时 fallback 到 preview（截断版）。
+  const [copiedAt, setCopiedAt] = useState<number>(0);
+
   // 命中 skill_listing rule 时，走专属富展示，完全替换通用 leaf 详情布局。
   if (leaf.origin.kind === "rule" && leaf.origin.payload?.skillListing) {
     return <SkillListingDetail leaf={leaf} totalContextChars={totalContextChars} />;
@@ -960,11 +966,6 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
   // jumpTarget prefers `firstSeenInCall` (the graph's "first-prompt" call)
   // over `sourceCallId` (the parser's call ownership) — for tool_result
   // these differ; for tool_use they coincide.
-  const { t } = useTranslation();
-  const { flashEvent, flashCall, flashToolUse } = useAttributionGraph();
-  // copy 按钮的"已复制"短暂反馈状态。复制的内容是 rawText（完整原文）；
-  // 仅当后端未带 rawText 时 fallback 到 preview（截断版）。
-  const [copiedAt, setCopiedAt] = useState<number>(0);
   const isCopied = copiedAt > 0 && Date.now() - copiedAt < 1500;
   const fullContent = leaf.rawText ?? leaf.preview;
   const isFullRaw = !!leaf.rawText;

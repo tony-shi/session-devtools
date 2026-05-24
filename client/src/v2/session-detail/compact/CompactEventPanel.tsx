@@ -13,8 +13,8 @@
 // 抽取自 SessionDetailV2.tsx 文件末，未改逻辑。
 
 import React from "react";
-import type { CompactEvent, InterTurnBlock, IntervalEvent, LlmCall, UserTurn } from "../drilldown-types";
-import { BRAND } from "../shared/brand";
+import type { CompactEvent, InterTurnBlock, IntervalEvent, LlmCall, UserTurn } from "../../drilldown-types";
+import { BRAND } from "../../shared/brand";
 
 // ─── synthesizeCompactTurn —— 把 CompactEvent 包装成 UserTurn-shape 数据 ──────
 // 让 UserTurnDetailPanel 可以"完全复用"渲染 Compact 详情。映射要点：
