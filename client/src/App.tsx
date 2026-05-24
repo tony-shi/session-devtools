@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate, useMatch } from "react-router-dom";
+import { SessionDetailV2 } from "./v2/SessionDetailV2";
 import { apiV2 } from "./v2/api";
 import { Header } from "./components/Header";
 import { ProxyV2Setup } from "./components/ProxyV2Setup";
@@ -8,14 +10,95 @@ import { SessionListV2 } from "./v2/SessionListV2";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { BarChart3, TrendingUp, Zap, ChevronLeft, ChevronRight } from "lucide-react";
-import type { SessionsV2Response, SummaryV2 } from "./v2/types";
+import type { SessionsV2Response, SummaryV2, SessionV2 } from "./v2/types";
 import { BRAND } from "./v2/shared/brand";
 
 type Tab = "sessions-v2" | "proxy-v2" | "trends";
 
+// 深链到不在当前列表页的 session 时（刷新 / 别人发的链接），列表里 find 不到
+// 这条。用 session_id 造一个最小 stub —— SessionDetailV2 只硬依赖 session_id
+// （API 调用 + drilldown），标题等显示字段会被 drilldown.title 覆盖，
+// 没覆盖前退化成 session_id。其余统计字段 SessionDetailV2 不直接读（走 drilldown）。
+function makeSessionStub(sessionId: string): SessionV2 {
+  return {
+    session_id: sessionId,
+    tool: "claude",
+    source_file: "",
+    file_mtime: 0,
+    file_size: 0,
+    parser_version: 0,
+    schema_fingerprint: "",
+    source_present: 1,
+    first_event_at: "",
+    last_event_at: "",
+    cwd: "",
+    project: "",
+    custom_title: null,
+    ai_title: null,
+    first_user_message: "",
+    event_count: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_tokens: 0,
+    cache_read_tokens: 0,
+    models: [],
+    tool_call_count: 0,
+    llm_call_count: 0,
+    human_input_count: 0,
+    sub_agent_count: 0,
+    claude_code_api_error_count: 0,
+    parser_warnings: [],
+    proxy_count: 0,
+    proxy_request_id_count: 0,
+    away_summary: null,
+    last_assistant_text: null,
+  };
+}
+
+// 路由层 gate：从 :sessionId 解析出会话，优先用列表里已加载的对象（有完整 meta），
+// 找不到就 stub。onClose 回 /sessions。SessionDetailV2 是 Sheet（portal 到 body），
+// 渲染位置不影响视觉。
+function SessionDetailGate({ sessionId, sessions, onClose }: {
+  sessionId: string;
+  sessions: SessionV2[];
+  onClose: () => void;
+}) {
+  const session = sessions.find((s) => s.session_id === sessionId) ?? makeSessionStub(sessionId);
+  return <SessionDetailV2 session={session} onClose={onClose} />;
+}
+
+// Tab ↔ URL path 映射。tab 是历史遗留的 UI 概念，path 是新的 source of truth。
+const TAB_TO_PATH: Record<Tab, string> = {
+  "sessions-v2": "/sessions",
+  "trends": "/trends",
+  "proxy-v2": "/proxy",
+};
+function pathToTab(pathname: string): Tab {
+  if (pathname.startsWith("/proxy")) return "proxy-v2";
+  if (pathname.startsWith("/trends")) return "trends";
+  return "sessions-v2"; // 默认（含 "/" 和 "/sessions"）
+}
+
 export default function App() {
+  // 全局 history 容器。Phase 1 只接管 tab 切换；session 详情的深链在 Phase 2+
+  // 接入，但 BrowserRouter 现在就位以便后续嵌套路由直接用。
+  return (
+    <BrowserRouter>
+      <AppShell />
+    </BrowserRouter>
+  );
+}
+
+function AppShell() {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<Tab>("sessions-v2");
+  const location = useLocation();
+  const navigate = useNavigate();
+  // tab 从 URL 派生（不再是独立 state）—— URL 是唯一真相。
+  const tab = pathToTab(location.pathname);
+  // 选中的 session 从 URL 派生。useMatch 在 splat 路由 /sessions/:sessionId/* 上
+  // 抓 sessionId —— 深链如 /sessions/abc/turn/3 也能拿到 abc。
+  const sessionMatch = useMatch("/sessions/:sessionId/*");
+  const selectedSessionId = sessionMatch?.params.sessionId ?? null;
   const [navOpen, setNavOpen] = useState(true);
 
   // v2 state
@@ -50,17 +133,16 @@ export default function App() {
 
   // Cross-component nav: any descendant can ask App to switch tabs via
   //   window.dispatchEvent(new CustomEvent("dashboard:navigate", { detail: { tab: "proxy-v2" } }))
-  // We don't have a router; this glue is the minimum to let in-detail
-  // links (e.g. "去启动 →", "打开代理设置 →" in ProxyMissingEmptyState)
-  // jump out to the Proxy tab without prop-drilling setTab through 6 levels.
+  // 现在改成 navigate 到对应 path —— 保留这个事件 API 不变（调用方无感），
+  // 只是内部从 setTab 换成了 router navigate。
   useEffect(() => {
     const onNav = (e: Event) => {
       const detail = (e as CustomEvent<{ tab?: Tab }>).detail;
-      if (detail?.tab) setTab(detail.tab);
+      if (detail?.tab) navigate(TAB_TO_PATH[detail.tab]);
     };
     window.addEventListener("dashboard:navigate", onNav);
     return () => window.removeEventListener("dashboard:navigate", onNav);
-  }, []);
+  }, [navigate]);
 
   // Debounce search input: only fire API after 350ms of inactivity
   useEffect(() => {
@@ -109,7 +191,7 @@ export default function App() {
             return (
               <button
                 key={id}
-                onClick={() => setTab(id)}
+                onClick={() => navigate(TAB_TO_PATH[id])}
                 title={!navOpen ? label : undefined}
                 style={{
                   display: "flex", alignItems: "center", gap: navOpen ? 8 : 0,
@@ -155,31 +237,52 @@ export default function App() {
           minWidth: 0,
           minHeight: 0,
         }}>
-          {tab === "sessions-v2" && (
-            <>
-              <SummaryCardsV2 data={summaryV2} loading={summaryV2Loading} />
-              <SessionListV2
-                data={sessionsV2}
-                loading={sessionsV2Loading}
-                page={v2Page}
-                pageSize={v2PageSize}
-                search={v2SearchInput}
-                onPageChange={(p) => setV2Page(p)}
-                onPageSizeChange={(size) => { setV2PageSize(size); setV2Page(0); }}
-                onSearchChange={(s) => setV2SearchInput(s)}
-                onSync={handleSyncV2}
-              />
-            </>
-          )}
-          {tab === "trends" && (
-            <Card className="py-12">
-              <CardHeader className="text-center items-center">
-                <CardTitle className="text-base">Trends</CardTitle>
-                <CardDescription>DOING — day-level token and usage trend charts coming soon.</CardDescription>
-              </CardHeader>
-            </Card>
-          )}
-          {tab === "proxy-v2" && <ProxyV2Setup />}
+          <Routes>
+            {/* 根路径重定向到 sessions */}
+            <Route path="/" element={<Navigate to="/sessions" replace />} />
+            {/* splat：/sessions、/sessions/:id、/sessions/:id/turn/3 都命中同一元素，
+                SessionListV2 不会随深链 remount。selectedSessionId 由 useMatch 派生。 */}
+            <Route
+              path="/sessions/*"
+              element={
+                <>
+                  <SummaryCardsV2 data={summaryV2} loading={summaryV2Loading} />
+                  <SessionListV2
+                    data={sessionsV2}
+                    loading={sessionsV2Loading}
+                    page={v2Page}
+                    pageSize={v2PageSize}
+                    search={v2SearchInput}
+                    onPageChange={(p) => setV2Page(p)}
+                    onPageSizeChange={(size) => { setV2PageSize(size); setV2Page(0); }}
+                    onSearchChange={(s) => setV2SearchInput(s)}
+                    onSync={handleSyncV2}
+                    selectedId={selectedSessionId}
+                    onOpenSession={(id) => navigate(`/sessions/${id}`)}
+                  />
+                  {selectedSessionId && (
+                    <SessionDetailGate
+                      sessionId={selectedSessionId}
+                      sessions={sessionsV2?.sessions ?? []}
+                      onClose={() => navigate("/sessions")}
+                    />
+                  )}
+                </>
+              }
+            />
+            <Route
+              path="/trends"
+              element={
+                <Card className="py-12">
+                  <CardHeader className="text-center items-center">
+                    <CardTitle className="text-base">Trends</CardTitle>
+                    <CardDescription>DOING — day-level token and usage trend charts coming soon.</CardDescription>
+                  </CardHeader>
+                </Card>
+              }
+            />
+            <Route path="/proxy" element={<ProxyV2Setup />} />
+          </Routes>
         </main>
       </div>
     </div>

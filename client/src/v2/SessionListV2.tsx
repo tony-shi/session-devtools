@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { SessionDetailV2 } from "./SessionDetailV2";
 import type { SessionV2, SessionsV2Response } from "./types";
 import { getSessionTitle, getSessionSubtitle } from "./session-display";
 import { AggregateLedger } from "./shared/AggregateLedger";
@@ -62,7 +61,7 @@ const TH: React.CSSProperties = {
 };
 
 
-function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onClick: () => void; maxTotal: number }) {
+function SessionRowV2({ session, onClick, maxTotal, selected = false }: { session: SessionV2; onClick: () => void; maxTotal: number; selected?: boolean }) {
   const [hovered, setHovered] = useState(false);
   const { t } = useTranslation();
   const fmtRelative = useRelativeTime();
@@ -80,7 +79,7 @@ function SessionRowV2({ session, onClick, maxTotal }: { session: SessionV2; onCl
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      style={{ cursor: "pointer", background: hovered ? "#f9fafb" : "#fff", transition: "background 0.1s" }}
+      style={{ cursor: "pointer", background: selected ? "#eff6ff" : hovered ? "#f9fafb" : "#fff", transition: "background 0.1s" }}
     >
       {/* 工具徽标 + proxy 链接质量小角标 */}
       <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
@@ -193,6 +192,10 @@ interface Props {
   onPageSizeChange: (size: number) => void;
   onSearchChange: (search: string) => void;
   onSync?: () => Promise<{ synced: number; skipped: number; errors: number }>;
+  /** 当前选中的 session（来自 URL :sessionId）。null = 列表态。 */
+  selectedId?: string | null;
+  /** 点击行 → 路由层 navigate(/sessions/:id)。列表不再自己持有选中态。 */
+  onOpenSession?: (sessionId: string) => void;
 }
 
 function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange }: {
@@ -283,9 +286,8 @@ function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange
   );
 }
 
-export function SessionListV2({ data, loading, page, pageSize, search, onPageChange, onPageSizeChange, onSearchChange, onSync }: Props) {
+export function SessionListV2({ data, loading, page, pageSize, search, onPageChange, onPageSizeChange, onSearchChange, onSync, selectedId = null, onOpenSession }: Props) {
   const { t } = useTranslation();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState("");
 
@@ -304,7 +306,6 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
       setSyncing(false);
     }
   }
-  const selectedSession = selectedId ? (data?.sessions.find((s) => s.session_id === selectedId) ?? null) : null;
   const total = data?.total ?? 0;
   const visibleSessions = data?.sessions ?? [];
 
@@ -400,16 +401,16 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
                 key={s.session_id}
                 session={s}
                 maxTotal={maxTotal}
-                onClick={() => setSelectedId(s.session_id)}
+                selected={s.session_id === selectedId}
+                onClick={() => onOpenSession?.(s.session_id)}
               />
             ))}
           </tbody>
         </table>
       )}
 
-      {selectedSession && (
-        <SessionDetailV2 session={selectedSession} onClose={() => setSelectedId(null)} />
-      )}
+      {/* SessionDetailV2 现在由路由层（SessionDetailGate）渲染，不再挂在列表里。
+          它是个 Sheet（portal 到 body），渲染位置不影响视觉。 */}
 
       <style>{`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }`}</style>
     </div>

@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { useLocation, useNavigate } from "react-router-dom";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import ReactMarkdown from "react-markdown";
@@ -282,11 +283,13 @@ function SessionOverviewPanel({
   // Hotspots from real data
   const hotspots = drilldown ? deriveSessionHotspots(drilldown) : null;
 
-  const compactionTurns = hotspots?.compactionTurns ?? turns.filter(t => t.hasCompaction || t.calls.some(c => c.isCompaction));
+  // Fix B2：压缩计数来自 CompactEvent（真实来源）。turn.hasCompaction 现在恒 false
+  // （压缩不再误标在 turn 上），所以不能再数 turn —— 直接数 compactEvents。
+  const compactEvents = drilldown?.compactEvents ?? [];
 
   // ── Badge summary (session-level counts) ──────────────────────────────────
   const badgeSummary = React.useMemo(() => {
-    const compactionCount  = compactionTurns.length;
+    const compactionCount  = compactEvents.length;
     const errorCount       = turns.reduce((s, t) => s + t.errorCount, 0);
     const subAgentTurns    = turns.filter(t => t.calls.some(c => c.subAgents.length > 0)).length;
     const subAgentTotal    = turns.reduce((s, t) => s + t.calls.reduce((cs, c) => cs + c.subAgents.length, 0), 0);
@@ -298,7 +301,7 @@ function SessionOverviewPanel({
     ).length;
     const noProxyCalls     = turns.reduce((s, t) => s + t.calls.filter(c => c.proxyMatchMode === "unmatched").length, 0);
     return { compactionCount, errorCount, subAgentTurns, subAgentTotal, commandTurns, unknownTurns, noProxyCalls };
-  }, [turns, compactionTurns]);
+  }, [turns, compactEvents.length]);
 
   const [modelsExpanded, setModelsExpanded] = React.useState(false);
   const multiModel = modelBreakdown && Object.keys(modelBreakdown).length > 1;
@@ -381,7 +384,7 @@ function SessionOverviewPanel({
         <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
           {t("sessionOverview.charts.contextTimeline")} {isMock && <MockBadge />}
         </div>
-        <ContextTimelineChart turns={turns} isMock={isMock} />
+        <ContextTimelineChart turns={turns} compactEvents={compactEvents} isMock={isMock} />
       </div>
 
 
@@ -554,8 +557,8 @@ function ModelBreakdownBlock({
 type TimelineXMode = "linear" | "time";
 
 function ContextTimelineChart({
-  turns, isMock,
-}: { turns: MockUserTurn[]; isMock: boolean }) {
+  turns, compactEvents = [], isMock,
+}: { turns: MockUserTurn[]; compactEvents?: CompactEvent[]; isMock: boolean }) {
   const { t } = useTranslation();
   const [xMode, setXMode] = useState<TimelineXMode>("linear");
   const chartRef = useRef<HTMLDivElement>(null);
@@ -656,6 +659,23 @@ function ContextTimelineChart({
         .map((p, i) => p.isCompaction ? i : -1)
         .filter(i => i >= 0);
 
+      // Fix B2：压缩是 between-turns 事件，不属于任何 turn 点。用 markLine 画在
+      // "压缩后第一个 turn"（belonging.beforeTurnId）的 category 处 —— 一条竖直
+      // 边界线 + "压缩 N" 标签，表达"这里发生过压缩、context 在此被重写"，而不是
+      // 把菱形/badge 错打在某个 turn 数据点上。
+      const compactionMarkLines = compactEvents
+        .map(ev => {
+          const targetTurnId =
+            ev.belonging.kind === "between-turns" ? ev.belonging.beforeTurnId
+            : ev.belonging.kind === "post-session" ? ev.belonging.afterTurnId
+            : null;
+          if (targetTurnId == null) return null;
+          const xl = `T${targetTurnId}`;
+          if (!xLabels.includes(xl)) return null;
+          return { xAxis: xl, label: `${t("sessionOverview.compact.label")} ${ev.index + 1}` };
+        })
+        .filter((x): x is { xAxis: string; label: string } => x !== null);
+
       const maxIdx = values.indexOf(Math.max(...values));
       const finalIdx = values.length - 1;
       const annotations = buildAnnotations(
@@ -714,6 +734,18 @@ function ContextTimelineChart({
                 ...annotations,
               ],
             },
+            markLine: {
+              silent: true,
+              symbol: "none",
+              data: compactionMarkLines.map(m => ({
+                xAxis: m.xAxis,
+                lineStyle: { color: CHART_COLORS.compaction, type: "dashed", width: 1 },
+                label: {
+                  show: true, position: "insideEndTop", fontSize: 9,
+                  color: CHART_COLORS.compaction, formatter: m.label,
+                },
+              })),
+            },
           },
         ],
         tooltip: {
@@ -722,9 +754,7 @@ function ContextTimelineChart({
           formatter: (params: unknown) => {
             const p = (params as Array<{ name: string; value: number }>)[0];
             if (!p) return "";
-            const tp = turnPoints.find(t => `T${t.turnId}` === p.name);
-            const compTag = tp?.isCompaction ? " ◆ compaction" : "";
-            return `${p.name}: ${fmtK(p.value)}${compTag}`;
+            return `${p.name}: ${fmtK(p.value)}`;
           },
         },
       };
@@ -4792,6 +4822,11 @@ function SubAgentSessionPanel({
   agentFileId,
   parentLabel,
   onReturnToParent,
+  selectedTurnId,
+  selectedCallId,
+  onSelectTurn,
+  onSelectCall,
+  onClearCall,
 }: {
   drilldown: SessionDrilldown | null;
   loadState: "loading" | "ok" | "error";
@@ -4803,23 +4838,25 @@ function SubAgentSessionPanel({
   agentFileId: string;
   parentLabel?: string;          // e.g. "Turn 3"
   onReturnToParent?: () => void; // closes sub-turn, returns to parent turn detail
+  // Phase 4：内部 turn/call 由 URL 驱动（lift up 到 SessionDetailV2）。本面板
+  // 变成受控组件 —— 从 props 拿选中 id，点击通过回调上报，不再持有 local state。
+  selectedTurnId: number | null;
+  selectedCallId: number | null;
+  onSelectTurn: (turnId: number) => void;
+  onSelectCall: (callId: number) => void;
+  onClearCall: () => void;       // 面包屑点 turn 时清掉 call，回到 turn 详情
 }) {
   const { t } = useTranslation();
 
-  // Internal nav state mirrors the main session's pattern: turn ↔ call.
-  // Sub-agents skip the "session overview" level — we land directly on
-  // the first turn, since a sub-agent is conceptually one (or a few) turns
-  // of focused work. Multi-turn agents get the same left-rail switcher.
-  const firstTurn = drilldown?.turns[0] ?? null;
-  const [innerTurn, setInnerTurn] = useState<UserTurn | null>(firstTurn);
-  const [innerCall, setInnerCall] = useState<LlmCall | null>(null);
-
-  // Re-default when the drilldown payload changes (clicking a different sub agent).
-  useEffect(() => {
-    setInnerTurn(drilldown?.turns[0] ?? null);
-    setInnerCall(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drilldown?.sessionId]);
+  // innerTurn/innerCall 从 props id + drilldown 派生（不再是 local state）。
+  // selectedTurnId 为 null（bare，redirect 前的瞬间）时回退到首 turn，避免闪烁 ——
+  // redirect 会立刻把 URL 设成首 turn id，派生结果一致，无跳变。
+  const innerTurn: UserTurn | null =
+    (selectedTurnId != null ? drilldown?.turns.find(t => t.id === selectedTurnId) : null)
+    ?? drilldown?.turns[0]
+    ?? null;
+  const innerCall: LlmCall | null =
+    (selectedCallId != null ? innerTurn?.calls.find(c => c.id === selectedCallId) : null) ?? null;
 
   if (loadState === "loading") {
     return (
@@ -4840,13 +4877,9 @@ function SubAgentSessionPanel({
   const turnPrefix = t("sessionOverview.turn.label");
   const callPrefix = t("terms.callLabel");
 
-  function handleSelectTurn(turn: UserTurn) {
-    setInnerTurn(turn);
-    setInnerCall(null);
-  }
-  function handleSelectCall(call: LlmCall) {
-    setInnerCall(call);
-  }
+  // 受控：点击只上报，URL 变化后由父组件回灌 selectedTurnId/CallId。
+  function handleSelectTurn(turn: UserTurn) { onSelectTurn(turn.id); }
+  function handleSelectCall(call: LlmCall) { onSelectCall(call.id); }
 
   // Cross-link kill-switch for the sub-agent scope (see earlier comment):
   // empty sessionId skips the attribution-graph API fetch; null onJumpToCall
@@ -4887,7 +4920,7 @@ function SubAgentSessionPanel({
                   color: !innerCall ? BRAND.indigo500 : "#374151",
                   cursor: innerCall ? "pointer" : "default",
                 }}
-                  onClick={() => { if (innerCall) setInnerCall(null); }}
+                  onClick={() => { if (innerCall) onClearCall(); }}
                 >
                   {turnPrefix} {innerTurn.id}
                 </span>
@@ -4995,7 +5028,7 @@ function SubAgentSessionPanel({
                 onSelectEntry={() => {}}
                 sessionId={parentSessionId}
                 agentFileId={agentFileId}
-                onClose={() => setInnerCall(null)}
+                onClose={onClearCall}
               />
             )}
             {!innerTurn && (
@@ -5013,6 +5046,86 @@ function SubAgentSessionPanel({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 type NavLevel = "session" | "turn" | "inter-turn" | "call" | "subagent" | "compact-event" | "compact-call";
+
+// ─── URL ↔ 导航主干 (Phase 3) ────────────────────────────────────────────────
+// session 内导航主干进 URL：path-style，type 编进 segment（turn / call / compact /
+// inter-turn）。sub-agent 内部 turn/call 留给 Phase 4；linkedPanel / inspector /
+// 列表分页都不进 URL（次要 / 对比状态）。
+//
+// 单向数据流：点击 handler 只 navigate(buildSessionPath(...))；URL 变化由一个
+// reconciliation useEffect 解析后 applyNav() 写回 state。state 是 URL 的派生，
+// 不存在双写，因此不会 URL↔state 互相触发死循环。
+type SessionNav =
+  | { level: "session" }
+  | { level: "turn"; turnId: number }
+  | { level: "call"; turnId: number; callId: number }
+  | { level: "inter-turn"; blockIdx: number }
+  | { level: "compact-event"; compactIdx: number }
+  | { level: "compact-call"; compactIdx: number }
+  // sub-agent 镜像主 session 的 turn/call 嵌套（Phase 4）。bare subagent（无 turn）
+  // 是 resolve-then-redirect 入口：加载后跳到首 turn，没有"默认 turn 0"魔法。
+  | { level: "subagent"; agentFileId: string }
+  | { level: "subagent-turn"; agentFileId: string; turnId: number }
+  | { level: "subagent-call"; agentFileId: string; turnId: number; callId: number };
+
+function buildSessionPath(sessionId: string, nav: SessionNav): string {
+  const base = `/sessions/${encodeURIComponent(sessionId)}`;
+  switch (nav.level) {
+    case "session":        return base;
+    case "turn":           return `${base}/turn/${nav.turnId}`;
+    case "call":           return `${base}/turn/${nav.turnId}/call/${nav.callId}`;
+    case "inter-turn":     return `${base}/inter-turn/${nav.blockIdx}`;
+    case "compact-event":  return `${base}/compact/${nav.compactIdx}`;
+    case "compact-call":   return `${base}/compact/${nav.compactIdx}/call`;
+    case "subagent":       return `${base}/subagent/${encodeURIComponent(nav.agentFileId)}`;
+    case "subagent-turn":  return `${base}/subagent/${encodeURIComponent(nav.agentFileId)}/turn/${nav.turnId}`;
+    case "subagent-call":  return `${base}/subagent/${encodeURIComponent(nav.agentFileId)}/turn/${nav.turnId}/call/${nav.callId}`;
+  }
+}
+
+// 解析 /sessions/:sessionId 之后的导航段。非法 / 无法识别 → 退到 session 总览。
+function parseSessionNav(pathname: string, sessionId: string): SessionNav {
+  const base = `/sessions/${encodeURIComponent(sessionId)}`;
+  if (!pathname.startsWith(base)) return { level: "session" };
+  const seg = pathname.slice(base.length).split("/").filter(Boolean);
+  if (seg.length === 0) return { level: "session" };
+  const [a, b, c, d] = seg;
+  if (a === "turn" && b != null) {
+    const turnId = Number(b);
+    if (!Number.isFinite(turnId)) return { level: "session" };
+    if (c === "call" && d != null) {
+      const callId = Number(d);
+      if (Number.isFinite(callId)) return { level: "call", turnId, callId };
+    }
+    return { level: "turn", turnId };
+  }
+  if (a === "inter-turn" && b != null) {
+    const blockIdx = Number(b);
+    return Number.isFinite(blockIdx) ? { level: "inter-turn", blockIdx } : { level: "session" };
+  }
+  if (a === "compact" && b != null) {
+    const compactIdx = Number(b);
+    if (!Number.isFinite(compactIdx)) return { level: "session" };
+    if (c === "call") return { level: "compact-call", compactIdx };
+    return { level: "compact-event", compactIdx };
+  }
+  if (a === "subagent" && b != null) {
+    const agentFileId = decodeURIComponent(b);
+    // 后续段：turn/:turnId[/call/:callId]
+    if (c === "turn" && d != null) {
+      const turnId = Number(d);
+      if (!Number.isFinite(turnId)) return { level: "subagent", agentFileId };
+      const e = seg[4], f = seg[5];
+      if (e === "call" && f != null) {
+        const callId = Number(f);
+        if (Number.isFinite(callId)) return { level: "subagent-call", agentFileId, turnId, callId };
+      }
+      return { level: "subagent-turn", agentFileId, turnId };
+    }
+    return { level: "subagent", agentFileId };
+  }
+  return { level: "session" };
+}
 
 type InspectorState =
   | { type: "hotspots" }
@@ -5043,6 +5156,8 @@ interface Props {
 
 export function SessionDetailV2({ session, onClose }: Props) {
   const { t } = useTranslation();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [drilldown, setDrilldown] = useState<SessionDrilldown | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ok" | "error">("loading");
 
@@ -5069,10 +5184,37 @@ export function SessionDetailV2({ session, onClose }: Props) {
   const [selectedSubAgent, setSelectedSubAgent] = useState<SubAgentSummary | null>(null);
   const [subAgentDrilldown, setSubAgentDrilldown] = useState<SessionDrilldown | null>(null);
   const [subAgentLoadState, setSubAgentLoadState] = useState<"loading" | "ok" | "error">("loading");
+  // sub-agent 内部 turn/call 现在由 URL 驱动（Phase 4 lift up），不再藏在
+  // SubAgentSessionPanel 的 local state 里。null/null = bare（待 redirect 到首 turn）。
+  const [subAgentTurnId, setSubAgentTurnId] = useState<number | null>(null);
+  const [subAgentCallId, setSubAgentCallId] = useState<number | null>(null);
   const [linkedPanel, setLinkedPanel] = useState<LinkedPanelState | null>(null);
   const [linkedPanelPinned, setLinkedPanelPinned] = useState(false);
 
   const title = getSessionDisplayName(session, drilldown?.title);
+
+  // agentFileId → SubAgentSummary 查找表。sub-agent 分散在各 turn 的 call 上，
+  // URL 只带 agentFileId，靠这张表还原出 SubAgentSummary（agentType 等显示信息）。
+  const subAgentByFileId = useMemo(() => {
+    const m = new Map<string, SubAgentSummary>();
+    for (const turn of turns) {
+      for (const call of turn.calls) {
+        for (const sa of call.subAgents ?? []) {
+          if (!m.has(sa.agentFileId)) m.set(sa.agentFileId, sa);
+        }
+      }
+    }
+    return m;
+  }, [turns]);
+
+  // sub-agent 的真实父 turn —— 由 sa.parentCallId 反查（哪个主 turn 的 calls 含
+  // 这个 call），而不是用 selectedTurn（浏览历史里停留的 turn）。后者会在深链 /
+  // 先逛别的 turn 再进 sub-agent 时给出错误的父级（曾把 turn 19 的 sub-agent 错
+  // 显成 "Turn 4"）。父级是 sub-agent 自身数据的属性，与导航路径无关。
+  const subAgentParentTurn = useMemo(() => {
+    if (!selectedSubAgent) return null;
+    return turns.find(t => t.calls.some(c => c.id === selectedSubAgent.parentCallId)) ?? null;
+  }, [selectedSubAgent, turns]);
 
   function findTurnForCall(callId: number): MockUserTurn | null {
     return turns.find(t => t.calls.some(c => c.id === callId)) ?? selectedTurn ?? null;
@@ -5103,35 +5245,34 @@ export function SessionDetailV2({ session, onClose }: Props) {
     setLinkedPanelPinned(false);
   }
 
+  // ── 导航主干：handler 只 navigate，state 由 reconciliation 写回 ────────────
+  // applyNav 是唯一写 navLevel/selected* 的地方（除 sub-agent，见 Phase 4 注释），
+  // 由下方 useEffect 在 URL 变化时调用。点击 handler 一律走 navigate(buildSessionPath)，
+  // 不直接 setState —— 保证 URL 是唯一真相、避免双写竞争。
+  const goNav = useCallback((nav: SessionNav) => {
+    navigate(buildSessionPath(session.session_id, nav));
+  }, [navigate, session.session_id]);
+
   function openLinkedPanelAsMain() {
     if (!linkedPanel) return;
-    if (linkedPanel.type === "call") {
-      setSelectedTurn(linkedPanel.turn);
-      setSelectedCall(linkedPanel.call);
-      setNavLevel("call");
-      setInspector({ type: "call-diff", call: linkedPanel.call });
-    } else {
-      setSelectedTurn(linkedPanel.turn);
-      setSelectedCall(null);
-      setNavLevel("turn");
-      setInspector({ type: "turn-rollup", turn: linkedPanel.turn });
-    }
+    // 提升 linked panel 到主视图 = 导航到对应 turn/call。先关 panel 再 navigate。
     setLinkedPanel(null);
+    goNav(linkedPanel.type === "call"
+      ? { level: "call", turnId: linkedPanel.turn.id, callId: linkedPanel.call.id }
+      : { level: "turn", turnId: linkedPanel.turn.id });
   }
 
   function handleSelectTurn(turn: MockUserTurn) {
-    setSelectedTurn(turn);
-    setSelectedCall(null);
-    setNavLevel("turn");
-    if (!linkedPanelPinned) setLinkedPanel(null);
-    setInspector({ type: "turn-rollup", turn });
+    goNav({ level: "turn", turnId: turn.id });
   }
 
   function handleSelectCall(call: MockLlmCall) {
-    setSelectedCall(call);
-    setNavLevel("call");
-    if (!linkedPanelPinned) setLinkedPanel(null);
-    setInspector({ type: "call-diff", call });
+    // call 归属当前 selectedTurn；兜底用 findTurnForCall 反查（如从别处直达）。
+    const owningTurn = selectedTurn?.calls.some(c => c.id === call.id)
+      ? selectedTurn
+      : findTurnForCall(call.id);
+    if (!owningTurn) return;
+    goNav({ level: "call", turnId: owningTurn.id, callId: call.id });
   }
 
   function handleLinkCallFromTurn(call: MockLlmCall) {
@@ -5144,54 +5285,152 @@ export function SessionDetailV2({ session, onClose }: Props) {
   }
 
   function handleNavSession() {
+    goNav({ level: "session" });
+  }
+
+  function handleSelectInterTurnBlock(block: InterTurnBlock) {
+    goNav({ level: "inter-turn", blockIdx: block.index });
+  }
+
+  function handleNavTurn(turn: MockUserTurn) {
+    goNav({ level: "turn", turnId: turn.id });
+  }
+
+  // applyNav：把解析出的 SessionNav 写回 state。找不到目标（坏链 / 不属于本
+  // session）退到 session 总览。inspector 在此同步设置，保持右栏与主视图一致。
+  // 注意：不处理 subagent —— 它仍由 handleSelectSubAgent setState 驱动（Phase 4
+  // 才接 URL）；本 effect 只在 pathname/loadState 变化时跑，进 subagent 不改
+  // pathname，因此不会被 applyNav 误覆盖。
+  function applyNav(nav: SessionNav) {
+    switch (nav.level) {
+      case "turn": {
+        const turn = turns.find(t => t.id === nav.turnId);
+        if (!turn) { applySessionLevel(); return; }
+        setNavLevel("turn"); setSelectedTurn(turn); setSelectedCall(null);
+        setSelectedInterTurnBlock(null); setSelectedCompactEventIdx(null);
+        if (!linkedPanelPinned) setLinkedPanel(null);
+        setInspector({ type: "turn-rollup", turn });
+        return;
+      }
+      case "call": {
+        const turn = turns.find(t => t.id === nav.turnId);
+        const call = turn?.calls.find(c => c.id === nav.callId);
+        if (!turn || !call) { applySessionLevel(); return; }
+        setNavLevel("call"); setSelectedTurn(turn); setSelectedCall(call);
+        setSelectedInterTurnBlock(null); setSelectedCompactEventIdx(null);
+        if (!linkedPanelPinned) setLinkedPanel(null);
+        setInspector({ type: "call-diff", call });
+        return;
+      }
+      case "inter-turn": {
+        const block = interTurnBlocks.find(b => b.index === nav.blockIdx);
+        if (!block) { applySessionLevel(); return; }
+        setNavLevel("inter-turn"); setSelectedInterTurnBlock(block);
+        setSelectedTurn(null); setSelectedCall(null); setSelectedCompactEventIdx(null);
+        if (!linkedPanelPinned) setLinkedPanel(null);
+        return;
+      }
+      case "compact-event": {
+        if (!compactEvents[nav.compactIdx]) { applySessionLevel(); return; }
+        setNavLevel("compact-event"); setSelectedCompactEventIdx(nav.compactIdx);
+        setSelectedTurn(null); setSelectedCall(null); setSelectedInterTurnBlock(null);
+        if (!linkedPanelPinned) setLinkedPanel(null);
+        return;
+      }
+      case "compact-call": {
+        if (!compactEvents[nav.compactIdx]) { applySessionLevel(); return; }
+        setNavLevel("compact-call"); setSelectedCompactEventIdx(nav.compactIdx);
+        setSelectedTurn(null); setSelectedCall(null); setSelectedInterTurnBlock(null);
+        if (!linkedPanelPinned) setLinkedPanel(null);
+        return;
+      }
+      case "subagent":
+      case "subagent-turn":
+      case "subagent-call": {
+        const sa = subAgentByFileId.get(nav.agentFileId);
+        if (!sa) { applySessionLevel(); return; }
+        // 父 turn 由 subAgentParentTurn（sa.parentCallId 反查）决定，与 selectedTurn
+        // 无关 —— 这里设 selectedTurn=null，避免 stale 值在别处泄漏。返回父 turn
+        // 走 handleReturnFromSubAgent → subAgentParentTurn。
+        setSelectedSubAgent(sa);
+        setSelectedTurn(null);
+        setNavLevel("subagent");
+        setSelectedCall(null); setSelectedInterTurnBlock(null); setSelectedCompactEventIdx(null);
+        if (!linkedPanelPinned) setLinkedPanel(null);
+        setSubAgentTurnId(nav.level === "subagent" ? null : nav.turnId);
+        setSubAgentCallId(nav.level === "subagent-call" ? nav.callId : null);
+        return;
+      }
+      case "session":
+      default:
+        applySessionLevel();
+        return;
+    }
+  }
+
+  function applySessionLevel() {
     setNavLevel("session");
     setSelectedTurn(null);
     setSelectedInterTurnBlock(null);
     setSelectedCall(null);
-    setLinkedPanel(null);
-    setLinkedPanelPinned(false);
+    setSelectedCompactEventIdx(null);
+    if (!linkedPanelPinned) setLinkedPanel(null);
     setInspector({ type: "hotspots" });
   }
 
-  function handleSelectInterTurnBlock(block: InterTurnBlock) {
-    setSelectedInterTurnBlock(block);
-    setSelectedTurn(null);
-    setSelectedCall(null);
-    setNavLevel("inter-turn");
-    if (!linkedPanelPinned) setLinkedPanel(null);
-  }
+  // Reconciliation：URL → state 的唯一通道。等 drilldown 到位（loadState==="ok"，
+  // turns/compactEvents 才有内容）再解析 pathname 并 applyNav。依赖只取
+  // [pathname, loadState] —— applyNav 内部的 setState 不改这两者，所以不会自触发，
+  // 单向流不成环。subagent 内部点击不改 pathname，因此不会被这里覆盖。
+  useEffect(() => {
+    if (loadState !== "ok") return;
+    applyNav(parseSessionNav(location.pathname, session.session_id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, loadState, session.session_id]);
 
-  function handleNavTurn(turn: MockUserTurn) {
-    setSelectedTurn(turn);
-    setSelectedCall(null);
-    setNavLevel("turn");
-    if (!linkedPanelPinned) setLinkedPanel(null);
-    setInspector({ type: "turn-rollup", turn });
-  }
-
+  // 进 sub-agent：navigate 到 bare /subagent/:aid，reconciliation + redirect effect
+  // 会接管（解析 sa、拉 drilldown、跳首 turn）。fetch 不在这里，挪到下方专用 effect
+  // （按 agentFileId 去重，避免 bare→turn redirect 触发二次 fetch）。
   function handleSelectSubAgent(sa: SubAgentSummary) {
-    setSelectedSubAgent(sa);
-    setNavLevel("subagent");
-    if (!linkedPanelPinned) setLinkedPanel(null);
+    goNav({ level: "subagent", agentFileId: sa.agentFileId });
+  }
+
+  // Return from a sub-agent side branch to its真实父 turn（由 parentCallId 反查），
+  // 不再依赖 selectedTurn。父 turn 不存在（理论上不应发生）时退到 session。
+  function handleReturnFromSubAgent() {
+    if (subAgentParentTurn) goNav({ level: "turn", turnId: subAgentParentTurn.id });
+    else goNav({ level: "session" });
+  }
+
+  // sub-agent drilldown 拉取：按 selectedSubAgent.agentFileId 去重。只有真正
+  // 处于 subagent 视图时才拉。effect deps 是 agentFileId —— bare→turn→call 的
+  // URL 变化不改 agentFileId，因此只拉一次。
+  const activeSubAgentFileId = navLevel === "subagent" ? (selectedSubAgent?.agentFileId ?? null) : null;
+  useEffect(() => {
+    if (!activeSubAgentFileId) return;
+    let cancelled = false;
     setSubAgentDrilldown(null);
     setSubAgentLoadState("loading");
-    apiV2.subAgentDrilldown(session.session_id, sa.agentFileId)
-      .then(data => { setSubAgentDrilldown(data); setSubAgentLoadState("ok"); })
-      .catch(() => setSubAgentLoadState("error"));
-  }
+    apiV2.subAgentDrilldown(session.session_id, activeSubAgentFileId)
+      .then(data => { if (!cancelled) { setSubAgentDrilldown(data); setSubAgentLoadState("ok"); } })
+      .catch(() => { if (!cancelled) setSubAgentLoadState("error"); });
+    return () => { cancelled = true; };
+  }, [activeSubAgentFileId, session.session_id]);
 
-  // Return from a sub-agent side branch to its parent turn — closes the loop
-  // so the breadcrumb / "Back to T<n>" affordance always lands somewhere real.
-  function handleReturnFromSubAgent() {
-    setSelectedSubAgent(null);
-    if (selectedTurn) {
-      setNavLevel("turn");
-      setInspector({ type: "turn-rollup", turn: selectedTurn });
-    } else {
-      setNavLevel("session");
-      setInspector({ type: "hotspots" });
-    }
-  }
+  // bare /subagent/:aid 的 resolve-then-redirect：drilldown 到位后跳首 turn，
+  // 用 replace 不污染历史。没有"默认 turn 0"魔法 —— canonical URL 永远带 turn。
+  useEffect(() => {
+    if (navLevel !== "subagent") return;
+    if (subAgentTurnId !== null) return;          // 已在某个 turn
+    if (subAgentLoadState !== "ok" || !subAgentDrilldown) return;
+    const firstTurnId = subAgentDrilldown.turns[0]?.id;
+    if (firstTurnId == null || !selectedSubAgent) return;
+    navigate(
+      buildSessionPath(session.session_id, { level: "subagent-turn", agentFileId: selectedSubAgent.agentFileId, turnId: firstTurnId }),
+      { replace: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navLevel, subAgentTurnId, subAgentLoadState, subAgentDrilldown, selectedSubAgent, session.session_id]);
 
   const allCallsForNav = selectedTurn?.calls ?? [];
 
@@ -5258,15 +5497,21 @@ export function SessionDetailV2({ session, onClose }: Props) {
             {title !== session.session_id && (
               <span style={{ fontSize: 10, color: "#9ca3af", fontFamily: "monospace", flexShrink: 0 }}>{session.session_id}</span>
             )}
-            {selectedTurn && (
-              <>
-                <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
-                <button onClick={() => navLevel === "subagent" ? handleReturnFromSubAgent() : handleNavTurn(selectedTurn)}
-                  style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: navLevel === "turn" && !selectedCall ? BRAND.indigo500 : "#374151" }}>{t("sessionOverview.turn.label")} {selectedTurn.id}</span>
-                </button>
-              </>
-            )}
+            {/* turn 面包屑：sub-agent 视图下显示其真实父 turn（parentCallId 反查），
+                其余视图显示当前 selectedTurn。两种都点击 → 导航到该 turn。 */}
+            {(() => {
+              const crumbTurn = navLevel === "subagent" ? subAgentParentTurn : selectedTurn;
+              if (!crumbTurn) return null;
+              return (
+                <>
+                  <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
+                  <button onClick={() => goNav({ level: "turn", turnId: crumbTurn.id })}
+                    style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: navLevel === "turn" && !selectedCall ? BRAND.indigo500 : "#374151" }}>{t("sessionOverview.turn.label")} {crumbTurn.id}</span>
+                  </button>
+                </>
+              );
+            })()}
             {selectedCall && (
               <>
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
@@ -5283,7 +5528,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
               <>
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
                 <button
-                  onClick={() => setNavLevel("compact-event")}
+                  onClick={() => goNav({ level: "compact-event", compactIdx: selectedCompactEventIdx })}
                   style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}
                 >
                   <span style={{
@@ -5448,10 +5693,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
                           key={`compact-${ev.index}`}
                           ev={ev}
                           active={navLevel === "compact-event" && selectedCompactEventIdx === ev.index}
-                          onClick={() => {
-                            setSelectedCompactEventIdx(ev.index);
-                            setNavLevel("compact-event");
-                          }}
+                          onClick={() => goNav({ level: "compact-event", compactIdx: ev.index })}
                         />
                       ))}
                   </React.Fragment>
@@ -5480,8 +5722,8 @@ export function SessionDetailV2({ session, onClose }: Props) {
                 turn={synthesizeCompactTurn(compactEvents[selectedCompactEventIdx])}
                 onSelectCall={() => {
                   // 合成 call 没有真实 jsonl line，但 compact 端点能用 idx 反查；
-                  // 直接进 compact-call 子级，LlmCallDetailPanel 走 compactIdx 分支。
-                  setNavLevel("compact-call");
+                  // navigate 到 compact-call 子级，reconciliation 会切 navLevel。
+                  goNav({ level: "compact-call", compactIdx: selectedCompactEventIdx });
                 }}
                 isMockSession={false}
                 sessionId={session.session_id}
@@ -5500,7 +5742,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
                   onSelectEntry={handleSelectEntry}
                   sessionId={session.session_id}
                   compactIdx={selectedCompactEventIdx}
-                  onClose={() => setNavLevel("compact-event")}
+                  onClose={() => goNav({ level: "compact-event", compactIdx: selectedCompactEventIdx })}
                 />
               );
             })()}
@@ -5558,8 +5800,13 @@ export function SessionDetailV2({ session, onClose }: Props) {
                 loadState={subAgentLoadState}
                 parentSessionId={session.session_id}
                 agentFileId={selectedSubAgent.agentFileId}
-                parentLabel={selectedTurn ? `${t("sessionOverview.turn.label")} ${selectedTurn.id}` : undefined}
-                onReturnToParent={selectedTurn ? handleReturnFromSubAgent : undefined}
+                parentLabel={subAgentParentTurn ? `${t("sessionOverview.turn.label")} ${subAgentParentTurn.id}` : undefined}
+                onReturnToParent={subAgentParentTurn ? handleReturnFromSubAgent : undefined}
+                selectedTurnId={subAgentTurnId}
+                selectedCallId={subAgentCallId}
+                onSelectTurn={(turnId) => goNav({ level: "subagent-turn", agentFileId: selectedSubAgent.agentFileId, turnId })}
+                onSelectCall={(callId) => goNav({ level: "subagent-call", agentFileId: selectedSubAgent.agentFileId, turnId: subAgentTurnId ?? 0, callId })}
+                onClearCall={() => goNav({ level: "subagent-turn", agentFileId: selectedSubAgent.agentFileId, turnId: subAgentTurnId ?? 0 })}
               />
             )}
           </div>

@@ -11,6 +11,9 @@ interface JUserEvent {
   type: "user";
   isMeta?: boolean;
   isSidechain?: boolean;
+  // compact 后 CLI 注入的 summary user 事件标记。它不是用户真实输入 ——
+  // 已由 CompactEvent（压缩 N）完整承载，不应被当成 turn opener。
+  isCompactSummary?: boolean;
   message?: { content?: unknown };
   timestamp?: string;
   ts?: string;
@@ -84,6 +87,11 @@ function isCommandContent(content: unknown): boolean {
 
 function isHumanInput(ev: JUserEvent): boolean {
   if (ev.isMeta || ev.isSidechain) return false;
+  // compact summary 是 CLI 注入的合成 user 事件（post-compact 上下文），不是
+  // 用户真实输入。不排除它会让它错误地开启一个新 turn —— 把 summary 当成 turn
+  // 的 userInput，把真实输入降级成 mid-turn，还让 turn 误带 compaction 标。
+  // 它已由 CompactEvent（压缩 N）承载，这里直接跳过。
+  if (ev.isCompactSummary) return false;
   const content = ev.message?.content;
   if (isToolResultOnly(content)) return false;
   if (isCommandContent(content)) return false;
@@ -701,37 +709,16 @@ export async function parseSessionDrilldown(
     }
   }
 
-  // ── 4b. Identify compaction boundaries ───────────────────────────────────
-  // Source-map of truth (restored-src/src/utils/messages.ts:4608):
-  //   isCompactBoundaryMessage = message.type === 'system' &&
-  //                              message.subtype === 'compact_boundary'
-  // sessionStorage.ts:1314 writes `isCompaction: true` directly into the jsonl
-  // entry for the compaction boundary; older runs predating that change still
-  // emit only the system event. We accept either form.
+  // ── 4b. Compaction 归属 ───────────────────────────────────────────────────
+  // 压缩本身是一个独立事件（CompactEvent / 压缩 N），不属于任何 turn。
   //
-  // 旧逻辑用 assistant 文本里 "<compaction_summary>" 字面量做启发式 ——
-  // 真实 CLI 从来没有过这个字面量，导致全员漏报。
+  // 旧逻辑曾把"紧跟 compact_boundary 之后第一个 assistant call"（即 post-compact
+  // 第一次推理）标成 isCompaction=true，于是那条 call 所在的 *下一个* turn 被
+  // 误带上 compaction 标。Fix B2：不再标真实 call —— 压缩标只挂 CompactEvent。
+  // 真实 call 的 isCompaction 一律 false（见下方 build 循环）。
   //
-  // 标记规则：把"紧跟 compact_boundary 之后的第一个非 sidechain assistant call"
-  // 视作 compaction call —— 那是基于 compaction summary 重新开始的第一次推理。
-  const compactionCallLineIdxs = new Set<number>();
-  for (let idx = 0; idx < events.length; idx++) {
-    const ev = events[idx];
-    const isBoundary =
-      (ev.type === "system" && (ev as JSystemEvent).subtype === "compact_boundary")
-      || ((ev as { isCompaction?: boolean }).isCompaction === true);
-    if (!isBoundary) continue;
-    // Look forward for the first canonical assistant call line.
-    for (let k = idx + 1; k < events.length; k++) {
-      const kev = events[k];
-      if (kev.type !== "assistant" || (kev as JAssistantEvent).isSidechain) continue;
-      const msgId = (kev as JAssistantEvent).message?.id;
-      const isCanonical = msgId ? lastAssistantByMsgId.get(msgId) === k : true;
-      if (!isCanonical) continue;
-      compactionCallLineIdxs.add(k);
-      break;
-    }
-  }
+  // 注：post-compact 第一次推理"这条 call"的特殊性（context 被重写、delta 基线
+  // 应换成 compact postTokens）留给 Fix C 处理，届时再按 CompactEvent 反查定位。
 
   // ── 5. Build turns ───────────────────────────────────────────────────────
   // Algorithm:
@@ -816,14 +803,10 @@ export async function parseSessionDrilldown(
       const rawModel = aev.message?.model ?? "";
       const model = rawModel === "<synthetic>" ? "" : normaliseModelName(rawModel);
 
-      // isCompaction: 由 pre-scan 出的 compactionCallLineIdxs 决定 —— 真实信号是
-      // jsonl 里 `type==='system', subtype==='compact_boundary'` 的入口事件，
-      // 之后的第一次 canonical assistant call 即为 compaction 触发点（其 reqBody
-      // 内嵌 isCompactSummary 那条 user message）。assistant 文本里没有
-      // `<compaction_summary>` 这个字面量，老 heuristic 全员漏报。
+      // Fix B2：真实 call 不再标 compaction —— 压缩标只挂 CompactEvent（压缩 N）。
+      // 这样 post-compact 第一次推理所在的 turn 不会被误带 compaction 标。
       const content = aev.message?.content ?? [];
-      const isCompaction = compactionCallLineIdxs.has(rawCalls[callIdx].lineIdx)
-        || compactionCallLineIdxs.has(rawCalls[callIdx].firstLineIdx);
+      const isCompaction = false;
 
       // Collect ALL Agent tool_use ids in this call (parallel spawn supported).
       const agentToolUseIds: string[] = [];
@@ -1452,7 +1435,10 @@ export async function parseSessionDrilldown(
   const totalFreshIn = allCalls.reduce((s, c) => s + c.freshIn, 0);
   const totalFreshOut = allCalls.reduce((s, c) => s + c.outputTokens, 0);
   const lastContext = allCalls.length ? allCalls[allCalls.length - 1].contextSize : 0;
-  const compactionCount = turns.filter(t => t.hasCompaction).length;
+  // Fix B2：压缩计数来自 CompactEvent（真实来源），不再数 turn.hasCompaction
+  // （后者现在恒为 false —— 压缩不再误标在 turn 上）。compactEvents 已在第 5b
+  // 节构造完毕（本行在其之后）。
+  const compactionCount = compactEvents.length;
 
   // Per-model breakdown
   const modelBreakdown: Record<string, ModelStats> = {};
