@@ -2,7 +2,7 @@
 // 这里——proxy-visibility/ 的其他文件保持对外部世界无感。
 import { getDb } from "../db.ts";
 import { parseSessionDrilldown } from "../session-drilldown-parser.ts";
-import type { SessionMeta, VisibilityDeps } from "./service.ts";
+import type { CallCoord, SessionMeta, VisibilityDeps } from "./service.ts";
 
 type SessionMetaRow = {
   session_id: string;
@@ -34,19 +34,22 @@ export function realVisibilityDeps(): VisibilityDeps {
       return out;
     },
 
-    async computeRenderedSet(meta: SessionMeta): Promise<Set<string>> {
+    async computeRenderedSet(meta: SessionMeta): Promise<Map<string, CallCoord>> {
       const db = getDb();
       const row = db.prepare(`SELECT * FROM sessions_meta_v2 WHERE session_id = ?`)
         .get(meta.sessionId) as Record<string, unknown> | undefined;
-      if (!row) return new Set();
+      if (!row) return new Map();
       const drilldown = await parseSessionDrilldown(meta.sourceFile, meta.sessionId, row, db);
-      const set = new Set<string>();
+      const map = new Map<string, CallCoord>();
       for (const turn of drilldown.turns) {
         for (const call of turn.calls) {
-          if (call.apiRequestId) set.add(call.apiRequestId);
+          // 同一 apiRequestId 理论上唯一；若重复，保留首次（最早渲染那条）。
+          if (call.apiRequestId && !map.has(call.apiRequestId)) {
+            map.set(call.apiRequestId, { turnId: turn.id, callId: call.id });
+          }
         }
       }
-      return set;
+      return map;
     },
   };
 }

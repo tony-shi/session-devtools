@@ -5,8 +5,9 @@
 // 命名空间，和应用其他部分共享 i18n 切换路径。每个子组件自己 useTranslation()，
 // 不再通过 `lang: Lang` prop 链式传递。
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, ExternalLink } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -67,6 +68,12 @@ type Visibility =
   | "computing"
   | "disabled";
 
+// 服务端 proxy-visibility 算好的跳转坐标，对应 URL /sessions/:id/turn/:t/call/:c。
+interface CallTarget {
+  turnId: number;
+  callId: number;
+}
+
 interface ProxyRequest {
   id: number;
   ts: string;
@@ -86,6 +93,8 @@ interface ProxyRequest {
   request_id?: string | null;
   // 由 proxy-visibility 模块在后端打的徽章。disabled 时整列不展示。
   visibility?: Visibility;
+  // 仅 visibility==="visible" 时非 null：可直达对应 session 的那条 call。
+  link_target?: CallTarget | null;
 }
 
 // i18n key 用 camelCase（session-gone → sessionGone），visibility 值是
@@ -112,21 +121,36 @@ function visibilityMatchesFilter(v: Visibility | undefined, f: VisibilityFilter)
   return v === "session-gone" || v === "unattributed";
 }
 
-function VisibilityBadge({ v }: { v: Visibility | undefined }) {
+function VisibilityBadge({ v, onJump }: { v: Visibility | undefined; onJump?: () => void }) {
   const { t } = useTranslation();
   if (!v || v === "disabled") return null;
   const meta = VISIBILITY_META[v];
+  const label = t(`proxyTraffic.visibility.${meta.i18nKey}`);
+  const sharedStyle: React.CSSProperties = {
+    fontSize: 10, padding: "2px 7px", borderRadius: 8,
+    background: meta.bg, color: meta.color,
+    border: `1px solid ${meta.border}`,
+    fontWeight: 600, whiteSpace: "nowrap",
+  };
+  // visible 且服务端给了坐标 → 徽章可点，跳到对应 session 的那条 call。
+  // 其余状态（hidden/session-gone/unattributed/computing）保持不可点：
+  // UI 目前渲染不出对应 call，跳过去也没有落点。
+  if (onJump) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onJump(); }}
+        title={t("proxyTraffic.visibilityJumpTip")}
+        style={{ ...sharedStyle, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 3 }}
+      >
+        {label}
+        <ExternalLink size={9} />
+      </button>
+    );
+  }
   return (
-    <span
-      title={t(`proxyTraffic.visibilityTip.${meta.i18nKey}`)}
-      style={{
-        fontSize: 10, padding: "2px 7px", borderRadius: 8,
-        background: meta.bg, color: meta.color,
-        border: `1px solid ${meta.border}`,
-        fontWeight: 600, whiteSpace: "nowrap",
-      }}
-    >
-      {t(`proxyTraffic.visibility.${meta.i18nKey}`)}
+    <span title={t(`proxyTraffic.visibilityTip.${meta.i18nKey}`)} style={sharedStyle}>
+      {label}
     </span>
   );
 }
@@ -152,6 +176,12 @@ function statusColor(s: number | null): string {
 
 function pathFromUrl(url: string): string {
   try { return new URL(url).pathname; } catch { return url; }
+}
+
+// session 内 call 的深链。格式必须和 SessionDetailV2 的 parseSessionNav 对齐：
+// /sessions/:id/turn/:turnId/call/:callId。坐标由后端 proxy-visibility 算好。
+function buildCallPath(sessionId: string, target: CallTarget): string {
+  return `/sessions/${encodeURIComponent(sessionId)}/turn/${target.turnId}/call/${target.callId}`;
 }
 
 function requestStartedAt(req: ProxyRequest): string {
@@ -739,6 +769,7 @@ const DEFAULT_PAGE_SIZE = 50;
 
 export function ProxyTraffic() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [requests, setRequests] = useState<ProxyRequest[]>([]);
   const [selected, setSelected] = useState<ProxyRequest | null>(null);
   const [live, setLive] = useState(true);
@@ -956,7 +987,14 @@ export function ProxyTraffic() {
                       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{formatBytes(r.bytes_out || r.bytes_in)}</td>
                       {showVisibilityCol && (
                         <td style={tdStyle}>
-                          <VisibilityBadge v={r.visibility} />
+                          <VisibilityBadge
+                            v={r.visibility}
+                            onJump={
+                              r.visibility === "visible" && r.link_target && r.session_id
+                                ? () => navigate(buildCallPath(r.session_id!, r.link_target!))
+                                : undefined
+                            }
+                          />
                         </td>
                       )}
                       <td style={tdStyle}>

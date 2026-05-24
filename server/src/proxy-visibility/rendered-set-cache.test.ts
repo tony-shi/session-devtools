@@ -3,7 +3,7 @@ import { RenderedSetLRU } from "./rendered-set-cache.ts";
 
 const entry = (mtime: number, ids: string[]) => ({
   jsonlMtime: mtime,
-  requestIdSet: new Set(ids),
+  requestIdMap: new Map(ids.map((id, i) => [id, { turnId: 1, callId: i + 1 }])),
   computedAt: Date.now(),
 });
 

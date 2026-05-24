@@ -136,6 +136,7 @@
     "pageSizeLabel": "每页",
     "streamCol": "流",
     "visibilityCol": "可见性",
+    "visibilityJumpTip": "跳到该 session 中对应的 call",
     "visibilityFilterLabel": "可见性",
     "visibilityFilterAll": "全部",
     "visibilityFilterHidden": "未渲染",

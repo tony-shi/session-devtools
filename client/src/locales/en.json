@@ -139,6 +139,7 @@
     "pageSizeLabel": "Per page",
     "streamCol": "Stream",
     "visibilityCol": "Visibility",
+    "visibilityJumpTip": "Jump to the matching call in that session",
     "visibilityFilterLabel": "Visibility",
     "visibilityFilterAll": "All",
     "visibilityFilterHidden": "Hidden",

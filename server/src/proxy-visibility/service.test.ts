@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { VisibilityService, type VisibilityDeps, type SessionMeta } from "./service.ts";
+import { VisibilityService, type VisibilityDeps, type SessionMeta, type CallCoord } from "./service.ts";
 import { createVisibilityService } from "./index.ts";
 
 function makeMeta(sessionId: string, opts: Partial<SessionMeta> = {}): SessionMeta {
@@ -12,9 +12,11 @@ function makeMeta(sessionId: string, opts: Partial<SessionMeta> = {}): SessionMe
   };
 }
 
+const coord = (turnId: number, callId: number): CallCoord => ({ turnId, callId });
+
 function makeDeps(
   metas: Map<string, SessionMeta>,
-  renderedSets: Map<string, Set<string>>,
+  renderedMaps: Map<string, Map<string, CallCoord>>,
 ): VisibilityDeps {
   return {
     loadMetas: vi.fn((ids: string[]) => {
@@ -25,9 +27,12 @@ function makeDeps(
       }
       return out;
     }),
-    computeRenderedSet: vi.fn(async (m: SessionMeta) => renderedSets.get(m.sessionId) ?? new Set()),
+    computeRenderedSet: vi.fn(async (m: SessionMeta) => renderedMaps.get(m.sessionId) ?? new Map()),
   };
 }
+
+// enrichRows 返回 {visibility,target}[]；大多数断言只关心 visibility 序列。
+const vis = (rs: { visibility: string }[]) => rs.map((r) => r.visibility);
 
 describe("VisibilityService.classify (synchronous decisions)", () => {
   let service: VisibilityService;
@@ -39,7 +44,8 @@ describe("VisibilityService.classify (synchronous decisions)", () => {
   it("session_id 缺失 → unattributed", () => {
     service = new VisibilityService(makeDeps(new Map(), new Map()));
     const out = service.enrichRows([{ sessionId: null, requestId: "req_abc" }]);
-    expect(out).toEqual(["unattributed"]);
+    expect(vis(out)).toEqual(["unattributed"]);
+    expect(out[0].target).toBeNull();
   });
 
   it("request_id 是 proxy-* 合成 ID → unattributed", () => {
@@ -48,7 +54,7 @@ describe("VisibilityService.classify (synchronous decisions)", () => {
       new Map(),
     ));
     const out = service.enrichRows([{ sessionId: "s1", requestId: "proxy-uuid-xxx" }]);
-    expect(out).toEqual(["unattributed"]);
+    expect(vis(out)).toEqual(["unattributed"]);
   });
 
   it("session 在 DB 但 source_present=false → session-gone", () => {
@@ -57,13 +63,13 @@ describe("VisibilityService.classify (synchronous decisions)", () => {
       new Map(),
     ));
     const out = service.enrichRows([{ sessionId: "s1", requestId: "req_abc" }]);
-    expect(out).toEqual(["session-gone"]);
+    expect(vis(out)).toEqual(["session-gone"]);
   });
 
   it("session 完全查不到 → session-gone", () => {
     service = new VisibilityService(makeDeps(new Map(), new Map()));
     const out = service.enrichRows([{ sessionId: "s_missing", requestId: "req_abc" }]);
-    expect(out).toEqual(["session-gone"]);
+    expect(vis(out)).toEqual(["session-gone"]);
   });
 
   it("缓存未命中 → computing，并 enqueue", () => {
@@ -74,7 +80,7 @@ describe("VisibilityService.classify (synchronous decisions)", () => {
     ));
     service.setEnqueueFn(enqueue);
     const out = service.enrichRows([{ sessionId: "s1", requestId: "req_abc" }]);
-    expect(out).toEqual(["computing"]);
+    expect(vis(out)).toEqual(["computing"]);
     expect(enqueue).toHaveBeenCalledExactlyOnceWith("s1");
   });
 
@@ -93,9 +99,9 @@ describe("VisibilityService.classify (synchronous decisions)", () => {
     expect(enqueue).toHaveBeenCalledExactlyOnceWith("s1");
   });
 
-  it("compute 后命中 → visible / hidden 区分", async () => {
+  it("compute 后命中 → visible 带坐标 / hidden 无坐标", async () => {
     const metas = new Map([["s1", makeMeta("s1")]]);
-    const rendered = new Map([["s1", new Set(["req_visible"])]]);
+    const rendered = new Map([["s1", new Map([["req_visible", coord(2, 5)]])]]);
     service = new VisibilityService(makeDeps(metas, rendered));
     service.setEnqueueFn(() => {}); // 这里手动驱动 compute
     await service.compute("s1");
@@ -104,12 +110,14 @@ describe("VisibilityService.classify (synchronous decisions)", () => {
       { sessionId: "s1", requestId: "req_visible" },
       { sessionId: "s1", requestId: "req_hidden" },
     ]);
-    expect(out).toEqual(["visible", "hidden"]);
+    expect(vis(out)).toEqual(["visible", "hidden"]);
+    expect(out[0].target).toEqual({ turnId: 2, callId: 5 });
+    expect(out[1].target).toBeNull();
   });
 
   it("mtime 变化 → 缓存失效，重新报 computing", async () => {
     const metas = new Map([["s1", makeMeta("s1", { fileMtime: 1000 })]]);
-    const rendered = new Map([["s1", new Set(["req_a"])]]);
+    const rendered = new Map([["s1", new Map([["req_a", coord(1, 1)]])]]);
     const deps = makeDeps(metas, rendered);
     service = new VisibilityService(deps);
     const enqueue = vi.fn();
@@ -117,11 +125,11 @@ describe("VisibilityService.classify (synchronous decisions)", () => {
     await service.compute("s1");
 
     // 第一次 enrich：命中
-    expect(service.enrichRows([{ sessionId: "s1", requestId: "req_a" }])).toEqual(["visible"]);
+    expect(vis(service.enrichRows([{ sessionId: "s1", requestId: "req_a" }]))).toEqual(["visible"]);
 
     // 模拟用户追加 turn 后 mtime 变了
     metas.set("s1", makeMeta("s1", { fileMtime: 2000 }));
-    expect(service.enrichRows([{ sessionId: "s1", requestId: "req_a" }])).toEqual(["computing"]);
+    expect(vis(service.enrichRows([{ sessionId: "s1", requestId: "req_a" }]))).toEqual(["computing"]);
     expect(enqueue).toHaveBeenCalledWith("s1");
   });
 
@@ -146,7 +154,8 @@ describe("VisibilityService.classify (synchronous decisions)", () => {
     const enqueue = vi.fn();
     service.setEnqueueFn(enqueue);
     const out = service.enrichRows([{ sessionId: "s1", requestId: "req_a" }]);
-    expect(out).toEqual(["disabled"]);
+    expect(vis(out)).toEqual(["disabled"]);
+    expect(out[0].target).toBeNull();
     expect(deps.loadMetas).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
   });
@@ -159,20 +168,21 @@ describe("VisibilityService + worker (createVisibilityService)", () => {
 
   it("worker 在 setImmediate 上跑 compute，不阻塞 enrichRows", async () => {
     const metas = new Map([["s1", makeMeta("s1")]]);
-    const rendered = new Map([["s1", new Set(["req_a"])]]);
+    const rendered = new Map([["s1", new Map([["req_a", coord(3, 7)]])]]);
     const deps = makeDeps(metas, rendered);
     const service = createVisibilityService(deps);
 
     // 第一次：必然是 computing
     const first = service.enrichRows([{ sessionId: "s1", requestId: "req_a" }]);
-    expect(first).toEqual(["computing"]);
+    expect(vis(first)).toEqual(["computing"]);
 
     // 让 setImmediate 执行
     await new Promise((r) => setImmediate(r));
     await new Promise((r) => setImmediate(r));
 
-    // 第二次：应该命中缓存
+    // 第二次：应该命中缓存，并带坐标
     const second = service.enrichRows([{ sessionId: "s1", requestId: "req_a" }]);
-    expect(second).toEqual(["visible"]);
+    expect(vis(second)).toEqual(["visible"]);
+    expect(second[0].target).toEqual({ turnId: 3, callId: 7 });
   });
 });

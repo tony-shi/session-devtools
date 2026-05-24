@@ -86,13 +86,18 @@ export class ProxyTrafficController {
       LIMIT ? OFFSET ?
     `).all([...params, limit, offset]) as Array<{ session_id: string | null; request_id: string | null } & Record<string, unknown>>;
 
-    // 用 RenderedSetService 给每行打 visibility 徽章。整条路径独立模块，
-    // 不在核心查询链路上：disabled 时直接全部回 'disabled'，零开销。
+    // 用 RenderedSetService 给每行打 visibility 徽章 + 跳转坐标。整条路径独立
+    // 模块，不在核心查询链路上：disabled 时直接全部回 'disabled'，零开销。
+    // link_target 仅 visible 行非 null —— 前端据此把徽章变成可点的"跳到 call"。
     const visService = getVisibilityService();
-    const visibilities = visService.enrichRows(
+    const results = visService.enrichRows(
       rows.map((r) => ({ sessionId: r.session_id, requestId: r.request_id })),
     );
-    const enriched = rows.map((r, i) => ({ ...r, visibility: visibilities[i] }));
+    const enriched = rows.map((r, i) => ({
+      ...r,
+      visibility: results[i].visibility,
+      link_target: results[i].target,
+    }));
 
     return { requests: enriched, total, limit, offset, indexProgress: getColdIndexProgress() };
   }

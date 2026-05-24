@@ -17,6 +17,20 @@ export interface VisibilityQuery {
   requestId: string | null;
 }
 
+// session 内导航坐标：和客户端 URL /sessions/:id/turn/:turnId/call/:callId
+// 直接对应（turnId=UserTurn.id，callId=LlmCall.id，都是数字 id）。
+export interface CallCoord {
+  turnId: number;
+  callId: number;
+}
+
+// 单行的判定结果。target 仅 visibility==="visible" 时非 null——
+// 服务端已经把跳转坐标算好，前端点击即跳完整 URL，无需二次 resolve。
+export interface VisibilityResult {
+  visibility: Visibility;
+  target: CallCoord | null;
+}
+
 export interface SessionMeta {
   sessionId: string;
   sourceFile: string;
@@ -28,12 +42,14 @@ export interface VisibilityDeps {
   // 批量查 meta：一次 SQL 拉到所有相关 session 的 source_file/mtime/source_present。
   // 单批调用，所以即使 50 行 proxy 也只一次 DB 命中。
   loadMetas(sessionIds: string[]): Map<string, SessionMeta>;
-  // 跑 parser，返回该 session 在 UI 上会渲染的所有 apiRequestId 集合。
-  // parser 现在异步（compact-proxy 精确匹配需要读 traffic.jsonl body），所以
+  // 跑 parser，返回该 session 在 UI 上会渲染的 apiRequestId → 导航坐标 映射。
+  // 用 Map 而非 Set：proxy 行不仅要知道"是否渲染"，还要知道"跳到哪条 call"，
+  // 把坐标在服务端一次算好 = 前端从确定性出发，点击直达完整 URL。
+  // parser 异步（compact-proxy 精确匹配需要读 traffic.jsonl body），所以
   // 这个接口也是 Promise；worker 那一侧已经在 setImmediate 上排队执行，
   // 切到 async 后队列变成"上一条完成才调下一条"，避免并发解 gzip。
   // 抛错时 service 不污染缓存，下次 enqueue 时重试。
-  computeRenderedSet(meta: SessionMeta): Promise<Set<string>>;
+  computeRenderedSet(meta: SessionMeta): Promise<Map<string, CallCoord>>;
 }
 
 export class VisibilityService {
@@ -47,8 +63,8 @@ export class VisibilityService {
     this.enqueueFn = fn;
   }
 
-  enrichRows(rows: VisibilityQuery[]): Visibility[] {
-    if (!isVisibilityEnabled()) return rows.map(() => "disabled");
+  enrichRows(rows: VisibilityQuery[]): VisibilityResult[] {
+    if (!isVisibilityEnabled()) return rows.map(() => ({ visibility: "disabled" as const, target: null }));
 
     const sessionIds = new Set<string>();
     for (const r of rows) {
@@ -70,22 +86,25 @@ export class VisibilityService {
     q: VisibilityQuery,
     metas: Map<string, SessionMeta>,
     toEnqueue: Set<string>,
-  ): Visibility {
-    if (!q.sessionId) return "unattributed";
+  ): VisibilityResult {
+    if (!q.sessionId) return { visibility: "unattributed", target: null };
     // proxy 端给缺失 request-id 的响应注入了 proxy-<uuid>。这种 id 永远不会
     // 出现在 jsonl 里，单独标为 unattributed 而不是 hidden，避免误导用户。
-    if (!q.requestId || q.requestId.startsWith("proxy-")) return "unattributed";
+    if (!q.requestId || q.requestId.startsWith("proxy-")) return { visibility: "unattributed", target: null };
 
     const meta = metas.get(q.sessionId);
-    if (!meta || !meta.sourcePresent) return "session-gone";
+    if (!meta || !meta.sourcePresent) return { visibility: "session-gone", target: null };
 
     const entry = this.cache.get(q.sessionId);
     if (entry && entry.jsonlMtime === meta.fileMtime) {
-      return entry.requestIdSet.has(q.requestId) ? "visible" : "hidden";
+      const target = entry.requestIdMap.get(q.requestId) ?? null;
+      return target
+        ? { visibility: "visible", target }
+        : { visibility: "hidden", target: null };
     }
 
     toEnqueue.add(q.sessionId);
-    return "computing";
+    return { visibility: "computing", target: null };
   }
 
   // 由 worker 调用：parser 现在异步（compact 匹配要读 traffic.jsonl body），
@@ -96,10 +115,10 @@ export class VisibilityService {
     if (!meta || !meta.sourcePresent) return;
 
     try {
-      const set = await this.deps.computeRenderedSet(meta);
+      const map = await this.deps.computeRenderedSet(meta);
       this.cache.set(sessionId, {
         jsonlMtime: meta.fileMtime,
-        requestIdSet: set,
+        requestIdMap: map,
         computedAt: Date.now(),
       });
     } catch (err) {

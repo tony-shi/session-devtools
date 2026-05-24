@@ -1,6 +1,9 @@
+import type { CallCoord } from "./service.ts";
+
 export interface RenderedSetEntry {
   jsonlMtime: number;
-  requestIdSet: Set<string>;
+  // apiRequestId → 导航坐标。命中即 visible，且坐标可直接拼 URL。
+  requestIdMap: Map<string, CallCoord>;
   computedAt: number;
 }
 
