@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { UserTurn } from "../../drilldown-types";
 
 // 第一幕:多轮对话的「播放」。镜像官方 context-window simulation 的感觉 ——
@@ -11,7 +13,7 @@ const TYPE_TICK = 22;     // 打字机每帧间隔(ms)
 const CHARS_PER_TICK = 2; // 每帧揭示字符数
 const DONE_HOLD = 650;    // 一轮结束后进入下一轮的停顿
 const MAX_USER = 200;      // demo 用:用户输入截断,避免超长拖慢打字
-const MAX_ASSISTANT = 280; // demo 用:回答截断,避免超长拖慢节奏
+const MAX_ASSISTANT = 420; // demo 用:回答截断,避免超长拖慢节奏(放宽以容纳 markdown 结构)
 
 type Stage = "user" | "thinking" | "typing" | "done";
 type Item = { id: number; user: string; assistant: string };
@@ -28,13 +30,15 @@ function buildItems(turns: UserTurn[]): Item[] {
   });
 }
 
-export function ConversationView({ turns }: { turns: UserTurn[] }) {
+export function ConversationView({ turns, playing, restartNonce }: { turns: UserTurn[]; playing: boolean; restartNonce: number }) {
   const [items] = useState<Item[]>(() => buildItems(turns));
   const [turnIdx, setTurnIdx] = useState(0);
   const [stage, setStage] = useState<Stage>("user");
   const [typed, setTyped] = useState(0);
-  const [playing, setPlaying] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // 外部(R 键)重播 → 回到开头
+  useEffect(() => { setTurnIdx(0); setStage("user"); setTyped(0); }, [restartNonce]);
 
   const cur = items[turnIdx];
   const hasAssistant = !!cur?.assistant;
@@ -64,51 +68,36 @@ export function ConversationView({ turns }: { turns: UserTurn[] }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [turnIdx, stage, typed]);
 
-  const restart = () => { setTurnIdx(0); setStage("user"); setTyped(0); setPlaying(true); };
-  const skip = () => {
-    setPlaying(false);
-    setTurnIdx(items.length - 1);
-    setStage("done");
-    setTyped(items[items.length - 1]?.assistant.length ?? 0);
-  };
-
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
-      {/* 播放控件 */}
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "10px 16px", borderBottom: "1px solid #f1f5f9" }}>
-        <button onClick={() => setPlaying((p) => !p)} style={ctrlBtn}>{playing ? "⏸ 暂停" : "▶ 播放"}</button>
-        <button onClick={restart} style={ctrlBtn}>⟲ 重播</button>
-        <button onClick={skip} style={ctrlBtn}>⤏ 跳到底</button>
-      </div>
-
-      {/* 对话流 */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "40px 0", minHeight: 0 }}>
-        <div style={{ width: "100%", maxWidth: 820, margin: "0 auto", padding: "0 24px", display: "flex", flexDirection: "column", gap: 30 }}>
-          {items.slice(0, turnIdx + 1).map((it, i) => {
-            const isCurrent = i === turnIdx;
-            const userTyping = isCurrent && stage === "user";
-            const userText = userTyping ? it.user.slice(0, typed) : it.user;
-            const showThinking = isCurrent && stage === "thinking";
-            const showAssistant = it.assistant && (!isCurrent || stage === "typing" || stage === "done");
-            const assistantText = !isCurrent ? it.assistant : stage === "typing" ? it.assistant.slice(0, typed) : it.assistant;
-            const isTyping = isCurrent && stage === "typing";
-            return (
-              <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <Bubble side="left" role="User" text={userText} caret={userTyping && typed < it.user.length} />
-                {showThinking && <Thinking />}
-                {showAssistant && <Bubble side="right" role="Claude" text={assistantText} caret={isTyping} />}
-              </div>
-            );
-          })}
-          <div ref={bottomRef} />
-        </div>
+    <div style={{ height: "100%", overflowY: "auto", padding: "48px 0", minHeight: 0 }}>
+      <style>{`.wt-md p{margin:0 0 8px}.wt-md p:last-child{margin-bottom:0}.wt-md ul,.wt-md ol{margin:4px 0;padding-left:20px}.wt-md li{margin:2px 0}.wt-md code{background:rgba(15,23,42,0.06);padding:1px 5px;border-radius:4px;font-size:0.9em}.wt-md pre{background:#0f172a;color:#e2e8f0;padding:10px 12px;border-radius:8px;overflow:auto;font-size:13px}.wt-md pre code{background:none;padding:0}.wt-md h1,.wt-md h2,.wt-md h3{margin:6px 0;font-size:1.05em;font-weight:700}.wt-md table{border-collapse:collapse;font-size:0.92em}.wt-md th,.wt-md td{border:1px solid #e5e7eb;padding:4px 8px}`}</style>
+      <div style={{ width: "100%", maxWidth: 820, margin: "0 auto", padding: "0 24px", display: "flex", flexDirection: "column", gap: 30 }}>
+        {items.slice(0, turnIdx + 1).map((it, i) => {
+          const isCurrent = i === turnIdx;
+          const userTyping = isCurrent && stage === "user";
+          const userText = userTyping ? it.user.slice(0, typed) : it.user;
+          const showThinking = isCurrent && stage === "thinking";
+          const showAssistant = it.assistant && (!isCurrent || stage === "typing" || stage === "done");
+          const assistantText = !isCurrent ? it.assistant : stage === "typing" ? it.assistant.slice(0, typed) : it.assistant;
+          const isTyping = isCurrent && stage === "typing";
+          return (
+            <div key={it.id} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <Bubble side="left" role="User" text={userText} caret={userTyping && typed < it.user.length} />
+              {showThinking && <Thinking />}
+              {showAssistant && <Bubble side="right" role="Claude" text={assistantText} caret={isTyping} markdown />}
+            </div>
+          );
+        })}
+        <div ref={bottomRef} />
       </div>
     </div>
   );
 }
 
-function Bubble({ side, role, text, caret }: { side: "left" | "right"; role: string; text: string; caret?: boolean }) {
+function Bubble({ side, role, text, caret, markdown }: { side: "left" | "right"; role: string; text: string; caret?: boolean; markdown?: boolean }) {
   const left = side === "left";
+  // 打字时用纯文本(避免半截 markdown 闪烁);打完那条再转成 Markdown 渲染。
+  const showMd = markdown && !caret;
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: left ? "flex-start" : "flex-end", gap: 6 }}>
       <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: 0.3, color: left ? "#6366f1" : "#0f766e" }}>{role}</span>
@@ -124,13 +113,19 @@ function Bubble({ side, role, text, caret }: { side: "left" | "right"; role: str
           color: "#1f2937",
           background: left ? "#eef2ff" : "#f0fdfa",
           border: `1px solid ${left ? "#e0e7ff" : "#ccfbf1"}`,
-          whiteSpace: "pre-wrap",
           wordBreak: "break-word",
+          ...(showMd ? {} : { whiteSpace: "pre-wrap" }),
           ...(left ? { display: "-webkit-box", WebkitLineClamp: 6, WebkitBoxOrient: "vertical", overflow: "hidden" } : {}),
         }}
       >
-        {text}
-        {caret && <span style={{ display: "inline-block", width: 8, marginLeft: 2, color: "#0f766e", animation: "wt-blink 1s step-end infinite" }}>▍</span>}
+        {showMd ? (
+          <div className="wt-md"><ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown></div>
+        ) : (
+          <>
+            {text}
+            {caret && <span style={{ display: "inline-block", width: 8, marginLeft: 2, color: "#0f766e", animation: "wt-blink 1s step-end infinite" }}>▍</span>}
+          </>
+        )}
       </div>
     </div>
   );
@@ -149,8 +144,3 @@ function Thinking() {
     </div>
   );
 }
-
-const ctrlBtn: React.CSSProperties = {
-  padding: "5px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer",
-  border: "1px solid #e5e7eb", background: "#fff", color: "#374151",
-};

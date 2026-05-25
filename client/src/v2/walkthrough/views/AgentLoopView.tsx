@@ -64,11 +64,13 @@ function buildNodes(turn: UserTurn): Node[] {
   return nodes;
 }
 
-export function AgentLoopView({ turn }: { turn: UserTurn }) {
+export function AgentLoopView({ turn, playing, restartNonce }: { turn: UserTurn; playing: boolean; restartNonce: number }) {
   const [nodes] = useState<Node[]>(() => buildNodes(turn));
   const [revealed, setRevealed] = useState(1);
-  const [playing, setPlaying] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // 外部(R 键)重播 → 回到开头
+  useEffect(() => { setRevealed(1); }, [restartNonce]);
 
   useEffect(() => {
     if (!playing || revealed >= nodes.length) return;
@@ -78,26 +80,15 @@ export function AgentLoopView({ turn }: { turn: UserTurn }) {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [revealed]);
 
-  const restart = () => { setRevealed(1); setPlaying(true); };
-  const skip = () => { setPlaying(false); setRevealed(nodes.length); };
-
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "10px 16px", borderBottom: "1px solid #f1f5f9" }}>
-        <button onClick={() => setPlaying((p) => !p)} style={ctrlBtn}>{playing ? "⏸ 暂停" : "▶ 播放"}</button>
-        <button onClick={restart} style={ctrlBtn}>⟲ 重播</button>
-        <button onClick={skip} style={ctrlBtn}>⤏ 跳到底</button>
-      </div>
-
-      <div style={{ flex: 1, overflowY: "auto", padding: "28px 0", minHeight: 0 }}>
-        <div style={{ width: "100%", maxWidth: 680, margin: "0 auto", padding: "0 24px", display: "flex", flexDirection: "column", gap: 10 }}>
-          {nodes.slice(0, revealed).map((n, i) => (
-            <div key={i} style={{ animation: "wt-rise 0.3s ease both" }}>
-              <Lane actor={actorOf(n.kind)}><NodeBox node={n} /></Lane>
-            </div>
-          ))}
-          <div ref={bottomRef} />
-        </div>
+    <div style={{ height: "100%", overflowY: "auto", padding: "36px 0", minHeight: 0 }}>
+      <div style={{ width: "100%", maxWidth: 680, margin: "0 auto", padding: "0 24px", display: "flex", flexDirection: "column", gap: 10 }}>
+        {nodes.slice(0, revealed).map((n, i) => (
+          <div key={i} style={{ animation: "wt-rise 0.3s ease both" }}>
+            <Lane actor={actorOf(n.kind)}><NodeBox node={n} /></Lane>
+          </div>
+        ))}
+        <div ref={bottomRef} />
       </div>
       <style>{`@keyframes wt-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}`}</style>
     </div>
@@ -185,8 +176,3 @@ function NodeBox({ node }: { node: Node }) {
       );
   }
 }
-
-const ctrlBtn: React.CSSProperties = {
-  padding: "5px 12px", borderRadius: 8, fontSize: 12, cursor: "pointer",
-  border: "1px solid #e5e7eb", background: "#fff", color: "#374151",
-};

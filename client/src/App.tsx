@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate, useMatch } from "react-router-dom";
 import { SessionDetailV2 } from "./v2/SessionDetailV2";
-import { DemoStage } from "./v2/walkthrough/DemoStage";
 import { apiV2 } from "./v2/api";
 import { Header } from "./components/Header";
 import { ProxyV2Setup } from "./components/ProxyV2Setup";
@@ -13,6 +12,12 @@ import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/ca
 import { BarChart3, TrendingUp, Zap, ChevronLeft, ChevronRight } from "lucide-react";
 import type { SessionsV2Response, SummaryV2, SessionV2 } from "./v2/types";
 import { BRAND } from "./v2/shared/brand";
+
+// 内部录制用的教学画板 —— 仅 dev 可达;生产构建里这段是死分支,
+// 动态 import 会被剥离,npm 包/线上 app 完全不含 walkthrough。
+const DemoStage = import.meta.env.DEV
+  ? lazy(() => import("./v2/walkthrough/DemoStage").then((m) => ({ default: m.DemoStage })))
+  : null;
 
 type Tab = "sessions-v2" | "proxy-v2" | "trends";
 
@@ -283,8 +288,10 @@ function AppShell() {
               }
             />
             <Route path="/proxy" element={<ProxyV2Setup />} />
-            {/* 独立教学画板，不在主导航里 —— 普通用户走不到 */}
-            <Route path="/demo/:storyId" element={<DemoStage />} />
+            {/* 内部教学画板:仅 dev 注册,生产构建里剥离;不在主导航 */}
+            {import.meta.env.DEV && DemoStage && (
+              <Route path="/demo/:storyId" element={<Suspense fallback={null}><DemoStage /></Suspense>} />
+            )}
           </Routes>
         </main>
       </div>

@@ -41,15 +41,15 @@ async function resolveForAct(act: ActId, cache: Map<string, SessionDrilldown>): 
 
 // 每一幕的特化编排:复用真实叶子组件,但布局由我们自己摆。
 // Act2/Act3 的叶子依赖 useAttributionGraph → 包一层 AttributionGraphProvider。
-function ActContent({ act, data }: { act: ActId; data: StageData }) {
+function ActContent({ act, data, playing, restartNonce }: { act: ActId; data: StageData; playing: boolean; restartNonce: number }) {
   if (!data.turn) return <div style={{ padding: 24, color: "#6b7280" }}>该会话无可用 turn。</div>;
 
   if (act === "conversation") {
-    return <ConversationView turns={data.turns} />;
+    return <ConversationView turns={data.turns} playing={playing} restartNonce={restartNonce} />;
   }
 
   if (act === "turn-io") {
-    return <AgentLoopView turn={data.turn} />;
+    return <AgentLoopView turn={data.turn} playing={playing} restartNonce={restartNonce} />;
   }
 
   // llm-call
@@ -69,12 +69,14 @@ export function DemoStage() {
   const { storyId = "" } = useParams();
   const navigate = useNavigate();
   const story = STORIES[storyId];
-  const { index, next, prev, isFirst, isLast } = useWalkthrough(story?.steps.length ?? 0);
+  const { index, next, prev } = useWalkthrough(story?.steps.length ?? 0);
 
   // 启动时把每一幕的数据一次性解析好,存进 act→data;切幕直接读,无加载闪烁。
   const [byAct, setByAct] = useState<Partial<Record<ActId, StageData>> | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const cacheRef = useRef<Map<string, SessionDrilldown>>(new Map());
+  const [playing, setPlaying] = useState(true);
+  const [restartNonce, setRestartNonce] = useState(0);
 
   useEffect(() => {
     const s = STORIES[storyId];
@@ -92,6 +94,22 @@ export function DemoStage() {
     return () => { cancelled = true; };
   }, [storyId]);
 
+  // 键盘控制:← / → 切幕,Space 播放/暂停,R 重播,Esc 退出。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight") { e.preventDefault(); next(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); prev(); }
+      else if (e.key === " ") { e.preventDefault(); setPlaying((p) => !p); }
+      else if (e.key === "r" || e.key === "R") { setRestartNonce((n) => n + 1); setPlaying(true); }
+      else if (e.key === "Escape") { navigate("/sessions"); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [next, prev, navigate]);
+
+  // 切幕时自动恢复播放
+  useEffect(() => { setPlaying(true); }, [index]);
+
   if (!story) {
     return <div style={{ padding: 40, color: "#6b7280" }}>未找到 walkthrough：<code>{storyId}</code></div>;
   }
@@ -100,65 +118,60 @@ export function DemoStage() {
   const data = byAct?.[step.act] ?? null;
 
   return (
-    <div style={{ flex: 1, position: "relative", minHeight: 0, background: "#fff", overflow: "hidden", borderRadius: 12 }}>
-      {/* 视频画面:幕内容全幅铺满 */}
-      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "#fff", display: "flex", flexDirection: "column", minHeight: 0 }}>
+      {/* 内容区:幕内容,绝不进入下方字幕带 */}
+      <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
         {state === "loading" && <div style={{ padding: 24, color: "#6b7280" }}>正在加载…</div>}
         {state === "error" && <div style={{ padding: 24, color: "#b91c1c" }}>找不到可用会话。请在 config.ts 的 STAGE_CONFIG 指定 sessionId。</div>}
-        {state === "ready" && data && <ActContent act={step.act} data={data} />}
+        {state === "ready" && data && <ActContent act={step.act} data={data} playing={playing} restartNonce={restartNonce} />}
       </div>
 
-      {/* 悬浮字幕(播报):配置的文案逐字播出 */}
-      {state === "ready" && <NarrationBox key={index} caption={step.caption} takeaway={step.takeaway} />}
-
-      {/* 右侧 hover 才显示的极简控件 */}
-      <div className="wt-nav" style={navZone}>
-        <button onClick={prev} disabled={isFirst} style={navBtn(isFirst)} title="上一幕">‹</button>
-        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", fontVariantNumeric: "tabular-nums" }}>{index + 1}/{story.steps.length}</span>
-        <button onClick={next} disabled={isLast} style={navBtn(isLast)} title="下一幕">›</button>
-        <button onClick={() => navigate("/sessions")} style={{ ...navBtn(false), marginTop: 10, fontSize: 13 }} title="退出">✕</button>
+      {/* 字幕带:预留的固定区域,字幕只在这里出现,不与内容重叠 */}
+      <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "0 24px 40px" }}>
+        {state === "ready" && <NarrationBox key={index} lines={step.lines} />}
       </div>
-      <style>{`.wt-nav{opacity:0;transition:opacity .25s ease}.wt-nav:hover{opacity:1}@keyframes wt-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}@keyframes wt-blink{50%{opacity:0}}`}</style>
+      <style>{`@keyframes wt-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}@keyframes wt-blink{50%{opacity:0}}@keyframes wt-rollup{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}`}</style>
     </div>
   );
 }
 
-// 悬浮字幕框:配置好的文案逐字"播报"(打字机),takeaway 打完淡入。
-function NarrationBox({ caption, takeaway }: { caption: string; takeaway?: string }) {
+// 悬浮字幕框:逐行播报 —— 当前行打字播出,打完停顿,下一行滑入上滚(模拟字幕滚动)。
+const LINE_HOLD_MS = 2200;
+function NarrationBox({ lines }: { lines: string[] }) {
+  const [li, setLi] = useState(0);
   const [n, setN] = useState(0);
-  useEffect(() => { setN(0); }, [caption]);
+  const line = lines[li] ?? "";
+  const typing = n < line.length;
+
+  // 打字
   useEffect(() => {
-    if (n >= caption.length) return;
-    const t = window.setTimeout(() => setN((x) => Math.min(caption.length, x + 2)), 28);
+    if (!typing) return;
+    const t = window.setTimeout(() => setN((x) => Math.min(line.length, x + 2)), 30);
     return () => clearTimeout(t);
-  }, [n, caption]);
-  const typing = n < caption.length;
+  }, [n, line, typing]);
+
+  // 打完停顿 → 下一行
+  useEffect(() => {
+    if (typing || li >= lines.length - 1) return;
+    const t = window.setTimeout(() => { setLi((i) => i + 1); setN(0); }, LINE_HOLD_MS);
+    return () => clearTimeout(t);
+  }, [typing, li, lines.length]);
+
   return (
-    <div style={{ position: "absolute", left: "50%", bottom: 44, transform: "translateX(-50%)", width: "min(760px, calc(100% - 130px))", animation: "wt-fade .4s ease both" }}>
-      <div style={{ background: "rgba(15,23,42,0.82)", backdropFilter: "blur(6px)", borderRadius: 14, padding: "16px 22px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
-        <div style={{ fontSize: 20, lineHeight: 1.5, color: "#fff", fontWeight: 500 }}>
-          {caption.slice(0, n)}
+    <div style={{ width: "min(820px, 100%)", animation: "wt-fade .4s ease both" }}>
+      <div style={{ background: "rgba(15,23,42,0.82)", backdropFilter: "blur(6px)", borderRadius: 14, padding: "18px 24px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)", minHeight: 30 }}>
+        {/* key=li 让每行重挂载 → 上滚动画 */}
+        <div key={li} style={{ fontSize: 21, lineHeight: 1.5, color: "#fff", fontWeight: 500, animation: "wt-rollup .45s ease both" }}>
+          {line.slice(0, n)}
           {typing && <span style={{ marginLeft: 2, color: "#a5b4fc", animation: "wt-blink 1s step-end infinite" }}>▍</span>}
         </div>
-        {takeaway && !typing && (
-          <div style={{ marginTop: 10, fontSize: 14, color: "#c7d2fe", animation: "wt-fade .3s ease both" }}>{takeaway}</div>
-        )}
+        {/* 进度小点:第几行 / 共几行 */}
+        <div style={{ display: "flex", gap: 5, marginTop: 12 }}>
+          {lines.map((_, i) => (
+            <span key={i} style={{ width: 6, height: 6, borderRadius: 999, background: i === li ? "#a5b4fc" : "rgba(255,255,255,0.25)" }} />
+          ))}
+        </div>
       </div>
     </div>
   );
-}
-
-const navZone: React.CSSProperties = {
-  position: "absolute", top: 0, right: 0, height: "100%", width: 92,
-  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10,
-  background: "linear-gradient(to left, rgba(15,23,42,0.30), transparent)",
-};
-
-function navBtn(disabled: boolean): React.CSSProperties {
-  return {
-    width: 40, height: 40, borderRadius: 999, border: "none",
-    background: "rgba(15,23,42,0.72)", color: disabled ? "rgba(255,255,255,0.3)" : "#fff",
-    fontSize: 20, lineHeight: 1, cursor: disabled ? "default" : "pointer",
-    display: "flex", alignItems: "center", justifyContent: "center",
-  };
 }

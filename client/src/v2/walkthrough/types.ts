@@ -11,8 +11,8 @@ export type ActId = "conversation" | "turn-io" | "llm-call";
 
 export interface Step {
   act: ActId;
-  caption: string;
-  takeaway?: string;
+  // 字幕脚本:逐行播报(打字 + 滚动切换),模拟视频字幕。先伪造,看效果。
+  lines: string[];
 }
 
 export interface Story {
