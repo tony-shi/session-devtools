@@ -52,6 +52,13 @@ export interface AttributionGraphContextValue {
     | ((callId: number, lens?: "request" | "response", focus?: PendingFocus) => void)
     | null;
   /**
+   * Open a side-call (background LLM request) detail view by its proxy
+   * request id. Wired by SessionDetailV2 to navigate to
+   * `/sessions/:id/side-call/:proxyRequestId`. Null when no parent dispatcher
+   * is provided (e.g. linked-panel mode) — click sites stay inert.
+   */
+  onOpenSideCall: ((proxyRequestId: number) => void) | null;
+  /**
    * One-shot focus hint set by `onJumpToCall(callId, lens, focus)`.
    * Call detail panels read it on mount + when the value changes, apply
    * the matching selection, then call `clearPendingFocus`. Returns to null
@@ -113,6 +120,7 @@ const Ctx = createContext<AttributionGraphContextValue>({
   loading: false,
   error: null,
   onJumpToCall: null,
+  onOpenSideCall: null,
   pendingFocus: null,
   clearPendingFocus: () => {},
   highlightedCallId: null,
@@ -126,11 +134,13 @@ const Ctx = createContext<AttributionGraphContextValue>({
 const FLASH_DURATION_MS = 2000;
 
 export function AttributionGraphProvider({
-  sessionId, onJumpToCall = null, children,
+  sessionId, onJumpToCall = null, onOpenSideCall = null, children,
 }: {
   sessionId: string;
   /** Jump-to-Call dispatcher (see AttributionGraphContextValue.onJumpToCall). */
   onJumpToCall?: ((callId: number, lens?: "request" | "response") => void) | null;
+  /** Side-call open dispatcher (see AttributionGraphContextValue.onOpenSideCall). */
+  onOpenSideCall?: ((proxyRequestId: number) => void) | null;
   children: React.ReactNode;
 }) {
   const [graph, setGraph] = useState<SessionAttributionGraph | null>(null);
@@ -280,6 +290,7 @@ export function AttributionGraphProvider({
     loading,
     error,
     onJumpToCall: wrappedJumpToCall,
+    onOpenSideCall,
     pendingFocus,
     clearPendingFocus,
     highlightedCallId,
@@ -314,6 +325,7 @@ export function LinkedPanelScope({ children }: { children: React.ReactNode }) {
     ...parent,
     linkedPanelMode: true,
     onJumpToCall: null,
+    onOpenSideCall: null,
     flashEvent: () => {},
     flashCall: () => {},
     flashToolUse: () => {},

@@ -11,7 +11,8 @@
 
 export type NavLevel =
   | "session" | "turn" | "inter-turn" | "call"
-  | "subagent" | "compact-event" | "compact-call";
+  | "subagent" | "compact-event" | "compact-call"
+  | "background" | "side-call";
 
 // Call 详情面板内部的 tab。不进 URL（tab 选择属于次要 / 对比状态），但属于
 // session-detail 的导航词汇，所以和 SessionNav 放一起，供 context / 面板共享。
@@ -28,7 +29,11 @@ export type SessionNav =
   // 是 resolve-then-redirect 入口：加载后跳到首 turn，没有"默认 turn 0"魔法。
   | { level: "subagent"; agentFileId: string }
   | { level: "subagent-turn"; agentFileId: string; turnId: number }
-  | { level: "subagent-call"; agentFileId: string; turnId: number; callId: number };
+  | { level: "subagent-call"; agentFileId: string; turnId: number; callId: number }
+  // 后台 side call（标题生成 / quota 探测 / 提示建议 …）—— session 级旁路视图，
+  // 不依赖 turns 加载。side-call 详情用 proxyRequestId 寻址（proxy-only）。
+  | { level: "background" }
+  | { level: "side-call"; proxyRequestId: number };
 
 export function buildSessionPath(sessionId: string, nav: SessionNav): string {
   const base = `/sessions/${encodeURIComponent(sessionId)}`;
@@ -42,6 +47,8 @@ export function buildSessionPath(sessionId: string, nav: SessionNav): string {
     case "subagent":       return `${base}/subagent/${encodeURIComponent(nav.agentFileId)}`;
     case "subagent-turn":  return `${base}/subagent/${encodeURIComponent(nav.agentFileId)}/turn/${nav.turnId}`;
     case "subagent-call":  return `${base}/subagent/${encodeURIComponent(nav.agentFileId)}/turn/${nav.turnId}/call/${nav.callId}`;
+    case "background":     return `${base}/background`;
+    case "side-call":      return `${base}/side-call/${nav.proxyRequestId}`;
   }
 }
 
@@ -85,6 +92,13 @@ export function parseSessionNav(pathname: string, sessionId: string): SessionNav
       return { level: "subagent-turn", agentFileId, turnId };
     }
     return { level: "subagent", agentFileId };
+  }
+  if (a === "background") return { level: "background" };
+  if (a === "side-call" && b != null) {
+    const proxyRequestId = Number(b);
+    return Number.isFinite(proxyRequestId)
+      ? { level: "side-call", proxyRequestId }
+      : { level: "session" };
   }
   return { level: "session" };
 }

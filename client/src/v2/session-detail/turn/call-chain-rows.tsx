@@ -341,7 +341,7 @@ export function IntervalEventRow({
   //   - skipped → dim + "仅元数据"
   // When the graph hasn't loaded yet annotation === null and the card
   // renders without any impact treatment.
-  const { getEventAnnotation, onJumpToCall, highlightedLineIdx } = useAttributionGraph();
+  const { getEventAnnotation, onJumpToCall, onOpenSideCall, highlightedLineIdx } = useAttributionGraph();
   const annotation = getEventAnnotation(ev.lineIdx);
   const isFlashing = highlightedLineIdx === ev.lineIdx;
   const impact = annotation ? {
@@ -430,12 +430,13 @@ export function IntervalEventRow({
         jumpTooltip={jumpTooltip}
       />
       {/* ai-title → 生成它的后台 proxy 请求：恒显连接 chip（不受 EventUnitCard
-          skipped 门控影响）。本期点击 no-op，真正的跳转/面板留待后续。 */}
+          skipped 门控影响）。点击导航到 side-call 详情页
+          （/sessions/:id/side-call/:proxyRequestId）。 */}
       {titleProxyId != null && (
         <button
           type="button"
-          title={t("terms.aiTitleGeneratedBy", { defaultValue: `已连接生成此标题的后台 Haiku 请求 proxy#${titleProxyId}（跳转待实现）` })}
-          onClick={() => { /* TODO: 接 proxy 详情跳转 */ }}
+          title={t("terms.aiTitleGeneratedBy", { defaultValue: `打开生成此标题的后台 Haiku 请求 proxy#${titleProxyId}` })}
+          onClick={() => { if (onOpenSideCall) onOpenSideCall(titleProxyId); }}
           style={{
             marginTop: 2,
             marginLeft: 18,

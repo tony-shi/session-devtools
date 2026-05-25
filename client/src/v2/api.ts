@@ -91,6 +91,52 @@ export const apiV2 = {
   compactResponseTree: (sessionId: string, compactIdx: number) =>
     get<ResponseTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/compact/${compactIdx}/response-tree`),
 
+  // Side calls —— session 在对话主线之外发的后台 LLM 请求（标题生成 / quota
+  // 探测 / 提示建议 …）。captured=false 时 proxy 没抓到（仅 JSONL 留痕），
+  // proxyRequestId / token / model 都为 null。
+  sideCalls: (sessionId: string) =>
+    get<SideCallsResponse>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/side-calls`),
+
+  // 原始 proxy 请求/响应体。req_body 是 Anthropic 请求 JSON 字符串
+  // （{model, system, messages, tools}），res_body 是 SSE 文本（流式）或 JSON。
+  proxyBody: (proxyRequestId: number) =>
+    get<ProxyBodyResponse>(`/api/proxy/requests/${proxyRequestId}/body`),
+
   sync: () =>
     get<{ synced: number; skipped: number; errors: number }>("/api/v2/sessions/sync"),
 };
+
+export type SideCallKind =
+  | "generate_session_title"
+  | "quota"
+  | "prompt_suggestion"
+  | "agent_summary"
+  | "auto_dream"
+  | "extract_memories";
+
+export interface SideCall {
+  proxyRequestId: number | null;
+  kind: SideCallKind;
+  model: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  startedAt: string | null;
+  title?: string;
+  /** True iff this side call已被对话主线锚定（anchored = 出现在 transcript 里）。 */
+  anchored: boolean;
+  /** True iff proxy 抓到了请求；false 时 proxyRequestId / token / model 为 null。 */
+  captured: boolean;
+}
+
+export interface SideCallsResponse {
+  sideCalls: SideCall[];
+  tokenTotals: { input: number; output: number };
+}
+
+export interface ProxyBodyResponse {
+  req_body: string;
+  res_body: string;
+  req_body_encoding?: string;
+  res_body_encoding?: string;
+  error?: string;
+}

@@ -9,8 +9,16 @@
 //   llm-call     —— 某个 turn 的某次 LLM Call(LLM Call)
 export type ActId = "conversation" | "turn-io" | "llm-call";
 
+// 每一步的"放大镜阶段":告诉复用的 view 该强调/揭示哪一部分(布局不变,只换高亮)。
+//   conversation 用:overview(整段) / turn(高亮一轮) / final(落到最终回答)
+//   turn-io 用:call(Context 请求) / tool-use / tool-result / loop(整链 + Context 增长)
+export type Focus =
+  | "overview" | "turn" | "final"
+  | "call" | "tool-use" | "tool-result" | "loop";
+
 export interface Step {
   act: ActId;
+  focus: Focus;
   // 字幕脚本:逐行播报(打字 + 滚动切换),模拟视频字幕。先伪造,看效果。
   lines: string[];
 }

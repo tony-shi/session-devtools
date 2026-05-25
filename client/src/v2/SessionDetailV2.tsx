@@ -26,6 +26,8 @@ import {
 import { SessionOverviewPanel } from "./session-detail/overview/SessionOverviewPanel";
 import { UserTurnDetailPanel } from "./session-detail/turn/UserTurnDetailPanel";
 import { LlmCallDetailPanel } from "./session-detail/call/LlmCallDetailPanel";
+import { BackgroundCallsPanel } from "./session-detail/background/BackgroundCallsPanel";
+import { SideCallDetailPanel } from "./session-detail/sidecall/SideCallDetailPanel";
 import { SubAgentSessionPanel } from "./session-detail/subagent/SubAgentSessionPanel";
 import { LinkedContextPanel } from "./session-detail/linked/LinkedContextPanel";
 import { SessionNavRail } from "./session-detail/SessionNavRail";
@@ -64,6 +66,8 @@ export function SessionDetailV2({ session, onClose }: Props) {
   // 后续 task 接入；目前只让用户能视觉确认"点击位置 = 这个 compact"。
   const [selectedCompactEventIdx, setSelectedCompactEventIdx] = useState<number | null>(null);
   const [selectedCall, setSelectedCall] = useState<MockLlmCall | null>(null);
+  // side-call 详情用 proxyRequestId 寻址（proxy-only，不依赖 turns 加载）。
+  const [selectedProxyRequestId, setSelectedProxyRequestId] = useState<number | null>(null);
   const [, setInspector] = useState<InspectorState>({ type: "hotspots" });
   const [selectedSubAgent, setSelectedSubAgent] = useState<SubAgentSummary | null>(null);
   const [subAgentDrilldown, setSubAgentDrilldown] = useState<SessionDrilldown | null>(null);
@@ -237,6 +241,25 @@ export function SessionDetailV2({ session, onClose }: Props) {
         setSubAgentCallId(nav.level === "subagent-call" ? nav.callId : null);
         return;
       }
+      case "background": {
+        // session 级旁路视图：不依赖 turns 加载，没有"找不到 → 退 session"的守卫。
+        setNavLevel("background");
+        setSelectedTurn(null); setSelectedCall(null);
+        setSelectedInterTurnBlock(null); setSelectedCompactEventIdx(null);
+        setSelectedProxyRequestId(null);
+        if (!linkedPanelPinned) setLinkedPanel(null);
+        setInspector({ type: "hotspots" });
+        return;
+      }
+      case "side-call": {
+        setNavLevel("side-call");
+        setSelectedProxyRequestId(nav.proxyRequestId);
+        setSelectedTurn(null); setSelectedCall(null);
+        setSelectedInterTurnBlock(null); setSelectedCompactEventIdx(null);
+        if (!linkedPanelPinned) setLinkedPanel(null);
+        setInspector({ type: "hotspots" });
+        return;
+      }
       case "session":
       default:
         applySessionLevel();
@@ -250,6 +273,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
     setSelectedInterTurnBlock(null);
     setSelectedCall(null);
     setSelectedCompactEventIdx(null);
+    setSelectedProxyRequestId(null);
     if (!linkedPanelPinned) setLinkedPanel(null);
     setInspector({ type: "hotspots" });
   }
@@ -361,7 +385,11 @@ export function SessionDetailV2({ session, onClose }: Props) {
 
   return (
     <SessionDetailProvider value={sessionDetailCtx}>
-    <AttributionGraphProvider sessionId={session.session_id} onJumpToCall={onJumpToCall}>
+    <AttributionGraphProvider
+      sessionId={session.session_id}
+      onJumpToCall={onJumpToCall}
+      onOpenSideCall={(proxyRequestId) => goNav({ level: "side-call", proxyRequestId })}
+    >
     <Sheet open onOpenChange={(open) => { if (!open) onClose(); }}>
       <SheetContent
         side="right"
@@ -422,7 +450,23 @@ export function SessionDetailV2({ session, onClose }: Props) {
           {/* Main Canvas */}
           <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", minWidth: 0 }}>
             {navLevel === "session" && (
-              <SessionOverviewPanel />
+              <>
+                <div style={{ padding: "10px 22px 0", display: "flex", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    onClick={() => goNav({ level: "background" })}
+                    title="查看会话在对话主线之外的后台 LLM 请求（标题生成 / quota 探测 …）"
+                    style={{
+                      border: "1px solid #e5e7eb", background: "#fff", color: "#64748b",
+                      borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    ⚙ Background calls
+                  </button>
+                </div>
+                <SessionOverviewPanel />
+              </>
             )}
             {navLevel === "turn" && selectedTurn && !selectedCall && (
               <UserTurnDetailPanel turn={selectedTurn} onSelectCall={handleLinkCallFromTurn} isMockSession={isMockData} onSubAgentClick={handleSelectSubAgent}
@@ -524,6 +568,19 @@ export function SessionDetailV2({ session, onClose }: Props) {
                 onSelectTurn={(turnId) => goNav({ level: "subagent-turn", agentFileId: selectedSubAgent.agentFileId, turnId })}
                 onSelectCall={(callId) => goNav({ level: "subagent-call", agentFileId: selectedSubAgent.agentFileId, turnId: subAgentTurnId ?? 0, callId })}
                 onClearCall={() => goNav({ level: "subagent-turn", agentFileId: selectedSubAgent.agentFileId, turnId: subAgentTurnId ?? 0 })}
+              />
+            )}
+            {navLevel === "background" && (
+              <BackgroundCallsPanel
+                sessionId={session.session_id}
+                onOpenSideCall={(pid) => goNav({ level: "side-call", proxyRequestId: pid })}
+              />
+            )}
+            {navLevel === "side-call" && selectedProxyRequestId != null && (
+              <SideCallDetailPanel
+                sessionId={session.session_id}
+                proxyRequestId={selectedProxyRequestId}
+                onClose={() => goNav({ level: "background" })}
               />
             )}
           </div>

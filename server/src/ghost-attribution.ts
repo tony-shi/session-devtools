@@ -52,6 +52,10 @@ export interface ClassifiedGhost {
   proxyRequestId: number;
   kind: GhostQueryKind;
   startedAt: string | null;
+  model: string | null;
+  /** proxy 行已 denormalize 的 token 计数（无需解压）。 */
+  inputTokens: number | null;
+  outputTokens: number | null;
   /** 仅 generate_session_title：模型返回的标题文本（已解 JSON 取 .title）。 */
   title?: string;
 }
@@ -63,6 +67,9 @@ interface ProxyRow {
   jsonl_byte_offset: number;
   started_at: string | null;
   is_stream: number;
+  model: string | null;
+  res_input_tokens: number | null;
+  res_output_tokens: number | null;
 }
 
 function systemBlockTexts(reqBody: Record<string, unknown>): string[] {
@@ -148,7 +155,8 @@ export async function classifyResidualProxies(
 ): Promise<ClassifiedGhost[]> {
   const rows = db
     .prepare(
-      `SELECT id, request_id, jsonl_file, jsonl_byte_offset, started_at, is_stream
+      `SELECT id, request_id, jsonl_file, jsonl_byte_offset, started_at, is_stream,
+              model, res_input_tokens, res_output_tokens
        FROM proxy_requests
        WHERE session_id = ?
        ORDER BY started_at`,
@@ -168,7 +176,14 @@ export async function classifyResidualProxies(
     }
     const kind = classify(reqBody);
     if (!kind) continue;
-    const ghost: ClassifiedGhost = { proxyRequestId: r.id, kind, startedAt: r.started_at };
+    const ghost: ClassifiedGhost = {
+      proxyRequestId: r.id,
+      kind,
+      startedAt: r.started_at,
+      model: r.model,
+      inputTokens: r.res_input_tokens,
+      outputTokens: r.res_output_tokens,
+    };
     if (kind === "generate_session_title") {
       const title = extractTitle(rec, r.is_stream === 1);
       if (title) ghost.title = title;

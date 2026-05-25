@@ -4,7 +4,8 @@ import { runSyncV2 } from "./sync-v2.ts";
 import { parseJsonField } from "./parser-utils.ts";
 import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
 import { loadCallDetail, readProxyRecord, findProxyRowForCall, computeCallProxyMatchModes } from "./call-detail.ts";
-import { resolveAiTitleProxies } from "./ghost-attribution.ts";
+import { resolveAiTitleProxies, classifyResidualProxies, type GhostQueryKind } from "./ghost-attribution.ts";
+import { readFileSync } from "node:fs";
 import { loadAttributionTree, readSessionEventsForLinker } from "./attribution-service.ts";
 import { computeSessionAttributionGraph, type JsonlEventAnnotation, type SessionAttributionGraph } from "./session-attribution-graph.ts";
 import { enrichTreeWithGraph } from "./attribution-tree-enrich.ts";
@@ -255,6 +256,88 @@ export class SessionsV2Controller {
     }
 
     return drilldown;
+  }
+
+  // Side calls：本 session 在对话主线之外发起的后台 LLM 请求（生成标题 / quota /
+  // prompt suggestion / agent summary 等）。它们带正确的 session_id 但不在 transcript
+  // turn/call 结构里。这里把它们集中列出供 Background tab 消费。
+  //
+  // 数据两路 union：
+  //   (1) proxy 捕获到的 —— classifyResidualProxies（对全部 proxy 行分类；transcript
+  //       call 的 prompt 不会命中任何 ghost 前缀，故空 exclude 集即安全）。带 tokens。
+  //   (2) JSONL 锚定但 proxy 未捕获的 ai-title —— 即使没开 proxy，JSONL 里仍有 ai-title
+  //       行证明标题生成过；这类标 captured=false（无 req/res、无 tokens）。
+  @Get("sessions/:id/side-calls")
+  async sideCalls(@Param("id") id: string) {
+    const db = getDb();
+    const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+
+    interface SideCall {
+      proxyRequestId: number | null;
+      kind: GhostQueryKind;
+      model: string | null;
+      inputTokens: number | null;
+      outputTokens: number | null;
+      startedAt: string | null;
+      title?: string;
+      anchored: boolean; // 在 JSONL transcript 里有锚点行（目前仅 ai-title）
+      captured: boolean; // proxy 抓到了 req/res
+    }
+
+    const captured = await classifyResidualProxies(db, id, new Set());
+    const rows: SideCall[] = captured.map((g) => ({
+      proxyRequestId: g.proxyRequestId,
+      kind: g.kind,
+      model: g.model,
+      inputTokens: g.inputTokens,
+      outputTokens: g.outputTokens,
+      startedAt: g.startedAt,
+      ...(g.title ? { title: g.title } : {}),
+      anchored: g.kind === "generate_session_title",
+      captured: true,
+    }));
+
+    // (2) JSONL-anchored ai-title 未被 proxy 捕获的：轻量扫 source_file 取 distinct
+    // aiTitle 值，凡不在已捕获标题集里的，补一条 captured=false。
+    const capturedTitles = new Set(
+      captured.filter((g) => g.kind === "generate_session_title" && g.title).map((g) => g.title!),
+    );
+    try {
+      const text = readFileSync(row.source_file, "utf8");
+      const seen = new Set<string>();
+      for (const line of text.split("\n")) {
+        if (!line.startsWith('{"type":"ai-title"')) continue;
+        try {
+          const t = (JSON.parse(line) as { aiTitle?: string }).aiTitle;
+          if (t && !seen.has(t)) {
+            seen.add(t);
+            if (!capturedTitles.has(t)) {
+              rows.push({
+                proxyRequestId: null,
+                kind: "generate_session_title",
+                model: null,
+                inputTokens: null,
+                outputTokens: null,
+                startedAt: null,
+                title: t,
+                anchored: true,
+                captured: false,
+              });
+            }
+          }
+        } catch { /* skip malformed line */ }
+      }
+    } catch { /* source file gone — only proxy-captured rows */ }
+
+    // 时间升序；未捕获（无 startedAt）排末尾。
+    rows.sort((a, b) => (a.startedAt ?? "~").localeCompare(b.startedAt ?? "~"));
+
+    const tokenTotals = rows.reduce(
+      (acc, r) => ({ input: acc.input + (r.inputTokens ?? 0), output: acc.output + (r.outputTokens ?? 0) }),
+      { input: 0, output: 0 },
+    );
+    return { sideCalls: rows, tokenTotals };
   }
 
   // Sub-agent call-detail mirrors the main session endpoint. A sub-agent is
