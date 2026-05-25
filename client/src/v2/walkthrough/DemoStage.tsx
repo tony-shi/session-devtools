@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useWalkthrough } from "./useWalkthrough";
 import { STORIES } from "./stories/agent-loop";
-import { DEMO_SESSION_ID } from "./config";
+import { STAGE_CONFIG } from "./config";
 import type { ActId } from "./types";
 import { apiV2 } from "../api";
-import type { UserTurn, LlmCall } from "../drilldown-types";
+import type { UserTurn, LlmCall, SessionDrilldown } from "../drilldown-types";
 import { AttributionGraphProvider } from "../attribution-graph-context";
 import { ConversationView } from "./views/ConversationView";
 import { AgentLoopView } from "./views/AgentLoopView";
@@ -13,22 +13,30 @@ import { LlmCallDetailPanel } from "../session-detail/call/LlmCallDetailPanel";
 
 const NOOP = () => { /* demo: inert */ };
 
-type StageData = { sessionId: string; turns: UserTurn[]; turn: UserTurn | null; call: LlmCall | null };
+type StageData = { act: ActId; sessionId: string; turns: UserTurn[]; turn: UserTurn | null; call: LlmCall | null };
 
-// 解析本机 demo 目标:config 指定的 session,或列表第一条 >=2 call 的会话;
-// turn/call 从其 drilldown 自动推导(第一个 >=2 call 的 turn 的首个 call)。
-async function resolveStageData(): Promise<StageData> {
-  const resp = await apiV2.sessions({ limit: 20 });
-  const sessionId =
-    DEMO_SESSION_ID ||
-    (resp.sessions.find((s) => s.llm_call_count >= 2) ?? resp.sessions[0])?.session_id;
+// 按某一幕的 STAGE_CONFIG 解析其 demo 目标。drilldown 按 sessionId 缓存,多幕共享
+// 同一会话时只取一次。任意字段留空 → 自动推导。
+async function resolveForAct(act: ActId, cache: Map<string, SessionDrilldown>): Promise<StageData> {
+  const cfg = STAGE_CONFIG[act];
+  let sessionId = (cfg.sessionId ?? "").trim();
+  if (!sessionId) {
+    const resp = await apiV2.sessions({ limit: 20 });
+    sessionId = (resp.sessions.find((s) => s.llm_call_count >= 2) ?? resp.sessions[0])?.session_id ?? "";
+  }
   if (!sessionId) throw new Error("no session");
-  const dd = await apiV2.sessionDrilldown(sessionId);
+  let dd = cache.get(sessionId);
+  if (!dd) { dd = await apiV2.sessionDrilldown(sessionId); cache.set(sessionId, dd); }
+  const turns = dd.turns;
   const turn =
-    dd.turns.find((t) => t.calls.length >= 2) ??
-    dd.turns.find((t) => t.calls.length >= 1) ??
-    dd.turns[0] ?? null;
-  return { sessionId, turns: dd.turns, turn, call: turn?.calls[0] ?? null };
+    (cfg.turnId != null ? turns.find((t) => t.id === cfg.turnId) : undefined) ??
+    turns.find((t) => t.calls.length >= 2) ??
+    turns.find((t) => t.calls.length >= 1) ??
+    turns[0] ?? null;
+  const call =
+    (cfg.callId != null ? turn?.calls.find((c) => c.id === cfg.callId) : undefined) ??
+    turn?.calls[0] ?? null;
+  return { act, sessionId, turns, turn, call };
 }
 
 // 每一幕的特化编排:复用真实叶子组件,但布局由我们自己摆。
@@ -61,82 +69,96 @@ export function DemoStage() {
   const { storyId = "" } = useParams();
   const navigate = useNavigate();
   const story = STORIES[storyId];
-  const { index, next, prev, goTo, isFirst, isLast } = useWalkthrough(story?.steps.length ?? 0);
+  const { index, next, prev, isFirst, isLast } = useWalkthrough(story?.steps.length ?? 0);
 
-  const [data, setData] = useState<StageData | null>(null);
+  // 启动时把每一幕的数据一次性解析好,存进 act→data;切幕直接读,无加载闪烁。
+  const [byAct, setByAct] = useState<Partial<Record<ActId, StageData>> | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const cacheRef = useRef<Map<string, SessionDrilldown>>(new Map());
 
   useEffect(() => {
+    const s = STORIES[storyId];
+    if (!s) return;
     let cancelled = false;
-    resolveStageData()
-      .then((d) => { if (!cancelled) { setData(d); setState("ready"); } })
-      .catch(() => { if (!cancelled) setState("error"); });
+    (async () => {
+      try {
+        const acts = [...new Set(s.steps.map((st) => st.act))];
+        const entries = await Promise.all(acts.map(async (a) => [a, await resolveForAct(a, cacheRef.current)] as const));
+        if (!cancelled) { setByAct(Object.fromEntries(entries)); setState("ready"); }
+      } catch {
+        if (!cancelled) setState("error");
+      }
+    })();
     return () => { cancelled = true; };
-  }, []);
+  }, [storyId]);
 
   if (!story) {
     return <div style={{ padding: 40, color: "#6b7280" }}>未找到 walkthrough：<code>{storyId}</code></div>;
   }
 
   const step = story.steps[index];
+  const data = byAct?.[step.act] ?? null;
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, background: "#0f172a", borderRadius: 12, overflow: "hidden" }}>
-      {/* 顶条 */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-        <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.4, color: "#a5b4fc", textTransform: "uppercase" }}>
-          {story.title}
-        </span>
-        <button onClick={() => navigate("/sessions")} style={ghostBtn}>退出 ✕</button>
-      </div>
-
-      {/* 舞台:白色承载区(浅色叶子组件按设计渲染) */}
-      <div style={{ flex: 1, margin: 16, borderRadius: 12, background: "#fff", overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" }}>
-        {state === "loading" && <div style={{ padding: 24, color: "#6b7280" }}>正在加载 demo 会话…</div>}
-        {state === "error" && <div style={{ padding: 24, color: "#b91c1c" }}>找不到可用会话。请先在 session 列表同步,或在 config.ts 指定 DEMO_SESSION_ID。</div>}
+    <div style={{ flex: 1, position: "relative", minHeight: 0, background: "#fff", overflow: "hidden", borderRadius: 12 }}>
+      {/* 视频画面:幕内容全幅铺满 */}
+      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        {state === "loading" && <div style={{ padding: 24, color: "#6b7280" }}>正在加载…</div>}
+        {state === "error" && <div style={{ padding: 24, color: "#b91c1c" }}>找不到可用会话。请在 config.ts 的 STAGE_CONFIG 指定 sessionId。</div>}
         {state === "ready" && data && <ActContent act={step.act} data={data} />}
       </div>
 
-      {/* 底部:文案 + 控件 */}
-      <div style={{ padding: "16px 24px", borderTop: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.03)" }}>
-        <div style={{ fontSize: 16, color: "#f1f5f9", lineHeight: 1.5 }}>{step.caption}</div>
-        {step.takeaway && (
-          <div style={{ marginTop: 8, fontSize: 13, color: "#c7d2fe", borderLeft: "3px solid #818cf8", paddingLeft: 10 }}>
-            {step.takeaway}
-          </div>
-        )}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>
-          <div style={{ display: "flex", gap: 6 }}>
-            {story.steps.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => goTo(i)}
-                aria-label={`step ${i + 1}`}
-                style={{ width: 9, height: 9, borderRadius: 999, border: "none", padding: 0, cursor: "pointer", background: i === index ? "#818cf8" : "rgba(148,163,184,0.4)" }}
-              />
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span style={{ fontSize: 12, color: "#94a3b8", marginRight: 4 }}>{index + 1} / {story.steps.length}</span>
-            <button onClick={prev} disabled={isFirst} style={stepBtn(isFirst)}>← 上一步</button>
-            <button onClick={next} disabled={isLast} style={stepBtn(isLast, true)}>下一步 →</button>
-          </div>
+      {/* 悬浮字幕(播报):配置的文案逐字播出 */}
+      {state === "ready" && <NarrationBox key={index} caption={step.caption} takeaway={step.takeaway} />}
+
+      {/* 右侧 hover 才显示的极简控件 */}
+      <div className="wt-nav" style={navZone}>
+        <button onClick={prev} disabled={isFirst} style={navBtn(isFirst)} title="上一幕">‹</button>
+        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.75)", fontVariantNumeric: "tabular-nums" }}>{index + 1}/{story.steps.length}</span>
+        <button onClick={next} disabled={isLast} style={navBtn(isLast)} title="下一幕">›</button>
+        <button onClick={() => navigate("/sessions")} style={{ ...navBtn(false), marginTop: 10, fontSize: 13 }} title="退出">✕</button>
+      </div>
+      <style>{`.wt-nav{opacity:0;transition:opacity .25s ease}.wt-nav:hover{opacity:1}@keyframes wt-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}@keyframes wt-blink{50%{opacity:0}}`}</style>
+    </div>
+  );
+}
+
+// 悬浮字幕框:配置好的文案逐字"播报"(打字机),takeaway 打完淡入。
+function NarrationBox({ caption, takeaway }: { caption: string; takeaway?: string }) {
+  const [n, setN] = useState(0);
+  useEffect(() => { setN(0); }, [caption]);
+  useEffect(() => {
+    if (n >= caption.length) return;
+    const t = window.setTimeout(() => setN((x) => Math.min(caption.length, x + 2)), 28);
+    return () => clearTimeout(t);
+  }, [n, caption]);
+  const typing = n < caption.length;
+  return (
+    <div style={{ position: "absolute", left: "50%", bottom: 44, transform: "translateX(-50%)", width: "min(760px, calc(100% - 130px))", animation: "wt-fade .4s ease both" }}>
+      <div style={{ background: "rgba(15,23,42,0.82)", backdropFilter: "blur(6px)", borderRadius: 14, padding: "16px 22px", boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
+        <div style={{ fontSize: 20, lineHeight: 1.5, color: "#fff", fontWeight: 500 }}>
+          {caption.slice(0, n)}
+          {typing && <span style={{ marginLeft: 2, color: "#a5b4fc", animation: "wt-blink 1s step-end infinite" }}>▍</span>}
         </div>
+        {takeaway && !typing && (
+          <div style={{ marginTop: 10, fontSize: 14, color: "#c7d2fe", animation: "wt-fade .3s ease both" }}>{takeaway}</div>
+        )}
       </div>
     </div>
   );
 }
 
-const ghostBtn: React.CSSProperties = {
-  border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 13,
+const navZone: React.CSSProperties = {
+  position: "absolute", top: 0, right: 0, height: "100%", width: 92,
+  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10,
+  background: "linear-gradient(to left, rgba(15,23,42,0.30), transparent)",
 };
 
-function stepBtn(disabled: boolean, primary = false): React.CSSProperties {
+function navBtn(disabled: boolean): React.CSSProperties {
   return {
-    padding: "7px 16px", borderRadius: 8, fontSize: 13,
-    cursor: disabled ? "default" : "pointer",
-    border: primary ? "none" : "1px solid rgba(148,163,184,0.35)",
-    background: disabled ? "rgba(148,163,184,0.15)" : primary ? "#6366f1" : "transparent",
-    color: disabled ? "#64748b" : primary ? "#fff" : "#e2e8f0",
+    width: 40, height: 40, borderRadius: 999, border: "none",
+    background: "rgba(15,23,42,0.72)", color: disabled ? "rgba(255,255,255,0.3)" : "#fff",
+    fontSize: 20, lineHeight: 1, cursor: disabled ? "default" : "pointer",
+    display: "flex", alignItems: "center", justifyContent: "center",
   };
 }
