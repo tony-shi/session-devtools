@@ -163,10 +163,19 @@ export async function classifyResidualProxies(
     )
     .all(sessionId) as ProxyRow[];
 
+  // [perf] 本地开发打点：残差解压是这里唯一的重活（readProxyRecord 每次从 gz 头
+  // 流式跳到 byte offset）。统计 残差数 / 解压次数 / 解压耗时 / 总耗时，定位瓶颈。
+  const tStart = Date.now();
+  let residualCount = 0;
+  let readMs = 0;
+
   const out: ClassifiedGhost[] = [];
   for (const r of rows) {
     if (r.request_id && excludeRequestIds.has(r.request_id)) continue; // 已被精确认领
+    residualCount++;
+    const tRead = Date.now();
     const rec = await readProxyRecord(r.jsonl_file, r.jsonl_byte_offset);
+    readMs += Date.now() - tRead;
     if (!rec) continue;
     let reqBody: Record<string, unknown>;
     try {
@@ -190,6 +199,12 @@ export async function classifyResidualProxies(
     }
     out.push(ghost);
   }
+
+  console.log(
+    `[ghost] session=${sessionId.slice(0, 8)} proxyRows=${rows.length} ` +
+    `residual=${residualCount} reads=${residualCount} readMs=${readMs}ms ` +
+    `total=${Date.now() - tStart}ms ghosts=${out.length}`,
+  );
   return out;
 }
 

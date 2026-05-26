@@ -131,6 +131,12 @@ export interface EventUnitCardProps {
    *  see the target before clicking. */
   jumpLabel?: string;
   jumpTooltip?: string;
+  /** Provenance jump — a header chip with the SAME styling as `onJump`, but
+   *  NOT suppressed when the event is reverse-attribution "skipped". Used for
+   *  ai-title → 生成它的 proxy 请求：纯元数据行常被标 skipped（→ onJump 会被吞），
+   *  但它确实有一个可跳的来源，所以走这条不受门控的通道，保证 chip 恒显且与其它
+   *  jump chip 视觉一致。 */
+  provenanceJump?: { label: string; tooltip?: string; onClick: () => void };
 
   // === Style overrides ===
   bg?: string;                     // default "#fafafa"
@@ -162,7 +168,7 @@ export function EventUnitCard(props: EventUnitCardProps) {
     preview, description, segments = [], coordinate, confidence, impact,
     expandable = true, defaultExpanded = false,
     active = false,
-    onMouseEnter, onMouseLeave, onClick, onJump, jumpLabel, jumpTooltip,
+    onMouseEnter, onMouseLeave, onClick, onJump, jumpLabel, jumpTooltip, provenanceJump,
     bg, border, compact = false,
   } = props;
 
@@ -310,6 +316,29 @@ export function EventUnitCard(props: EventUnitCardProps) {
           >
             {auditGapped ? <WarningIcon /> : <LinkIcon />}
             {auditGapped && jumpLabel ? `?${jumpLabel}` : (jumpLabel ?? "跳转")}
+          </button>
+        )}
+
+        {/* provenance jump — 与上面 jump chip 同款样式（LinkIcon + 靛色），但不受
+            isSkipped 门控。ai-title → 生成它的 proxy 请求走这条。 */}
+        {provenanceJump && (
+          <button
+            type="button"
+            title={provenanceJump.tooltip}
+            onClick={(e) => { e.stopPropagation(); provenanceJump.onClick(); }}
+            className="hover:!bg-indigo-700 transition-colors"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              border: "none", background: BRAND.indigo600, color: "#fff",
+              borderRadius: 4, fontSize: 10, fontWeight: 700,
+              padding: "3px 9px", cursor: "pointer", lineHeight: 1.3,
+              flexShrink: 0, whiteSpace: "nowrap", transition: "background 0.12s",
+              boxShadow: "0 1px 2px rgba(79,70,229,0.25)", letterSpacing: "0.02em",
+              marginLeft: 6,
+            }}
+          >
+            <LinkIcon />
+            {provenanceJump.label}
           </button>
         )}
 

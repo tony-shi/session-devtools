@@ -97,6 +97,21 @@ export const apiV2 = {
   sideCalls: (sessionId: string) =>
     get<SideCallsResponse>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/side-calls`),
 
+  // Side-call-as-call endpoints. 一个 side call 只由 proxy_requests.id 寻址（没有
+  // transcript turn / prev call / jsonl 坐标），所以走专用的 :proxyRequestId 路由。
+  // 返回 shape 与 compact 端点一致（CallDetail / AttributionTreeResult /
+  // ResponseTreeResult），前端 side-call 模式直接复用 LLM-call 详情的三个 tab。
+  // attribution 端点的 diff 永远是"全 added"（无 prev），由前端 hideDiff 隐藏；
+  // cache 也在 side-call 模式下被前端强制隐藏。
+  sideCallDetail: (sessionId: string, proxyRequestId: number) =>
+    get<CallDetail>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/side-call/${proxyRequestId}/detail`),
+
+  sideCallAttributionTree: (sessionId: string, proxyRequestId: number) =>
+    get<AttributionTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/side-call/${proxyRequestId}/attribution-tree`),
+
+  sideCallResponseTree: (sessionId: string, proxyRequestId: number) =>
+    get<ResponseTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/side-call/${proxyRequestId}/response-tree`),
+
   // 原始 proxy 请求/响应体。req_body 是 Anthropic 请求 JSON 字符串
   // （{model, system, messages, tools}），res_body 是 SSE 文本（流式）或 JSON。
   proxyBody: (proxyRequestId: number) =>

@@ -270,11 +270,14 @@ interface Props {
   /** Present iff rendering a compact summarization call — routes to compact endpoint.
    *  互斥于 agentFileId（compact 不在 sub-agent 内）。 */
   compactIdx?: number;
+  /** Present iff rendering a side call（后台 LLM 请求，仅 proxyRequestId 寻址）——
+   *  routes to side-call response 端点。互斥于 callId/compactIdx/agentFileId。 */
+  proxyRequestId?: number;
   callId: number;
   onLinkCall?: (callId: number) => void;
 }
 
-export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, callId }: Props) {
+export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, proxyRequestId, callId }: Props) {
   const [data, setData] = useState<ResponseTreeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -282,15 +285,17 @@ export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, callId }
   useEffect(() => {
     setLoading(true);
     setSelectedId(null);
-    const fetcher = compactIdx != null
-      ? apiV2.compactResponseTree(sessionId, compactIdx)
-      : agentFileId
-        ? apiV2.subAgentResponseTree(sessionId, agentFileId, callId)
-        : apiV2.responseTree(sessionId, callId);
+    const fetcher = proxyRequestId != null
+      ? apiV2.sideCallResponseTree(sessionId, proxyRequestId)
+      : compactIdx != null
+        ? apiV2.compactResponseTree(sessionId, compactIdx)
+        : agentFileId
+          ? apiV2.subAgentResponseTree(sessionId, agentFileId, callId)
+          : apiV2.responseTree(sessionId, callId);
     fetcher
       .then((d) => { setData(d); setLoading(false); })
       .catch(() => { setData(null); setLoading(false); });
-  }, [sessionId, agentFileId, compactIdx, callId]);
+  }, [sessionId, agentFileId, compactIdx, proxyRequestId, callId]);
 
   // Pending-focus consumption: when a Turn-view tool_use jump lands here
   // with `{ toolUseId }`, find the matching response block and select it.

@@ -68,25 +68,25 @@ export const agentLoopStory: Story = {
         "现在把它们串起来 —— 这是这个 Turn 真实的调用链路。",
         "Call 产生 tool_use,Agent 执行得到 tool_result。",
         "tool_result 被塞回下一次 Call 的 context,上下文越滚越大。",
-        "如此循环,Claude 对现场的理解越来越完整。",
+        "如此循环 —— 模型负责推理,工具负责行动,Claude 对现场的理解越来越完整。",
         "当 LLM 获取到充分信息,它不再输出 tool_use,而是给出最终结论。",
         "从用户输入,到 LLM 给出结果 —— 一个 Turn 就此结束。",
       ],
     },
     {
-      act: "conversation",
+      act: "recap",
       focus: "final",
       lines: [
-        "最后的回答,看起来只是一段文字。",
-        "但它背后是一串可检查的调用链。",
-        "Session 记录整场工作,Turn 记录一次任务,Call 记录一次模型请求。",
-        "tool_use 是模型想做什么,tool_result 是现实返回了什么。",
-        "Loop,就是这些不断接上,直到任务完成。",
+        // 前 6 行点亮结构图;后 2 行点出官方心智模型(三阶段 + 两引擎)
+        "Session —— 一次完整的会话。",
+        "Turn —— 一次用户请求,以及为回答它的全部工作。",
+        "LLM Call —— 一次带着具体 context 的模型请求。",
+        "tool_use —— 模型想做什么。",
+        "tool_result —— 现实返回了什么。",
+        "Loop —— 结果塞回 context,循环到 LLM 决定终止。",
+        "把循环抽象出来,其实就是三个阶段:收集上下文 → 采取行动 → 验证结果。",
+        "而驱动它的只有两件事:模型负责推理,工具负责行动。",
       ],
     },
   ],
-};
-
-export const STORIES: Record<string, Story> = {
-  [agentLoopStory.id]: agentLoopStory,
 };

@@ -181,6 +181,8 @@ export class SessionsV2Controller {
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
 
     const sourceFile = row.source_file as string;
+    // [perf] 本地开发用：定位 drilldown 加载各阶段耗时。约定同 [attribution-tree] 等。
+    const tStart = Date.now();
     let drilldown;
     try {
       drilldown = await parseSessionDrilldown(sourceFile, id, row, db);
@@ -188,6 +190,7 @@ export class SessionsV2Controller {
       const msg = err instanceof Error ? err.message : String(err);
       throw Object.assign(new Error(`Failed to parse session: ${msg}`), { status: 500 });
     }
+    const tParsed = Date.now();
 
     // Enrich each call with proxyMatchMode (single batch query, not N+1).
     // The drilldown parser leaves matchMode = "unmatched" by default; we
@@ -210,7 +213,9 @@ export class SessionsV2Controller {
     const excludeRequestIds = new Set<string>(
       flatCalls.map((c) => c.apiRequestId).filter((r): r is string => !!r),
     );
+    const tEnrichStart = Date.now();
     const titleProxies = await resolveAiTitleProxies(db, id, excludeRequestIds);
+    const aiTitleMs = Date.now() - tEnrichStart;
     if (titleProxies.length > 0) {
       const byTitle = new Map<string, number>();
       for (const tp of titleProxies) if (!byTitle.has(tp.title)) byTitle.set(tp.title, tp.proxyRequestId);
@@ -227,6 +232,12 @@ export class SessionsV2Controller {
         for (const call of turn.calls) call.intervalEvents.forEach(backfill);
       }
     }
+
+    console.log(
+      `[drilldown] session=${id.slice(0, 8)} parse=${tParsed - tStart}ms ` +
+      `ai-title-enrich=${aiTitleMs}ms total=${Date.now() - tStart}ms ` +
+      `turns=${drilldown.turns.length} titleProxies=${titleProxies.length}`,
+    );
 
     return drilldown;
   }
@@ -1092,6 +1103,150 @@ export class SessionsV2Controller {
     enrichTreeWithGraph(treeResult, eventByLine, syntheticCallId);
 
     return treeResult;
+  }
+
+  // ── Side-call-as-call endpoints ───────────────────────────────────────────
+  // A side call 是对话主线之外的后台 LLM 请求（标题 / quota / agent summary …），
+  // 只由 proxy_requests.id 寻址 —— 没有 JSONL transcript turn、没有 prev call、
+  // 没有可归因的 jsonl 坐标。这组端点镜像 compact 端点，但 attribution 走"空 jsonl
+  // + 无 prevCall"的退化路径（无 diff），response 直接用 proxy row 的 request_id
+  // 解析 resBody。callId 用负 sentinel `-(proxyRequestId)`，仅作内部占位，前端
+  // side-call 模式不依赖它做展示。
+
+  private sideCallProxyRow(db: ReturnType<typeof getDb>, id: string, proxyRequestId: number) {
+    return db.prepare(`
+      SELECT id, request_id, jsonl_file, jsonl_byte_offset, req_headers, model, started_at,
+             res_input_tokens, res_output_tokens,
+             res_cache_read_tokens, res_cache_creation_tokens, res_stop_reason
+      FROM proxy_requests
+      WHERE session_id = ? AND id = ?
+    `).get(id, proxyRequestId) as {
+      id: number;
+      request_id: string | null;
+      jsonl_file: string | null;
+      jsonl_byte_offset: number | null;
+      req_headers: string | null;
+      model: string | null;
+      started_at: string | null;
+      res_input_tokens: number | null;
+      res_output_tokens: number | null;
+      res_cache_read_tokens: number | null;
+      res_cache_creation_tokens: number | null;
+      res_stop_reason: string | null;
+    } | undefined;
+  }
+
+  @Get("sessions/:id/side-call/:proxyRequestId/detail")
+  async sideCallDetail(@Param("id") id: string, @Param("proxyRequestId") proxyRequestIdStr: string) {
+    const db = getDb();
+    const proxyRequestId = parseInt(proxyRequestIdStr, 10);
+    const proxyRow = this.sideCallProxyRow(db, id, proxyRequestId);
+    if (!proxyRow) throw Object.assign(new Error("side call proxy row not found"), { status: 404 });
+
+    const freshIn = proxyRow.res_input_tokens ?? 0;
+    const tokens = {
+      contextSize: freshIn,
+      cacheRead: proxyRow.res_cache_read_tokens ?? 0,
+      cacheWrite: proxyRow.res_cache_creation_tokens ?? 0,
+      freshIn,
+      outputTokens: proxyRow.res_output_tokens ?? 0,
+    };
+
+    let rawRequestJson: Record<string, unknown> | null = null;
+    if (proxyRow.jsonl_file != null && proxyRow.jsonl_byte_offset != null) {
+      const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
+      if (rec && typeof rec.reqBody === "string") {
+        try { rawRequestJson = JSON.parse(rec.reqBody) as Record<string, unknown>; }
+        catch { /* not JSON */ }
+      }
+    }
+
+    return {
+      // 负 sentinel callId —— 仅占位，side-call 模式不据它寻址/展示。
+      callId: -proxyRequestId,
+      sessionId: id,
+      model: proxyRow.model ?? "",
+      stopReason: proxyRow.res_stop_reason ?? "end_turn",
+      timestamp: proxyRow.started_at ?? "",
+      tokens,
+      proxyRequestId: proxyRow.id,
+      proxyMatchMode: "exact" as const,
+      rawRequestJson,
+    };
+  }
+
+  @Get("sessions/:id/side-call/:proxyRequestId/response-tree")
+  async sideCallResponseTree(@Param("id") id: string, @Param("proxyRequestId") proxyRequestIdStr: string) {
+    const db = getDb();
+    const proxyRequestId = parseInt(proxyRequestIdStr, 10);
+    const proxyRow = this.sideCallProxyRow(db, id, proxyRequestId);
+    if (!proxyRow) throw Object.assign(new Error("side call proxy row not found"), { status: 404 });
+
+    const syntheticCallId = -proxyRequestId;
+    // loadResponseTree 走 resolveCallContext —— 用 proxy row 的 request_id 当作
+    // apiRequestId，resBody 解析路径完全复用普通/compact call 那条。side call 没有
+    // tool_use（也无下游 call），toolCalls / nextCallId 都给空。
+    return loadResponseTree(id, syntheticCallId, db, {
+      resolveCallContext: () => ({
+        apiRequestId: proxyRow.request_id,
+        proxySessionId: id,
+        toolCalls: [],
+        nextCallId: null,
+        stopReason: proxyRow.res_stop_reason ?? "end_turn",
+        outputTokens: proxyRow.res_output_tokens ?? 0,
+      }),
+    });
+  }
+
+  @Get("sessions/:id/side-call/:proxyRequestId/attribution-tree")
+  async sideCallAttributionTree(@Param("id") id: string, @Param("proxyRequestId") proxyRequestIdStr: string) {
+    const db = getDb();
+    const proxyRequestId = parseInt(proxyRequestIdStr, 10);
+    const proxyRow = this.sideCallProxyRow(db, id, proxyRequestId);
+    if (!proxyRow) throw Object.assign(new Error("side call proxy row not found"), { status: 404 });
+
+    const syntheticCallId = -proxyRequestId;
+
+    // loadAttributionTree 退化驱动：
+    //   • resolveCallMeta 返回 prevCall=null → 不跑 prev snapshot → diff 为 null。
+    //   • loadJsonlEvents 永远返回空数组 → attributeWithJsonl 用空 jsonl 归因
+    //     （叶子保持 structural/rule origin，没有 jsonl-origin 反向链接）。
+    //   • 不做 attribution-graph enrichment（side call 不在 session 的 call 图里）。
+    const resolveCallMeta = (_sid: string, cid: number) => {
+      if (cid !== syntheticCallId) return null;
+      return {
+        call: {
+          id: syntheticCallId,
+          timestamp: proxyRow.started_at ?? "",
+          turnId: -1,
+          // sourceFile 仅作为 loadJsonlEvents 的 key；我们强制返回 [] 所以值无关紧要。
+          sourceFile: proxyRow.jsonl_file ?? `side-call:${proxyRequestId}`,
+          apiRequestId: proxyRow.request_id,
+        },
+        prevCall: null,
+      };
+    };
+
+    const fetchProxyReqBodyAt = async () => {
+      if (proxyRow.jsonl_file == null || proxyRow.jsonl_byte_offset == null) return null;
+      const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
+      const reqBodyStr = rec?.reqBody as string | undefined;
+      if (typeof reqBodyStr !== "string") return null;
+      let reqBody: Record<string, unknown> | null = null;
+      try { reqBody = JSON.parse(reqBodyStr) as Record<string, unknown>; }
+      catch { return null; }
+      let reqHeaders: Record<string, string> = {};
+      try { reqHeaders = JSON.parse(proxyRow.req_headers ?? "{}") as Record<string, string>; }
+      catch { /* default empty */ }
+      return { reqBody, reqHeaders, proxyRequestId: proxyRow.id, startedAt: proxyRow.started_at ?? "" };
+    };
+
+    return loadAttributionTree(id, syntheticCallId, db, {
+      resolveCallMeta,
+      fetchProxyReqBodyAt,
+      // empty jsonl — side call 没有 transcript 锚点
+      loadJsonlEvents: () => [],
+    });
   }
 
   @Get("sessions/:id/proxy")

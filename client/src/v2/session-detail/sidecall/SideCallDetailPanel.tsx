@@ -1,19 +1,25 @@
 // SideCallDetailPanel —— 单个 side call（后台 LLM 请求）的 URL 可寻址详情视图。
 //
-// 与 LlmCallDetailPanel 的视觉骨架一致（顶部 header → REQUEST → RESPONSE），但
-// 是 proxy-only 路径：直接 fetch proxy 的原始 req/res body 解析，没有 JSONL 归因 /
-// AttributionGraph 接线（side call 不在对话主线里，没有可归因的 jsonl 坐标）。
+// side call 只由 proxy_requests.id 寻址：没有 transcript turn、没有 prev call、
+// 没有可归因的 jsonl 坐标。本面板复用 LLM-call 详情的三个 tab（Attribution /
+// Response / Raw），通过给 AttributionTreeLensPanel / ResponseTreePanel 传
+// `proxyRequestId` 走 side-call 专用端点。Diff 与 Cache 在此模式下被强制隐藏。
 //
-// req_body 是 Anthropic 请求 JSON（{model, system, messages, tools}）。
-// res_body 是 SSE 文本（流式）或 JSON —— 两种都尽力抽出 assistant 文本。
+// Raw tab 仍走 proxyBody（原始 req/res body）：req_body 是 Anthropic 请求 JSON
+// （{model, system, messages, tools}），res_body 是 SSE 文本（流式）或 JSON。
 
 import React, { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { apiV2, type ProxyBodyResponse } from "../../api";
-import { shortModelName, modelColor } from "../../lib/format";
+import { shortModelName, modelColor, fmtDateShort } from "../../lib/format";
 import { EventUnitCard, SegmentView, type EventSegment } from "../../shared/EventUnitCard";
+import { AttributionTreeLensPanel } from "../../AttributionTreeLensPanel";
+import { ResponseTreePanel } from "../../ResponseTreePanel";
+import type { CallTab } from "../session-nav";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
-// ── 解析 helpers（纯函数，文件内私有）─────────────────────────────────────────
+// ── 解析 helpers（纯函数，文件内私有）—— 仅 Raw tab 用 ─────────────────────────
 
 interface ParsedRequest {
   model: string | null;
@@ -115,13 +121,9 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function SideCallDetailPanel({
-  sessionId, proxyRequestId, onClose,
-}: {
-  sessionId: string;
-  proxyRequestId: number;
-  onClose?: () => void;
-}) {
+// ── Raw tab：原始 proxy req/res body ──────────────────────────────────────────
+// 沿用旧 SideCallDetailPanel 的 proxyBody 路径（按 proxyRequestId 取原始 body）。
+function RawTab({ proxyRequestId, sessionId }: { proxyRequestId: number; sessionId: string }) {
   const [body, setBody] = useState<ProxyBodyResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -140,23 +142,112 @@ export function SideCallDetailPanel({
     // 依赖里以便 session 切换时也刷新，语义更稳。
   }, [proxyRequestId, sessionId]);
 
-  const parsedReq = body && !body.error ? parseRequest(body.req_body) : null;
-  const responseText = body && !body.error ? parseResponseText(body.res_body) : null;
+  if (loading) {
+    return <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>;
+  }
+  if (body?.error) {
+    return (
+      <div style={{
+        fontSize: 11, color: "#b45309",
+        background: "#fffbeb", border: "1px solid #fde68a",
+        borderRadius: 6, padding: "10px 12px",
+      }}>
+        {body.error === "request body unavailable" ? "请求体不可用（proxy 未保留或已被裁剪）。" : body.error}
+      </div>
+    );
+  }
+
+  const parsedReq = body ? parseRequest(body.req_body) : null;
+  const responseText = body ? parseResponseText(body.res_body) : null;
+
+  return (
+    <>
+      {/* ══ REQUEST ══════════════════════════════ */}
+      <SectionLabel>Request</SectionLabel>
+      {!parsedReq ? (
+        <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 16 }}>无法解析请求体。</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 }}>
+          {parsedReq.systemBlocks.map((sys, i) => (
+            <EventUnitCard
+              key={`sys-${i}`}
+              color="#64748b"
+              kindLabel="System"
+              segments={[{ label: "SYSTEM", content: sys, monospace: false, truncateAt: 2000 }]}
+              defaultExpanded
+              expandable={false}
+            />
+          ))}
+          {parsedReq.messages.map((m, i) => (
+            <EventUnitCard
+              key={`msg-${i}`}
+              color={m.role === "assistant" ? "#16a34a" : "#3b82f6"}
+              kindLabel={m.role}
+              segments={[{ label: m.role.toUpperCase(), content: m.text || "(empty)", monospace: false, truncateAt: 2000 }]}
+              defaultExpanded
+              expandable={false}
+            />
+          ))}
+          {parsedReq.systemBlocks.length === 0 && parsedReq.messages.length === 0 && (
+            <div style={{ fontSize: 11, color: "#9ca3af" }}>请求体无 system / messages。</div>
+          )}
+        </div>
+      )}
+
+      {/* ══ RESPONSE ═════════════════════════════ */}
+      <SectionLabel>Response</SectionLabel>
+      {responseText != null ? (
+        <div style={{
+          border: "1px solid #bbf7d0", background: "#f0fdf4",
+          borderRadius: 6, padding: "0 10px 8px",
+        }}>
+          <SegmentView seg={{ label: "ASSISTANT", content: responseText, monospace: false, truncateAt: 4000 } as EventSegment} />
+        </div>
+      ) : (
+        <div style={{ fontSize: 11, color: "#9ca3af" }}>无法从响应体抽出文本（可能为非文本响应）。</div>
+      )}
+    </>
+  );
+}
+
+export function SideCallDetailPanel({
+  sessionId, proxyRequestId, kind, model, startedAt, onClose,
+}: {
+  sessionId: string;
+  proxyRequestId: number;
+  /** side call 类别（generate_session_title / quota / …），来自 side-calls 列表。 */
+  kind?: string;
+  /** 模型名，来自 side-calls 列表（proxy 行的 model 列）。 */
+  model?: string | null;
+  /** 发起时间，来自 side-calls 列表。 */
+  startedAt?: string | null;
+  onClose?: () => void;
+}) {
+  const { t } = useTranslation();
+  const [tab, setTab] = useState<CallTab>("attribution");
+
+  const TAB_DEFS: Array<{ id: CallTab; label: string }> = [
+    { id: "attribution", label: t("callTab.attribution") },
+    { id: "response",    label: t("callTab.responseAnalysis") },
+    { id: "raw",         label: t("callTab.raw") },
+  ];
 
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: "16px 22px", minWidth: 0 }}>
-      {/* ── Header ──────────────────────────────── */}
+      {/* ── Header（kind / model / time / proxy#id；无 cache ledger） ──────── */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, flexWrap: "wrap", paddingBottom: 10, borderBottom: "1px solid #f3f4f6" }}>
         <span style={{ fontSize: 14, fontWeight: 800, color: "#111827" }}>
-          后台请求 proxy#{proxyRequestId}
+          {kind ?? "后台请求"}
         </span>
+        <span style={{ fontSize: 10, color: "#9ca3af" }}>proxy#{proxyRequestId}</span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          {parsedReq?.model && (
+          {model && (
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <div style={{ width: 7, height: 7, borderRadius: 2, background: modelColor(parsedReq.model), flexShrink: 0 }} />
-              <span style={{ fontSize: 11, color: "#6b7280" }}>{shortModelName(parsedReq.model)}</span>
+              <div style={{ width: 7, height: 7, borderRadius: 2, background: modelColor(model), flexShrink: 0 }} />
+              <span style={{ fontSize: 11, color: "#6b7280" }}>{shortModelName(model)}</span>
             </div>
           )}
+          {startedAt && <span style={{ fontSize: 10, color: "#9ca3af" }}>{fmtDateShort(startedAt)}</span>}
           {onClose && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -177,64 +268,50 @@ export function SideCallDetailPanel({
         </div>
       </div>
 
-      {loading ? (
-        <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>
-      ) : body?.error ? (
-        <div style={{
-          fontSize: 11, color: "#b45309",
-          background: "#fffbeb", border: "1px solid #fde68a",
-          borderRadius: 6, padding: "10px 12px",
-        }}>
-          {body.error === "request body unavailable" ? "请求体不可用（proxy 未保留或已被裁剪）。" : body.error}
-        </div>
-      ) : (
-        <>
-          {/* ══ REQUEST ══════════════════════════════ */}
-          <SectionLabel>Request</SectionLabel>
-          {!parsedReq ? (
-            <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 16 }}>无法解析请求体。</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 }}>
-              {parsedReq.systemBlocks.map((sys, i) => (
-                <EventUnitCard
-                  key={`sys-${i}`}
-                  color="#64748b"
-                  kindLabel="System"
-                  segments={[{ label: "SYSTEM", content: sys, monospace: false, truncateAt: 2000 }]}
-                  defaultExpanded
-                  expandable={false}
-                />
-              ))}
-              {parsedReq.messages.map((m, i) => (
-                <EventUnitCard
-                  key={`msg-${i}`}
-                  color={m.role === "assistant" ? "#16a34a" : "#3b82f6"}
-                  kindLabel={m.role}
-                  segments={[{ label: m.role.toUpperCase(), content: m.text || "(empty)", monospace: false, truncateAt: 2000 }]}
-                  defaultExpanded
-                  expandable={false}
-                />
-              ))}
-              {parsedReq.systemBlocks.length === 0 && parsedReq.messages.length === 0 && (
-                <div style={{ fontSize: 11, color: "#9ca3af" }}>请求体无 system / messages。</div>
-              )}
-            </div>
-          )}
+      {/* ── Tabs（镜像 LlmCallDetailPanel 的 TabsList/TabsTrigger 样式） ──── */}
+      <div style={{ display: "flex", flexDirection: "column" }}>
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as CallTab)}
+          className="mb-3.5"
+        >
+          <TabsList variant="line" className="h-auto border-b border-border w-full justify-start gap-0 rounded-none p-0">
+            {TAB_DEFS.map(({ id, label }) => (
+              <TabsTrigger
+                key={id}
+                value={id}
+                className="text-[11px] font-normal data-[state=active]:font-bold data-[state=active]:text-indigo-500 text-muted-foreground px-3 py-1.5 -mb-px after:bg-indigo-500"
+              >
+                {label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
 
-          {/* ══ RESPONSE ═════════════════════════════ */}
-          <SectionLabel>Response</SectionLabel>
-          {responseText != null ? (
-            <div style={{
-              border: "1px solid #bbf7d0", background: "#f0fdf4",
-              borderRadius: 6, padding: "0 10px 8px",
-            }}>
-              <SegmentView seg={{ label: "ASSISTANT", content: responseText, monospace: false, truncateAt: 4000 } as EventSegment} />
-            </div>
-          ) : (
-            <div style={{ fontSize: 11, color: "#9ca3af" }}>无法从响应体抽出文本（可能为非文本响应）。</div>
-          )}
-        </>
-      )}
+        {/* ══ Attribution —— side-call 模式：hideDiff + cache 也由 panel 内部隐藏 ══ */}
+        {tab === "attribution" && (
+          <AttributionTreeLensPanel
+            sessionId={sessionId}
+            proxyRequestId={proxyRequestId}
+            callId={-proxyRequestId}
+            hideDiff
+          />
+        )}
+
+        {/* ══ Response —— assistant blocks ══ */}
+        {tab === "response" && (
+          <ResponseTreePanel
+            sessionId={sessionId}
+            proxyRequestId={proxyRequestId}
+            callId={-proxyRequestId}
+          />
+        )}
+
+        {/* ══ Raw —— 原始 proxy req/res body ══ */}
+        {tab === "raw" && (
+          <RawTab proxyRequestId={proxyRequestId} sessionId={sessionId} />
+        )}
+      </div>
     </div>
   );
 }

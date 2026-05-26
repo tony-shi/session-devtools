@@ -428,35 +428,14 @@ export function IntervalEventRow({
         onJump={handleJump}
         jumpLabel={jumpLabel}
         jumpTooltip={jumpTooltip}
+        // ai-title → 生成它的后台 proxy 请求：走 provenanceJump（header chip，与
+        // 其它 jump chip 同款 LinkIcon + 靛色样式），不受 isSkipped 门控影响。
+        provenanceJump={titleProxyId != null && onOpenSideCall ? {
+          label: `proxy#${titleProxyId}`,
+          tooltip: t("terms.aiTitleGeneratedBy", { defaultValue: `打开生成此标题的后台 Haiku 请求 proxy#${titleProxyId}` }),
+          onClick: () => onOpenSideCall(titleProxyId),
+        } : undefined}
       />
-      {/* ai-title → 生成它的后台 proxy 请求：恒显连接 chip（不受 EventUnitCard
-          skipped 门控影响）。点击导航到 side-call 详情页
-          （/sessions/:id/side-call/:proxyRequestId）。 */}
-      {titleProxyId != null && (
-        <button
-          type="button"
-          title={t("terms.aiTitleGeneratedBy", { defaultValue: `打开生成此标题的后台 Haiku 请求 proxy#${titleProxyId}` })}
-          onClick={() => { if (onOpenSideCall) onOpenSideCall(titleProxyId); }}
-          style={{
-            marginTop: 2,
-            marginLeft: 18,
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            border: "none",
-            background: BRAND.indigo600,
-            color: "#fff",
-            borderRadius: 4,
-            fontSize: 10,
-            fontWeight: 700,
-            padding: "2px 8px",
-            cursor: "pointer",
-            letterSpacing: "0.02em",
-          }}
-        >
-          → proxy#{titleProxyId}
-        </button>
-      )}
       {/* forked 模式 footnote: "跳转 sub-agent：TODO" 占位文字（最简实现，无跳转） */}
       {skillFormat?.footnote && (
         <div style={{

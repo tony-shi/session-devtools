@@ -12,7 +12,7 @@
 App.tsx  ──route /demo/:storyId──▶  DemoStage
                                        │
    ┌───────────────────────────────────┼───────────────────────────────────┐
-   │ 1. 取 story                         │ STORIES[storyId]  (stories/agent-loop.ts)
+   │ 1. 取 story                         │ STORIES[storyId]  (stories/index.ts 注册表)
    │ 2. 解析每一幕的数据(启动时一次性)    │ resolveForAct(act) 按 STAGE_CONFIG(config.ts)
    │      sessionId→drilldown→turn→call  │ 结果存 byAct,drilldown 按 sessionId 缓存
    │ 3. 步进 + 键盘                       │ useWalkthrough(步索引) + keydown
@@ -39,7 +39,11 @@ ActContent 按 act 分发:
 |---|---|
 | `config.ts` | **`STAGE_CONFIG`**:每一幕用哪条 session / 哪个 turn / 哪次 call(留空=自动) |
 | `types.ts` | `ActId` / `Step`(act + 字幕 `lines`)/ `Story` |
-| `stories/agent-loop.ts` | 具体 story:每幕的 `act` + **字幕脚本 `lines`**,以及 `STORIES` 注册表 |
+| `stories/index.ts` | `STORIES` 注册表(所有 story:`/demo/<id>`) |
+| `stories/agent-loop.ts` | ep1 故事:Session/Turn/Call/loop。每步 `act` + `focus` + 字幕 `lines` |
+| `stories/context-window.ts` | ep2 故事:Context Window 不是容量条 |
+| `views/ConversationView` `AgentLoopView` `RecapView` | ep1 三类视图 |
+| `views/ContextStackView` `ContextRealView` | ep2:概念 context 栈 / 真实 attribution 构成条 |
 | `useWalkthrough.ts` | 纯步进状态机(index / next / prev) |
 | `DemoStage.tsx` | 编排器:数据解析 + 键盘 + 全屏布局 + 字幕 `NarrationBox` + 分发到各幕 |
 | `views/ConversationView.tsx` | 第一幕:对话播放(左右气泡 + 思考 + 打字机,打完转 Markdown) |

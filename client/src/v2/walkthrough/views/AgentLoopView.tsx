@@ -25,6 +25,7 @@ type Node =
   | { kind: "context"; iter: number; tokens: number; lastText: string }
   | { kind: "response"; iter: number; aiText: string; tools: ParsedTool[] }
   | { kind: "result"; iter: number; results: ResultItem[] }
+  | { kind: "more"; remaining: number }
   | { kind: "final"; text: string; calls: number };
 
 const clip = (s: string, n: number) => { const t = (s ?? "").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
@@ -48,7 +49,8 @@ function buildNodes(turn: UserTurn): Node[] {
   const summary = `这个 Turn:${turn.calls.length} 次调用 · ` +
     [...tally.entries()].sort((a, b) => b[1] - a[1]).map(([n, c]) => `${n}×${c}`).join(" · ");
 
-  const iters = turn.calls.filter((c) => c.toolCalls?.length).slice(0, MAX_ITERS);
+  const allTool = turn.calls.filter((c) => c.toolCalls?.length);
+  const iters = allTool.slice(0, MAX_ITERS);
   const nodes: Node[] = [{ kind: "task", text: userInput, summary }];
   iters.forEach((c, i) => {
     const lastText = i === 0 ? userInput : clip(iters[i - 1].toolCalls[0]?.outputPreview ?? "", 80);
@@ -56,6 +58,8 @@ function buildNodes(turn: UserTurn): Node[] {
     nodes.push({ kind: "response", iter: i, aiText: clip(c.assistantText ?? "", REASON_MAX), tools: c.toolCalls.map((tc) => parseTool(tc.name, tc.inputPreview)) });
     nodes.push({ kind: "result", iter: i, results: c.toolCalls.map((tc) => ({ name: tc.name, output: clip(tc.outputPreview, 90), isError: tc.isError })) });
   });
+  const remaining = allTool.length - iters.length;
+  if (remaining > 0) nodes.push({ kind: "more", remaining });
   nodes.push({ kind: "final", text: clip(turn.finalOutput ?? "", 280), calls: turn.calls.length });
   return nodes;
 }
@@ -110,6 +114,8 @@ export function AgentLoopView({ turn, focus, beat, beatCount }: { turn: UserTurn
             <div key={i} style={{ animation: "wt-rise 0.32s ease both", opacity: dim ? 0.4 : 1, transition: "opacity .35s ease" }}>
               {n.kind === "final"
                 ? <FinalNode text={n.text} calls={n.calls} active={active} />
+                : n.kind === "more"
+                ? <MoreNode remaining={n.remaining} />
                 : <Lane actor={n.kind === "result" ? "agent" : n.kind === "task" ? "user" : "llm"}>
                     <NodeBox node={n} active={active} ctxStage={ctxStage} showTools={showTools} highlightTool={focus === "tool-use"} />
                   </Lane>}
@@ -184,6 +190,14 @@ function NodeBox({ node, active, ctxStage, showTools, highlightTool }: { node: N
         </div>
       ))}
     </EventRow>
+  );
+}
+
+function MoreNode({ remaining }: { remaining: number }) {
+  return (
+    <div style={{ textAlign: "center", color: "#94a3b8", fontSize: 13, border: "1px dashed #cbd5e1", borderRadius: 12, padding: "10px 16px" }}>
+      … 还有 {remaining} 轮 Call ↔ Tool,Agent 持续循环,直到 LLM 决定终止 …
+    </div>
   );
 }
 

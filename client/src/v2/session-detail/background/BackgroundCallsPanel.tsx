@@ -9,21 +9,18 @@ import { apiV2, type SideCall, type SideCallKind, type SideCallsResponse } from 
 import { fmtK, fmtDateShort, shortModelName, modelColor } from "../../lib/format";
 import { BRAND } from "../../shared/brand";
 
-// kind → 显示标签 + emoji（emoji 只是扫描时的视觉锚点，非语义关键）。
-const KIND_META: Record<SideCallKind, { label: string; emoji: string }> = {
-  generate_session_title: { label: "标题生成", emoji: "🏷️" },
-  quota:                  { label: "Quota 探测", emoji: "📊" },
-  prompt_suggestion:      { label: "提示建议", emoji: "💡" },
-  agent_summary:          { label: "Agent 摘要", emoji: "📝" },
-  auto_dream:             { label: "Auto dream", emoji: "💭" },
-  extract_memories:       { label: "记忆抽取", emoji: "🧠" },
+// kind → 显示标签（平面文本，暂不加 icon）。
+const KIND_LABEL: Record<SideCallKind, string> = {
+  generate_session_title: "标题生成",
+  quota:                  "Quota 探测",
+  prompt_suggestion:      "提示建议",
+  agent_summary:          "Agent 摘要",
+  auto_dream:             "Auto dream",
+  extract_memories:       "记忆抽取",
 };
 
 function kindLabel(kind: SideCallKind): string {
-  return KIND_META[kind]?.label ?? kind;
-}
-function kindEmoji(kind: SideCallKind): string {
-  return KIND_META[kind]?.emoji ?? "•";
+  return KIND_LABEL[kind] ?? kind;
 }
 
 const thStyle: React.CSSProperties = {
@@ -124,7 +121,6 @@ function SideCallRow({ sc, onOpen }: { sc: SideCall; onOpen: (proxyRequestId: nu
   return (
     <tr style={{ borderBottom: "1px solid #f3f4f6" }} className="hover:bg-neutral-50 transition-colors">
       <td style={tdStyle}>
-        <span style={{ marginRight: 6 }}>{kindEmoji(sc.kind)}</span>
         <span style={{ fontWeight: 600 }}>{kindLabel(sc.kind)}</span>
         {sc.title && (
           <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 1, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

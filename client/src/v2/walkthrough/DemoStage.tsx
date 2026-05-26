@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useWalkthrough } from "./useWalkthrough";
-import { STORIES } from "./stories/agent-loop";
+import { STORIES } from "./stories";
 import { STAGE_CONFIG } from "./config";
 import type { ActId, Focus } from "./types";
 import { apiV2 } from "../api";
@@ -9,6 +9,9 @@ import type { UserTurn, LlmCall, SessionDrilldown } from "../drilldown-types";
 import { AttributionGraphProvider } from "../attribution-graph-context";
 import { ConversationView } from "./views/ConversationView";
 import { AgentLoopView } from "./views/AgentLoopView";
+import { RecapView } from "./views/RecapView";
+import { ContextStackView } from "./views/ContextStackView";
+import { AttributionTreeLensPanel } from "../AttributionTreeLensPanel";
 import { LlmCallDetailPanel } from "../session-detail/call/LlmCallDetailPanel";
 
 const NOOP = () => { /* demo: inert */ };
@@ -42,8 +45,9 @@ async function resolveForAct(act: ActId, cache: Map<string, SessionDrilldown>): 
 
 // 每一幕的特化编排:复用真实叶子组件,但布局由我们自己摆。
 // Act2/Act3 的叶子依赖 useAttributionGraph → 包一层 AttributionGraphProvider。
-function ActContent({ act, data, focus, beat, beatCount, playing, restartNonce }: { act: ActId; data: StageData; focus: Focus; beat: number; beatCount: number; playing: boolean; restartNonce: number }) {
-  if (!data.turn) return <div style={{ padding: 24, color: "#6b7280" }}>该会话无可用 turn。</div>;
+function ActContent({ act, data, focus, beat, beatCount, playing, restartNonce }: { act: ActId; data: StageData | null; focus: Focus; beat: number; beatCount: number; playing: boolean; restartNonce: number }) {
+  if (act === "recap") return <RecapView beat={beat} />;
+  if (!data || !data.turn) return <div style={{ padding: 24, color: "#6b7280" }}>加载中…</div>;
 
   if (act === "conversation") {
     return <ConversationView turns={data.turns} focus={focus} playing={playing} restartNonce={restartNonce} />;
@@ -51,6 +55,22 @@ function ActContent({ act, data, focus, beat, beatCount, playing, restartNonce }
 
   if (act === "turn-io") {
     return <AgentLoopView turn={data.turn} focus={focus} beat={beat} beatCount={beatCount} playing={playing} restartNonce={restartNonce} />;
+  }
+
+  if (act === "cw-stack") {
+    return <ContextStackView turn={data.turn} focus={focus} beat={beat} />;
+  }
+
+  if (act === "cw-real") {
+    // 复用 ep1 LLM Call 那套真实 attribution 面板,进一步 dig 进去;hideDiff 隐去
+    // Diff lens(Cache lens 无拓扑时自动退化)—— 符合 ep2 只讲"context 构成"的边界。
+    return (
+      <AttributionGraphProvider sessionId={data.sessionId} onJumpToCall={null}>
+        <div style={{ height: "100%", overflowY: "auto", padding: 16, background: "#fff" }}>
+          <AttributionTreeLensPanel sessionId={data.sessionId} callId={data.call?.id ?? 0} hideDiff />
+        </div>
+      </AttributionGraphProvider>
+    );
   }
 
   // llm-call
@@ -87,7 +107,7 @@ export function DemoStage() {
     let cancelled = false;
     (async () => {
       try {
-        const acts = [...new Set(s.steps.map((st) => st.act))];
+        const acts = [...new Set(s.steps.map((st) => st.act))].filter((a) => a !== "recap");
         const entries = await Promise.all(acts.map(async (a) => [a, await resolveForAct(a, cacheRef.current)] as const));
         if (!cancelled) { setByAct(Object.fromEntries(entries)); setState("ready"); }
       } catch {
@@ -135,7 +155,7 @@ export function DemoStage() {
       <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
         {state === "loading" && <div style={{ padding: 24, color: "#6b7280" }}>正在加载…</div>}
         {state === "error" && <div style={{ padding: 24, color: "#b91c1c" }}>找不到可用会话。请在 config.ts 的 STAGE_CONFIG 指定 sessionId。</div>}
-        {state === "ready" && data && <ActContent act={step.act} data={data} focus={step.focus} beat={beat} beatCount={step.lines.length} playing={playing} restartNonce={restartNonce} />}
+        {state === "ready" && <ActContent act={step.act} data={data} focus={step.focus} beat={beat} beatCount={step.lines.length} playing={playing} restartNonce={restartNonce} />}
       </div>
 
       {/* 字幕带:预留的固定区域,字幕只在这里出现,不与内容重叠 */}

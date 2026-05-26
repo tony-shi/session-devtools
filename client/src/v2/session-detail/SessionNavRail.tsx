@@ -20,7 +20,7 @@ import { NavItem, CompactEventNavItem } from "./nav";
 export function SessionNavRail({
   turns, compactEvents, navLevel, selectedTurn, selectedCall,
   selectedCompactEventIdx, linkedPanel, allCallsForNav,
-  onNavSession, onSelectTurn, onSelectCall, onSelectCompact,
+  onNavSession, onSelectTurn, onSelectCall, onSelectCompact, onNavBackground,
 }: {
   turns: MockUserTurn[];
   compactEvents: CompactEvent[];
@@ -34,6 +34,9 @@ export function SessionNavRail({
   onSelectTurn: (turn: MockUserTurn) => void;
   onSelectCall: (call: MockLlmCall) => void;
   onSelectCompact: (idx: number) => void;
+  // 后台 side call（标题生成 / quota / suggestion 等）入口。与 turns 并列在左栏，
+  // 否则用户很难发现/点到这些不在对话主线里的请求。
+  onNavBackground: () => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -164,6 +167,17 @@ export function SessionNavRail({
           );
         });
       })()}
+
+      {/* 后台请求 —— 与 user turns 并列的独立分区。集中陈列对话主线之外的
+          side call（标题生成 / quota / prompt suggestion …）。 */}
+      <div style={{ padding: "10px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>
+        {t("sessionOverview.nav.background", { defaultValue: "后台请求" })}
+      </div>
+      <NavItem
+        label={t("sessionOverview.nav.backgroundCalls", { defaultValue: "Background calls" })}
+        active={navLevel === "background" || navLevel === "side-call"}
+        onClick={onNavBackground}
+      />
     </div>
   );
 }

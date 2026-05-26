@@ -443,7 +443,7 @@ function DiffUnavailableBanner({
 }
 
 export function AttributionTreeLensPanel({
-  sessionId, agentFileId, compactIdx, callId, prevCallId, hideDiff, onLinkSource, onLeafSelect, prelude,
+  sessionId, agentFileId, compactIdx, proxyRequestId, callId, prevCallId, hideDiff, onLinkSource, onLeafSelect, prelude,
 }: {
   sessionId: string;
   /** Present iff rendering a sub-agent call — routes to sub-agent endpoint. */
@@ -452,6 +452,11 @@ export function AttributionTreeLensPanel({
    *  互斥于 agentFileId。compact 没有 diffTree 端点（语义上"和上一条 call diff"
    *  对 compact 价值不大），diffData 自然落 null，Diff lens 自动退化展示。 */
   compactIdx?: number;
+  /** Present iff rendering a side call（后台 LLM 请求，仅 proxyRequestId 寻址）。
+   *  互斥于 callId/compactIdx/agentFileId 的寻址语义。side call 没有 transcript
+   *  turn / prev call / jsonl 坐标 —— attribution fetch 切到 side-call 端点，
+   *  Diff 与 Cache 两个 lens 都被强制隐藏（无 prev、无 cache 拓扑可言）。 */
+  proxyRequestId?: number;
   callId: number;
   /** Optional previous-call id — required for the Diff lens. */
   prevCallId?: number | null;
@@ -515,17 +520,19 @@ export function AttributionTreeLensPanel({
     let cancelled = false;
     setLoading(true); setError(null);
     setSelectedSection(null); setSelectedNodeId(null); setBucketFilters({});
-    const fetcher = compactIdx != null
-      ? apiV2.compactAttributionTree(sessionId, compactIdx)
-      : agentFileId
-        ? apiV2.subAgentAttributionTree(sessionId, agentFileId, callId)
-        : apiV2.attributionTree(sessionId, callId);
+    const fetcher = proxyRequestId != null
+      ? apiV2.sideCallAttributionTree(sessionId, proxyRequestId)
+      : compactIdx != null
+        ? apiV2.compactAttributionTree(sessionId, compactIdx)
+        : agentFileId
+          ? apiV2.subAgentAttributionTree(sessionId, agentFileId, callId)
+          : apiV2.attributionTree(sessionId, callId);
     fetcher
       .then((r) => { if (!cancelled) setResult(r); })
       .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sessionId, agentFileId, compactIdx, callId]);
+  }, [sessionId, agentFileId, compactIdx, proxyRequestId, callId]);
 
   // 并行拉 diff-tree，用 leafId 把 diffKind 合并到 attribution leaves 上。
   // Diff lens / Diff 视角的双层 bar / Removed footer 都依赖这份数据。
@@ -543,9 +550,10 @@ export function AttributionTreeLensPanel({
   // 暂缓不实施（复杂度中等，先收敛当前 UI 体验）。
   const [diffData, setDiffData] = useState<import("./diff-tree-types").DiffTreeResult | null>(null);
   useEffect(() => {
-    // compact 没有 diffTree 端点（语义上和 "上一条 call diff" 价值不大）——
-    // 直接 null，Diff lens 退化展示，整体不影响 attribution。
-    if (compactIdx != null) {
+    // compact / side-call 都没有 diffTree 端点（语义上和 "上一条 call diff" 价值
+    // 不大，side call 更是无 prev）—— 直接 null，Diff lens 退化展示，整体不影响
+    // attribution。
+    if (compactIdx != null || proxyRequestId != null) {
       setDiffData(null);
       return;
     }
@@ -557,7 +565,7 @@ export function AttributionTreeLensPanel({
       .then((r) => { if (!cancelled) setDiffData(r); })
       .catch(() => { if (!cancelled) setDiffData(null); }); // diff 失败不阻塞 attribution
     return () => { cancelled = true; };
-  }, [sessionId, agentFileId, compactIdx, callId]);
+  }, [sessionId, agentFileId, compactIdx, proxyRequestId, callId]);
 
   const allLeaves = useMemo(() => {
     if (!result) return [];
@@ -713,11 +721,13 @@ export function AttributionTreeLensPanel({
   // 注意：useMemo 必须在所有 early return 之上，避免 hook 顺序变化。
   const visibleLenses = useMemo(
     () => LENSES.filter((l) => {
+      // side-call 模式：Diff（无 prev）与 Cache（无 cache 拓扑）一律隐藏。
+      if (proxyRequestId != null && (l.id === "diff" || l.id === "cache")) return false;
       if (l.id === "diff" && (hideDiff || prevCallId == null || !diffUsable)) return false;
       if (l.id === "cache" && !cacheUsable) return false;
       return true;
     }),
-    [hideDiff, prevCallId, diffUsable, cacheUsable],
+    [proxyRequestId, hideDiff, prevCallId, diffUsable, cacheUsable],
   );
 
   // Lens 被强制隐藏时，把它从 activeLenses 里同步剔除（否则下方对

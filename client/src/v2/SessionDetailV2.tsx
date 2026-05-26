@@ -445,28 +445,13 @@ export function SessionDetailV2({ session, onClose }: Props) {
             onSelectTurn={handleSelectTurn}
             onSelectCall={handleSelectCall}
             onSelectCompact={(idx) => goNav({ level: "compact-event", compactIdx: idx })}
+            onNavBackground={() => goNav({ level: "background" })}
           />
 
           {/* Main Canvas */}
           <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", minWidth: 0 }}>
             {navLevel === "session" && (
-              <>
-                <div style={{ padding: "10px 22px 0", display: "flex", justifyContent: "flex-end" }}>
-                  <button
-                    type="button"
-                    onClick={() => goNav({ level: "background" })}
-                    title="查看会话在对话主线之外的后台 LLM 请求（标题生成 / quota 探测 …）"
-                    style={{
-                      border: "1px solid #e5e7eb", background: "#fff", color: "#64748b",
-                      borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 600,
-                      cursor: "pointer",
-                    }}
-                  >
-                    ⚙ Background calls
-                  </button>
-                </div>
-                <SessionOverviewPanel />
-              </>
+              <SessionOverviewPanel />
             )}
             {navLevel === "turn" && selectedTurn && !selectedCall && (
               <UserTurnDetailPanel turn={selectedTurn} onSelectCall={handleLinkCallFromTurn} isMockSession={isMockData} onSubAgentClick={handleSelectSubAgent}
