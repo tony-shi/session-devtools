@@ -161,11 +161,49 @@ export interface SectionStyle {
 }
 
 export const sectionPalette: Record<"system" | "tools" | "messages" | "other", SectionStyle> = {
-  system:   { label: "System",   barBg: "#bfdbfe", barText: "#1e3a8a", rowBg: "#eff6ff", marker: "#3b82f6", textColor: "#1e40af" },
+  // system 改靛蓝族（原浅蓝 #bfdbfe 与 tools 蓝撞色）；diff/cache/walkthrough 一并受益。
+  system:   { label: "System",   barBg: "#6366f1", barText: "#fff",    rowBg: "#eef2ff", marker: "#4f46e5", textColor: "#3730a3" },
   tools:    { label: "Tools",    barBg: "#3b82f6", barText: "#fff",    rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1e40af" },
   messages: { label: "Messages", barBg: "#a78bfa", barText: "#fff",    rowBg: "#f5f3ff", marker: "#8b5cf6", textColor: "#5b21b6" },
   other:    { label: "Other",    barBg: "#d1d5db", barText: "#374151", rowBg: "#fafafa", marker: "#9ca3af", textColor: "#374151" },
 };
 
+// ─── rolePalette（L2 语义角色配色）：attribution 面板三级模型用 ─────────────────
+//
+// 颜色族标 L1（regionOf）：system=冷色(靛/青/teal/灰)、messages=暖色(紫/粉/洋红/暖灰)、
+// tools=蓝、other=灰。严格落在允许色相(蓝/青/靛/紫/淡紫/粉/洋红/灰)内，回避绿/黄/橙/红
+// （让给 diff 纹理）。injection 用洋红 #c026d3（醒目且不撞 diff 黄下划线）。
+export const rolePalette: Record<RoleId, SectionStyle> = {
+  "system.core":        { label: "Core",       barBg: "#6366f1", barText: "#fff", rowBg: "#eef2ff", marker: "#4f46e5", textColor: "#3730a3" },
+  "system.tool-policy": { label: "Tool policy", barBg: "#06b6d4", barText: "#fff", rowBg: "#ecfeff", marker: "#0891b2", textColor: "#155e75" },
+  "system.env":         { label: "Env·git",    barBg: "#14b8a6", barText: "#fff", rowBg: "#f0fdfa", marker: "#0d9488", textColor: "#115e59" },
+  "system.billing":     { label: "Billing",    barBg: "#94a3b8", barText: "#fff", rowBg: "#f8fafc", marker: "#64748b", textColor: "#334155" },
+  "messages.human":     { label: "Human",      barBg: "#a78bfa", barText: "#fff", rowBg: "#f5f3ff", marker: "#8b5cf6", textColor: "#5b21b6" },
+  "messages.assistant": { label: "Assistant",  barBg: "#8b5cf6", barText: "#fff", rowBg: "#f5f3ff", marker: "#7c3aed", textColor: "#5b21b6" },
+  "messages.tool-io":   { label: "Tool I/O",   barBg: "#ec4899", barText: "#fff", rowBg: "#fdf2f8", marker: "#db2777", textColor: "#9d174d" },
+  "messages.injection": { label: "Injection",  barBg: "#c026d3", barText: "#fff", rowBg: "#fdf4ff", marker: "#a21caf", textColor: "#86198f" },
+  "messages.misc":      { label: "Msg misc",   barBg: "#a8a29e", barText: "#fff", rowBg: "#fafaf9", marker: "#78716c", textColor: "#44403c" },
+  "tools.builtin":      { label: "Tools",      barBg: "#3b82f6", barText: "#fff", rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1e40af" },
+  "other.unknown":      { label: "Other",      barBg: "#d1d5db", barText: "#374151", rowBg: "#fafafa", marker: "#9ca3af", textColor: "#374151" },
+};
+
 /** 未识别 leaf 的 fallback 填充。 */
 export const UNKNOWN_FILL = provenancePalette.unknown;
+
+// ─── L2 语义角色（RoleId）：attribution 面板三级模型的中间层 ──────────────────
+//
+// 三级模型：L1 物理区(RegionId == sectionPalette 的 4 键) / L2 语义角色(RoleId) /
+// L3 明细(slotType / origin.ruleId)。RoleId 前缀编码 L1（regionOf = 取 "." 前缀），
+// 故 region 不另立类型，复用 SectionId。rolePalette（每个 role 的色）在 Step5 加。
+export type RoleId =
+  | "system.core"
+  | "system.tool-policy"
+  | "system.env"
+  | "system.billing"
+  | "messages.human"
+  | "messages.assistant"
+  | "messages.tool-io"
+  | "messages.injection"
+  | "messages.misc"
+  | "tools.builtin"
+  | "other.unknown";

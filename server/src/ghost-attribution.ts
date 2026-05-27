@@ -33,7 +33,10 @@ interface GhostDetector {
   userPrefix?: string;
 }
 
-const DETECTORS: GhostDetector[] = [
+// classifier_version：检测表/抽取逻辑变更时 +1，触发已扫描 session 的重扫。
+export const CLASSIFIER_VERSION = 1;
+
+export const DETECTORS: GhostDetector[] = [
   // restored-src/src/utils/sessionTitle.ts SESSION_TITLE_PROMPT
   { kind: "generate_session_title", systemPrefix: "Generate a concise, sentence-case title" },
   // restored-src/src/services/PromptSuggestion/promptSuggestion.ts
@@ -50,6 +53,8 @@ const DETECTORS: GhostDetector[] = [
 
 export interface ClassifiedGhost {
   proxyRequestId: number;
+  /** proxy 行的 request_id（共享 Anthropic/synthetic id），供调用方按 request_id 建键。 */
+  requestId: string | null;
   kind: GhostQueryKind;
   startedAt: string | null;
   model: string | null;
@@ -101,7 +106,7 @@ function lastUserText(reqBody: Record<string, unknown>): string | null {
   return null;
 }
 
-function classify(reqBody: Record<string, unknown>): GhostQueryKind | null {
+export function classifyReqBody(reqBody: Record<string, unknown>): GhostQueryKind | null {
   const sysTexts = systemBlockTexts(reqBody);
   const userText = lastUserText(reqBody);
   for (const d of DETECTORS) {
@@ -113,7 +118,7 @@ function classify(reqBody: Record<string, unknown>): GhostQueryKind | null {
 
 // 从 resBody 取出标题文本。响应是 {"title": "..."} 的 JSON（被模型当文本输出），
 // 故先抽 assistant text，再 JSON.parse 取 .title；非 JSON 时退回 trim 后的原文。
-function extractTitle(rec: Record<string, unknown>, isStream: boolean): string | undefined {
+export function extractTitle(rec: Record<string, unknown>, isStream: boolean): string | undefined {
   const resBody = typeof rec.resBody === "string" ? rec.resBody : "";
   if (!resBody) return undefined;
   let text = "";
@@ -183,10 +188,11 @@ export async function classifyResidualProxies(
     } catch {
       continue;
     }
-    const kind = classify(reqBody);
+    const kind = classifyReqBody(reqBody);
     if (!kind) continue;
     const ghost: ClassifiedGhost = {
       proxyRequestId: r.id,
+      requestId: r.request_id,
       kind,
       startedAt: r.started_at,
       model: r.model,
@@ -214,15 +220,24 @@ export interface AiTitleProxyMatch {
   startedAt: string | null;
 }
 
-// 专给 ai-title 跳转用：残差里所有 generate_session_title 的 (title → proxyRequestId)，
-// 按 started_at 升序（供同名重算时按顺序兜底匹配）。
-export async function resolveAiTitleProxies(
+// 专给 ai-title 跳转用：从 side_call_facts 派生索引读出本 session 所有
+// generate_session_title 的 (title → proxyRequestId)，按 started_at 升序（供同名重算时
+// 按顺序兜底匹配）。不再解压 proxy body —— 索引由 cold-indexer enricher + 惰性回扫填充
+// （见 server/src/side-call/enricher.ts）。
+export function resolveAiTitleProxies(
   db: Database,
   sessionId: string,
-  excludeRequestIds: ReadonlySet<string>,
-): Promise<AiTitleProxyMatch[]> {
-  const ghosts = await classifyResidualProxies(db, sessionId, excludeRequestIds);
-  return ghosts
-    .filter((g): g is ClassifiedGhost & { title: string } => g.kind === "generate_session_title" && typeof g.title === "string")
-    .map((g) => ({ title: g.title, proxyRequestId: g.proxyRequestId, startedAt: g.startedAt }));
+): AiTitleProxyMatch[] {
+  const rows = db
+    .prepare(
+      `SELECT p.id AS proxyRequestId, f.link_fact AS title, p.started_at AS startedAt
+       FROM side_call_facts f
+       JOIN proxy_requests p ON p.session_id = f.session_id AND p.request_id = f.request_id
+       WHERE f.session_id = ?
+         AND f.query_kind = 'generate_session_title'
+         AND f.link_fact IS NOT NULL
+       ORDER BY p.started_at`,
+    )
+    .all(sessionId) as { proxyRequestId: number; title: string; startedAt: string | null }[];
+  return rows.map((r) => ({ title: r.title, proxyRequestId: r.proxyRequestId, startedAt: r.startedAt }));
 }

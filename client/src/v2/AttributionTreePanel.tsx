@@ -28,7 +28,7 @@ import { LinkIcon, SegmentView } from "./shared/EventUnitCard";
 import { EVENT_PALETTES } from "./shared/eventPalette";
 import type { IntervalEventKind } from "./drilldown-types";
 import { useAttributionGraph } from "./attribution-graph-context";
-import { sectionPalette, UNKNOWN_FILL as PALETTE_UNKNOWN_FILL } from "./lens-palette";
+import { sectionPalette, rolePalette, UNKNOWN_FILL as PALETTE_UNKNOWN_FILL, type RoleId } from "./lens-palette";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Check, Copy } from "lucide-react";
@@ -51,15 +51,23 @@ export interface SectionMeta {
 }
 
 // 配色集中在 lens-palette.ts；本处仅 re-export 以保持向后兼容。
+// SECTION_META 仍按 L1 region（4 键）供 diff/cache/walkthrough；ROLE_META 按 L2 role
+// 供 attribution 面板的 section bar / table。
 export const SECTION_META: Record<SectionId, SectionMeta> = sectionPalette;
+export const ROLE_META: Record<RoleId, SectionMeta> = rolePalette;
 
-// Leaf 颜色：解析清楚的（rule / jsonl / structural）使用所属 section 的色调；
+// Leaf 颜色：解析清楚的（rule / jsonl / structural）按 L2 role 上色（颜色族标 L1）；
 // unknown 统一用「加重一号」的灰，与可解释段落明显区分。
 const UNKNOWN_FILL = PALETTE_UNKNOWN_FILL;
 
-export function leafFill(leaf: { origin: SegmentOrigin; rootSlotType: string }): string {
+export function leafFill(leaf: {
+  origin: SegmentOrigin;
+  classSlot: string;
+  rootSlotType: string;
+  messageRole?: "user" | "assistant" | "system";
+}): string {
   if (leaf.origin.kind === "unknown") return UNKNOWN_FILL;
-  return SECTION_META[sectionOf(leaf.rootSlotType)].barBg;
+  return ROLE_META[roleOf(leaf)].barBg;
 }
 
 // ─── 工具函数 ────────────────────────────────────────────────────────────────
@@ -69,6 +77,65 @@ export function sectionOf(slotType: string): SectionId {
   if (slotType.startsWith("tools.")) return "tools";
   if (slotType.startsWith("messages.") || slotType === "side-query.user") return "messages";
   return "other";
+}
+
+// ─── 三级模型 L2：RoleId 分类（Step3+4，行为旁路；UI 切换在 Step6）──────────────
+
+/** L1 region 从 RoleId 前缀解析（system.* / tools.* / messages.* / other.*）。 */
+export function regionOf(role: RoleId): SectionId {
+  const head = role.slice(0, role.indexOf("."));
+  return head === "system" || head === "tools" || head === "messages" ? head : "other";
+}
+
+/** 系统 section 级 slot：flattenLeaves 用它把 section 信息从顶层 root 下沉到 classSlot。 */
+function isSystemSectionSlot(slotType: string): boolean {
+  return (
+    slotType.startsWith("system.main-prompt.section.") ||
+    slotType === "system.main-prompt-block" ||
+    slotType === "system.identity" ||
+    slotType === "system.billing"
+  );
+}
+
+/**
+ * L2 语义角色判定。输入用 classSlot（system 取 section 级 / messages 取叶子自身）
+ * + rootSlotType（区分 tool_result 上下文）+ messageRole。
+ * 注入（messages.inline.system-reminder，含 smoosh 进 tool_result 的 reminder——
+ * ast-builder 给它们同一 slotType）优先判定，跨 tool_result / text。
+ */
+export function roleOf(leaf: {
+  classSlot: string;
+  rootSlotType: string;
+  messageRole?: "user" | "assistant" | "system";
+}): RoleId {
+  const { classSlot, rootSlotType, messageRole } = leaf;
+  if (classSlot === "messages.inline.system-reminder") return "messages.injection";
+  if (classSlot.startsWith("system.") || classSlot === "side-query.system") {
+    if (classSlot === "system.billing") return "system.billing";
+    if (classSlot === "system.main-prompt.section.using-tools") return "system.tool-policy";
+    if (
+      classSlot === "system.main-prompt.section.environment" ||
+      classSlot === "system.main-prompt.section.context"
+    )
+      return "system.env";
+    return "system.core";
+  }
+  if (classSlot.startsWith("tools.") || rootSlotType.startsWith("tools.")) return "tools.builtin";
+  if (rootSlotType === "messages.tool_use" || rootSlotType === "messages.tool_result")
+    return "messages.tool-io";
+  if (classSlot === "messages.thinking" || rootSlotType === "messages.thinking")
+    return "messages.assistant";
+  if (
+    classSlot === "messages.block.image" ||
+    classSlot === "messages.inline.image-placeholder" ||
+    classSlot === "messages.inline.local-command"
+  )
+    return "messages.misc";
+  if (messageRole === "assistant") return "messages.assistant";
+  if (messageRole === "user") return "messages.human";
+  if (rootSlotType.startsWith("messages.") || rootSlotType === "side-query.user")
+    return "messages.misc";
+  return "other.unknown";
 }
 
 export function fmtK(n: number): string {
@@ -119,6 +186,12 @@ export interface LeafLite {
   nodeId: string;
   slotType: string;
   rootSlotType: string;
+  /**
+   * 三级模型 L2 分类用的「最有意义 slot」：system 取最近的 section 级祖先
+   * （system.main-prompt.section.* / identity / billing / block），messages·tools
+   * 取叶子自身 slotType。由 flattenLeaves 下沉填充，供 roleOf 使用。
+   */
+  classSlot: string;
   charCount: number;
   preview: string;
   origin: SegmentOrigin;
@@ -148,12 +221,15 @@ export interface LeafLite {
 export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
   if (!result.snapshot) return [];
   const out: LeafLite[] = [];
-  function visit(node: SerializedNode, rootSlot: string) {
+  function visit(node: SerializedNode, rootSlot: string, sectionSlot: string | undefined) {
+    // 经过 system section 级 slot 时，把它记下来下沉给后代叶子（classSlot）。
+    const nextSection = isSystemSectionSlot(node.slotType) ? node.slotType : sectionSlot;
     if (node.children.length === 0) {
       out.push({
         nodeId: node.id,
         slotType: node.slotType,
         rootSlotType: rootSlot,
+        classSlot: nextSection ?? node.slotType,
         charCount: node.charCount,
         preview: node.preview,
         origin: node.origin,
@@ -165,14 +241,15 @@ export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
       });
       return;
     }
-    for (const c of node.children) visit(c, rootSlot);
+    for (const c of node.children) visit(c, rootSlot, nextSection);
   }
-  for (const root of result.snapshot.roots) visit(root, root.slotType);
+  for (const root of result.snapshot.roots) visit(root, root.slotType, undefined);
   return out;
 }
 
 export interface SectionStat {
-  id: SectionId;
+  // 三级模型：bar 的每段现在是 L2 role（不再是 L1 region）。
+  id: RoleId;
   totalChars: number;
   leafCount: number;
   leaves: LeafLite[];
@@ -180,18 +257,24 @@ export interface SectionStat {
   toolCount?: number;
 }
 
+// L2 角色展示顺序：按 L1 物理区聚拢（tools → system → messages → other），
+// 与 cache prefix / diff-tree-service 的区顺序对齐；同区内固定子序。
+const ROLE_ORDER: RoleId[] = [
+  "tools.builtin",
+  "system.core", "system.tool-policy", "system.env", "system.billing",
+  "messages.human", "messages.assistant", "messages.tool-io", "messages.injection", "messages.misc",
+  "other.unknown",
+];
+
 export function computeSectionStats(leaves: LeafLite[]): SectionStat[] {
-  const map = new Map<SectionId, LeafLite[]>();
+  const map = new Map<RoleId, LeafLite[]>();
   for (const l of leaves) {
-    const id = sectionOf(l.rootSlotType);
+    const id = roleOf(l);
     if (!map.has(id)) map.set(id, []);
     map.get(id)!.push(l);
   }
-  // 与 Anthropic 实际 cache prefix 顺序 + diff-tree-service 一致，让两边视觉
-  // 顺序对齐：tools → system → messages → other。
-  const order: SectionId[] = ["tools", "system", "messages", "other"];
   const out: SectionStat[] = [];
-  for (const id of order) {
+  for (const id of ROLE_ORDER) {
     const ls = map.get(id);
     if (!ls || ls.length === 0) continue;
     const stat: SectionStat = {
@@ -199,15 +282,7 @@ export function computeSectionStats(leaves: LeafLite[]): SectionStat[] {
       totalChars: ls.reduce((s, l) => s + l.charCount, 0),
       leafCount: ls.length,
     };
-    if (id === "messages") {
-      stat.byRole = { user: 0, assistant: 0, system: 0 };
-      for (const l of ls) {
-        const r = l.messageRole;
-        if (r === "user") stat.byRole.user += 1;
-        else if (r === "assistant") stat.byRole.assistant += 1;
-        else if (r === "system") stat.byRole.system += 1;
-      }
-    } else if (id === "tools") {
+    if (id === "tools.builtin") {
       const tools = new Set<string>();
       for (const l of ls) tools.add(l.rootSlotType);
       stat.toolCount = tools.size;
@@ -239,13 +314,13 @@ function SectionBar({
 }: {
   stats: SectionStat[];
   totalChars: number;
-  selectedSection: SectionId | null;
-  onSelect: (s: SectionId) => void;
+  selectedSection: RoleId | null;
+  onSelect: (s: RoleId) => void;
   filter?: "all" | "partial" | "none";
   filteredStats?: SectionStat[] | null;
   filterColor?: string | null;
 }) {
-  const [hoveredId, setHoveredId] = useState<SectionId | null>(null);
+  const [hoveredId, setHoveredId] = useState<RoleId | null>(null);
   if (totalChars === 0) return null;
   const hasSelection = selectedSection !== null;
   const filterActive = filter !== "all" && filteredStats !== null;
@@ -255,7 +330,7 @@ function SectionBar({
       onMouseLeave={() => setHoveredId(null)}
     >
       {stats.map((s) => {
-        const meta = SECTION_META[s.id];
+        const meta = ROLE_META[s.id];
         const pct = s.totalChars / totalChars;
         const isSel = selectedSection === s.id;
         const isHov = hoveredId === s.id;
@@ -440,8 +515,8 @@ function SectionTable({
 }: {
   stats: SectionStat[];
   totalChars: number;
-  selectedSection: SectionId | null;
-  onSelect: (s: SectionId) => void;
+  selectedSection: RoleId | null;
+  onSelect: (s: RoleId) => void;
   filter?: "all" | "partial" | "none";
   filteredStats?: SectionStat[] | null;
   filterColor?: string | null;
@@ -450,7 +525,7 @@ function SectionTable({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {stats.map((s) => {
-        const meta = SECTION_META[s.id];
+        const meta = ROLE_META[s.id];
         const pct = totalChars > 0 ? (s.totalChars / totalChars) * 100 : 0;
         const isSel = selectedSection === s.id;
         const hitCount = filterActive
@@ -1382,7 +1457,7 @@ export function AttributionTreePanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedSection, setSelectedSection] = useState<SectionId | null>(null);
+  const [selectedSection, setSelectedSection] = useState<RoleId | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [auditFilter, setAuditFilter] = useState<AuditFilter>("all");
 
@@ -1502,7 +1577,7 @@ export function AttributionTreePanel({
           />
 
           {/* Layer 3: leaf detail（扁平展示） */}
-          {selectedLeaf && sectionOf(selectedLeaf.rootSlotType) === selectedStat.id && (
+          {selectedLeaf && roleOf(selectedLeaf) === selectedStat.id && (
             <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} totalContextChars={totalChars} />
           )}
         </>

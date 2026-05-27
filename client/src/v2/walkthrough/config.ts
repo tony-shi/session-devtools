@@ -23,4 +23,22 @@ export const STAGE_CONFIG: Record<ActId, StageTarget> = {
   // ep2:context window —— 复用同一条 demo 会话的某次 call(real 视图取其 attribution)
   "cw-stack": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 1 },
   "cw-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 1 },
+  // ep3:context diff —— 用 callId 2(有上一条 call 1 可 diff;diffTree 自动取 prev)
+  "cd-diff": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 2 },
+  "cd-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 2 },
+  // ep4:tools(context 的关键部分)—— real 步复用真实归因里的 tools 块
+  "tools-concept": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e" },
+  "tools-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 2 },
+  // ep5:cache —— 用非首条 call(callId 2),才有 cache_read 命中可讲
+  "cache-split": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 2 },
+  "cache-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 2 },
+  // ep6:compaction —— 会话级事件(compactEvents);最好指向一条真发生过 /compact 的会话
+  "compact-concept": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e" },
+  "compact-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e" },
+  // ep7:skills / MCP / hooks —— real 步扫描会话里第一个 Skill 调用(无则兜底)
+  "extend-concept": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e" },
+  "extend-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e" },
+  // ep8:subagent —— real 步读 dd.subAgents[0](无则兜底)。最好指向一条派过子 agent 的会话
+  "subagent-concept": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e" },
+  "subagent-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e" },
 };

@@ -123,6 +123,14 @@ const SLOT_BINDINGS: Record<string, string[]> = {
   "claude-code.smoosh.plan-mode-reminder.v1": ["messages.inline.system-reminder"],
   "claude-code.smoosh.plan-mode-exited.v1": ["messages.inline.system-reminder"],
 
+  // Batch1：inline SR 细分（路由前提见 ast-builder.splitInlineTags，仅 <system-reminder> 壳）
+  "claude-code.messages.token-usage.v1": ["messages.inline.system-reminder"],
+  "claude-code.messages.new-diagnostics.v1": ["messages.inline.system-reminder"],
+  "claude-code.messages.file-truncated.v1": ["messages.inline.system-reminder"],
+  "claude-code.smoosh.todowrite-reminder.v1": ["messages.inline.system-reminder"],
+  "claude-code.messages.memory-contents.v1": ["messages.inline.system-reminder"],
+  "claude-code.messages.thinking-frequency.v1": ["messages.inline.system-reminder"],
+
   "claude-code.side-query.session-title.v1": ["side-query.system"],
 };
 

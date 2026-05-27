@@ -2560,6 +2560,157 @@ export const CLAUDE_CODE_MESSAGES_AWAY_SUMMARY_RULE: ContextLedgerRule = {
   materialization: "exact_text",
 };
 
+// ── P? Batch1：inline system-reminder 细分 rules（参考 Piebald v2.1.150 抽取）────
+//
+// 路由前提（ast-builder.splitInlineTags）：只有以 "<system-reminder>" 开头的段才会被
+// 切到 messages.inline.system-reminder 槽。故以下 pattern 均锚定 SR 壳。
+// ⚠️ wrapper/位置按推测（Piebald 快照只给内层模板），尚未用真实 JSONL 取证：
+//   - file-truncated / token-usage / todowrite：把握较高（同 file-modified / task-reminder 形态）。
+//   - new-diagnostics：风险最高 —— 内层自带 <new-diagnostics> 标签，若注入时不再包 SR 壳，
+//     则会落到 messages.inline.free-text 成为死规则，待 smoke 暴露后再决定（可能需改 ast-builder）。
+// verifiedFor 一律 null（命中后置信度降级为 inferred；未按 SUPPORTED 版本逐条校对）。
+
+export const CLAUDE_CODE_TOKEN_USAGE_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.token-usage.v1",
+  verifiedFor: null,
+  description:
+    "system-reminder 的 token-usage 子类：harness 注入的预算统计。" +
+    "形如 'Token usage: {used}/{total}; {remaining} remaining'，三个数值动态。",
+  stability: "dynamic",
+  sourcemapRef: "Piebald v2.1.150 system-reminder-token-usage (ATTACHMENT_OBJECT.used/total/remaining)",
+
+  attribution: {
+    pattern:
+      "^<system-reminder>\\nToken usage: (?<used>\\d+)/(?<total>\\d+); (?<remaining>\\d+) remaining\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "system_reminder_pattern",
+    category: "attachment",
+    captureGroups: {
+      used: "已用 token 数",
+      total: "总预算 token 数",
+      remaining: "剩余 token 数",
+    },
+  },
+
+  materialization: "normalized_text",
+};
+
+export const CLAUDE_CODE_NEW_DIAGNOSTICS_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.new-diagnostics.v1",
+  verifiedFor: null,
+  description:
+    "system-reminder 的 new-diagnostics 子类：LSP/诊断注入。" +
+    "内层自带 <new-diagnostics> 标签，diagnostics 摘要动态。" +
+    "⚠️ 若实际不被 <system-reminder> 包裹，将落到 free-text（死规则风险，待 smoke 验证）。",
+  stability: "dynamic",
+  sourcemapRef: "Piebald v2.1.150 system-reminder-new-diagnostics-detected",
+
+  attribution: {
+    pattern:
+      "^<system-reminder>\\n<new-diagnostics>The following new diagnostic issues were detected:\\n\\n(?<diagnostics>[\\s\\S]*?)</new-diagnostics>\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "system_reminder_pattern",
+    category: "harness_injection",
+    captureGroups: {
+      diagnostics: "诊断摘要正文（formatDiagnosticsSummary 输出）",
+    },
+  },
+
+  materialization: "normalized_text",
+};
+
+export const CLAUDE_CODE_FILE_TRUNCATED_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.file-truncated.v1",
+  verifiedFor: null,
+  description:
+    "system-reminder 的 file-truncated 子类:读文件超长被截断的告知。" +
+    "filename / maxLines / readTool 动态;大段静态文本作锚点。",
+  stability: "dynamic",
+  sourcemapRef: "Piebald v2.1.150 system-reminder-file-truncated",
+
+  attribution: {
+    pattern:
+      "^<system-reminder>\\nNote: The file (?<filename>.+?) was too large and has been truncated to the first (?<maxLines>\\d+) lines\\. Don't tell the user about this truncation\\. Use (?<readTool>\\S+) to read more of the file if you need\\.\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "system_reminder_pattern",
+    category: "attachment",
+    captureGroups: {
+      filename: "被截断的文件名",
+      maxLines: "保留的首行数",
+      readTool: "用于继续读取的工具名",
+    },
+  },
+
+  materialization: "normalized_text",
+};
+
+export const CLAUDE_CODE_SMOOSH_TODOWRITE_REMINDER_V1_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.smoosh.todowrite-reminder.v1",
+  verifiedFor: null,
+  description:
+    "Smoosh 内容:todowrite reminder（task-reminder 的兄弟）。" +
+    "前缀 'The TodoWrite tool hasn't been used recently.'，正文全静态。" +
+    "smoosh 进 tool_result 尾部,harness 注入。",
+  stability: "semi-static",
+  sourcemapRef: "Piebald v2.1.150 system-reminder-todowrite-reminder",
+
+  attribution: {
+    pattern:
+      "^<system-reminder>\\nThe TodoWrite tool hasn't been used recently\\.[\\s\\S]*?\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "smoosh_content_match",
+    category: "attachment",
+  },
+
+  materialization: "exact_text",
+};
+
+// Batch1 续：memory 注入（合并 Piebald 的 memory-file-contents + nested-memory-contents，
+// 两形态文本同构 'Contents of {path}:\n\n{content}'，合一条避免互相抢匹配）。
+export const CLAUDE_CODE_MEMORY_CONTENTS_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.memory-contents.v1",
+  verifiedFor: null,
+  description:
+    "system-reminder 的 memory-contents 子类:CLAUDE.md / 嵌套 memory 文件注入。" +
+    "形如 'Contents of {path}{typeDesc}:\\n\\n{content}'，path/typeDesc/content 动态。",
+  stability: "dynamic",
+  sourcemapRef: "Piebald v2.1.150 system-reminder-memory-file-contents / nested-memory-contents",
+
+  attribution: {
+    pattern:
+      "^<system-reminder>\\nContents of (?<memoryPath>.+?):\\n\\n(?<memoryContent>[\\s\\S]*?)\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "system_reminder_pattern",
+    category: "memory_injection",
+    captureGroups: {
+      memoryPath: "memory 文件路径（含可选类型说明，如 \" (user's auto-memory...)\"）",
+      memoryContent: "memory 文件正文",
+    },
+  },
+
+  materialization: "normalized_text",
+};
+
+export const CLAUDE_CODE_THINKING_FREQUENCY_RULE: ContextLedgerRule = {
+  ruleId: "claude-code.messages.thinking-frequency.v1",
+  verifiedFor: null,
+  description:
+    "system-reminder 的 thinking-frequency 子类:指示把 SR 当 harness 指令并按复杂度调节思考频率。" +
+    "正文全静态。⚠️ 也可能注入到 system 段而非 inline SR;按推测绑 inline SR，待 smoke 验证归属。",
+  stability: "static",
+  sourcemapRef: "Piebald v2.1.150 system-reminder-thinking-frequency-tuning",
+
+  attribution: {
+    pattern:
+      "^<system-reminder>\\n# Thinking system reminder\\nUser messages may include a <system-reminder> appended by this harness[\\s\\S]*?\\n</system-reminder>$",
+    matchMode: "regex",
+    mechanism: "system_reminder_pattern",
+    category: "harness_injection",
+  },
+
+  materialization: "exact_text",
+};
+
 export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   // ── identity / noise ──────────────────────────────────────────────────────
   CLAUDE_CODE_BILLING_NOISE_RULE,
@@ -2640,6 +2791,13 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   CLAUDE_CODE_USER_CONTEXT_RULE,
   // 必须排在 SYSTEM_REMINDER_RULE 之前，否则会被通用 SR 前缀兜底抢先命中。
   CLAUDE_CODE_MESSAGES_SKILL_LISTING_V1_RULE,
+  // Batch1 inline SR 细分（必须排在通用 SYSTEM_REMINDER_RULE 之前）
+  CLAUDE_CODE_TOKEN_USAGE_RULE,
+  CLAUDE_CODE_NEW_DIAGNOSTICS_RULE,
+  CLAUDE_CODE_FILE_TRUNCATED_RULE,
+  CLAUDE_CODE_SMOOSH_TODOWRITE_REMINDER_V1_RULE,
+  CLAUDE_CODE_MEMORY_CONTENTS_RULE,
+  CLAUDE_CODE_THINKING_FREQUENCY_RULE,
   CLAUDE_CODE_SYSTEM_REMINDER_RULE,
   CLAUDE_CODE_LOCAL_COMMAND_RULE,
   CLAUDE_CODE_TOOL_RESULT_SMOOSH_RULE,

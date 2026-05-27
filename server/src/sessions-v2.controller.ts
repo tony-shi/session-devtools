@@ -4,7 +4,8 @@ import { runSyncV2 } from "./sync-v2.ts";
 import { parseJsonField } from "./parser-utils.ts";
 import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
 import { loadCallDetail, readProxyRecord, findProxyRowForCall, computeCallProxyMatchModes } from "./call-detail.ts";
-import { resolveAiTitleProxies, classifyResidualProxies, type GhostQueryKind } from "./ghost-attribution.ts";
+import { resolveAiTitleProxies, type GhostQueryKind } from "./ghost-attribution.ts";
+import { ensureSessionScanned } from "./side-call/enricher.ts";
 import { readFileSync } from "node:fs";
 import { loadAttributionTree, readSessionEventsForLinker } from "./attribution-service.ts";
 import { computeSessionAttributionGraph, type JsonlEventAnnotation, type SessionAttributionGraph } from "./session-attribution-graph.ts";
@@ -207,15 +208,15 @@ export class SessionsV2Controller {
       }
     }
 
-    // 协同归因（残差指纹）：transcript call 已被精确认领（exclude），对剩下的
-    // 残差 proxy 做指纹识别，把 generate_session_title 的标题回填到 ai-title 行，
+    // 协同归因（残差指纹）：把 generate_session_title 的标题回填到 ai-title 行，
     // 让前端能从 ai-title 跳到生成它的后台 Haiku 请求。值匹配 aiTitle === 响应 .title。
-    const excludeRequestIds = new Set<string>(
-      flatCalls.map((c) => c.apiRequestId).filter((r): r is string => !!r),
-    );
+    // 现在直接读 side_call_facts 派生索引（不解压 body，~几 ms）。
     const tEnrichStart = Date.now();
-    const titleProxies = await resolveAiTitleProxies(db, id, excludeRequestIds);
+    const titleProxies = resolveAiTitleProxies(db, id);
     const aiTitleMs = Date.now() - tEnrichStart;
+    // Fire-and-forget：触发存量 session 的一次性回扫填充索引，不阻塞本次响应；
+    // 下次加载即可命中。绝不 await。
+    void ensureSessionScanned(db, id).catch(() => {});
     if (titleProxies.length > 0) {
       const byTitle = new Map<string, number>();
       for (const tp of titleProxies) if (!byTitle.has(tp.title)) byTitle.set(tp.title, tp.proxyRequestId);
@@ -296,8 +297,28 @@ export class SessionsV2Controller {
       captured: boolean; // proxy 抓到了 req/res
     }
 
-    const captured = await classifyResidualProxies(db, id, new Set());
-    const rows: SideCall[] = captured.map((g) => ({
+    // 一次性回扫填充 side_call_facts（Background tab 可接受首次阻塞扫描）；
+    // 之后从派生表 JOIN proxy_requests 取 kind/model/tokens/time/title，无需解压 body。
+    await ensureSessionScanned(db, id);
+    const factRows = db.prepare(`
+      SELECT p.id AS proxyRequestId, f.query_kind AS kind, f.link_fact AS title,
+             p.model AS model, p.res_input_tokens AS inputTokens,
+             p.res_output_tokens AS outputTokens, p.started_at AS startedAt
+      FROM side_call_facts f
+      JOIN proxy_requests p ON p.session_id = f.session_id AND p.request_id = f.request_id
+      WHERE f.session_id = ?
+      ORDER BY p.started_at
+    `).all(id) as {
+      proxyRequestId: number;
+      kind: GhostQueryKind;
+      title: string | null;
+      model: string | null;
+      inputTokens: number | null;
+      outputTokens: number | null;
+      startedAt: string | null;
+    }[];
+
+    const rows: SideCall[] = factRows.map((g) => ({
       proxyRequestId: g.proxyRequestId,
       kind: g.kind,
       model: g.model,
@@ -312,7 +333,7 @@ export class SessionsV2Controller {
     // (2) JSONL-anchored ai-title 未被 proxy 捕获的：轻量扫 source_file 取 distinct
     // aiTitle 值，凡不在已捕获标题集里的，补一条 captured=false。
     const capturedTitles = new Set(
-      captured.filter((g) => g.kind === "generate_session_title" && g.title).map((g) => g.title!),
+      factRows.filter((g) => g.kind === "generate_session_title" && g.title).map((g) => g.title!),
     );
     try {
       const text = readFileSync(row.source_file, "utf8");

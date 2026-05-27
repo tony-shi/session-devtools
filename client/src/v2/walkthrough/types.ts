@@ -9,7 +9,13 @@
 //   llm-call     —— 某个 turn 的某次 LLM Call(LLM Call)
 export type ActId =
   | "conversation" | "turn-io" | "llm-call" | "recap"  // ep1: agent loop
-  | "cw-stack" | "cw-real";                            // ep2: context window
+  | "cw-stack" | "cw-real"                             // ep2: context window
+  | "cd-diff" | "cd-real"                              // ep3: context diff
+  | "tools-concept" | "tools-real"                     // ep4: tools(context 的关键部分)
+  | "cache-split" | "cache-real"                       // ep5: cache
+  | "compact-concept" | "compact-real"                 // ep6: compaction
+  | "extend-concept" | "extend-real"                   // ep7: skills / MCP / hooks
+  | "subagent-concept" | "subagent-real";              // ep8: subagent
 
 // 每一步的"放大镜阶段":告诉复用的 view 该强调/揭示哪一部分(布局不变,只换高亮)。
 //   conversation 用:overview(整段) / turn(高亮一轮) / final(落到最终回答)
@@ -17,7 +23,13 @@ export type ActId =
 export type Focus =
   | "overview" | "turn" | "final"
   | "call" | "tool-use" | "tool-result" | "loop"
-  | "stack" | "diagram"; // ep2: context-stack 构建 / 收尾结构图
+  | "stack" | "diagram"  // ep2: context-stack 构建 / 收尾结构图
+  | "diff"               // ep3: context-diff 构建
+  | "tools-cat"          // ep4: tools 五大类构建
+  | "cache"              // ep5: cache 构建
+  | "compact"            // ep6: compaction 构建
+  | "inject"             // ep7: skills/MCP/hooks 注入构建
+  | "spawn";             // ep8: subagent 开第二个 context 构建
 
 export interface Step {
   act: ActId;

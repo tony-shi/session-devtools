@@ -5,19 +5,36 @@ import { STORIES } from "./stories";
 import { STAGE_CONFIG } from "./config";
 import type { ActId, Focus } from "./types";
 import { apiV2 } from "../api";
-import type { UserTurn, LlmCall, SessionDrilldown } from "../drilldown-types";
+import type { UserTurn, LlmCall, SessionDrilldown, CompactEvent, SubAgentSummary, ToolCallSlot } from "../drilldown-types";
 import { AttributionGraphProvider } from "../attribution-graph-context";
 import { ConversationView } from "./views/ConversationView";
 import { AgentLoopView } from "./views/AgentLoopView";
 import { RecapView } from "./views/RecapView";
 import { ContextStackView } from "./views/ContextStackView";
 import { AttributionTreeLensPanel } from "../AttributionTreeLensPanel";
+import { DiffView } from "./views/DiffView";
+import { ContextDiffRealView } from "./views/ContextDiffRealView";
+import { CacheView } from "./views/CacheView";
+import { CallLedger } from "../shared/CallLedger";
+import { CompactView } from "./views/CompactView";
+import { ToolsView } from "./views/ToolsView";
+import { ExtendView } from "./views/ExtendView";
+import { SubagentView } from "./views/SubagentView";
 import { LlmCallDetailPanel } from "../session-detail/call/LlmCallDetailPanel";
 
 const NOOP = () => { /* demo: inert */ };
 const BEAT_MS = 2600; // 每行字幕 / 每个揭示阶段的停留时长
 
-type StageData = { act: ActId; sessionId: string; turns: UserTurn[]; turn: UserTurn | null; call: LlmCall | null };
+type StageData = { act: ActId; sessionId: string; turns: UserTurn[]; turn: UserTurn | null; call: LlmCall | null; compactEvents: CompactEvent[]; subAgents: SubAgentSummary[]; skillSlot: ToolCallSlot | null };
+
+// 扫描会话里第一个带 skillInjection 的工具调用(用于 ep7 real 步;无则 null)。
+function findSkillSlot(turns: UserTurn[]): ToolCallSlot | null {
+  for (const t of turns) for (const c of t.calls) {
+    const hit = c.toolCalls.find((s) => s.skillInjection || s.name === "Skill");
+    if (hit) return hit;
+  }
+  return null;
+}
 
 // 按某一幕的 STAGE_CONFIG 解析其 demo 目标。drilldown 按 sessionId 缓存,多幕共享
 // 同一会话时只取一次。任意字段留空 → 自动推导。
@@ -40,7 +57,17 @@ async function resolveForAct(act: ActId, cache: Map<string, SessionDrilldown>): 
   const call =
     (cfg.callId != null ? turn?.calls.find((c) => c.id === cfg.callId) : undefined) ??
     turn?.calls[0] ?? null;
-  return { act, sessionId, turns, turn, call };
+  return { act, sessionId, turns, turn, call, compactEvents: dd.compactEvents ?? [], subAgents: dd.subAgents ?? [], skillSlot: findSkillSlot(turns) };
+}
+
+// 小统计块(ep8 subagent-real 用)。
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: "8px 12px", background: "#fff", minWidth: 96 }}>
+      <div style={{ fontSize: 11, color: "#94a3b8" }}>{label}</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: "#334155" }}>{value}</div>
+    </div>
+  );
 }
 
 // 每一幕的特化编排:复用真实叶子组件,但布局由我们自己摆。
@@ -59,6 +86,166 @@ function ActContent({ act, data, focus, beat, beatCount, playing, restartNonce }
 
   if (act === "cw-stack") {
     return <ContextStackView turn={data.turn} focus={focus} beat={beat} />;
+  }
+
+  if (act === "cd-diff") {
+    return <DiffView call={data.call} focus={focus} beat={beat} />;
+  }
+
+  if (act === "cd-real") {
+    return <ContextDiffRealView sessionId={data.sessionId} callId={data.call?.id ?? 0} beat={beat} />;
+  }
+
+  if (act === "tools-concept") {
+    return <ToolsView focus={focus} beat={beat} />;
+  }
+
+  if (act === "tools-real") {
+    // 复用真实 attribution 面板,旁白把注意力引向其中的 tools 块(它通常是最大的一段)。
+    return (
+      <AttributionGraphProvider sessionId={data.sessionId} onJumpToCall={null}>
+        <div style={{ height: "100%", overflowY: "auto", padding: 16, background: "#fff" }}>
+          <AttributionTreeLensPanel sessionId={data.sessionId} callId={data.call?.id ?? 0} hideDiff />
+        </div>
+      </AttributionGraphProvider>
+    );
+  }
+
+  if (act === "extend-concept") {
+    return <ExtendView focus={focus} beat={beat} />;
+  }
+
+  if (act === "extend-real") {
+    const s = data.skillSlot;
+    if (!s) {
+      return (
+        <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
+          <div style={{ width: "min(560px,100%)", color: "#6b7280", fontSize: 13, border: "1px dashed #cbd5e1", borderRadius: 10, padding: "14px 18px" }}>
+            这条 demo 会话没有 Skill 调用 —— 但机制不变:skill 平时只占一行,被调用时才把全文注入 context。
+            (想看真实数据,在 config.ts 把 extend-* 指向一条用过 /skill 的会话。)
+          </div>
+        </div>
+      );
+    }
+    const inj = s.skillInjection;
+    return (
+      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
+        <div style={{ width: "min(620px,100%)" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#334155", marginBottom: 12 }}>真实 Skill 调用 · {s.name}</div>
+          {inj?.mode === "inline" && (
+            <div style={{ fontSize: 13, color: "#312e81", background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 8, padding: "10px 14px" }}>
+              inline 模式:SKILL.md 全文({inj.totalChars.toLocaleString()} 字符)直接注入主对话 —— context 因此变大。
+            </div>
+          )}
+          {inj?.mode === "forked" && (
+            <div style={{ fontSize: 13, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "10px 14px" }}>
+              forked 模式:起子进程执行,主对话只剩 1 条 ack({inj.forkedResultChars.toLocaleString()} 字符结果)—— 主 context 几乎不涨。
+            </div>
+          )}
+          {s.inputPreview && <div style={{ fontSize: 12, color: "#475569", marginTop: 10, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>调用:{s.inputPreview.slice(0, 200)}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  if (act === "subagent-concept") {
+    return <SubagentView focus={focus} beat={beat} />;
+  }
+
+  if (act === "subagent-real") {
+    const sa = data.subAgents[0];
+    if (!sa) {
+      return (
+        <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
+          <div style={{ width: "min(560px,100%)", color: "#6b7280", fontSize: 13, border: "1px dashed #cbd5e1", borderRadius: 10, padding: "14px 18px" }}>
+            这条 demo 会话没有子 agent —— 但机制不变:派出隔离 context、独立走完一套、只带回摘要。
+            (想看真实数据,在 config.ts 把 subagent-* 指向一条派过子 agent 的会话。)
+          </div>
+        </div>
+      );
+    }
+    const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+    return (
+      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
+        <div style={{ width: "min(640px,100%)" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#334155", marginBottom: 10 }}>真实子 agent · {sa.agentType}</div>
+          {sa.description && <div style={{ fontSize: 12, color: "#475569", marginBottom: 12 }}>任务:{sa.description}</div>}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+            <Stat label="独立 LLM 调用" value={`${sa.llmCallCount} 次`} />
+            <Stat label="工具调用" value={`${sa.toolCallCount} 次`} />
+            <Stat label="自身峰值 context" value={fmt(sa.peakContext)} />
+            <Stat label="产出 token" value={fmt(sa.totalOutputTokens)} />
+          </div>
+          <div style={{ fontSize: 12, color: "#15803d", fontWeight: 700, marginBottom: 4 }}>← 只把这段摘要交回主 agent:</div>
+          <div style={{ fontSize: 12, color: "#475569", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 12px", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {(sa.resultPreview || "(无摘要预览)").slice(0, 240)}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (act === "cache-split") {
+    return <CacheView call={data.call} focus={focus} beat={beat} />;
+  }
+
+  if (act === "compact-concept") {
+    return <CompactView focus={focus} beat={beat} />;
+  }
+
+  if (act === "compact-real") {
+    const ev = data.compactEvents[0];
+    if (!ev) {
+      return (
+        <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
+          <div style={{ width: "min(560px,100%)", color: "#6b7280", fontSize: 13, border: "1px dashed #cbd5e1", borderRadius: 10, padding: "14px 18px" }}>
+            这条 demo 会话没有 compaction 事件 —— 但概念不变:涨满 → 总结 → 缩小,缓存失效、细节丢失。
+            (想看真实数据,在 config.ts 把 compact-* 指向一条发生过 /compact 的会话。)
+          </div>
+        </div>
+      );
+    }
+    const ratio = ev.preTokens > 0 ? Math.round((1 - ev.postTokens / ev.preTokens) * 100) : 0;
+    const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+    const postPct = ev.preTokens > 0 ? Math.max(4, (ev.postTokens / ev.preTokens) * 100) : 20;
+    return (
+      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
+        <div style={{ width: "min(620px,100%)" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#334155", marginBottom: 12 }}>真实 compaction 事件 · {ev.trigger}</div>
+          <div style={{ fontSize: 14, color: "#15803d", fontWeight: 700, marginBottom: 10 }}>
+            压缩前 {fmt(ev.preTokens)} → 压缩后 {fmt(ev.postTokens)} tokens(-{ratio}%)
+          </div>
+          <div style={{ height: 30, borderRadius: 8, background: "#fca5a5", overflow: "hidden", marginBottom: 6 }}>
+            <div style={{ width: `${postPct}%`, height: "100%", background: "#86efac" }} />
+          </div>
+          {ev.userInstructions && <div style={{ fontSize: 12, color: "#6366f1", marginTop: 8 }}>/compact 指令:{ev.userInstructions}</div>}
+          {ev.summaryText && <div style={{ fontSize: 12, color: "#475569", marginTop: 8, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>摘要预览:{ev.summaryText.slice(0, 200)}…</div>}
+        </div>
+      </div>
+    );
+  }
+
+  if (act === "cache-real") {
+    const c = data.call;
+    if (!c) return <div style={{ padding: 24, color: "#6b7280" }}>该会话无可用 call。</div>;
+    return (
+      <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 40 }}>
+        <div style={{ width: "min(620px, 100%)" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#334155", marginBottom: 12 }}>这一次 Call 真实的 token 去向</div>
+          <CallLedger
+            size="full"
+            freshIn={Math.max(0, c.contextSize - c.cacheRead - c.cacheWrite)}
+            cacheRead={c.cacheRead}
+            cacheWrite={c.cacheWrite}
+            output={c.outputTokens}
+            cacheMiss={c.cacheMiss}
+            gapMs={c.gapSincePrevMs}
+            ephemeral1h={c.cacheEphemeral1h}
+            ephemeral5m={c.cacheEphemeral5m}
+          />
+        </div>
+      </div>
+    );
   }
 
   if (act === "cw-real") {

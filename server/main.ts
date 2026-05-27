@@ -137,6 +137,11 @@ async function startBackgroundServices() {
     const { startCacheSyncWorker } = await import("./src/proxy-v2/log/cache-sync-worker.ts");
     startCacheSyncWorker();
 
+    // Register the side-call facts enricher BEFORE the cold-indexer loop runs,
+    // so every record processed gets classified into side_call_facts.
+    const { registerSideCallEnricher } = await import("./src/side-call/enricher.ts");
+    registerSideCallEnricher();
+
     const { startColdIndexer } = await import("./src/proxy-v2/log/cold-indexer.ts");
     startColdIndexer();
 

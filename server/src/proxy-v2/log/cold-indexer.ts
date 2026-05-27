@@ -9,6 +9,31 @@ import { getDb, serializeWrite } from "../../db";
 
 const COLD_FILE_RE = /^traffic\.jsonl\..+\.gz$/;
 
+// ── Generic enricher seam ───────────────────────────────────────────────────
+// Downstream app-domain modules (e.g. side-call/enricher) register hooks that
+// receive each parsed record on ingest. The cold-indexer stays ignorant of any
+// query_kind semantics — it only forwards (rawRecord, { sessionId, requestId }).
+// A throwing enricher MUST NOT break cold-indexing, so every call is wrapped.
+type ProxyEnricher = (
+  rawRecord: Record<string, unknown>,
+  ctx: { sessionId: string | null; requestId: string | null },
+) => void;
+const enrichers: ProxyEnricher[] = [];
+
+export function registerProxyEnricher(fn: ProxyEnricher): void {
+  enrichers.push(fn);
+}
+
+function runEnrichers(rawRecord: Record<string, unknown>, sessionId: string | null, requestId: string | null): void {
+  for (const fn of enrichers) {
+    try {
+      fn(rawRecord, { sessionId, requestId });
+    } catch (e) {
+      console.warn("[cold-indexer] enricher threw (ignored):", e);
+    }
+  }
+}
+
 function listColdFiles(): string[] {
   const dir = dirname(PATHS.trafficLog);
   if (!existsSync(dir)) return [];
@@ -97,6 +122,15 @@ async function indexColdFile(filePath: string): Promise<void> {
         recordCount++;
         if (!tsStart) tsStart = rec.started_at || rec.ts;
         tsEnd = rec.started_at || rec.ts;
+
+        // Forward the RAW record (with reqBody/resBody) to registered enrichers
+        // so they can classify without re-reading the gz. Wrapped so a bad
+        // enricher never breaks cold-indexing.
+        if (enrichers.length > 0) {
+          let rawRecord: Record<string, unknown> | null = null;
+          try { rawRecord = JSON.parse(line) as Record<string, unknown>; } catch { rawRecord = null; }
+          if (rawRecord) runEnrichers(rawRecord, rec.session_id, rec.request_id);
+        }
       }
     }
     uncompressedOffset += lineBytes;

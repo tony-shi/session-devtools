@@ -82,6 +82,26 @@ export function initProxySchema(): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_cold_ts ON indexed_cold_files(ts_start, ts_end);
+
+    -- side_call_facts: derived index of background ("side") LLM calls per session.
+    -- Populated by the cold-indexer enricher (server/src/side-call/enricher.ts) on
+    -- ingest, and lazily backfilled for historical sessions. Lets per-session
+    -- side-call scanning read a table instead of decompressing dozens of gz files.
+    CREATE TABLE IF NOT EXISTS side_call_facts (
+      session_id  TEXT NOT NULL,
+      request_id  TEXT NOT NULL,
+      query_kind  TEXT NOT NULL,           -- generate_session_title | quota | prompt_suggestion | agent_summary | auto_dream | extract_memories
+      link_fact   TEXT,                    -- kind-specific link value; for generate_session_title = the response title text; null otherwise
+      classifier_version INTEGER NOT NULL,
+      PRIMARY KEY (session_id, request_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_side_call_facts_session ON side_call_facts(session_id);
+
+    CREATE TABLE IF NOT EXISTS side_call_scanned_sessions (
+      session_id  TEXT PRIMARY KEY,
+      classifier_version INTEGER NOT NULL,
+      scanned_at  TEXT NOT NULL
+    );
   `);
 
   // 迁移：为存量 DB 补新字段（幂等）
@@ -197,6 +217,10 @@ export function initV2Schema(): void {
 
 // ── DB health check ───────────────────────────────────────────────────────────
 
+// NOTE: side_call_facts / side_call_scanned_sessions are intentionally NOT
+// listed here. They are created idempotently by initProxySchema() at every
+// startup, so an existing pre-migration DB must NOT be flagged "incomplete"
+// (which would gate boot). The health check only guards the original tables.
 const REQUIRED_TABLES = ["proxy_requests", "indexed_cold_files"];
 
 export type DbHealthResult =
