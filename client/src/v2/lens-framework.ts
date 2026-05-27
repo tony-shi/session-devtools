@@ -13,13 +13,14 @@
 // 当前实现单选：同一时刻只激活一个 Lens、最多选一个桶。多选 / Lens 叠加留作
 // 后续迭代。
 
-import type { LeafLite } from "./AttributionTreePanel";
+import { roleOf, type LeafLite } from "./AttributionTreePanel";
 import { coverageStateOf } from "./attribution-tree-types";
 import {
-  provenancePalette,
   diffPalette,
   cachePalette,
   auditPalette,
+  rolePalette,
+  type RoleId,
 } from "./lens-palette";
 
 // ─── 类型定义 ────────────────────────────────────────────────────────────────
@@ -48,95 +49,6 @@ export interface Lens {
    *  （桶过滤时也不会被任何 pill 选中）。一般每个 leaf 都应该能落到桶里。 */
   bucketOf(leaf: LeafLite): string | null;
 }
-
-// ─── Provenance Lens（来源）──────────────────────────────────────────────────
-//
-// 把每个 leaf 归类到「这段内容从哪儿来」，按原子 source 一一对应：
-//
-//   rule origin（任意 dynamicFields）→ 系统提示词
-//   jsonl user_input                 → 用户输入
-//   jsonl tool_use                   → 工具调用
-//   jsonl tool_result                → 工具结果
-//   jsonl thinking                   → Claude 思考
-//   jsonl assistant_text             → Claude 回复
-//   jsonl attachment                 → 文件附件
-//   jsonl system_local_command       → 命令输出
-//   jsonl harness_injection          → Skill / 摘要注入
-//   structural / unknown / 其他      → 未识别
-//
-// 设计原则：每个桶对应 JsonlEventSource 中的一个实际产出值，互斥且完全覆盖。
-// rule origin 不再按 dynamicFields 拆分——那是 parser 实现细节，不是内容来源。
-// harness_injection 单独成桶（原先遗漏→落入"未识别"，现已修正）。
-
-const PROV_SYSTEM_PROMPT   = "system-prompt";
-const PROV_USER_INPUT      = "user-input";
-const PROV_TOOL_USE        = "tool-use";
-const PROV_TOOL_RESULT     = "tool-result";
-const PROV_CLAUDE_THINKING = "claude-thinking";
-const PROV_CLAUDE_TEXT     = "claude-text";
-const PROV_FILE_ATTACHMENT = "file-attachment";
-const PROV_COMMAND_OUTPUT  = "command-output";
-const PROV_HARNESS_INJECT  = "harness-injection";
-const PROV_UNKNOWN         = "unknown";
-
-const PROVENANCE_BUCKETS: LensBucket[] = [
-  { id: PROV_SYSTEM_PROMPT,   label: "系统提示词",   color: provenancePalette.systemPrompt,
-    description: "Claude Code 内置系统 prompt（规则匹配段，含静态模板与动态字段注入）" },
-  { id: PROV_USER_INPUT,      label: "用户输入",     color: provenancePalette.userInput,
-    description: "原始用户输入消息（jsonl user_input 事件）" },
-  { id: PROV_TOOL_USE,        label: "工具调用",     color: provenancePalette.toolUse,
-    description: "Agent 发起的 tool_use block（assistant 响应中的工具调用请求）" },
-  { id: PROV_TOOL_RESULT,     label: "工具结果",     color: provenancePalette.toolResult,
-    description: "工具执行结果回灌（jsonl tool_result 事件）" },
-  { id: PROV_CLAUDE_THINKING, label: "AI 思考",      color: provenancePalette.claudeThinking,
-    description: "Extended thinking 块（AI 内部推理过程，不直接输出给用户）" },
-  { id: PROV_CLAUDE_TEXT,     label: "AI 回复",      color: provenancePalette.claudeText,
-    description: "Assistant 文本响应（直接输出给用户的回复内容）" },
-  { id: PROV_FILE_ATTACHMENT, label: "文件附件",     color: provenancePalette.fileAttachment,
-    description: "用户上传的文件或 attachment 事件（task_reminder / queued_command / edited_text_file 等）" },
-  { id: PROV_COMMAND_OUTPUT,  label: "命令输出",     color: provenancePalette.commandOutput,
-    description: "Bash / 本地命令输出（<bash-stdout> / <local-command-*> 等）" },
-  { id: PROV_HARNESS_INJECT,  label: "Skill / 摘要", color: provenancePalette.harnessInject,
-    description: "Skill 工具加载的 SKILL.md 内容，或 compaction 压缩后注入的对话摘要" },
-  { id: PROV_UNKNOWN,         label: "未识别",       color: provenancePalette.unknown,
-    description: "structural 占位 / 未匹配规则 / 未知 origin" },
-];
-
-function jsonlEventSource(eventKind: unknown): string | null {
-  if (!eventKind) return null;
-  if (typeof eventKind === "string") return eventKind;
-  if (typeof eventKind === "object" && "source" in (eventKind as object)) {
-    return (eventKind as { source?: string }).source ?? null;
-  }
-  return null;
-}
-
-export const provenanceLens: Lens = {
-  id: "provenance",
-  label: "来源",
-  description: "按内容来源分类：系统提示词、用户输入、工具调用/结果、Claude 思考/回复、文件附件、命令输出、Skill/摘要注入、未识别",
-  buckets: PROVENANCE_BUCKETS,
-  bucketOf(leaf) {
-    const o = leaf.origin;
-    // rule origin 统一归入系统提示词，不再按 dynamicFields 区分静/动态
-    if (o.kind === "rule") return PROV_SYSTEM_PROMPT;
-    if (o.kind === "jsonl") {
-      const src = jsonlEventSource(o.eventKind);
-      switch (src) {
-        case "user_input":           return PROV_USER_INPUT;
-        case "tool_use":             return PROV_TOOL_USE;
-        case "tool_result":          return PROV_TOOL_RESULT;
-        case "thinking":             return PROV_CLAUDE_THINKING;
-        case "assistant_text":       return PROV_CLAUDE_TEXT;
-        case "attachment":           return PROV_FILE_ATTACHMENT;
-        case "system_local_command": return PROV_COMMAND_OUTPUT;
-        case "harness_injection":    return PROV_HARNESS_INJECT;
-        default:                     return PROV_UNKNOWN;
-      }
-    }
-    return PROV_UNKNOWN;
-  },
-};
 
 // ─── Cache Lens ──────────────────────────────────────────────────────────────
 //
@@ -167,6 +79,42 @@ export const cacheLens: Lens = {
     if (p.ttl === "5m") return CACHE_5M;
     if (p.ttl === "1h") return CACHE_1H;
     return CACHE_NONE;
+  },
+};
+
+// ─── Structure Lens（L2 语义角色）─────────────────────────────────────────────
+//
+// 在物理三区（tools/system/messages）的几何之上，按「语义角色」着色：
+//   system → core / tool-policy / env / billing；messages → human / assistant /
+//   tool-io / injection / misc。颜色族标 L1 区、具体色标 role（见 lens-palette.rolePalette）。
+// 未识别（origin=unknown 或路由到 *.unknown 结构兜底槽）诚实归 "未识别"，不冒充 role。
+// roleOf 吃 leaf.classSlot（system section 级，flattenLeaves 已下沉）+ rootSlotType + messageRole。
+
+const ROLE_LENS_IDS: RoleId[] = [
+  "tools.builtin",
+  "system.core", "system.tool-policy", "system.env", "system.billing",
+  "messages.human", "messages.thinking", "messages.assistant",
+  "messages.tool-use", "messages.tool-result",
+  "messages.injection", "messages.skills", "messages.misc",
+  "other.unknown",
+];
+
+const ROLE_BUCKETS: LensBucket[] = ROLE_LENS_IDS.map((r) => ({
+  id: r,
+  label: rolePalette[r].label,
+  color: rolePalette[r].barBg,
+}));
+
+export const structureLens: Lens = {
+  id: "structure",
+  label: "结构",
+  description: "按语义角色分类（物理三区之上）：核心指令 / 工具策略 / 环境·git / billing / 人类 / AI / 工具 I/O / 注入 / 杂项；未识别诚实标灰",
+  buckets: ROLE_BUCKETS,
+  bucketOf(leaf) {
+    // 未识别优先：origin unknown，或路由到结构兜底 *.unknown 槽 → 不冒充具体 role。
+    if (leaf.origin.kind === "unknown") return "other.unknown";
+    if (leaf.classSlot.endsWith(".unknown") || leaf.slotType.endsWith(".unknown")) return "other.unknown";
+    return roleOf(leaf);
   },
 };
 
@@ -285,11 +233,12 @@ function isDevLensEnabled(): boolean {
   return false;
 }
 
-/** 默认 Lens 顺序。来源在最左（默认开启基底）；Diff 次之；Cache 紧随；
- *  Audit 仅 dev 下挂出来。 */
+/** 默认 Lens 顺序。基底 lens = LENSES[0]（永远 active、给主 bar 上色、顶部图例用它的类目）。
+ *  默认 = 「结构」(L2 语义角色,已细分到对齐原 provenance 的 对话/工具 粒度)。
+ *  provenance 已移除（语义被 structure 吸收；覆盖信号后续与 audit 融合）。Audit 仅 dev 下挂出来。 */
 export const LENSES: Lens[] = isDevLensEnabled()
-  ? [provenanceLens, diffLens, cacheLens, auditLens]
-  : [provenanceLens, diffLens, cacheLens];
+  ? [structureLens, diffLens, cacheLens, auditLens]
+  : [structureLens, diffLens, cacheLens];
 
 /** 工具：根据 id 取 lens。 */
 export function getLens(id: string): Lens {

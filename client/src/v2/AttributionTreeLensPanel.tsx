@@ -22,10 +22,9 @@ import { useAttributionGraph } from "./attribution-graph-context";
 import type { AttributionTreeResult } from "./attribution-tree-types";
 import {
   SECTION_META,
-  ROLE_META,
   computeSectionStats,
   flattenLeaves,
-  roleOf,
+  sectionOf,
   shortSlot,
   fmtK,
   LeafStrip,
@@ -33,6 +32,7 @@ import {
   SelectedDetail,
   type LeafLite,
   type LeafItem,
+  type SectionId,
   type SectionStat,
 } from "./AttributionTreePanel";
 import { FisheyeStrip } from "./fisheye-strip";
@@ -46,7 +46,7 @@ import {
 // DiffPanel 旧入口已废弃，但其中的 SelectedDiffDetail 仍然复用（行级 inline diff）。
 import type { DiffSection, DiffTreeResult, PinInfo } from "./diff-tree-types";
 import { SelectedDiffDetail } from "./DiffPanel";
-import { diffUnderlineFor, sectionFrame, type RoleId } from "./lens-palette";
+import { diffUnderlineFor, sectionFrame } from "./lens-palette";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { BRAND } from "./shared/brand";
 
@@ -195,8 +195,8 @@ function MainSectionBar({
 }: {
   sections: SectionStat[];
   totalChars: number;
-  selectedSection: RoleId | null;
-  onSelectSection: (s: RoleId) => void;
+  selectedSection: SectionId | null;
+  onSelectSection: (s: SectionId) => void;
   selectedLeafId: string | null;
   onSelectLeaf: (id: string) => void;
   leafColor: (leaf: LeafLite) => string;
@@ -207,7 +207,7 @@ function MainSectionBar({
   return (
     <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
       {sections.map((s) => {
-        const meta = ROLE_META[s.id];
+        const meta = SECTION_META[s.id];
         const pct = s.totalChars / totalChars;
         const isSelectedSec = selectedSection === s.id;
         const items: LeafItem[] = s.leaves.map((l) => ({
@@ -311,7 +311,7 @@ function LensSectionTable({
 }: {
   stats: SectionStat[];
   totalChars: number;
-  onSelect: (id: RoleId) => void;
+  onSelect: (id: SectionId) => void;
   filteredStats: SectionStat[] | null;
   bucketColor: string | null;
 }) {
@@ -319,7 +319,7 @@ function LensSectionTable({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {stats.map((s) => {
-        const meta = ROLE_META[s.id];
+        const meta = SECTION_META[s.id];
         const pct = totalChars > 0 ? (s.totalChars / totalChars) * 100 : 0;
         const hitCount = filterActive
           ? (filteredStats!.find((fs) => fs.id === s.id)?.leafCount ?? 0)
@@ -479,7 +479,7 @@ export function AttributionTreeLensPanel({
   // bucketFilters 是「每个 lens 选中的桶」的 map；过滤是各 lens 选择的 AND 合取。
   const [activeLenses, setActiveLenses] = useState<Set<string>>(new Set([LENSES[0].id]));
   const [bucketFilters, setBucketFilters] = useState<Record<string, string | null>>({});
-  const [selectedSection, setSelectedSection] = useState<RoleId | null>(null);
+  const [selectedSection, setSelectedSection] = useState<SectionId | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   // 把选中状态外露给父组件（如 CachePanel），用于上方 bar 联动高亮。
@@ -597,7 +597,7 @@ export function AttributionTreeLensPanel({
       (l) => l.origin.kind === "jsonl" && l.origin.jsonlLineIdx === target,
     );
     if (match) {
-      setSelectedSection(roleOf(match));
+      setSelectedSection(sectionOf(match.rootSlotType));
       setSelectedNodeId(match.nodeId);
     }
     clearPendingFocus();
@@ -656,13 +656,13 @@ export function AttributionTreeLensPanel({
     [selectedNodeId, leaves],
   );
 
-  // Leaf 着色：永远用 Provenance lens（来源是基底视角）。其他 lens 的信息通过
-  // 行尾 badge 表达，而不是抢主色。
+  // Leaf 着色：永远用基底 lens（LENSES[0] = 结构/语义角色）。其他 lens（来源/
+  // 缓存/diff/audit）的信息通过行尾 badge 表达，而不是抢主色。
   const leafColor = useMemo(() => {
-    const provLens = getLens(LENSES[0].id);
+    const baseLens = getLens(LENSES[0].id);
     return (leaf: LeafLite) => {
-      const bid = provLens.bucketOf(leaf);
-      const b = bid ? provLens.buckets.find((x) => x.id === bid) : null;
+      const bid = baseLens.bucketOf(leaf);
+      const b = bid ? baseLens.buckets.find((x) => x.id === bid) : null;
       return b?.color ?? "#d1d5db";
     };
   }, []);
@@ -858,7 +858,7 @@ export function AttributionTreeLensPanel({
         onSelectLeaf={(id) => {
           // 主 bar 内点 leaf → 自动 drill 到该 leaf 的 section + 选中
           const leaf = allLeaves.find((l) => l.nodeId === id);
-          if (leaf) setSelectedSection(roleOf(leaf));
+          if (leaf) setSelectedSection(sectionOf(leaf.rootSlotType));
           setSelectedNodeId((cur) => (cur === id ? null : id));
         }}
         leafColor={leafColor}
@@ -891,7 +891,7 @@ export function AttributionTreeLensPanel({
             getBadges={leafBadges}
             totalContextChars={totalChars}
           />
-          {selectedLeaf && roleOf(selectedLeaf) === selectedStat.id && (
+          {selectedLeaf && sectionOf(selectedLeaf.rootSlotType) === selectedStat.id && (
             <>
               <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} totalContextChars={totalChars} />
               {/* Diff lens 激活时，选中 leaf 有 diff 变化的话，叠加行级 diff 详情。

@@ -265,6 +265,10 @@ export function IntervalEventRow({
   const kindLabel = ev.kind === "user:tool_result"
     ? t("terms.toolResultLabel")
     : t(`eventKinds.${ev.kind.replace(/[:-]/g, "_")}`, { defaultValue: KIND_LABEL[ev.kind] });
+  // 详尽解读 hover：非 context 元数据事件（ai-title / permission-mode / …）在 locale
+  // 的 eventKindDesc.<kind> 里有详细描述（是什么/何时出现/为何不进上下文）。其它 kind
+  // 无描述则 defaultValue "" → 不显示 tooltip。
+  const kindTooltip = t(`eventKindDesc.${ev.kind.replace(/[:-]/g, "_")}`, { defaultValue: "" }) || undefined;
   // tool_result is the *output* fed back to the LLM; other kinds don't fit
   // input/output framing — leave bare bytes (direction undefined).
   const direction: "in" | "out" | undefined = ev.kind === "user:tool_result" ? "out" : undefined;
@@ -367,13 +371,13 @@ export function IntervalEventRow({
     ? t("terms.openAttributionAtLine", { callId: consumerJumpTarget })
     : undefined;
 
-  // ── ai-title → 生成它的后台 proxy 请求 ───────────────────────────────────
-  // 指纹归因（ghost-attribution）把 ai-title 连到了生成它的 Haiku 请求。
-  // 注意：ai-title 是纯元数据，反向归因常把它标为 "skipped"，而 EventUnitCard 在
-  // skipped 时会抹掉 onJump（line 193）——所以这个连接 chip **不走** EventUnitCard
-  // 的 jump 机制，单独渲染在卡片下方，保证恒显。本期只建立连接（展示 proxy#<id>），
-  // 点击暂不接跳转/面板（留待后续版本）。
-  const titleProxyId = ev.kind === "ai-title" ? ev.generatedByProxyRequestId : undefined;
+  // ── 非 context 事件 → 生成它的后台 proxy 请求 ────────────────────────────
+  // 指纹归因（ghost-attribution）把有 JSONL 锚点的 side call 连回对应行：
+  //   ai-title           → generate_session_title 请求
+  //   system:away_summary → away_summary 请求
+  // controller 回填 generatedByProxyRequestId，这里据此渲染「→ proxy#<id>」chip
+  // （provenanceJump，不受 EventUnitCard 的 skipped 门控影响）。
+  const linkedProxyId = ev.generatedByProxyRequestId;
 
   return (
     <div
@@ -393,6 +397,7 @@ export function IntervalEventRow({
         bg={col.bg}
         border={col.border}
         kindLabel={kindLabel}
+        kindTooltip={kindTooltip}
         size={ev.contentSize > 0 ? { bytes: ev.contentSize, direction } : undefined}
         timestamp={ev.timestamp}
         preview={skillFormat?.preview ?? ev.contentPreview.slice(0, 120)}
@@ -428,12 +433,12 @@ export function IntervalEventRow({
         onJump={handleJump}
         jumpLabel={jumpLabel}
         jumpTooltip={jumpTooltip}
-        // ai-title → 生成它的后台 proxy 请求：走 provenanceJump（header chip，与
-        // 其它 jump chip 同款 LinkIcon + 靛色样式），不受 isSkipped 门控影响。
-        provenanceJump={titleProxyId != null && onOpenSideCall ? {
-          label: `proxy#${titleProxyId}`,
-          tooltip: t("terms.aiTitleGeneratedBy", { defaultValue: `打开生成此标题的后台 Haiku 请求 proxy#${titleProxyId}` }),
-          onClick: () => onOpenSideCall(titleProxyId),
+        // 非 context 事件 → 生成它的后台 proxy 请求：走 provenanceJump（header chip，
+        // 与其它 jump chip 同款 LinkIcon + 靛色样式），不受 isSkipped 门控影响。
+        provenanceJump={linkedProxyId != null && onOpenSideCall ? {
+          label: `proxy#${linkedProxyId}`,
+          tooltip: t("terms.sideCallGeneratedBy", { defaultValue: `打开生成它的后台请求 proxy#${linkedProxyId}` }),
+          onClick: () => onOpenSideCall(linkedProxyId),
         } : undefined}
       />
       {/* forked 模式 footnote: "跳转 sub-agent：TODO" 占位文字（最简实现，无跳转） */}

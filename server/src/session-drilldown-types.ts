@@ -93,6 +93,11 @@ export type IntervalEventKind =
   | "file-history-snapshot"
   | "last-prompt"
   | "ai-title"
+  | "permission-mode"
+  | "custom-title"
+  | "agent-name"
+  | "queue-operation"
+  | "worktree-state"
   | "unknown";           // catch-all for future JSONL types
 
 export interface IntervalEvent {
@@ -114,6 +119,13 @@ export interface IntervalEvent {
   // 后台 Haiku proxy 请求行 id。前端据此提供「→ 查看生成请求」跳转。
   // 由 controller 富化阶段回填（值匹配 aiTitle === proxy 响应 .title）。
   generatedByProxyRequestId?: number;
+  // 命令分组（纯视觉合并）：当一次 local/slash 命令（/exit）或 bash（!ls）在 jsonl
+  // 里展开成多条连续 user:command / system:local_command 事件（caveat + command-name
+  // + stdout）时，parser 把这串折叠成一个 wrapper IntervalEvent，并把原始成员事件
+  // 原样收进 commandGroup.members（每个成员保留自己的 lineIdx / kind / rawJson，
+  // 供前端做**逐段**反向归因 —— 合并只是视觉的，归属严格按行保留）。
+  // 只有 run 长度 ≥ 2 才有 commandGroup；单条命令不包 wrapper。
+  commandGroup?: { commandType: "bash" | "local"; members: IntervalEvent[] };
 }
 
 // One tool_use block paired with its tool_result (if found in the next user event)

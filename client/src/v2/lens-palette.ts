@@ -178,11 +178,18 @@ export const rolePalette: Record<RoleId, SectionStyle> = {
   "system.tool-policy": { label: "Tool policy", barBg: "#06b6d4", barText: "#fff", rowBg: "#ecfeff", marker: "#0891b2", textColor: "#155e75" },
   "system.env":         { label: "Env·git",    barBg: "#14b8a6", barText: "#fff", rowBg: "#f0fdfa", marker: "#0d9488", textColor: "#115e59" },
   "system.billing":     { label: "Billing",    barBg: "#94a3b8", barText: "#fff", rowBg: "#f8fafc", marker: "#64748b", textColor: "#334155" },
-  "messages.human":     { label: "Human",      barBg: "#a78bfa", barText: "#fff", rowBg: "#f5f3ff", marker: "#8b5cf6", textColor: "#5b21b6" },
-  "messages.assistant": { label: "Assistant",  barBg: "#8b5cf6", barText: "#fff", rowBg: "#f5f3ff", marker: "#7c3aed", textColor: "#5b21b6" },
-  "messages.tool-io":   { label: "Tool I/O",   barBg: "#ec4899", barText: "#fff", rowBg: "#fdf2f8", marker: "#db2777", textColor: "#9d174d" },
-  "messages.injection": { label: "Injection",  barBg: "#c026d3", barText: "#fff", rowBg: "#fdf4ff", marker: "#a21caf", textColor: "#86198f" },
-  "messages.misc":      { label: "Msg misc",   barBg: "#a8a29e", barText: "#fff", rowBg: "#fafaf9", marker: "#78716c", textColor: "#44403c" },
+  // 对话族（紫）：human / thinking / assistant —— 按明度区分。
+  "messages.human":      { label: "Human",       barBg: "#a78bfa", barText: "#fff", rowBg: "#f5f3ff", marker: "#8b5cf6", textColor: "#5b21b6" },
+  "messages.thinking":   { label: "Thinking",    barBg: "#7c3aed", barText: "#fff", rowBg: "#f5f3ff", marker: "#6d28d9", textColor: "#5b21b6" },
+  "messages.assistant":  { label: "Assistant",   barBg: "#8b5cf6", barText: "#fff", rowBg: "#f5f3ff", marker: "#7c3aed", textColor: "#5b21b6" },
+  // 工具 I/O 族（粉）：tool-use / tool-result —— 对齐 provenance 的 工具调用/工具结果。
+  "messages.tool-use":   { label: "Tool call",   barBg: "#f472b6", barText: "#fff", rowBg: "#fdf2f8", marker: "#ec4899", textColor: "#9d174d" },
+  "messages.tool-result":{ label: "Tool result", barBg: "#ec4899", barText: "#fff", rowBg: "#fdf2f8", marker: "#db2777", textColor: "#9d174d" },
+  // Harness 族（品红/洋红）：injection / skills。
+  "messages.injection":  { label: "Injection",   barBg: "#c026d3", barText: "#fff", rowBg: "#fdf4ff", marker: "#a21caf", textColor: "#86198f" },
+  // Skills 机制:专门识别的 skill_listing 注入,单列一类（与通用 injection 区分）。
+  "messages.skills":     { label: "Skills",      barBg: "#e879f9", barText: "#fff", rowBg: "#fdf4ff", marker: "#d946ef", textColor: "#86198f" },
+  "messages.misc":       { label: "Msg misc",    barBg: "#a8a29e", barText: "#fff", rowBg: "#fafaf9", marker: "#78716c", textColor: "#44403c" },
   "tools.builtin":      { label: "Tools",      barBg: "#3b82f6", barText: "#fff", rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1e40af" },
   "other.unknown":      { label: "Other",      barBg: "#d1d5db", barText: "#374151", rowBg: "#fafafa", marker: "#9ca3af", textColor: "#374151" },
 };
@@ -201,9 +208,12 @@ export type RoleId =
   | "system.env"
   | "system.billing"
   | "messages.human"
+  | "messages.thinking"
   | "messages.assistant"
-  | "messages.tool-io"
+  | "messages.tool-use"
+  | "messages.tool-result"
   | "messages.injection"
+  | "messages.skills"
   | "messages.misc"
   | "tools.builtin"
   | "other.unknown";

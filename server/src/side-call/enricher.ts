@@ -19,6 +19,7 @@ import {
   classifyReqBody,
   classifyResidualProxies,
   extractTitle,
+  extractResponseText,
 } from "../ghost-attribution.ts";
 import { registerProxyEnricher } from "../proxy-v2/log/cold-indexer.ts";
 import { getDb, serializeWrite } from "../db.ts";
@@ -40,7 +41,7 @@ export function classifyRawRecord(
   if (!kind) return null;
 
   let linkFact: string | null = null;
-  if (kind === "generate_session_title") {
+  if (kind === "generate_session_title" || kind === "away_summary") {
     const meta = (rec.meta as Record<string, unknown> | undefined) ?? undefined;
     let isStream: boolean;
     if (meta && typeof meta.isStream === "boolean") {
@@ -50,7 +51,8 @@ export function classifyRawRecord(
       const resBody = typeof rec.resBody === "string" ? rec.resBody : "";
       isStream = /^\[sse \d+ events, \d+ bytes\]$/.test(resBody);
     }
-    linkFact = extractTitle(rec, isStream) ?? null;
+    // generate_session_title 解 {title}；away_summary 用响应摘要全文。
+    linkFact = (kind === "generate_session_title" ? extractTitle(rec, isStream) : extractResponseText(rec, isStream)) ?? null;
   }
   return { queryKind: kind, linkFact };
 }
@@ -106,8 +108,9 @@ export function ensureSessionScanned(db: Database, sessionId: string): Promise<v
       db.transaction(() => {
         for (const g of ghosts) {
           if (!g.requestId) continue;
-          const linkFact = g.kind === "generate_session_title" ? (g.title ?? null) : null;
-          upsertFact(db, sessionId, g.requestId, g.kind, linkFact);
+          // g.title 已被 classifyResidualProxies 复用为通用 link_fact
+          // （generate_session_title=标题 / away_summary=摘要全文 / 其余=undefined）。
+          upsertFact(db, sessionId, g.requestId, g.kind, g.title ?? null);
         }
         db.prepare(
           `INSERT OR REPLACE INTO side_call_scanned_sessions

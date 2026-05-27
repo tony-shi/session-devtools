@@ -83,7 +83,8 @@ export type IntervalEventKind =
   | "system:stop_hook_summary" | "system:away_summary"
   | "attachment:skill_listing" | "attachment:task_reminder" | "attachment:queued_command"
   | "attachment:edited_text_file" | "attachment:file"
-  | "file-history-snapshot" | "last-prompt" | "ai-title" | "unknown";
+  | "file-history-snapshot" | "last-prompt" | "ai-title" | "permission-mode"
+  | "custom-title" | "agent-name" | "queue-operation" | "worktree-state" | "unknown";
 
 export interface IntervalEvent {
   kind: IntervalEventKind;
@@ -99,6 +100,12 @@ export interface IntervalEvent {
   /** 仅 kind="ai-title"：经指纹归因解析出的、生成这条标题的后台 Haiku proxy 行 id。
    *  前端据此提供「→ 查看生成请求」跳转。controller 富化阶段回填。 */
   generatedByProxyRequestId?: number;
+  /** 命令分组（纯视觉合并）：一次 local/slash 命令（/exit）或 bash（!ls）在 jsonl
+   *  里展开成多条连续 user:command / system:local_command 事件（caveat + command-name
+   *  + stdout）时，parser 把这串折叠成一个 wrapper IntervalEvent，原始成员原样收进
+   *  commandGroup.members（每个成员保留自己的 lineIdx / kind / rawJson，供前端做
+   *  **逐段**反向归因 —— 合并只是视觉的，归属严格按行保留）。只有 run 长度 ≥ 2 才有。 */
+  commandGroup?: { commandType: "bash" | "local"; members: IntervalEvent[] };
 }
 
 export interface ToolCallSlot {

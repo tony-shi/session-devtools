@@ -127,7 +127,8 @@ export type SideCallKind =
   | "prompt_suggestion"
   | "agent_summary"
   | "auto_dream"
-  | "extract_memories";
+  | "extract_memories"
+  | "away_summary";
 
 export interface SideCall {
   proxyRequestId: number | null;

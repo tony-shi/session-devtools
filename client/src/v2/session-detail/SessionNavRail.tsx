@@ -8,6 +8,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import type { CompactEvent } from "../drilldown-types";
 import type { MockUserTurn, MockLlmCall } from "../lib/mock-data";
+import type { SideCall, SideCallKind } from "../api";
 import type { NavLevel } from "./session-nav";
 import type { LinkedPanelState } from "./SessionDetailContext";
 import { fmtK } from "../lib/format";
@@ -17,10 +18,22 @@ import { renderStatusIcon } from "../shared/SessionBadges";
 import { NoProxyDot } from "../shared/NoProxyDot";
 import { NavItem, CompactEventNavItem } from "./nav";
 
+// side call kind → 平面文本标签（与 BackgroundCallsPanel 一致，暂不加 icon）。
+const SIDE_CALL_KIND_LABEL: Record<SideCallKind, string> = {
+  generate_session_title: "标题生成",
+  quota: "Quota 探测",
+  prompt_suggestion: "提示建议",
+  agent_summary: "Agent 摘要",
+  auto_dream: "Auto dream",
+  extract_memories: "记忆抽取",
+  away_summary: "离开摘要",
+};
+
 export function SessionNavRail({
   turns, compactEvents, navLevel, selectedTurn, selectedCall,
   selectedCompactEventIdx, linkedPanel, allCallsForNav,
   onNavSession, onSelectTurn, onSelectCall, onSelectCompact, onNavBackground,
+  sideCalls, selectedProxyRequestId, onSelectSideCall,
 }: {
   turns: MockUserTurn[];
   compactEvents: CompactEvent[];
@@ -34,21 +47,59 @@ export function SessionNavRail({
   onSelectTurn: (turn: MockUserTurn) => void;
   onSelectCall: (call: MockLlmCall) => void;
   onSelectCompact: (idx: number) => void;
-  // 后台 side call（标题生成 / quota / suggestion 等）入口。与 turns 并列在左栏，
-  // 否则用户很难发现/点到这些不在对话主线里的请求。
+  // 后台 side call（标题生成 / quota / suggestion 等）入口。放在顶部、与 turns 并列，
+  // 否则长会话要滚到底才发现。展开成编号子项（#1/#2…，按 started_at），与 turn→call 对齐。
   onNavBackground: () => void;
+  sideCalls: SideCall[];
+  selectedProxyRequestId: number | null;
+  onSelectSideCall: (proxyRequestId: number) => void;
 }) {
   const { t } = useTranslation();
+  const inBackground = navLevel === "background" || navLevel === "side-call";
   return (
-    <div style={{ width: 200, borderRight: "1px solid #e5e7eb", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
-      <div style={{ padding: "12px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>{t("sessionOverview.nav.session")}</div>
+    <div style={{ width: 200, borderRight: "1px solid #e5e7eb", flexShrink: 0, background: "#fafafa", display: "flex", flexDirection: "column", minHeight: 0 }}>
+      {/* 总览：独立置顶项，在 tab 栏之上、始终可见。 */}
       <NavItem
         label={t("sessionOverview.nav.overview")}
         active={navLevel === "session"}
         onClick={onNavSession}
       />
+      {/* 两个 tab：用户轮次(N) / 后台请求(M)。点击切换左栏列表（导航到对应 family 的根）。
+          次数徽标放在 tab 右侧。 */}
+      <div style={{ display: "flex", flexShrink: 0, borderTop: "1px solid #e5e7eb", borderBottom: "1px solid #e5e7eb" }}>
+        {([
+          { key: "turns", label: t("sessionOverview.nav.userTurns"), active: !inBackground, count: turns.length, onClick: () => { if (inBackground) onNavSession(); } },
+          { key: "bg", label: t("sessionOverview.nav.background", { defaultValue: "后台请求" }), active: inBackground, count: sideCalls.length, onClick: () => { if (!inBackground) onNavBackground(); } },
+        ] as const).map((tab) => (
+          <button
+            key={tab.key}
+            onClick={tab.onClick}
+            className={!tab.active ? "hover:bg-gray-100 transition-colors" : ""}
+            style={{
+              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+              padding: "9px 6px", border: "none", cursor: "pointer",
+              background: tab.active ? "#fff" : "transparent",
+              color: tab.active ? BRAND.indigo600 : "#6b7280",
+              fontSize: 11, fontWeight: 700,
+              borderBottom: tab.active ? `2px solid ${BRAND.indigo500}` : "2px solid transparent",
+            }}
+          >
+            <span>{tab.label}</span>
+            {tab.count > 0 && (
+              <span style={{
+                fontSize: 9, fontWeight: 700,
+                color: tab.active ? BRAND.indigo600 : "#9ca3af",
+                background: tab.active ? "#eef2ff" : "#f1f5f9",
+                borderRadius: 8, padding: "1px 6px", lineHeight: 1.4,
+              }}>{tab.count}</span>
+            )}
+          </button>
+        ))}
+      </div>
 
-      <div style={{ padding: "10px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>{t("sessionOverview.nav.userTurns")}</div>
+      <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
+      {!inBackground && (
+        <>
       {(() => {
         const turnPrefix = t("sessionOverview.turn.label");
         const callPrefix = t("terms.callLabel");
@@ -167,17 +218,45 @@ export function SessionNavRail({
           );
         });
       })()}
-
-      {/* 后台请求 —— 与 user turns 并列的独立分区。集中陈列对话主线之外的
-          side call（标题生成 / quota / prompt suggestion …）。 */}
-      <div style={{ padding: "10px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>
-        {t("sessionOverview.nav.background", { defaultValue: "后台请求" })}
+        </>
+      )}
+      {inBackground && (
+        <>
+          <NavItem
+            label={t("sessionOverview.nav.backgroundAll", { defaultValue: "全部后台请求" })}
+            active={navLevel === "background"}
+            onClick={onNavBackground}
+          />
+          {sideCalls.length === 0 && (
+            <div style={{ padding: "8px 16px", fontSize: 11, color: "#9ca3af" }}>
+              {t("sessionOverview.nav.backgroundEmpty", { defaultValue: "（无后台请求 / 扫描中…）" })}
+            </div>
+          )}
+          {sideCalls.map((sc, i) => {
+            const label = `#${i + 1} ${SIDE_CALL_KIND_LABEL[sc.kind] ?? sc.kind}`;
+            if (sc.proxyRequestId == null) {
+              // 未捕获（proxy 未抓到，仅 JSONL 留痕）：无详情页可跳，置灰、不可点。
+              return (
+                <div key={`sc-uncap-${i}`} style={{ padding: "5px 10px 5px 28px", fontSize: 11, color: "#cbd5e1" }}>
+                  {label} <span style={{ fontSize: 9 }}>· 未捕获</span>
+                </div>
+              );
+            }
+            const pid = sc.proxyRequestId;
+            return (
+              <NavItem
+                key={`sc-${pid}`}
+                indent
+                label={label}
+                sublabel={sc.title ?? undefined}
+                active={navLevel === "side-call" && selectedProxyRequestId === pid}
+                onClick={() => onSelectSideCall(pid)}
+              />
+            );
+          })}
+        </>
+      )}
       </div>
-      <NavItem
-        label={t("sessionOverview.nav.backgroundCalls", { defaultValue: "Background calls" })}
-        active={navLevel === "background" || navLevel === "side-call"}
-        onClick={onNavBackground}
-      />
     </div>
   );
 }

@@ -499,8 +499,24 @@
     "attachment_file": "文件附件",
     "file_history_snapshot": "文件快照",
     "last_prompt": "上一个 Prompt",
+    "ai_title": "生成标题",
+    "permission_mode": "权限模式",
+    "custom_title": "自定义标题",
+    "agent_name": "Agent 名称",
+    "queue_operation": "排队操作",
+    "worktree_state": "Worktree 状态",
     "unknown": "未知",
     "user_skill_injection": "激活 SKILL"
+  },
+  "eventKindDesc": {
+    "ai_title": "AI 自动生成的会话标题（后台 Haiku 调用）。仅用于会话列表 / --resume 显示，不进入对话 context；会被用户 /rename 的自定义标题覆盖。",
+    "last_prompt": "会话最近一条用户 prompt 的快照（换行压平、截断到 200 字）。供 --resume / claude ps 列表显示，不进入 context；真正的 prompt 在对应的 user 消息里。",
+    "permission_mode": "当前工具权限模式（default / acceptEdits / bypassPermissions / plan）。客户端会话状态，用于 --resume 恢复与遥测；具体模式值不进入 context（模型只看到 system prompt 里一句通用的权限说明）。",
+    "file_history_snapshot": "文件检查点快照：记录某条消息处被改动文件的备份指针，供回溯（rewind）还原。备份内容存在磁盘、不进入 context；空快照 = 会话起点的初始基线。",
+    "custom_title": "用户通过 /rename 设置的会话标题（读取优先级高于 AI 标题）。仅用于显示，不进入 context。",
+    "agent_name": "（子）agent 会话的显示名。客户端会话状态，不进入 context。",
+    "queue_operation": "用户在 LLM 执行期间排队 / 出队消息的操作记录（enqueue 等）。重建会话日志时会被过滤掉，不进入 context。",
+    "worktree_state": "会话的 git worktree 状态（worktreeSession 为 null 表示已退出 worktree）。供 --resume 判断会话是否仍在 worktree 内；不进入 context。"
   },
   "ledgerExplainer": {
     "title": "Token 账本 · 计算说明",

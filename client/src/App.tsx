@@ -18,6 +18,9 @@ import { BRAND } from "./v2/shared/brand";
 const DemoStage = import.meta.env.DEV
   ? lazy(() => import("./v2/walkthrough/DemoStage").then((m) => ({ default: m.DemoStage })))
   : null;
+const DemoIndex = import.meta.env.DEV
+  ? lazy(() => import("./v2/walkthrough/DemoIndex").then((m) => ({ default: m.DemoIndex })))
+  : null;
 
 type Tab = "sessions-v2" | "proxy-v2" | "trends";
 
@@ -289,6 +292,9 @@ function AppShell() {
             />
             <Route path="/proxy" element={<ProxyV2Setup />} />
             {/* 内部教学画板:仅 dev 注册,生产构建里剥离;不在主导航 */}
+            {import.meta.env.DEV && DemoIndex && (
+              <Route path="/demo" element={<Suspense fallback={null}><DemoIndex /></Suspense>} />
+            )}
             {import.meta.env.DEV && DemoStage && (
               <Route path="/demo/:storyId" element={<Suspense fallback={null}><DemoStage /></Suspense>} />
             )}

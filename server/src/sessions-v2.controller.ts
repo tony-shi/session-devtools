@@ -4,7 +4,7 @@ import { runSyncV2 } from "./sync-v2.ts";
 import { parseJsonField } from "./parser-utils.ts";
 import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
 import { loadCallDetail, readProxyRecord, findProxyRowForCall, computeCallProxyMatchModes } from "./call-detail.ts";
-import { resolveAiTitleProxies, type GhostQueryKind } from "./ghost-attribution.ts";
+import { resolveSideCallLinks, type GhostQueryKind } from "./ghost-attribution.ts";
 import { ensureSessionScanned } from "./side-call/enricher.ts";
 import { readFileSync } from "node:fs";
 import { loadAttributionTree, readSessionEventsForLinker } from "./attribution-service.ts";
@@ -208,25 +208,36 @@ export class SessionsV2Controller {
       }
     }
 
-    // 协同归因（残差指纹）：把 generate_session_title 的标题回填到 ai-title 行，
-    // 让前端能从 ai-title 跳到生成它的后台 Haiku 请求。值匹配 aiTitle === 响应 .title。
-    // 现在直接读 side_call_facts 派生索引（不解压 body，~几 ms）。
+    // 协同归因（残差指纹）：把后台 side call 回填到对应的 JSONL 锚点行，让前端能从
+    // 该行跳到生成它的后台请求。直接读 side_call_facts 派生索引（不解压 body，~几 ms）。
+    //   ai-title           ↔ generate_session_title：aiTitle === link_fact（精确）
+    //   system:away_summary ↔ away_summary：content 含 link_fact（JSONL content 末尾多一段
+    //                         " (disable recaps in /config)" UI 提示，故用 includes 而非等值）
     const tEnrichStart = Date.now();
-    const titleProxies = resolveAiTitleProxies(db, id);
-    const aiTitleMs = Date.now() - tEnrichStart;
+    const titleLinks = resolveSideCallLinks(db, id, "generate_session_title");
+    const awayLinks = resolveSideCallLinks(db, id, "away_summary");
+    const enrichMs = Date.now() - tEnrichStart;
     // Fire-and-forget：触发存量 session 的一次性回扫填充索引，不阻塞本次响应；
     // 下次加载即可命中。绝不 await。
     void ensureSessionScanned(db, id).catch(() => {});
-    if (titleProxies.length > 0) {
+    if (titleLinks.length > 0 || awayLinks.length > 0) {
       const byTitle = new Map<string, number>();
-      for (const tp of titleProxies) if (!byTitle.has(tp.title)) byTitle.set(tp.title, tp.proxyRequestId);
+      for (const l of titleLinks) if (!byTitle.has(l.linkFact)) byTitle.set(l.linkFact, l.proxyRequestId);
       const backfill = (ev: { kind: string; rawJson: string; generatedByProxyRequestId?: number }) => {
-        if (ev.kind !== "ai-title") return;
-        let aiTitle: string | undefined;
-        try { aiTitle = (JSON.parse(ev.rawJson) as { aiTitle?: string }).aiTitle; } catch { /* skip */ }
-        if (!aiTitle) return;
-        const pid = byTitle.get(aiTitle);
-        if (pid != null) ev.generatedByProxyRequestId = pid;
+        if (ev.kind === "ai-title") {
+          let aiTitle: string | undefined;
+          try { aiTitle = (JSON.parse(ev.rawJson) as { aiTitle?: string }).aiTitle; } catch { /* skip */ }
+          if (!aiTitle) return;
+          const pid = byTitle.get(aiTitle);
+          if (pid != null) ev.generatedByProxyRequestId = pid;
+        } else if (ev.kind === "system:away_summary") {
+          let content: string | undefined;
+          try { content = (JSON.parse(ev.rawJson) as { content?: string }).content; } catch { /* skip */ }
+          if (typeof content !== "string") return;
+          const c = content.trim();
+          const hit = awayLinks.find((l) => c.includes(l.linkFact));
+          if (hit) ev.generatedByProxyRequestId = hit.proxyRequestId;
+        }
       };
       for (const turn of drilldown.turns) {
         turn.leadingEvents.forEach(backfill);
@@ -236,8 +247,8 @@ export class SessionsV2Controller {
 
     console.log(
       `[drilldown] session=${id.slice(0, 8)} parse=${tParsed - tStart}ms ` +
-      `ai-title-enrich=${aiTitleMs}ms total=${Date.now() - tStart}ms ` +
-      `turns=${drilldown.turns.length} titleProxies=${titleProxies.length}`,
+      `sidecall-enrich=${enrichMs}ms total=${Date.now() - tStart}ms ` +
+      `turns=${drilldown.turns.length} titleLinks=${titleLinks.length} awayLinks=${awayLinks.length}`,
     );
 
     return drilldown;

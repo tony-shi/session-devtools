@@ -384,6 +384,31 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
   } else if (iev.type === "ai-title") {
     kind = "ai-title";
     preview = ((iev as { aiTitle?: string }).aiTitle ?? "").slice(0, 300);
+  } else if (iev.type === "permission-mode") {
+    // 纯客户端会话状态（default/acceptEdits/bypassPermissions/plan）。piK policy=always，
+    // 用于 --resume 恢复 + 遥测，不进 LLM context（模型只见 system prompt 里一句
+    // 通用的"工具按权限模式执行"，不含具体 mode 值）。当元数据行展示即可。
+    kind = "permission-mode";
+    preview = String((iev as { permissionMode?: unknown }).permissionMode ?? "");
+  } else if (iev.type === "custom-title") {
+    // 用户 /rename 设置的标题（读取优先级高于 ai-title）。piK always，非 context。
+    kind = "custom-title";
+    preview = ((iev as { customTitle?: string }).customTitle ?? "").slice(0, 300);
+  } else if (iev.type === "agent-name") {
+    // sub-agent 会话的显示名。piK always，非 context。
+    kind = "agent-name";
+    preview = ((iev as { agentName?: string }).agentName ?? "").slice(0, 300);
+  } else if (iev.type === "queue-operation") {
+    // 用户在 LLM 执行时排队/出队消息的操作记录（enqueue/…）。piK always，非 context。
+    kind = "queue-operation";
+    preview = String((iev as { operation?: unknown }).operation ?? "");
+  } else if (iev.type === "worktree-state") {
+    // 会话的 git worktree 状态；worktreeSession 为 null 表示不在 worktree。piK always，非 context。
+    {
+      const ws = (iev as { worktreeSession?: { worktreeName?: string; worktreePath?: string } | null }).worktreeSession;
+      kind = "worktree-state";
+      preview = ws ? (ws.worktreeName ?? ws.worktreePath ?? "(worktree)") : "(not in worktree)";
+    }
   } else {
     kind = "unknown";
     preview = raw.slice(0, 300);
@@ -402,6 +427,72 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
     rawJson: raw,
     ...(typeof stuid === "string" ? { sourceToolUseID: stuid } : {}),
   };
+}
+
+// ─── Command grouping (purely visual) ────────────────────────────────────────
+// 一次 local/slash 命令（/exit）或 bash（!ls）在 jsonl 里会落成多条连续 user 事件：
+//   <local-command-caveat> 样板行 + <command-name>… 行 + <local-command-stdout> 行
+// makeIntervalEvent 把它们全部归到 kind="user:command"（bash 同理）。本 helper 把
+// 每段「极大连续 run」（kind 是 user:command / system:local_command）折叠成一个
+// wrapper IntervalEvent，原始成员原样收进 commandGroup.members 供前端逐段归因。
+//
+// 重点：合并**纯视觉** —— 成员各自保留 lineIdx / kind / rawJson / contentSize，
+// 前端按各自 lineIdx 查归因、各自跳转。run 长度 1 的不包 wrapper（原样返回）。
+function groupCommandEvents(events: IntervalEvent[]): IntervalEvent[] {
+  const isCmd = (e: IntervalEvent) =>
+    e.kind === "user:command" || e.kind === "system:local_command";
+
+  const out: IntervalEvent[] = [];
+  let i = 0;
+  while (i < events.length) {
+    if (!isCmd(events[i])) {
+      out.push(events[i]);
+      i++;
+      continue;
+    }
+    // Maximal run of consecutive command events.
+    let j = i;
+    while (j < events.length && isCmd(events[j])) j++;
+    const run = events.slice(i, j);
+    if (run.length < 2) {
+      out.push(run[0]);
+    } else {
+      const anchor = run[0];
+      const hasBash = run.some((m) =>
+        m.rawJson.includes("<bash-input>") || m.contentPreview.includes("<bash-input>"),
+      );
+      // contentPreview = the command name. Prefer <command-name>…; else
+      // !<bash-input>…; else the first non-caveat member's preview.
+      let preview = "";
+      for (const m of run) {
+        const cmdMatch = m.contentPreview.match(/<command-name>([^<]+)<\/command-name>/);
+        if (cmdMatch) { preview = cmdMatch[1].trim(); break; }
+        const bashMatch = m.contentPreview.match(/<bash-input>([^<\n]{0,60})/);
+        if (bashMatch) { preview = `!${bashMatch[1].trim()}`; break; }
+      }
+      if (!preview) {
+        const firstNonCaveat = run.find((m) =>
+          !m.rawJson.includes("<local-command-caveat>")
+          && !m.contentPreview.includes("<local-command-caveat>"),
+        );
+        preview = (firstNonCaveat ?? anchor).contentPreview;
+      }
+      out.push({
+        kind: "user:command",
+        lineIdx: anchor.lineIdx,
+        timestamp: anchor.timestamp,
+        contentPreview: preview,
+        contentSize: run.reduce((s, m) => s + m.contentSize, 0),
+        rawJson: anchor.rawJson,
+        commandGroup: {
+          commandType: hasBash ? "bash" : "local",
+          members: run,
+        },
+      });
+    }
+    i = j;
+  }
+  return out;
 }
 
 // ─── Sub agent parser ─────────────────────────────────────────────────────────
@@ -1308,6 +1399,37 @@ export async function parseSessionDrilldown(
         events: blockEvents,
       });
     }
+  }
+
+  // ── 5a-dedup. trailing 事件去重 ─────────────────────────────────────────
+  // 末尾 call 的 interval 扫描会一直扫到 EOF，把会话末尾的 command / local-command /
+  // meta 事件也吸进 call.intervalEvents；而这些又被 trailing inter-turn 块收录 → 重复
+  // 渲染（call chain + 「AFTER THIS TURN」各一份）。用户语义上它们属于 tailing(inter-turn
+  // 块)，故从 call.intervalEvents 里移除任何已被 inter-turn 块收录的行。away_summary /
+  // ai-title 等不被 inter-turn 块收录（它只收 cmd/sysCmd/meta），故仍保留在 call 里。
+  {
+    const interTurnLineIdxs = new Set<number>();
+    for (const b of interTurnBlocks) for (const e of b.events) interTurnLineIdxs.add(e.lineIdx);
+    if (interTurnLineIdxs.size > 0) {
+      for (const turn of turns) {
+        for (const call of turn.calls) {
+          call.intervalEvents = call.intervalEvents.filter((ev) => !interTurnLineIdxs.has(ev.lineIdx));
+        }
+      }
+    }
+  }
+
+  // ── 5a-group. 命令分组（纯视觉）────────────────────────────────────────────
+  // 把每个 call.intervalEvents 和每个 interTurnBlock.events 里连续的 command 事件
+  // （caveat + command-name + stdout）折叠成单个 commandGroup wrapper。逐段归因
+  // 由前端按 members[].lineIdx 各自查询保留 —— 这里只做视觉合并。
+  for (const turn of turns) {
+    for (const call of turn.calls) {
+      call.intervalEvents = groupCommandEvents(call.intervalEvents);
+    }
+  }
+  for (const block of interTurnBlocks) {
+    block.events = groupCommandEvents(block.events);
   }
 
   // ── 5b. Extract CompactEvent[] ─────────────────────────────────────────

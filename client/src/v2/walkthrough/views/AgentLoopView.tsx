@@ -3,6 +3,7 @@ import type { UserTurn } from "../../drilldown-types";
 import type { Focus } from "../types";
 import { sectionPalette } from "../../lens-palette";
 import { fmtK } from "../../lib/format";
+import { ACTOR_COLOR } from "../actorPalette";
 
 // 第二幕(turn-io):深入一个 Turn —— 纵向链,揭示进度由外部 beat(字幕节拍)驱动,
 // 字幕和画面逐步同步推进。
@@ -10,7 +11,6 @@ import { fmtK } from "../../lib/format";
 //   → Turn 完成(LLM 自行决定结束)。
 
 const MAX_ITERS = 3;
-const REASON_MAX = 110;
 
 const TOOL_VERB: Record<string, string> = {
   Bash: "执行命令", Read: "读取文件", Grep: "搜索代码", Glob: "匹配文件",
@@ -21,7 +21,7 @@ const TOOL_VERB: Record<string, string> = {
 type ParsedTool = { name: string; explain: string; param: string };
 type ResultItem = { name: string; output: string; isError: boolean };
 type Node =
-  | { kind: "task"; text: string; summary: string }
+  | { kind: "task"; text: string }
   | { kind: "context"; iter: number; tokens: number; lastText: string }
   | { kind: "response"; iter: number; aiText: string; tools: ParsedTool[] }
   | { kind: "result"; iter: number; results: ResultItem[] }
@@ -39,28 +39,31 @@ function parseTool(name: string, inputPreview: string): ParsedTool {
       if (v != null) param = String(v);
     }
   } catch { /* 非 JSON,直接用预览 */ }
-  return { name, explain: TOOL_VERB[name] ?? "调用工具", param: clip(param, 72) };
+  // 展示用:不截断 —— 命令 / 路径完整可见(容器已拉宽,过长才换行)。
+  return { name, explain: TOOL_VERB[name] ?? "调用工具", param };
 }
 
 function buildNodes(turn: UserTurn): Node[] {
-  const userInput = clip(turn.userInput, 160);
-  const tally = new Map<string, number>();
-  for (const c of turn.calls) for (const tc of c.toolCalls ?? []) tally.set(tc.name, (tally.get(tc.name) ?? 0) + 1);
-  const summary = `这个 Turn:${turn.calls.length} 次调用 · ` +
-    [...tally.entries()].sort((a, b) => b[1] - a[1]).map(([n, c]) => `${n}×${c}`).join(" · ");
+  const userInput = (turn.userInput ?? "").trim();
 
   const allTool = turn.calls.filter((c) => c.toolCalls?.length);
   const iters = allTool.slice(0, MAX_ITERS);
-  const nodes: Node[] = [{ kind: "task", text: userInput, summary }];
+  const nodes: Node[] = [{ kind: "task", text: userInput }];
   iters.forEach((c, i) => {
     const lastText = i === 0 ? userInput : clip(iters[i - 1].toolCalls[0]?.outputPreview ?? "", 80);
     nodes.push({ kind: "context", iter: i, tokens: c.contextSize, lastText });
-    nodes.push({ kind: "response", iter: i, aiText: clip(c.assistantText ?? "", REASON_MAX), tools: c.toolCalls.map((tc) => parseTool(tc.name, tc.inputPreview)) });
-    nodes.push({ kind: "result", iter: i, results: c.toolCalls.map((tc) => ({ name: tc.name, output: clip(tc.outputPreview, 90), isError: tc.isError })) });
+    // 展示用:assistantText / tool_result 全文,不折叠。
+    nodes.push({ kind: "response", iter: i, aiText: (c.assistantText ?? "").trim(), tools: c.toolCalls.map((tc) => parseTool(tc.name, tc.inputPreview)) });
+    nodes.push({ kind: "result", iter: i, results: c.toolCalls.map((tc) => ({ name: tc.name, output: (tc.outputPreview ?? "").trim(), isError: tc.isError })) });
   });
   const remaining = allTool.length - iters.length;
   if (remaining > 0) nodes.push({ kind: "more", remaining });
-  nodes.push({ kind: "final", text: clip(turn.finalOutput ?? "", 280), calls: turn.calls.length });
+  // 最后一次 LLM 调用:context 已含最新 tool_result → 模型不再 tool_use → 给出结论 → Turn 终止。
+  const lastIter = iters[iters.length - 1];
+  const finalCtxText = lastIter ? clip(lastIter.toolCalls[0]?.outputPreview ?? "", 80) : userInput;
+  const finalCall = turn.calls[turn.calls.length - 1] ?? null;
+  nodes.push({ kind: "context", iter: iters.length, tokens: finalCall?.contextSize ?? 0, lastText: finalCtxText });
+  nodes.push({ kind: "final", text: (turn.finalOutput ?? "").trim(), calls: turn.calls.length });
   return nodes;
 }
 
@@ -77,9 +80,9 @@ function plan(focus: Focus, beat: number, total: number, beatCount: number): { c
     case "tool-result":
       return { count: 4, ctxStage: "full", showTools: true };
     case "loop":
-      // 后续轮真实链路逐拍展开;最后两拍揭示「最终输出」节点(LLM 不再 tool_use)。
+      // 前面逐拍展开循环体;最后两拍揭示「最终一次 LLM 调用 + 结论」(模型不再 tool_use)。
       if (beat >= beatCount - 2) return { count: total, ctxStage: "full", showTools: true };
-      return { count: Math.min(total - 1, 6 + beat * 2), ctxStage: "full", showTools: true };
+      return { count: Math.min(total - 2, 4 + beat * 2), ctxStage: "full", showTools: true };
     default:
       return { count: total, ctxStage: "full", showTools: true };
   }
@@ -106,18 +109,18 @@ export function AgentLoopView({ turn, focus, beat, beatCount }: { turn: UserTurn
 
   return (
     <div style={{ height: "100%", overflowY: "auto", padding: "36px 0", minHeight: 0 }}>
-      <div style={{ width: "100%", maxWidth: 700, margin: "0 auto", padding: "0 24px", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ width: "100%", maxWidth: 880, margin: "0 auto", padding: "0 24px", display: "flex", flexDirection: "column", gap: 10 }}>
         {nodes.slice(0, count).map((n, i) => {
           const active = isActive(n, focus);
           const dim = hasFocus && !active;
           return (
             <div key={i} style={{ animation: "wt-rise 0.32s ease both", opacity: dim ? 0.4 : 1, transition: "opacity .35s ease" }}>
-              {n.kind === "final"
-                ? <FinalNode text={n.text} calls={n.calls} active={active} />
-                : n.kind === "more"
+              {n.kind === "more"
                 ? <MoreNode remaining={n.remaining} />
-                : <Lane actor={n.kind === "result" ? "agent" : n.kind === "task" ? "user" : "llm"}>
-                    <NodeBox node={n} active={active} ctxStage={ctxStage} showTools={showTools} highlightTool={focus === "tool-use"} />
+                : <Lane actor={n.kind === "final" ? "llm" : n.kind === "result" ? "agent" : n.kind === "task" ? "user" : "llm"}>
+                    {n.kind === "final"
+                      ? <FinalNode text={n.text} calls={n.calls} active={active} />
+                      : <NodeBox node={n} active={active} ctxStage={ctxStage} showTools={showTools} highlightTool={focus === "tool-use"} />}
                   </Lane>}
             </div>
           );
@@ -130,9 +133,9 @@ export function AgentLoopView({ turn, focus, beat, beatCount }: { turn: UserTurn
 }
 
 const ACTOR = {
-  user: { color: "#64748b", label: "User" },
-  llm: { color: "#6366f1", label: "LLM" },
-  agent: { color: "#14b8a6", label: "Agent" },
+  user: { color: ACTOR_COLOR.user.main, label: "User" },
+  llm: { color: ACTOR_COLOR.llm.main, label: "LLM" },
+  agent: { color: ACTOR_COLOR.agent.main, label: "Agent" },
 } as const;
 function Lane({ actor, children }: { actor: keyof typeof ACTOR; children: React.ReactNode }) {
   const { color, label } = ACTOR[actor];
@@ -150,7 +153,6 @@ function NodeBox({ node, active, ctxStage, showTools, highlightTool }: { node: N
     return (
       <EventRow accent={ACTOR.user.color} label="用户输入 · 本轮任务" active={active}>
         <div style={{ fontSize: 15, color: "#1f2937", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{node.text}</div>
-        <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 8 }}>{node.summary}</div>
       </EventRow>
     );
   }
@@ -163,7 +165,7 @@ function NodeBox({ node, active, ctxStage, showTools, highlightTool }: { node: N
           : (!showTools && <div style={{ fontSize: 13, color: "#94a3b8", fontStyle: "italic" }}>模型在判断该做什么…</div>)}
         {showTools && node.tools.map((t, i) => (
           <div key={i} style={{
-            border: `1px solid ${highlightTool ? "#6366f1" : "#e0e7ff"}`, borderRadius: 8, padding: "8px 10px", marginTop: i ? 6 : 0,
+            border: `1px solid ${highlightTool ? "#6366f1" : "#e0e7ff"}`, borderRadius: 10, padding: "8px 10px", marginTop: i ? 6 : 0,
             background: "#f8f9ff", boxShadow: highlightTool ? "0 0 0 3px rgba(99,102,241,0.22)" : "none",
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
@@ -183,10 +185,14 @@ function NodeBox({ node, active, ctxStage, showTools, highlightTool }: { node: N
   return (
     <EventRow accent={ACTOR.agent.color} label="Agent 执行结果 · tool_result" active={active}>
       {node.results.map((o, i) => (
-        <div key={i} style={{ display: "flex", gap: 8, marginTop: i ? 6 : 0, fontSize: 13 }}>
-          <span style={{ color: o.isError ? "#b91c1c" : "#0f766e", fontWeight: 700, flexShrink: 0 }}>{o.isError ? "✗" : "✓"} {o.name}</span>
-          <span style={{ color: "#cbd5e1" }}>→</span>
-          <span style={{ fontFamily: "monospace", color: "#475569", whiteSpace: "pre-wrap", wordBreak: "break-word", minWidth: 0 }}>{o.output || "(空)"}</span>
+        <div key={i} style={{ marginTop: i ? 10 : 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, fontSize: 13 }}>
+            <span style={{ color: o.isError ? "#b91c1c" : "#0f766e", fontWeight: 700 }}>{o.isError ? "✗" : "✓"} {o.name}</span>
+            <span style={{ marginLeft: "auto", fontSize: 10, color: "#99f6e4" }}>tool_result</span>
+          </div>
+          <div style={{ fontFamily: "monospace", fontSize: 13, color: "#334155", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "8px 12px", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55 }}>
+            {o.output || "(空)"}
+          </div>
         </div>
       ))}
     </EventRow>
@@ -209,10 +215,10 @@ function FinalNode({ text, calls, active }: { text: string; calls: number; activ
       border: `1px solid ${active ? "#16a34a" : "#bbf7d0"}`, boxShadow: active ? "0 0 0 3px rgba(22,163,74,0.15)" : "none",
       transition: "box-shadow .3s, border-color .3s",
     }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: "#15803d", marginBottom: 6 }}>✅ Final response · Turn 完成</div>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#15803d", marginBottom: 6 }}>✅ 最后一次 LLM 调用 · 无 tool_use → 结论</div>
       <div style={{ fontSize: 14, color: "#14532d", lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{text || "(无最终文本)"}</div>
       <div style={{ fontSize: 12, color: "#16a34a", marginTop: 8 }}>
-        信息已充分,LLM 不再调用工具,直接输出结论 —— 从用户输入到最终结果,本轮共 {calls} 次调用,到此结束。
+        模型判断信息已充分,这一次不再请求工具,直接给出结论 —— 本轮共 {calls} 次调用,Turn 到此终止。
       </div>
     </div>
   );

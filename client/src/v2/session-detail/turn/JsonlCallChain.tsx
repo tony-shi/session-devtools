@@ -13,6 +13,7 @@ import { ForwardArrowIcon, LinkIcon } from "../../shared/EventUnitCard";
 import { useAttributionGraph } from "../../attribution-graph-context";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { ChainNarrativeNode, ToolCallRow, IntervalEventRow } from "./call-chain-rows";
+import { CommandGroupCard } from "./CommandGroupCard";
 
 export function JsonlCallChain({
   turn, onSelectCall, onSubAgentClick,
@@ -551,13 +552,23 @@ export function JsonlCallChain({
                       {t("terms.jsonlEventGraph")}
                     </div>
 	                  {visibleIntervals.map((ev, ei) => (
-	                    <IntervalEventRow
-	                      key={`${ev.lineIdx}-${ei}`}
-	                      ev={ev}
-	                      producingCallId={call.id}
-	                      activeToolUseId={activeToolUseId}
-	                      onHoverToolUse={setActiveToolUseId}
-	                    />
+	                    ev.commandGroup ? (
+	                      <CommandGroupCard
+	                        key={`${ev.lineIdx}-${ei}`}
+	                        ev={ev}
+	                        producingCallId={call.id}
+	                        activeToolUseId={activeToolUseId}
+	                        onHoverToolUse={setActiveToolUseId}
+	                      />
+	                    ) : (
+	                      <IntervalEventRow
+	                        key={`${ev.lineIdx}-${ei}`}
+	                        ev={ev}
+	                        producingCallId={call.id}
+	                        activeToolUseId={activeToolUseId}
+	                        onHoverToolUse={setActiveToolUseId}
+	                      />
+	                    )
 	                  ))}
 	                </div>
 	              )}

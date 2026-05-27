@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { SessionV2 } from "./types";
 import type { SessionDrilldown, UserTurn, InterTurnBlock, CompactEvent } from "./drilldown-types";
 import { apiV2 } from "./api";
+import type { SideCall } from "./api";
 import type { SubAgentSummary } from "./drilldown-types";
 import { getSessionDisplayName } from "./session-display";
 import { AttributionGraphProvider } from "./attribution-graph-context";
@@ -52,6 +53,19 @@ export function SessionDetailV2({ session, onClose }: Props) {
     apiV2.sessionDrilldown(session.session_id)
       .then(data => { setDrilldown(data); setLoadState("ok"); })
       .catch(() => setLoadState("error"));
+  }, [session.session_id]);
+
+  // Side calls (后台请求) for the left-rail index. Async + non-blocking: the
+  // /side-calls fetch triggers ensureSessionScanned server-side (deduped +
+  // marker-gated, so once per session), and the rail populates when it returns
+  // — turns render immediately regardless.
+  const [sideCalls, setSideCalls] = useState<SideCall[]>([]);
+  useEffect(() => {
+    let alive = true;
+    apiV2.sideCalls(session.session_id)
+      .then((r) => { if (alive) setSideCalls(r.sideCalls); })
+      .catch(() => { /* leave empty */ });
+    return () => { alive = false; };
   }, [session.session_id]);
 
   const turns: UserTurn[] = drilldown?.turns ?? buildFallbackTurns();
@@ -446,6 +460,9 @@ export function SessionDetailV2({ session, onClose }: Props) {
             onSelectCall={handleSelectCall}
             onSelectCompact={(idx) => goNav({ level: "compact-event", compactIdx: idx })}
             onNavBackground={() => goNav({ level: "background" })}
+            sideCalls={sideCalls}
+            selectedProxyRequestId={selectedProxyRequestId}
+            onSelectSideCall={(pid) => goNav({ level: "side-call", proxyRequestId: pid })}
           />
 
           {/* Main Canvas */}

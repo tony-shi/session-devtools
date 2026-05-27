@@ -13,6 +13,11 @@ export interface EventPalette {
 const SLATE_NEUTRAL:  EventPalette = { bg: "#f8fafc", border: "#e2e8f0", fg: "#64748b" };
 const SLATE_MUTED:    EventPalette = { bg: "#f8fafc", border: "#e2e8f0", fg: "#94a3b8" };
 
+// 不进入 LLM context 的会话元数据（piK policy=always 的状态记录：标题/权限模式/
+// worktree/排队/agent 名/文件快照…）统一用这一档样式，让它们读起来是连贯的一组、
+// 与承载上下文的 user/tool/system 事件区分开。淡靛底 + 中性字，区别于 unknown 的纯灰。
+const META_NONCONTEXT: EventPalette = { bg: "#f8fafc", border: "#e6e8f0", fg: "#7c83a3" };
+
 /**
  * Sub-agent purple uses `#a855f7` (the chart-theme `subAgent` token) rather than
  * the older `#7c3aed` so it lines up with the minimap triangle marker.
@@ -39,10 +44,16 @@ export const EVENT_PALETTES: Record<IntervalEventKind, EventPalette> = {
   "attachment:edited_text_file":  { bg: "#ecfeff", border: "#a5f3fc", fg: "#0e7490" },
   "attachment:file":              { bg: "#f0f9ff", border: "#bae6fd", fg: "#0369a1" },
 
-  "file-history-snapshot":    SLATE_MUTED,
-  "last-prompt":              SLATE_NEUTRAL,
-  // ai-title：标题由后台 Haiku 生成，用浅靛色区别于普通 slate 元数据。
-  "ai-title":                 { bg: "#eef2ff", border: "#c7d2fe", fg: "#4f46e5" },
+  // ── 不进 context 的会话元数据：统一 META_NONCONTEXT 样式 ──────────────────
+  // (ai-title 的 proxy 跳转 chip 仍是靛色 LinkIcon，作为“动作”强调；行底色归入元数据组)
+  "file-history-snapshot":    META_NONCONTEXT,
+  "last-prompt":              META_NONCONTEXT,
+  "ai-title":                 META_NONCONTEXT,
+  "permission-mode":          META_NONCONTEXT,
+  "custom-title":             META_NONCONTEXT,
+  "agent-name":               META_NONCONTEXT,
+  "queue-operation":          META_NONCONTEXT,
+  "worktree-state":           META_NONCONTEXT,
   "unknown":                  SLATE_MUTED,
 };
 

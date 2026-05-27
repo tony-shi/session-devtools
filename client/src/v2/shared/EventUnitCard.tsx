@@ -18,6 +18,7 @@ import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import JsonView from "@uiw/react-json-view";
 import { TriangleAlert, Link2, ArrowUpRight } from "lucide-react";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { BRAND } from "./brand";
 
 export type EventDirection = "in" | "out";
@@ -66,6 +67,9 @@ export interface EventUnitCardProps {
   // === Header (always visible) ===
   color: string;                   // dot + accent color
   kindLabel: string;               // "Tool Use" / "Tool Result" / "User Input" / ...
+  /** 详尽描述,作为 kindLabel 的 hover tooltip。用于非 context 元数据事件
+   *  （ai-title / permission-mode / …）解释「这是什么、何时出现、为何不进上下文」。 */
+  kindTooltip?: string;
   title?: string;                  // e.g. tool name "Edit"
   shortId?: string;                // e.g. "toolu_013n…3MjCD"
   size?: { bytes: number; direction?: EventDirection };
@@ -164,7 +168,7 @@ function shortenId(id: string): string {
 
 export function EventUnitCard(props: EventUnitCardProps) {
   const {
-    color, kindLabel, title, shortId, size, timestamp,
+    color, kindLabel, kindTooltip, title, shortId, size, timestamp,
     preview, description, segments = [], coordinate, confidence, impact,
     expandable = true, defaultExpanded = false,
     active = false,
@@ -233,14 +237,34 @@ export function EventUnitCard(props: EventUnitCardProps) {
           width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0,
         }} />
 
-        {/* kind label */}
-        <span style={{
-          fontSize: 10, fontWeight: 700, color: "#4b5563",
-          textTransform: "uppercase", letterSpacing: "0.04em",
-          flexShrink: 0, whiteSpace: "nowrap",
-        }}>
-          {kindLabel}
-        </span>
+        {/* kind label —— kindTooltip 存在时用 Radix Tooltip（复用 App 根的
+            TooltipProvider，同 DiffPanel/UserTurnDetailPanel）弹出详尽解读；
+            加 help 光标 + 虚线下划线提示可 hover。原生 title 不可靠，已弃用。 */}
+        {kindTooltip ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span style={{
+                fontSize: 10, fontWeight: 700, color: "#4b5563",
+                textTransform: "uppercase", letterSpacing: "0.04em",
+                flexShrink: 0, whiteSpace: "nowrap",
+                cursor: "help", textDecoration: "underline dotted", textUnderlineOffset: 2,
+              }}>
+                {kindLabel}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs whitespace-normal leading-relaxed">
+              {kindTooltip}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: "#4b5563",
+            textTransform: "uppercase", letterSpacing: "0.04em",
+            flexShrink: 0, whiteSpace: "nowrap",
+          }}>
+            {kindLabel}
+          </span>
+        )}
 
         {/* title (e.g. tool name) */}
         {title && (

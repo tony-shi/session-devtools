@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { UserTurn } from "../../drilldown-types";
 import type { Focus } from "../types";
+import { ACTOR_COLOR } from "../actorPalette";
 
 // 第一幕:多轮对话的「播放」。镜像官方 context-window simulation 的感觉 ——
 // auto-play + 逐步揭示 + 跟随滚动。用户输入在左、Claude 输出在右,Claude 回答
@@ -117,10 +118,10 @@ export function ConversationView({ turns, focus, playing, restartNonce }: { turn
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>{bubbles}</div>
                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginTop: 14, paddingTop: 10, borderTop: "1px dashed #e5e7eb", fontSize: 12 }}>
-                    <span style={{ fontWeight: 700, color: "#6366f1" }}>{it.llmCalls} 次 LLM 调用</span>
+                    <span style={{ fontWeight: 700, color: ACTOR_COLOR.llm.main }}>{it.llmCalls} 次 LLM 调用</span>
                     <span style={{ color: "#cbd5e1" }}>|</span>
                     {it.tools.map((tl) => (
-                      <span key={tl.name} style={{ color: "#0f766e", fontWeight: 600 }}>✓ {tl.name} ×{tl.count}</span>
+                      <span key={tl.name} style={{ color: ACTOR_COLOR.agent.main, fontWeight: 600 }}>✓ {tl.name} ×{tl.count}</span>
                     ))}
                   </div>
                 </div>
@@ -138,11 +139,13 @@ export function ConversationView({ turns, focus, playing, restartNonce }: { turn
 
 function Bubble({ side, role, text, caret, markdown }: { side: "left" | "right"; role: string; text: string; caret?: boolean; markdown?: boolean }) {
   const left = side === "left";
+  // 左=User(slate),右=Claude/模型(靛蓝)—— 与后续 loop/recap 的演员配色一致。
+  const c = left ? ACTOR_COLOR.user : ACTOR_COLOR.llm;
   // 打字时用纯文本(避免半截 markdown 闪烁);打完那条再转成 Markdown 渲染。
   const showMd = markdown && !caret;
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: left ? "flex-start" : "flex-end", gap: 6 }}>
-      <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: 0.3, color: left ? "#6366f1" : "#0f766e" }}>{role}</span>
+      <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: 0.3, color: c.main }}>{role}</span>
       <div
         style={{
           maxWidth: "82%",
@@ -153,8 +156,8 @@ function Bubble({ side, role, text, caret, markdown }: { side: "left" | "right";
           fontSize: 16,
           lineHeight: 1.65,
           color: "#1f2937",
-          background: left ? "#eef2ff" : "#f0fdfa",
-          border: `1px solid ${left ? "#e0e7ff" : "#ccfbf1"}`,
+          background: c.bg,
+          border: `1px solid ${c.border}`,
           wordBreak: "break-word",
           ...(showMd ? {} : { whiteSpace: "pre-wrap" }),
           ...(left ? { display: "-webkit-box", WebkitLineClamp: 6, WebkitBoxOrient: "vertical", overflow: "hidden" } : {}),
@@ -165,7 +168,7 @@ function Bubble({ side, role, text, caret, markdown }: { side: "left" | "right";
         ) : (
           <>
             {text}
-            {caret && <span style={{ display: "inline-block", width: 8, marginLeft: 2, color: "#0f766e", animation: "wt-blink 1s step-end infinite" }}>▍</span>}
+            {caret && <span style={{ display: "inline-block", width: 8, marginLeft: 2, color: c.main, animation: "wt-blink 1s step-end infinite" }}>▍</span>}
           </>
         )}
       </div>
@@ -175,11 +178,11 @@ function Bubble({ side, role, text, caret, markdown }: { side: "left" | "right";
 
 function Thinking() {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, alignSelf: "flex-end", color: "#0f766e", fontSize: 13 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, alignSelf: "flex-end", color: ACTOR_COLOR.llm.main, fontSize: 13 }}>
       <span>Claude is thinking</span>
       <span style={{ display: "inline-flex", gap: 3 }}>
         {[0, 1, 2].map((i) => (
-          <span key={i} style={{ width: 5, height: 5, borderRadius: 999, background: "#14b8a6", animation: `wt-pulse 1.2s ${i * 0.2}s infinite ease-in-out` }} />
+          <span key={i} style={{ width: 5, height: 5, borderRadius: 999, background: ACTOR_COLOR.llm.main, animation: `wt-pulse 1.2s ${i * 0.2}s infinite ease-in-out` }} />
         ))}
       </span>
       <style>{`@keyframes wt-blink{50%{opacity:0}}@keyframes wt-pulse{0%,80%,100%{opacity:0.3;transform:scale(0.8)}40%{opacity:1;transform:scale(1)}}`}</style>

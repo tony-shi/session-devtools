@@ -17,6 +17,7 @@ const KIND_LABEL: Record<SideCallKind, string> = {
   agent_summary:          "Agent 摘要",
   auto_dream:             "Auto dream",
   extract_memories:       "记忆抽取",
+  away_summary:           "离开摘要",
 };
 
 function kindLabel(kind: SideCallKind): string {

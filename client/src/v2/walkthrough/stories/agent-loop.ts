@@ -64,13 +64,13 @@ export const agentLoopStory: Story = {
       act: "turn-io",
       focus: "loop",
       lines: [
-        // 0-3 逐拍展开后续真实调用链路;4-5 揭示最终输出 + Turn 结束
+        // 0-3 逐拍展开循环体;4-5 揭示「最后一次 LLM 调用 + 结论」+ Turn 终止
         "现在把它们串起来 —— 这是这个 Turn 真实的调用链路。",
         "Call 产生 tool_use,Agent 执行得到 tool_result。",
         "tool_result 被塞回下一次 Call 的 context,上下文越滚越大。",
-        "如此循环 —— 模型负责推理,工具负责行动,Claude 对现场的理解越来越完整。",
-        "当 LLM 获取到充分信息,它不再输出 tool_use,而是给出最终结论。",
-        "从用户输入,到 LLM 给出结果 —— 一个 Turn 就此结束。",
+        "循环往复 —— 模型负责推理,工具负责行动,理解越来越完整。",
+        "直到某一次调用,模型判断信息已充分 —— 不再 tool_use,而是给出最终结论。",
+        "从用户输入,到这最后一次 LLM 调用给出结果 —— 一个 Turn 就此终止。",
       ],
     },
     {

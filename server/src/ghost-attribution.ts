@@ -23,18 +23,23 @@ export type GhostQueryKind =
   | "prompt_suggestion"
   | "agent_summary"
   | "auto_dream"
-  | "extract_memories";
+  | "extract_memories"
+  | "away_summary";
 
-// 前缀检测表。systemPrefix 命中任一 system block 文本；userPrefix 命中末条 user
-// 消息的首个 text 块。前缀来源 sourcemap（restored-src/src/...）。
+// 检测表。systemPrefix 命中任一 system block 文本（startsWith）；userPrefix 命中
+// 末条 user 消息首个 text 块（startsWith）；userContains 命中末条 user 文本的子串
+// （用于区分性文案不在开头、可能被 memory 块等前缀挤后的情况，如 away_summary）。
+// 文案来源 sourcemap（restored-src/src/...）。
 interface GhostDetector {
   kind: GhostQueryKind;
   systemPrefix?: string;
   userPrefix?: string;
+  userContains?: string;
 }
 
 // classifier_version：检测表/抽取逻辑变更时 +1，触发已扫描 session 的重扫。
-export const CLASSIFIER_VERSION = 1;
+// v2：新增 away_summary detector；v3：away_summary 也抽 link_fact（摘要全文）。
+export const CLASSIFIER_VERSION = 3;
 
 export const DETECTORS: GhostDetector[] = [
   // restored-src/src/utils/sessionTitle.ts SESSION_TITLE_PROMPT
@@ -47,6 +52,9 @@ export const DETECTORS: GhostDetector[] = [
   { kind: "auto_dream", userPrefix: "# Dream: Memory Consolidation" },
   // restored-src/src/services/extractMemories/prompts.ts
   { kind: "extract_memories", userPrefix: "You are now acting as the memory extraction subagent" },
+  // restored-src/src/services/awaySummary.ts —— 空 system，区分性文案在末条 user
+  // 消息（可能被 session-memory 块前缀挤后），故用 userContains 而非 startsWith。
+  { kind: "away_summary", userContains: "The user stepped away and is coming back" },
   // connectivity/quota probe: single user message with literal content "quota", max_tokens=1
   { kind: "quota", userPrefix: "quota" },
 ];
@@ -112,13 +120,14 @@ export function classifyReqBody(reqBody: Record<string, unknown>): GhostQueryKin
   for (const d of DETECTORS) {
     if (d.systemPrefix && sysTexts.some((t) => t.startsWith(d.systemPrefix!))) return d.kind;
     if (d.userPrefix && userText != null && userText.startsWith(d.userPrefix)) return d.kind;
+    if (d.userContains && userText != null && userText.includes(d.userContains)) return d.kind;
   }
   return null;
 }
 
-// 从 resBody 取出标题文本。响应是 {"title": "..."} 的 JSON（被模型当文本输出），
-// 故先抽 assistant text，再 JSON.parse 取 .title；非 JSON 时退回 trim 后的原文。
-export function extractTitle(rec: Record<string, unknown>, isStream: boolean): string | undefined {
+// 从 resBody 抽 assistant 文本（流式 reconstruct / 非流式 content[]，trim 后返回）。
+// 是 link_fact 抽取的共享底座：away_summary 直接用它，generate_session_title 在其上解 JSON。
+export function extractResponseText(rec: Record<string, unknown>, isStream: boolean): string | undefined {
   const resBody = typeof rec.resBody === "string" ? rec.resBody : "";
   if (!resBody) return undefined;
   let text = "";
@@ -141,6 +150,13 @@ export function extractTitle(rec: Record<string, unknown>, isStream: boolean): s
     }
   }
   text = text.trim();
+  return text || undefined;
+}
+
+// generate_session_title：响应是 {"title": "..."} 的 JSON（被模型当文本输出），
+// 先抽 assistant text，再 JSON.parse 取 .title；非 JSON 时退回 trim 后的原文。
+export function extractTitle(rec: Record<string, unknown>, isStream: boolean): string | undefined {
+  const text = extractResponseText(rec, isStream);
   if (!text) return undefined;
   try {
     const j = JSON.parse(text) as { title?: unknown };
@@ -199,9 +215,14 @@ export async function classifyResidualProxies(
       inputTokens: r.res_input_tokens,
       outputTokens: r.res_output_tokens,
     };
+    // link_fact（存进 ghost.title 这个通用"链接值"字段）：
+    //   generate_session_title → 响应里的标题；away_summary → 响应摘要全文。
     if (kind === "generate_session_title") {
-      const title = extractTitle(rec, r.is_stream === 1);
-      if (title) ghost.title = title;
+      const t = extractTitle(rec, r.is_stream === 1);
+      if (t) ghost.title = t;
+    } else if (kind === "away_summary") {
+      const t = extractResponseText(rec, r.is_stream === 1);
+      if (t) ghost.title = t;
     }
     out.push(ghost);
   }
@@ -214,30 +235,31 @@ export async function classifyResidualProxies(
   return out;
 }
 
-export interface AiTitleProxyMatch {
-  title: string;
+export interface SideCallLink {
+  /** 链接值：generate_session_title=标题文本；away_summary=摘要全文。供与 JSONL 锚点匹配。 */
+  linkFact: string;
   proxyRequestId: number;
   startedAt: string | null;
 }
 
-// 专给 ai-title 跳转用：从 side_call_facts 派生索引读出本 session 所有
-// generate_session_title 的 (title → proxyRequestId)，按 started_at 升序（供同名重算时
-// 按顺序兜底匹配）。不再解压 proxy body —— 索引由 cold-indexer enricher + 惰性回扫填充
-// （见 server/src/side-call/enricher.ts）。
-export function resolveAiTitleProxies(
+// 从 side_call_facts 派生索引读出本 session 某 kind 的 (link_fact → proxyRequestId)，
+// 按 started_at 升序。不解压 proxy body —— 索引由 cold-indexer enricher + 惰性回扫填充
+// （见 server/src/side-call/enricher.ts）。供 controller 把 side call 链回 JSONL 锚点行。
+export function resolveSideCallLinks(
   db: Database,
   sessionId: string,
-): AiTitleProxyMatch[] {
+  queryKind: GhostQueryKind,
+): SideCallLink[] {
   const rows = db
     .prepare(
-      `SELECT p.id AS proxyRequestId, f.link_fact AS title, p.started_at AS startedAt
+      `SELECT p.id AS proxyRequestId, f.link_fact AS linkFact, p.started_at AS startedAt
        FROM side_call_facts f
        JOIN proxy_requests p ON p.session_id = f.session_id AND p.request_id = f.request_id
        WHERE f.session_id = ?
-         AND f.query_kind = 'generate_session_title'
+         AND f.query_kind = ?
          AND f.link_fact IS NOT NULL
        ORDER BY p.started_at`,
     )
-    .all(sessionId) as { proxyRequestId: number; title: string; startedAt: string | null }[];
-  return rows.map((r) => ({ title: r.title, proxyRequestId: r.proxyRequestId, startedAt: r.startedAt }));
+    .all(sessionId, queryKind) as { proxyRequestId: number; linkFact: string; startedAt: string | null }[];
+  return rows.map((r) => ({ linkFact: r.linkFact, proxyRequestId: r.proxyRequestId, startedAt: r.startedAt }));
 }

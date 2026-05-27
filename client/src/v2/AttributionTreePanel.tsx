@@ -10,27 +10,22 @@
 //   - 点击 leaf bar / leaf 行 → 高亮该 leaf，并显示叶子详情。
 //   - 「← back」回到上一级。
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { apiV2 } from "./api";
 import { FisheyeStrip } from "./fisheye-strip";
 import type { FisheyeStatus } from "./fisheye-strip";
 import type {
   AttributionTreeResult,
   SerializedNode,
   SegmentOrigin,
-  AuditEnvelope,
   JsonlEventKindObject,
 } from "./attribution-tree-types";
-import { coverageStateOf } from "./attribution-tree-types";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { LinkIcon, SegmentView } from "./shared/EventUnitCard";
 import { EVENT_PALETTES } from "./shared/eventPalette";
 import type { IntervalEventKind } from "./drilldown-types";
 import { useAttributionGraph } from "./attribution-graph-context";
 import { sectionPalette, rolePalette, UNKNOWN_FILL as PALETTE_UNKNOWN_FILL, type RoleId } from "./lens-palette";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Check, Copy } from "lucide-react";
 import { BRAND } from "./shared/brand";
 
@@ -79,13 +74,7 @@ export function sectionOf(slotType: string): SectionId {
   return "other";
 }
 
-// ─── 三级模型 L2：RoleId 分类（Step3+4，行为旁路；UI 切换在 Step6）──────────────
-
-/** L1 region 从 RoleId 前缀解析（system.* / tools.* / messages.* / other.*）。 */
-export function regionOf(role: RoleId): SectionId {
-  const head = role.slice(0, role.indexOf("."));
-  return head === "system" || head === "tools" || head === "messages" ? head : "other";
-}
+// ─── 三级模型 L2：RoleId 分类（区内颜色维度；几何仍按 L1 物理区）────────────────
 
 /** 系统 section 级 slot：flattenLeaves 用它把 section 信息从顶层 root 下沉到 classSlot。 */
 function isSystemSectionSlot(slotType: string): boolean {
@@ -99,7 +88,7 @@ function isSystemSectionSlot(slotType: string): boolean {
 
 /**
  * L2 语义角色判定。输入用 classSlot（system 取 section 级 / messages 取叶子自身）
- * + rootSlotType（区分 tool_result 上下文）+ messageRole。
+ * + rootSlotType（区分 tool_result 上下文）+ messageRole + origin（识别 skills）。
  * 注入（messages.inline.system-reminder，含 smoosh 进 tool_result 的 reminder——
  * ast-builder 给它们同一 slotType）优先判定，跨 tool_result / text。
  */
@@ -107,8 +96,13 @@ export function roleOf(leaf: {
   classSlot: string;
   rootSlotType: string;
   messageRole?: "user" | "assistant" | "system";
+  origin?: SegmentOrigin;
 }): RoleId {
-  const { classSlot, rootSlotType, messageRole } = leaf;
+  const { classSlot, rootSlotType, messageRole, origin } = leaf;
+  // Skills 机制:skill_listing 与普通 reminder 共用 slot，只能靠 ruleId 区分。
+  // 我们专门解析了它（skillsBlock / SkillListingDetail），故单列一类。
+  if (origin?.kind === "rule" && origin.ruleId === "claude-code.messages.skill-listing.v1")
+    return "messages.skills";
   if (classSlot === "messages.inline.system-reminder") return "messages.injection";
   if (classSlot.startsWith("system.") || classSlot === "side-query.system") {
     if (classSlot === "system.billing") return "system.billing";
@@ -121,10 +115,12 @@ export function roleOf(leaf: {
     return "system.core";
   }
   if (classSlot.startsWith("tools.") || rootSlotType.startsWith("tools.")) return "tools.builtin";
-  if (rootSlotType === "messages.tool_use" || rootSlotType === "messages.tool_result")
-    return "messages.tool-io";
+  // 思考块单列（先于 tool/role 判定）——对齐 provenance 的「AI 思考」。
   if (classSlot === "messages.thinking" || rootSlotType === "messages.thinking")
-    return "messages.assistant";
+    return "messages.thinking";
+  // 工具调用 / 工具结果分列——对齐 provenance 的「工具调用 / 工具结果」。
+  if (rootSlotType === "messages.tool_use") return "messages.tool-use";
+  if (rootSlotType === "messages.tool_result") return "messages.tool-result";
   if (
     classSlot === "messages.block.image" ||
     classSlot === "messages.inline.image-placeholder" ||
@@ -248,8 +244,8 @@ export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
 }
 
 export interface SectionStat {
-  // 三级模型：bar 的每段现在是 L2 role（不再是 L1 region）。
-  id: RoleId;
+  // 三级模型：bar 顶层段 = L1 物理区（不可重排）；role 仅作区内颜色（roleSegments）。
+  id: SectionId;
   totalChars: number;
   leafCount: number;
   leaves: LeafLite[];
@@ -257,24 +253,21 @@ export interface SectionStat {
   toolCount?: number;
 }
 
-// L2 角色展示顺序：按 L1 物理区聚拢（tools → system → messages → other），
-// 与 cache prefix / diff-tree-service 的区顺序对齐；同区内固定子序。
-const ROLE_ORDER: RoleId[] = [
-  "tools.builtin",
-  "system.core", "system.tool-policy", "system.env", "system.billing",
-  "messages.human", "messages.assistant", "messages.tool-io", "messages.injection", "messages.misc",
-  "other.unknown",
-];
+// 物理区展示顺序：tools → system → messages → other，对齐 Anthropic cache prefix
+// 拼接顺序（≠ JSON key 序，JSON key 序是 SDK 任意序列化，无语义）。
+const REGION_ORDER: SectionId[] = ["tools", "system", "messages", "other"];
 
 export function computeSectionStats(leaves: LeafLite[]): SectionStat[] {
-  const map = new Map<RoleId, LeafLite[]>();
+  // leaves 已是 flattenLeaves 的 DFS 文档顺序 = 物理序；分组到各区时按出现顺序 push，
+  // 天然保序。不要按 jsonPath 字符串重排（"messages[10]" < "messages[2]" 会乱序）。
+  const map = new Map<SectionId, LeafLite[]>();
   for (const l of leaves) {
-    const id = roleOf(l);
+    const id = sectionOf(l.rootSlotType);
     if (!map.has(id)) map.set(id, []);
     map.get(id)!.push(l);
   }
   const out: SectionStat[] = [];
-  for (const id of ROLE_ORDER) {
+  for (const id of REGION_ORDER) {
     const ls = map.get(id);
     if (!ls || ls.length === 0) continue;
     const stat: SectionStat = {
@@ -282,7 +275,15 @@ export function computeSectionStats(leaves: LeafLite[]): SectionStat[] {
       totalChars: ls.reduce((s, l) => s + l.charCount, 0),
       leafCount: ls.length,
     };
-    if (id === "tools.builtin") {
+    if (id === "messages") {
+      stat.byRole = { user: 0, assistant: 0, system: 0 };
+      for (const l of ls) {
+        const r = l.messageRole;
+        if (r === "user") stat.byRole.user += 1;
+        else if (r === "assistant") stat.byRole.assistant += 1;
+        else if (r === "system") stat.byRole.system += 1;
+      }
+    } else if (id === "tools") {
       const tools = new Set<string>();
       for (const l of ls) tools.add(l.rootSlotType);
       stat.toolCount = tools.size;
@@ -292,116 +293,7 @@ export function computeSectionStats(leaves: LeafLite[]): SectionStat[] {
   return out;
 }
 
-function subStatDescription(s: SectionStat): string {
-  const bits: string[] = [`${s.leafCount} segments`];
-  if (s.toolCount !== undefined) bits.push(`${s.toolCount} tools`);
-  if (s.byRole) {
-    if (s.byRole.user > 0) bits.push(`${s.byRole.user} user`);
-    if (s.byRole.assistant > 0) bits.push(`${s.byRole.assistant} assistant`);
-    if (s.byRole.system > 0) bits.push(`${s.byRole.system} system`);
-  }
-  return bits.join(" · ");
-}
-
-// ─── 顶部 stacked bar（无边框 / gap 间隔 / 可点击）─────────────────────────────
-
-const BAR_HEIGHT = 44;
 const SUB_BAR_HEIGHT = 36;
-
-function SectionBar({
-  stats, totalChars, selectedSection, onSelect,
-  filter = "all", filteredStats = null, filterColor = null,
-}: {
-  stats: SectionStat[];
-  totalChars: number;
-  selectedSection: RoleId | null;
-  onSelect: (s: RoleId) => void;
-  filter?: "all" | "partial" | "none";
-  filteredStats?: SectionStat[] | null;
-  filterColor?: string | null;
-}) {
-  const [hoveredId, setHoveredId] = useState<RoleId | null>(null);
-  if (totalChars === 0) return null;
-  const hasSelection = selectedSection !== null;
-  const filterActive = filter !== "all" && filteredStats !== null;
-  return (
-    <div
-      style={{ display: "flex", gap: 4, height: BAR_HEIGHT }}
-      onMouseLeave={() => setHoveredId(null)}
-    >
-      {stats.map((s) => {
-        const meta = ROLE_META[s.id];
-        const pct = s.totalChars / totalChars;
-        const isSel = selectedSection === s.id;
-        const isHov = hoveredId === s.id;
-        // 三档强度
-        let intensity: 0 | 1 | 2 | 3 = 1;
-        if (hasSelection) {
-          if (isSel) intensity = 3;
-          else if (isHov) intensity = 2;
-          else intensity = 0;
-        } else if (hoveredId !== null) {
-          intensity = isHov ? 2 : 1;
-        }
-        let opacity = intensity === 0 ? 0.18 : 1;
-        const fontWeight = intensity >= 2 ? 800 : 700;
-        // filter 命中数（按 section）。无命中且未选中 → 进一步降饱和。
-        const hitCount = filterActive
-          ? (filteredStats!.find((fs) => fs.id === s.id)?.leafCount ?? 0)
-          : null;
-        if (filterActive && hitCount === 0 && !isSel) opacity = Math.min(opacity, 0.25);
-        const outline = isSel ? "2px solid #1f2937" : (intensity === 2 ? "2px solid rgba(31,41,55,0.45)" : "none");
-        return (
-          <button
-            key={s.id}
-            onClick={() => onSelect(s.id)}
-            onMouseEnter={() => setHoveredId(s.id)}
-            title={`${meta.label} · ${fmtK(s.totalChars)} chars (${(pct * 100).toFixed(1)}%)`}
-            style={{
-              flex: pct, minWidth: 64,
-              background: meta.barBg,
-              opacity,
-              border: "none",
-              outline, outlineOffset: -2,
-              borderRadius: 6,
-              padding: "8px 14px",
-              cursor: "pointer",
-              textAlign: "left",
-              color: meta.barText,
-              display: "flex", alignItems: "center",
-              overflow: "hidden",
-              transition: "opacity 0.15s, outline-color 0.15s",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {meta.label}
-              </div>
-              {/* 角标只画在 ≥5% 宽度的块里，避免撑破窄块的 minWidth；窄块的"无命中"信号交给 opacity 灰化即可。
-                  纯数字 + 彩色方块，不重复显示 filter 名（顶部 AuditBadge 已激活态，用户知道当前 filter 是什么）。*/}
-              {filterActive && filterColor && hitCount !== null && pct >= 0.05 && (
-                <span
-                  title={`${hitCount} leaf${hitCount === 1 ? "" : "s"} match ${filter}`}
-                  style={{
-                    display: "inline-flex", alignItems: "center", gap: 4,
-                    fontSize: 10, fontWeight: 700,
-                    padding: "1px 5px", borderRadius: 3,
-                    background: "rgba(255,255,255,0.7)",
-                    color: "#1f2937",
-                    whiteSpace: "nowrap", flexShrink: 0,
-                  }}
-                >
-                  <span style={{ width: 5, height: 5, borderRadius: 1, background: filterColor }} />
-                  {hitCount}
-                </span>
-              )}
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 // ─── 二级 strip：leaves（消费 fisheye-strip 模块） ────────────────────────────
 //
@@ -503,73 +395,6 @@ export function LeafStrip({
         onSelect={(it) => onSelect(it.id)}
         onStatusChange={setStripStatus}
       />
-    </div>
-  );
-}
-
-// ─── 极简 table（无边框，行 hover） ─────────────────────────────────────────
-
-function SectionTable({
-  stats, totalChars, selectedSection, onSelect,
-  filter = "all", filteredStats = null, filterColor = null,
-}: {
-  stats: SectionStat[];
-  totalChars: number;
-  selectedSection: RoleId | null;
-  onSelect: (s: RoleId) => void;
-  filter?: "all" | "partial" | "none";
-  filteredStats?: SectionStat[] | null;
-  filterColor?: string | null;
-}) {
-  const filterActive = filter !== "all" && filteredStats !== null;
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-      {stats.map((s) => {
-        const meta = ROLE_META[s.id];
-        const pct = totalChars > 0 ? (s.totalChars / totalChars) * 100 : 0;
-        const isSel = selectedSection === s.id;
-        const hitCount = filterActive
-          ? (filteredStats!.find((fs) => fs.id === s.id)?.leafCount ?? 0)
-          : null;
-        const rowOpacity = filterActive && hitCount === 0 && !isSel ? 0.45 : 1;
-        return (
-          <button
-            key={s.id}
-            onClick={() => onSelect(s.id)}
-            style={{
-              display: "flex", alignItems: "center", gap: 14,
-              padding: "8px 8px",
-              background: isSel ? meta.rowBg : "transparent",
-              border: "none", borderRadius: 4,
-              opacity: rowOpacity,
-              cursor: "pointer", textAlign: "left",
-              transition: "background 0.1s",
-            }}
-            className={!isSel ? "hover:bg-gray-50" : ""}
-          >
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.marker, flexShrink: 0 }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 90 }}>{meta.label}</span>
-            <span style={{ fontSize: 11, color: "#374151", minWidth: 60 }}>{fmtK(s.totalChars)}</span>
-            <span style={{ fontSize: 11, color: "#9ca3af", minWidth: 44 }}>{pct.toFixed(1)}%</span>
-            <span style={{ fontSize: 10, color: "#9ca3af", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {subStatDescription(s)}
-              {filterActive && hitCount !== null && filterColor && (
-                <span
-                  style={{
-                    marginLeft: 10,
-                    fontSize: 10, fontWeight: 600,
-                    padding: "1px 6px", borderRadius: 3,
-                    background: `${filterColor}26`,
-                    color: hitCount > 0 ? "#1f2937" : "#9ca3af",
-                  }}
-                >
-                  {hitCount} {filter}
-                </span>
-              )}
-            </span>
-          </button>
-        );
-      })}
     </div>
   );
 }
@@ -1324,264 +1149,3 @@ function jsonlSourceToIntervalKind(source: string): IntervalEventKind {
   }
 }
 
-// ─── 顶层 Panel ─────────────────────────────────────────────────────────────
-
-// ─── AuditBadge (PR6) ────────────────────────────────────────────────────────
-//
-// 紧凑徽章，紧贴 SectionBar 之上。展示三桶计数 + jsonl missing 数。
-// 点击 partial / none 切换 filter，把 leaf 列表过滤到对应 segmentId 集合。
-// 点击 missing 暂只显示文本（无 drawer）；后续可扩展为列表视图。
-
-type AuditFilter = "all" | "partial" | "none";
-
-function AuditBadge({
-  audit, filter, onFilter,
-}: {
-  audit: AuditEnvelope;
-  filter: AuditFilter;
-  onFilter: (f: AuditFilter) => void;
-}) {
-  const { full, partial, none } = audit.forward.totals;
-  const missing = audit.reverse.missing.length;
-
-  function Pill({
-    label, value, active, color, onClick, title,
-  }: {
-    label: string; value: number; active: boolean; color: string;
-    onClick?: () => void; title?: string;
-  }) {
-    const clickable = onClick !== undefined;
-    const btn = (
-      <button
-        type="button"
-        onClick={onClick}
-        disabled={!clickable}
-        style={{
-          display: "inline-flex", alignItems: "baseline", gap: 6,
-          padding: "3px 8px", borderRadius: 4,
-          border: active ? `1px solid ${color}` : "1px solid transparent",
-          background: active ? `${color}1a` : "transparent",
-          color: "#374151", fontSize: 11,
-          cursor: clickable ? "pointer" : "default",
-          transition: "background 0.1s, border-color 0.1s",
-        }}
-      >
-        <span style={{ width: 6, height: 6, borderRadius: 1, background: color, alignSelf: "center" }} />
-        <span style={{ fontWeight: 600, color: "#1f2937" }}>{value}</span>
-        <span style={{ color: "#6b7280" }}>{label}</span>
-      </button>
-    );
-    if (!title) return btn;
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>{btn}</TooltipTrigger>
-        <TooltipContent className="max-w-xs">{title}</TooltipContent>
-      </Tooltip>
-    );
-  }
-
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 8,
-      fontSize: 11, color: "#6b7280",
-      padding: "2px 0",
-    }}>
-      <span style={{ fontWeight: 600, color: "#4b5563", letterSpacing: "0.04em", textTransform: "uppercase", fontSize: 10 }}>
-        Audit
-      </span>
-      <Pill label="full"    value={full}    active={false}                 color="#10b981" title="叶子覆盖完整（rule 或 jsonl）" />
-      <Pill label="partial" value={partial} active={filter === "partial"}  color="#f59e0b"
-            onClick={() => onFilter(filter === "partial" ? "all" : "partial")}
-            title="rule/jsonl 命中但 fullyCovered=false（动态注入未覆盖）" />
-      <Pill label="none"    value={none}    active={filter === "none"}     color="#9ca3af"
-            onClick={() => onFilter(filter === "none" ? "all" : "none")}
-            title="structural（slot 已知但无规则）或 unknown（template 未识别）" />
-      <span style={{ color: "#d1d5db" }}>|</span>
-      <Pill label="missing jsonl" value={missing} active={false} color="#ef4444"
-            title="jsonl 中存在但 proxy 中无对应 segment 的原子单元（tool_use / tool_result / user / assistant / attachment）。当前已按 call 时间截断，不含未来 turn 的事件。" />
-      {/*
-        TODO(audit-missing-belongs-on-turn-view):
-        missing jsonl 的语义是"jsonl event 是否被任何 call 引用"，本质属于 session/turn
-        视角 —— 一条 jsonl event 属于某个 turn，不属于 call。call 视图当前展示的是
-        "截至本 call 时刻 proxy 漏掉的事件"（已经修过 reverse audit 的截断），
-        够用但不是终态。终态应该在 turn 视图按 jsonl event 行级展示，标记"被哪些 call
-        引用 / 全程无引用 / 只在部分窗口引用"，把诊断粒度下沉到 event。
-        现阶段先用本 call 视图凑合，等需要诊断具体哪条 jsonl event 丢了再做 turn 视图。
-      */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            style={{
-              fontSize: 10, color: "#a16207",
-              padding: "1px 6px", borderRadius: 3,
-              background: "#fef3c7", border: "1px dashed #fcd34d",
-              cursor: "help",
-              userSelect: "none",
-            }}
-          >
-            TODO: 应移至 turn 视图
-          </span>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-md">TODO: missing jsonl 更适合放在 turn 视图（按 jsonl event 行展示）。call 视图是 last-call 视角的近似。详见源码 TODO(audit-missing-belongs-on-turn-view)。</TooltipContent>
-      </Tooltip>
-    </div>
-  );
-}
-
-// TODO(remove-after-tab-refactor): the AttributionTreePanel *component* (the
-// "经典" view that only filters by Audit) has been retired. Call detail now
-// always renders AttributionTreeLensPanel, which exposes the full lens
-// catalog (来源 / 缓存 / Audit / Diff) — the legacy Audit-only filter is one
-// of those lenses.
-//
-// This file still exports utilities (SECTION_META / computeSectionStats /
-// flattenLeaves / shortSlot / fmtK / LeafStrip / LeafTable / SelectedDetail
-// / leafFill / originLabel) that AttributionTreeLensPanel imports. Those
-// stay. Only the panel function below should be removed once we're sure no
-// stray import survives.
-export function AttributionTreePanel({
-  sessionId, agentFileId, callId, onLinkSource,
-}: {
-  sessionId: string;
-  /** Present iff the panel is rendering a call from a sub-agent — routes
-   *  the API call to the sub-agent endpoint variant. Parent (main) sessions
-   *  leave this undefined. */
-  agentFileId?: string;
-  callId: number;
-  /** 反向 link：点击 jsonl origin 带 sourceCallId 的 leaf 时调用。
-   *  parent 决定要不要展示 link 按钮（main 模式提供，panel 模式留空避免嵌套）。*/
-  onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
-}) {
-  const { t } = useTranslation();
-  const [result, setResult] = useState<AttributionTreeResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const [selectedSection, setSelectedSection] = useState<RoleId | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [auditFilter, setAuditFilter] = useState<AuditFilter>("all");
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true); setError(null); setSelectedSection(null); setSelectedNodeId(null);
-    const fetcher = agentFileId
-      ? apiV2.subAgentAttributionTree(sessionId, agentFileId, callId)
-      : apiV2.attributionTree(sessionId, callId);
-    fetcher
-      .then((r) => { if (!cancelled) setResult(r); })
-      .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [sessionId, agentFileId, callId]);
-
-  const allLeaves = useMemo(() => result ? flattenLeaves(result) : [], [result]);
-
-  // 根据 audit filter 过滤叶子（不重算 stats —— 顶部 bar 仍按全集呈现）。
-  const leaves = useMemo(() => {
-    if (auditFilter === "all" || !result?.audit) return allLeaves;
-    return allLeaves.filter((l) => coverageStateOf(l.origin) === auditFilter);
-  }, [allLeaves, auditFilter, result?.audit]);
-
-  const stats = useMemo(() => computeSectionStats(allLeaves), [allLeaves]);
-  const totalChars = useMemo(() => allLeaves.reduce((s, l) => s + l.charCount, 0), [allLeaves]);
-
-  // filter 启用时按 section 算"命中数"，给 SectionBar / SectionTable 显示角标 + 灰化。
-  // 顶部 bar 形状仍按全集分布，避免点击 filter 后整个布局跳动。
-  const filteredStats = useMemo(
-    () => auditFilter === "all" ? null : computeSectionStats(leaves),
-    [leaves, auditFilter],
-  );
-  const filterColor = auditFilter === "partial" ? "#f59e0b" : auditFilter === "none" ? "#9ca3af" : null;
-
-  const selectedStat = useMemo(() => {
-    if (!selectedSection) return null;
-    const stat = stats.find((s) => s.id === selectedSection);
-    if (!stat) return null;
-    // 应用 audit filter：drill-in 后只显示符合 filter 的叶子（顶部 bar 仍按全集）。
-    if (auditFilter === "all") return stat;
-    const filteredLeaves = stat.leaves.filter((l) => coverageStateOf(l.origin) === auditFilter);
-    return { ...stat, leaves: filteredLeaves };
-  }, [selectedSection, stats, auditFilter]);
-  const selectedLeaf = useMemo(
-    () => selectedNodeId ? leaves.find((l) => l.nodeId === selectedNodeId) ?? null : null,
-    [selectedNodeId, leaves],
-  );
-
-  if (loading) {
-    return <div style={{ padding: "32px 0", textAlign: "center", fontSize: 11, color: "#9ca3af" }}>{t("attribution.loading")}</div>;
-  }
-  if (error) {
-    return (
-      <Alert variant="destructive" className="text-xs">
-        <AlertDescription>{t("attribution.loadFailed", { error })}</AlertDescription>
-      </Alert>
-    );
-  }
-  if (!result?.snapshot) {
-    return (
-      <div style={{ padding: 16, fontSize: 11, color: "#9ca3af", background: "#fafafa", borderRadius: 6, border: "1px dashed #e5e7eb" }}>
-        {result?.error ?? t("attribution.unavailable")}
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {/* Layer 0: AuditBadge — 紧凑三桶 + missing 数 */}
-      {result.audit && (
-        <AuditBadge audit={result.audit} filter={auditFilter} onFilter={setAuditFilter} />
-      )}
-
-      {/* Layer 1: 顶部 stacked bar */}
-      <SectionBar
-        stats={stats}
-        totalChars={totalChars}
-        selectedSection={selectedSection}
-        onSelect={(s) => {
-          setSelectedSection((cur) => (cur === s ? null : s));
-          setSelectedNodeId(null);
-        }}
-        filter={auditFilter}
-        filteredStats={filteredStats}
-        filterColor={filterColor}
-      />
-
-      {selectedStat === null ? (
-        // 默认：极简 section table
-        <SectionTable
-          stats={stats}
-          totalChars={totalChars}
-          selectedSection={null}
-          onSelect={(s) => setSelectedSection(s)}
-          filter={auditFilter}
-          filteredStats={filteredStats}
-          filterColor={filterColor}
-        />
-      ) : (
-        <>
-          {/* drill-in：去掉 header 行（back / size / pct / counts 上方 SectionBar 已有） */}
-
-          {/* Layer 2: leaf strip */}
-          <LeafStrip
-            leaves={selectedStat.leaves}
-            selectedId={selectedNodeId}
-            onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
-          />
-
-          {/* Layer 2.5: leaf table */}
-          <LeafTable
-            leaves={selectedStat.leaves}
-            selectedId={selectedNodeId}
-            onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
-            totalContextChars={totalChars}
-          />
-
-          {/* Layer 3: leaf detail（扁平展示） */}
-          {selectedLeaf && roleOf(selectedLeaf) === selectedStat.id && (
-            <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} totalContextChars={totalChars} />
-          )}
-        </>
-      )}
-    </div>
-  );
-}

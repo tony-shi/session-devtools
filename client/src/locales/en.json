@@ -510,8 +510,24 @@
     "attachment_file": "File attach",
     "file_history_snapshot": "File snapshot",
     "last_prompt": "Last prompt",
+    "ai_title": "AI title",
+    "permission_mode": "Permission mode",
+    "custom_title": "Custom title",
+    "agent_name": "Agent name",
+    "queue_operation": "Queue op",
+    "worktree_state": "Worktree state",
     "unknown": "Unknown",
     "user_skill_injection": "Activated SKILL"
+  },
+  "eventKindDesc": {
+    "ai_title": "AI-generated session title (background Haiku call). Shown in the session list / --resume only; does NOT enter the conversation context. Overridden by a user /rename custom title.",
+    "last_prompt": "Snapshot of the session's most recent user prompt (newlines flattened, truncated to 200 chars). For --resume / claude ps listing; does NOT enter context — the real prompt lives in the user message.",
+    "permission_mode": "Current tool permission mode (default / acceptEdits / bypassPermissions / plan). Client-side session state for --resume and telemetry; the specific mode value does NOT enter context (the model only sees a generic permission-mode line in the system prompt).",
+    "file_history_snapshot": "File-checkpoint snapshot: backup pointers for files changed at a given message, used to rewind/restore. Backups live on disk and do NOT enter context; an empty snapshot is the session's initial baseline.",
+    "custom_title": "Session title set by the user via /rename (takes read priority over the AI title). Display-only; does NOT enter context.",
+    "agent_name": "Display name of a (sub-)agent session. Client-side session state; does NOT enter context.",
+    "queue_operation": "Record of the user queuing/dequeuing a message while the LLM was running (enqueue, etc.). Filtered out when reconstructing the session log; does NOT enter context.",
+    "worktree_state": "Session's git worktree state (worktreeSession = null means it exited the worktree). Used by --resume to tell whether the session is still inside a worktree; does NOT enter context."
   },
   "ledgerExplainer": {
     "title": "Token Ledger · How it's computed",

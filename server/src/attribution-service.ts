@@ -500,34 +500,41 @@ export function readSessionEventsForLinker(sourceFile: string): LinkableJsonlEve
         out.push(base);
         continue;
       }
-      if (ev.isMeta || ev.isSidechain) {
-        // meta / sidechain user 事件正常情况下不参与 attribution（无 turn 关联）。
-        // 例外：isMeta=true + 纯 text 且 lastToolResultUseId 指向一个 Skill tool_use
-        // → 这是 SkillTool 注入的 SKILL.md body（authorship=harness）。把内容摊到
-        //    harnessInjection 维度，让 jsonl-linker 能按内容相等 link 回 reqBody。
-        // 注意：识别完之后**不要**清空 lastToolResultUseId —— 极少数情况下注入文本
-        // 可能被拆成多个 isMeta event 推过来（保险起见保留状态直到遇到下一非 meta）。
-        if (
-          ev.isMeta &&
-          !ev.isSidechain &&
-          lastToolResultUseId !== null &&
-          skillToolUseIds.has(lastToolResultUseId)
-        ) {
-          const plain = extractUserPlainText(ev.message?.content);
-          if (plain) {
-            out.push({
-              ...base,
-              harnessInjection: {
-                mechanism: "skill_invocation",
-                payload: "skill_md_body",
-                rawText: plain,
-                triggerToolUseId: lastToolResultUseId,
-              },
-            });
-            continue;
-          }
-        }
+      // sidechain user（sub-agent 转录）不在主 session 的 call context 里 → base（skipped）。
+      if (ev.isSidechain) {
         out.push(base);
+        continue;
+      }
+      // isMeta 的 user 消息（local-command caveat / output-token 恢复提示 / 预算 nudge /
+      // Skill 注入 …）**照样进 messages[] 发给模型** → 必须给 consumable 内容，否则会被
+      // isConsumableEvent 误判为 skipped（"未进入 prompt"），但它们其实进 context（见
+      // call 8 ground truth：caveat 在 reqBody.messages 里）。原实现把 isMeta 一律丢成
+      // 裸 base 是误区——把"无 turn 关联"等同于"不进 context"。
+      // 不重置 lastToolResultUseId —— Skill 注入可能跨多条 isMeta event。
+      if (ev.isMeta) {
+        const plain = extractUserPlainText(ev.message?.content);
+        // Skill 注入的 SKILL.md body → harnessInjection（让 jsonl-linker 按内容相等 link 回 reqBody）。
+        if (lastToolResultUseId !== null && skillToolUseIds.has(lastToolResultUseId) && plain) {
+          out.push({
+            ...base,
+            harnessInjection: {
+              mechanism: "skill_invocation",
+              payload: "skill_md_body",
+              rawText: plain,
+              triggerToolUseId: lastToolResultUseId,
+            },
+          });
+          continue;
+        }
+        // 其余 isMeta user：按 command-like / 自由文本 分流到 commandText / userText（与普通
+        // user 同口径），caveat 这类 `<local-command-*>` → commandText → consumable。
+        const metaImages = extractUserImages(ev.message?.content);
+        const metaWithImages: Partial<LinkableJsonlEvent> = metaImages.length > 0 ? { userImages: metaImages } : {};
+        if (plain) {
+          out.push({ ...base, ...metaWithImages, ...(isCommandLikeText(plain) ? { commandText: plain } : { userText: plain }) });
+        } else {
+          out.push({ ...base, ...metaWithImages });
+        }
         continue;
       }
       const content = ev.message?.content;

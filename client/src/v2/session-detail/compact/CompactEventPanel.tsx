@@ -15,6 +15,7 @@
 import React from "react";
 import type { CompactEvent, InterTurnBlock, IntervalEvent, LlmCall, UserTurn } from "../../drilldown-types";
 import { BRAND } from "../../shared/brand";
+import { CommandGroupCard } from "../turn/CommandGroupCard";
 
 // ─── synthesizeCompactTurn —— 把 CompactEvent 包装成 UserTurn-shape 数据 ──────
 // 让 UserTurnDetailPanel 可以"完全复用"渲染 Compact 详情。映射要点：
@@ -380,18 +381,28 @@ export function InterTurnBlockDetail({ block }: { block: InterTurnBlock }) {
       </div>
       <div style={{ padding: "8px 12px" }}>
         {block.events.map((ev, i) => (
-          <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "4px 0", borderBottom: i < block.events.length - 1 ? "1px solid #f3e8ff" : "none" }}>
-            <span style={{
-              fontSize: 9, fontWeight: 700, color: BRAND.violet400,
-              background: BRAND.violet100, borderRadius: 3, padding: "1px 4px",
-              flexShrink: 0, marginTop: 2,
-            }}>
-              {kindLabel[ev.kind] ?? ev.kind.split(":")[1] ?? ev.kind}
-            </span>
-            <span style={{ fontSize: 11, color: "#374151", wordBreak: "break-all", fontFamily: "monospace", lineHeight: 1.5 }}>
-              {ev.contentPreview || <span style={{ color: "#d1d5db" }}>—</span>}
-            </span>
-          </div>
+          // 命令分组（caveat + command-name + stdout）折叠成单张卡片；逐段反向归因
+          // 由 CommandGroupCard 内部按 member.lineIdx 各自查询。InterTurnBlockDetail
+          // 渲染在 session detail 里，已处于 AttributionGraph context 内（context 缺
+          // 失时 getEventAnnotation 优雅返回 null，per-row chip 不显示，不会报错）。
+          ev.commandGroup ? (
+            <div key={i} style={{ padding: "4px 0" }}>
+              <CommandGroupCard ev={ev} activeToolUseId={null} onHoverToolUse={() => {}} />
+            </div>
+          ) : (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "4px 0", borderBottom: i < block.events.length - 1 ? "1px solid #f3e8ff" : "none" }}>
+              <span style={{
+                fontSize: 9, fontWeight: 700, color: BRAND.violet400,
+                background: BRAND.violet100, borderRadius: 3, padding: "1px 4px",
+                flexShrink: 0, marginTop: 2,
+              }}>
+                {kindLabel[ev.kind] ?? ev.kind.split(":")[1] ?? ev.kind}
+              </span>
+              <span style={{ fontSize: 11, color: "#374151", wordBreak: "break-all", fontFamily: "monospace", lineHeight: 1.5 }}>
+                {ev.contentPreview || <span style={{ color: "#d1d5db" }}>—</span>}
+              </span>
+            </div>
+          )
         ))}
       </div>
     </div>
