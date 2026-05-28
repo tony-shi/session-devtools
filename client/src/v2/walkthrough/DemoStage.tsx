@@ -5,7 +5,7 @@ import { STORIES } from "./stories";
 import { STAGE_CONFIG } from "./config";
 import type { ActId, Focus } from "./types";
 import { LangCtx, loadLang, saveLang, pickLines, type Lang } from "./i18n";
-import { readModeFromUrl, hidesChrome, forcesManualBeat, readLockedLang, type Mode } from "./modes";
+import { readModeFromUrl, hidesChrome, forcesManualBeat, readLockedLang, readSpeedFromUrl, readDevFromUrl, type Mode } from "./modes";
 import { loadManifest } from "./voice/manifestLoader";
 import type { Manifest } from "./voice/types";
 import { apiV2 } from "../api";
@@ -290,6 +290,8 @@ export function DemoStage() {
   // 呈现模式 —— ?mode=record 隐藏所有 chrome,节拍必须手动推进;无参数=live(向后兼容)
   const [mode] = useState<Mode>(() => readModeFromUrl());
   const lockedLang = readLockedLang();        // ?lang=zh|en → 录屏锁定语言
+  const speed = readSpeedFromUrl();           // ?speed=0.7 = 慢 30%
+  const devOn = readDevFromUrl();             // ?dev=1 → 完整 HUD
   const [playing, setPlaying] = useState(() => !forcesManualBeat(mode));
   const [restartNonce, setRestartNonce] = useState(0);
   // 双语:仅切换 NarrationBox 的字幕来源(以及 view 侧 useT() 的解析结果),数据流不变。
@@ -362,39 +364,45 @@ export function DemoStage() {
     setInstantReveal(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restartNonce]);
+  // 当前一拍的"开始时刻"(performance.now()),给底部进度条 / dev HUD 算 elapsed 用
+  const [lineStartAt, setLineStartAt] = useState<number>(() => performance.now());
   // 节拍时钟 —— 三档优先级:
   //   1) record 模式:完全手动,← / → 触发,这个 effect 不推进
   //   2) 有 manifest 这一拍的 cue:按 (durMs + gapMs) 推进 + 播 mp3(若有 audio 字段)
   //   3) 没 manifest:沿用原 BEAT_MS 计时(向后兼容,无音轨也能 demo)
+  // speed 倍率作用于 cue.durMs / cue.gapMs / BEAT_MS,**不影响**音频本身播放速度
+  //   (调音频 playbackRate 会改音调,违背"试听节奏"的目的;真要试快慢就不要 mp3,只看节拍)
   useEffect(() => {
+    setLineStartAt(performance.now());
     if (!playing) return;
     if (forcesManualBeat(mode)) return;
     const n = STORIES[storyId]?.steps[index]?.lines.length ?? 0;
     if (beat >= n - 1) return;
 
     const cue = manifest?.steps.find((s) => s.stepIdx === index)?.lines[beat] ?? null;
+    const scaledDur = (cue?.durMs ?? BEAT_MS) / speed;
+    const scaledGap = (cue?.gapMs ?? 0) / speed;
     const advance = () => setBeat((b) => b + 1);
 
-    // 有音频 → 播 + 等 ended;无音频或加载失败 → 走 cue.durMs;再无 cue → 走 BEAT_MS
+    // 有音频 → 播 + 等 ended;无音频或加载失败 → 走 scaledDur;再无 cue → 走 scaledDur(BEAT_MS / speed)
     let audio: HTMLAudioElement | null = null;
     let timer: number | undefined;
-    if (cue?.audio) {
+    if (cue?.audio && speed === 1) {
+      // 只有 speed=1 时才用音频驱动;变速时音频会和动画失步,直接走计时
       audio = new Audio(`/voice/${manifest!.storyId}/${cue.audio}`);
-      const onEnd = () => { timer = window.setTimeout(advance, cue.gapMs); };
-      const onErr = () => { timer = window.setTimeout(advance, cue.durMs + cue.gapMs); };
+      const onEnd = () => { timer = window.setTimeout(advance, scaledGap); };
+      const onErr = () => { timer = window.setTimeout(advance, scaledDur + scaledGap); };
       audio.addEventListener("ended", onEnd, { once: true });
       audio.addEventListener("error", onErr, { once: true });
       audio.play().catch(onErr);
-    } else if (cue) {
-      timer = window.setTimeout(advance, cue.durMs + cue.gapMs);
     } else {
-      timer = window.setTimeout(advance, BEAT_MS);
+      timer = window.setTimeout(advance, scaledDur + scaledGap);
     }
     return () => {
       if (audio) { audio.pause(); }
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [playing, beat, index, storyId, mode, manifest]);
+  }, [playing, beat, index, storyId, mode, manifest, speed]);
 
   if (!story) {
     return <div style={{ padding: 40, color: "#6b7280" }}>未找到 walkthrough：<code>{storyId}</code></div>;
@@ -430,9 +438,101 @@ export function DemoStage() {
           <RecordHud storyId={storyId} stepIdx={index} stepCount={story.steps.length} beat={beat} beatCount={subtitle.length} lang={lang} hasManifest={!!manifest} />
         )}
 
+        {/* 底部进度条:当前一拍的 elapsed/duration,录屏模式隐藏(成片不需要)。
+            "细" —— 2px 高,在屏幕最底沿,不与字幕带抢视觉;同时给你"节奏感"的 instant feedback。 */}
+        {!hidesChrome(mode) && state === "ready" && (
+          <BeatProgressBar
+            playing={playing}
+            beat={beat}
+            beatCount={subtitle.length}
+            lineStartAt={lineStartAt}
+            durMs={(manifest?.steps.find((s) => s.stepIdx === index)?.lines[beat]?.durMs ?? BEAT_MS) / speed}
+          />
+        )}
+
+        {/* dev HUD(?dev=1):完整诊断 —— 当前 step/line、durMs、gapMs、speed、是否走音轨 */}
+        {devOn && state === "ready" && (
+          <DevHud
+            storyId={storyId}
+            stepIdx={index}
+            stepCount={story.steps.length}
+            beat={beat}
+            beatCount={subtitle.length}
+            lang={lang}
+            speed={speed}
+            manifest={manifest}
+            mode={mode}
+            playing={playing}
+          />
+        )}
+
         <style>{`@keyframes wt-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}@keyframes wt-blink{50%{opacity:0}}@keyframes wt-rollup{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}`}</style>
       </div>
     </LangCtx.Provider>
+  );
+}
+
+// 底部进度条:用 rAF 在本地算 elapsed/durMs,不靠 props 透传"实时时间"(避免 DemoStage 每 16ms 重渲).
+// playing=false 时定格在当前位置(暂停的视觉反馈)。
+function BeatProgressBar({ playing, beat, beatCount, lineStartAt, durMs }: { playing: boolean; beat: number; beatCount: number; lineStartAt: number; durMs: number }) {
+  const [pct, setPct] = useState(0);
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const elapsed = performance.now() - lineStartAt;
+      setPct(Math.max(0, Math.min(1, elapsed / Math.max(1, durMs))));
+      if (playing) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, lineStartAt, durMs]);
+  // 总进度:已完成的拍 + 本拍内的进度,除以总拍数 —— 给整集"还剩多少"的一眼感
+  const totalPct = beatCount > 0 ? (beat + pct) / beatCount : 0;
+  return (
+    <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, height: 3, zIndex: 55, pointerEvents: "none", display: "flex" }}>
+      {/* 整集底色 + 已播 */}
+      <div style={{ flex: 1, background: "rgba(99,102,241,0.10)" }}>
+        <div style={{ width: `${totalPct * 100}%`, height: "100%", background: "linear-gradient(to right, #6366f1, #818cf8)" }} />
+      </div>
+    </div>
+  );
+}
+
+// dev HUD:右下角面板,显示当前拍的所有计时数据,方便边看动画边调 manifest。
+function DevHud({ storyId, stepIdx, stepCount, beat, beatCount, lang, speed, manifest, mode, playing }: {
+  storyId: string; stepIdx: number; stepCount: number; beat: number; beatCount: number; lang: Lang; speed: number; manifest: Manifest | null; mode: Mode; playing: boolean;
+}) {
+  const cue = manifest?.steps.find((s) => s.stepIdx === stepIdx)?.lines[beat];
+  const scaledDur = (cue?.durMs ?? 2600) / speed;
+  const total = manifest ? (manifest.totalMs / speed / 1000).toFixed(1) + "s" : "—";
+  return (
+    <div
+      style={{
+        position: "fixed", right: 12, bottom: 14, zIndex: 60,
+        fontFamily: "monospace", fontSize: 11, lineHeight: 1.55,
+        color: "#e2e8f0", background: "rgba(15,23,42,0.88)", padding: "10px 12px",
+        borderRadius: 8, minWidth: 220, boxShadow: "0 6px 20px rgba(0,0,0,0.3)",
+      }}
+    >
+      <div style={{ color: "#a5b4fc", fontWeight: 700, marginBottom: 4 }}>dev · {playing ? "▶" : "⏸"} {mode}</div>
+      <Row k="story" v={`${storyId} / ${lang}`} />
+      <Row k="step" v={`${stepIdx + 1} / ${stepCount}`} />
+      <Row k="beat" v={`${beat + 1} / ${beatCount}`} />
+      <Row k="durMs" v={cue ? `${cue.durMs}` : "—"} />
+      <Row k="gapMs" v={cue ? `${cue.gapMs}` : "—"} />
+      <Row k="× speed" v={`${speed.toFixed(2)} → ${Math.round(scaledDur)}ms`} />
+      <Row k="audio" v={cue?.audio ? "mp3" : manifest ? "timer" : "BEAT_MS"} />
+      <Row k="total" v={total} />
+      <div style={{ color: "#94a3b8", fontSize: 10, marginTop: 6 }}>?speed=0.7 慢 / ?speed=1.3 快 / 改 zh.json 即时生效</div>
+    </div>
+  );
+}
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+      <span style={{ color: "#94a3b8" }}>{k}</span>
+      <span>{v}</span>
+    </div>
   );
 }
 

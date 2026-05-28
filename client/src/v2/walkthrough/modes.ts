@@ -27,3 +27,21 @@ export function readLockedLang(): "zh" | "en" | null {
   const p = new URLSearchParams(window.location.search).get("lang");
   return p === "zh" || p === "en" ? p : null;
 }
+
+/**
+ * 全局节拍倍率。?speed=0.7 = 整体放慢到 70% 速度(durMs 拉长 30%);
+ * ?speed=1.3 = 加速 30%。调试节奏用,不需要改 manifest 也不需要改 BEAT_MS。
+ * 范围 [0.3, 3.0] 防止意外把整集拖到几小时 / 闪过去。
+ */
+export function readSpeedFromUrl(): number {
+  if (typeof window === "undefined") return 1;
+  const v = parseFloat(new URLSearchParams(window.location.search).get("speed") ?? "1");
+  if (!Number.isFinite(v) || v <= 0) return 1;
+  return Math.max(0.3, Math.min(3.0, v));
+}
+
+/** ?dev=1 显示完整 HUD —— 当前 step / line / durMs / gapMs / 倍率 / 是否走音轨 */
+export function readDevFromUrl(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).get("dev") === "1";
+}
