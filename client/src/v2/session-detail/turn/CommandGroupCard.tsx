@@ -19,12 +19,15 @@ function isCaveatMember(m: IntervalEvent): boolean {
 }
 
 export function CommandGroupCard({
-  ev, producingCallId, activeToolUseId, onHoverToolUse,
+  ev, producingCallId, activeToolUseId, onHoverToolUse, suppressPendingState = false,
 }: {
   ev: IntervalEvent;
   producingCallId?: number;
   activeToolUseId: string | null;
   onHoverToolUse: (id: string | null) => void;
+  /** 抑制每行的 "暂未消费" 黄牌。trailing inter-turn 块（session 结束）传 true：
+   *  那里的 pending 是集体宿命，由块级文案说明，不需要逐条重复。 */
+  suppressPendingState?: boolean;
 }) {
   const group = ev.commandGroup;
   const [showCaveat, setShowCaveat] = useState(false);
@@ -38,6 +41,7 @@ export function CommandGroupCard({
         producingCallId={producingCallId}
         activeToolUseId={activeToolUseId}
         onHoverToolUse={onHoverToolUse}
+        suppressPendingState={suppressPendingState}
       />
     );
   }
@@ -117,6 +121,7 @@ export function CommandGroupCard({
                 producingCallId={producingCallId}
                 activeToolUseId={activeToolUseId}
                 onHoverToolUse={onHoverToolUse}
+                suppressPendingState={suppressPendingState}
               />
             ))}
           </div>
@@ -130,6 +135,7 @@ export function CommandGroupCard({
             producingCallId={producingCallId}
             activeToolUseId={activeToolUseId}
             onHoverToolUse={onHoverToolUse}
+            suppressPendingState={suppressPendingState}
           />
         ))}
       </div>

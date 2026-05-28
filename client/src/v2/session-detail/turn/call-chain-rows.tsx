@@ -239,9 +239,75 @@ export function ToolCallRow({
 // less readable. For `unknown` the preview is the truncated raw JSON itself,
 // so the toggle is even more confusing. These rows default to the JSON tree
 // view and hide the toggle entirely.
+
+// Parse cli.js command envelopes (固定模板，确定性 schema) into a structured,
+// human-readable rendering. Returns null when the kind doesn't match or no
+// known tags found — caller falls back to raw preview.
+//
+// Output shape:
+//   - segmentLabel:  body 段标题 ("命令输入" / "命令输出" / "BASH 输入" ...)
+//   - segmentContent: 已结构化的可读文本 (XML 标签已剥离)
+//   - direction:     "in" = 用户输入；"out" = 命令执行结果
+//   - kindLabelOverride: 可选，覆盖头部 kindLabel 让输入/输出在折叠态也能区分
+function parseCommandEnvelope(ev: IntervalEvent): {
+  segmentLabel: string;
+  segmentContent: string;
+  direction: "in" | "out";
+  kindLabelOverride?: string;
+  preview: string;
+} | null {
+  const raw = ev.contentPreview || "";
+  const match = (re: RegExp): string | undefined => {
+    const m = raw.match(re);
+    return m ? m[1] : undefined;
+  };
+  if (ev.kind === "user:command") {
+    const name = match(/<command-name>([\s\S]*?)<\/command-name>/)?.trim();
+    if (name) {
+      const msg  = match(/<command-message>([\s\S]*?)<\/command-message>/)?.trim();
+      const args = match(/<command-args>([\s\S]*?)<\/command-args>/)?.trim();
+      const lines = [`$ ${name}`];
+      if (msg && msg !== name)     lines.push(`  description: ${msg}`);
+      if (args && args.length > 0) lines.push(`  args: ${args}`);
+      return {
+        segmentLabel: "命令输入", segmentContent: lines.join("\n"), direction: "in",
+        kindLabelOverride: "命令", preview: `$ ${name}${msg && msg !== name ? `  (${msg})` : ""}`,
+      };
+    }
+    const bash = match(/<bash-input>([\s\S]*?)<\/bash-input>/)?.trim();
+    if (bash != null) {
+      return {
+        segmentLabel: "BASH 输入", segmentContent: `$ ${bash}`, direction: "in",
+        kindLabelOverride: "bash", preview: `$ ${bash}`,
+      };
+    }
+    return null;
+  }
+  if (ev.kind === "system:local_command") {
+    const stdout = match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/);
+    const stderr = match(/<local-command-stderr>([\s\S]*?)<\/local-command-stderr>/);
+    const bashOut = match(/<bash-stdout>([\s\S]*?)<\/bash-stdout>/);
+    const bashErr = match(/<bash-stderr>([\s\S]*?)<\/bash-stderr>/);
+    const parts: string[] = [];
+    if (stdout != null && stdout.trim().length > 0) parts.push(stdout);
+    if (stderr != null && stderr.trim().length > 0) parts.push(`stderr:\n${stderr}`);
+    if (bashOut != null && bashOut.trim().length > 0) parts.push(bashOut);
+    if (bashErr != null && bashErr.trim().length > 0) parts.push(`stderr:\n${bashErr}`);
+    if (parts.length > 0) {
+      const joined = parts.join("\n\n");
+      const first = joined.split("\n")[0] ?? "";
+      return {
+        segmentLabel: "命令输出", segmentContent: joined, direction: "out",
+        kindLabelOverride: "命令输出", preview: first.slice(0, 120),
+      };
+    }
+    return null;
+  }
+  return null;
+}
 // ── IntervalEventRow: non-tool JSONL events between calls ─────────────────────
 export function IntervalEventRow({
-  ev, activeToolUseId, onHoverToolUse,
+  ev, activeToolUseId, onHoverToolUse, suppressPendingState = false,
 }: {
   ev: IntervalEvent;
   /**
@@ -254,6 +320,9 @@ export function IntervalEventRow({
   producingCallId?: number;
   activeToolUseId: string | null;
   onHoverToolUse: (id: string | null) => void;
+  /** 抑制"暂未消费"逐条徽章 —— 调用方（trailing InterTurnBlock）已用块级文案
+   *  说明 session 结束所以无人消费，行内重复反而误导。 */
+  suppressPendingState?: boolean;
 }) {
   const { t } = useTranslation();
   const col = KIND_COLOR[ev.kind];
@@ -271,7 +340,8 @@ export function IntervalEventRow({
   const kindTooltip = t(`eventKindDesc.${ev.kind.replace(/[:-]/g, "_")}`, { defaultValue: "" }) || undefined;
   // tool_result is the *output* fed back to the LLM; other kinds don't fit
   // input/output framing — leave bare bytes (direction undefined).
-  const direction: "in" | "out" | undefined = ev.kind === "user:tool_result" ? "out" : undefined;
+  // user:command/system:local_command 由后段 commandFormat 覆盖出明确方向。
+  const baseDirection: "in" | "out" | undefined = ev.kind === "user:tool_result" ? "out" : undefined;
 
   // ── Skill-related 特化渲染 ───────────────────────────────────────────────
   // 三种 case 的识别依据全部是 cli.js 写入的确定性字段：
@@ -338,6 +408,20 @@ export function IntervalEventRow({
     return null;
   })();
 
+  // ── Command envelope parsing ──────────────────────────────────────────
+  // user:command / system:local_command 在 jsonl 里是 cli.js 写死的 XML 信封：
+  //   user:command            → <command-name>/<command-message>/<command-args>
+  //                           或 <bash-input>!ls</bash-input>
+  //   system:local_command    → <local-command-stdout>...</local-command-stdout>
+  //                           或 <local-command-stderr>... 等
+  // 直接展示原始 XML 既丑又掩盖结构。这里 parse 出来后用对话式排版渲染（输入/输出
+  // 区分明显，空 args 自动省略）。解析失败时回退到原 preview，绝不丢内容。
+  const commandFormat = parseCommandEnvelope(ev);
+  const direction: "in" | "out" | undefined = commandFormat?.direction ?? baseDirection;
+  // commandFormat 命中时让头部 kindLabel 直接说明角色（命令 vs 命令输出），与
+  // segment 标签保持一致；解析失败仍走 i18n 默认。
+  const effectiveKindLabel = commandFormat?.kindLabelOverride ?? kindLabel;
+
   // ── Reverse-attribution lookup ────────────────────────────────────────
   // Each jsonl event may already have been audited by the session graph:
   //   - indexed → render normal + jump to firstSeenInCall
@@ -348,7 +432,9 @@ export function IntervalEventRow({
   const { getEventAnnotation, onJumpToCall, onOpenSideCall, highlightedLineIdx } = useAttributionGraph();
   const annotation = getEventAnnotation(ev.lineIdx);
   const isFlashing = highlightedLineIdx === ev.lineIdx;
-  const impact = annotation ? {
+  // 抑制 pending：调用方说明"集体未消费"已由块级文案覆盖，行内重复反而干扰。
+  // 把 pending 状态降级为 undefined（视觉上完全中性，不黄不灰），其它 state 不变。
+  const impact = annotation && !(suppressPendingState && annotation.contextImpact === "pending") ? {
     state: annotation.contextImpact,
     firstSeenInCall: annotation.firstSeenInCall,
     consumedByCallIds: annotation.consumedByCallIds,
@@ -396,20 +482,24 @@ export function IntervalEventRow({
         color={col.fg}
         bg={col.bg}
         border={col.border}
-        kindLabel={kindLabel}
+        kindLabel={effectiveKindLabel}
         kindTooltip={kindTooltip}
         size={ev.contentSize > 0 ? { bytes: ev.contentSize, direction } : undefined}
         timestamp={ev.timestamp}
-        preview={skillFormat?.preview ?? ev.contentPreview.slice(0, 120)}
+        preview={skillFormat?.preview ?? commandFormat?.preview ?? ev.contentPreview.slice(0, 120)}
         defaultExpanded={skillFormat ? skillFormat.defaultExpanded : undefined}
         segments={[
           {
             label: skillFormat
               ? skillFormat.segmentLabel
-              : (direction === "out" ? "OUTPUT" : "CONTENT"),
+              : commandFormat
+                ? commandFormat.segmentLabel
+                : (direction === "out" ? "OUTPUT" : "CONTENT"),
             content: skillFormat
               ? skillFormat.segmentContent
-              : (ev.contentPreview && ev.contentPreview.length > 0 ? ev.contentPreview : ev.rawJson),
+              : commandFormat
+                ? commandFormat.segmentContent
+                : (ev.contentPreview && ev.contentPreview.length > 0 ? ev.contentPreview : ev.rawJson),
             // skill_injection 的 SKILL.md 通常 5-10KB —— 给一个足够大的阈值，
             // 让用户展开后能看到完整内容（SegmentView 仍提供 "展开全部" 按钮兜底）。
             monospace: true,

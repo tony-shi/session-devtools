@@ -366,14 +366,33 @@ export function InterTurnBlockDetail({ block }: { block: InterTurnBlock }) {
     "user:human": "inject",
     "file-history-snapshot": "snapshot",
   };
+  // 命令计数：commandGroup wrapper 即一次完整的命令交互（caveat + 输入 + 输出）。
+  // 没被分组的 cmd/sys-cmd 各自单独算一条命令；其余事件归入 "事件"（meta 类）。
+  const commandCount = block.events.filter(
+    (ev) => ev.commandGroup || ev.kind === "user:command" || ev.kind === "system:local_command",
+  ).length;
+  const otherCount = block.events.length - commandCount;
+  // Trailing block 的"未消费"是集体命运（session 结束所以没有 LLM call 消费），
+  // 不是事件本身的反常 —— 抑制行内徽章，由 block-level 文案集中说明。详见 D 任务。
+  const suppressPendingPill = !block.enteredContext;
   return (
     <div style={{ border: "1px solid #e9d5ff", borderRadius: 8, background: BRAND.violetGradient50, overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid #e9d5ff", background: "#f3e8ff" }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.violet600 }}>{block.label}</span>
         <span style={{ fontSize: 10, color: BRAND.violet400 }}>·</span>
-        <span style={{ fontSize: 10, color: BRAND.violet400 }}>{block.events.length} event{block.events.length > 1 ? "s" : ""}</span>
+        <span style={{ fontSize: 10, color: BRAND.violet400 }}>
+          {commandCount > 0 && `${commandCount} 命令`}
+          {commandCount > 0 && otherCount > 0 && " · "}
+          {otherCount > 0 && `${otherCount} 事件`}
+          {commandCount === 0 && otherCount === 0 && "0 事件"}
+        </span>
         {!block.enteredContext && (
-          <span style={{ fontSize: 10, color: "#94a3b8", marginLeft: "auto", fontStyle: "italic" }}>did not enter context (session ended)</span>
+          <span
+            title="本块在 session 结束之后产生，没有后续 LLM 调用消费这些事件。中段同类事件通常会被下一个 turn 的 reqBody 带入 context。"
+            style={{ fontSize: 10, color: "#94a3b8", marginLeft: "auto", fontStyle: "italic", cursor: "help" }}
+          >
+            session 已结束 · 不会被任何 LLM 调用消费
+          </span>
         )}
         {block.enteredContext && (
           <span style={{ fontSize: 10, color: BRAND.violet400, marginLeft: "auto", fontStyle: "italic" }}>entered context in next turn</span>
@@ -387,7 +406,12 @@ export function InterTurnBlockDetail({ block }: { block: InterTurnBlock }) {
           // 失时 getEventAnnotation 优雅返回 null，per-row chip 不显示，不会报错）。
           ev.commandGroup ? (
             <div key={i} style={{ padding: "4px 0" }}>
-              <CommandGroupCard ev={ev} activeToolUseId={null} onHoverToolUse={() => {}} />
+              <CommandGroupCard
+                ev={ev}
+                activeToolUseId={null}
+                onHoverToolUse={() => {}}
+                suppressPendingState={suppressPendingPill}
+              />
             </div>
           ) : (
             <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "4px 0", borderBottom: i < block.events.length - 1 ? "1px solid #f3e8ff" : "none" }}>

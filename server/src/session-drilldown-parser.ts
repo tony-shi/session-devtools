@@ -1369,21 +1369,19 @@ export async function parseSessionDrilldown(
       }
       if (blockEvents.length === 0) continue;
 
-      // Build a label summarising what happened
+      // Build a label summarising what commands were invoked. Only count the
+      // *input* envelopes (<command-name> / <bash-input>); stdout/stderr is the
+      // RESULT of a command, not another command — historically lumping stdout
+      // into the label produced misleading titles like "/exit, Goodbye!" that
+      // read as two sibling commands.
       const cmdNames: string[] = [];
       for (const ev of blockEvents) {
-        if (ev.kind === "user:command" || ev.kind === "system:local_command") {
-          const raw = ev.contentPreview;
-          // Extract <command-name>/exit</command-name>
-          const cmdMatch = raw.match(/<command-name>([^<]+)<\/command-name>/);
-          if (cmdMatch) { cmdNames.push(cmdMatch[1].trim()); continue; }
-          // bash-input
-          const bashMatch = raw.match(/<bash-input>([^<\n]{0,40})/);
-          if (bashMatch) { cmdNames.push(`!${bashMatch[1].trim()}`); continue; }
-          // local-command-stdout (e.g. Bye!)
-          const stdoutMatch = raw.match(/<local-command-stdout>([^<\n]{0,40})/);
-          if (stdoutMatch) { cmdNames.push(stdoutMatch[1].trim()); }
-        }
+        if (ev.kind !== "user:command" && ev.kind !== "system:local_command") continue;
+        const raw = ev.contentPreview;
+        const cmdMatch = raw.match(/<command-name>([^<]+)<\/command-name>/);
+        if (cmdMatch) { cmdNames.push(cmdMatch[1].trim()); continue; }
+        const bashMatch = raw.match(/<bash-input>([^<\n]{0,40})/);
+        if (bashMatch) cmdNames.push(`!${bashMatch[1].trim()}`);
       }
       const label = cmdNames.length > 0
         ? [...new Set(cmdNames)].slice(0, 3).join(", ")
