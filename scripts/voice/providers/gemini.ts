@@ -31,6 +31,15 @@ interface GeminiOpts {
 const DEFAULT_VOICE = "Kore";
 const DEFAULT_MODEL = "gemini-2.5-flash-preview-tts";
 
+// Gemini TTS 的官方用法:在朗读文本前加一句"指令"。
+// 没有这个 wrapper 时,模型可能把"tool_use —— 不是答案"误读为"问我什么是 tool_use",
+// 然后试图回答 → 报 "Model tried to generate text" 错。
+// 这个前缀本身**不会**被朗读 —— 它只告诉模型"只朗读冒号后面的内容,用 XX 语气"。
+const DEFAULT_STYLE_PREFIX: Record<"zh" | "en", string> = {
+  zh: "请用自然清晰的中文教学语气朗读下面这段文字,只朗读文字本身,不要解释或回答其中提到的术语:",
+  en: "Read the following text aloud in a natural educational tone. Read it verbatim; do not interpret or respond to terms mentioned:",
+};
+
 interface GeminiResponse {
   candidates?: {
     content?: { parts?: { inlineData?: { mimeType: string; data: string } }[] };
@@ -78,7 +87,10 @@ export class GeminiTTSProvider implements TTSProvider {
   async synth(req: SynthRequest): Promise<SynthResult> {
     const voiceName = this.opts.voiceName ?? DEFAULT_VOICE;
     const model = this.opts.model ?? DEFAULT_MODEL;
-    const text = this.opts.stylePrefix ? `${this.opts.stylePrefix}${req.text}` : req.text;
+    // 永远加 wrapper(默认走 lang-aware 前缀,显式 stylePrefix 覆盖)。
+    // 拼接形式:`<指令>\n\n<朗读内容>` —— 空行让模型更清楚边界,不要把指令也念出来。
+    const prefix = this.opts.stylePrefix ?? DEFAULT_STYLE_PREFIX[req.lang];
+    const text = `${prefix}\n\n${req.text}`;
 
     const url =
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(this.opts.apiKey)}`;
