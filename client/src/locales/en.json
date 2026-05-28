@@ -383,6 +383,32 @@
       "prevParseFailed": "Previous call's request body failed to parse.",
       "noPrev": "This is the first request in the session — no previous to compare against.",
       "goSetup": "Configure proxy →"
+    },
+    "lensGroup": {
+      "instructions": {
+        "label": "System Instructions",
+        "description": "Directives Claude Code injects to tell the model how to behave: identity, behavioral rules, style, workflow, tool-use policy, thinking-frequency guidance. Stable across users/sessions — remove and the model no longer knows how to act."
+      },
+      "environment": {
+        "label": "Env & Resources",
+        "description": "Facts the model can see and capabilities available to use: env / git / billing / tool schemas / skills / memory (CLAUDE.md) / userEmail / currentDate / deferred tools / available agent types. Remove and the model loses what's available."
+      },
+      "conversation": {
+        "label": "Conversation",
+        "description": "The conversation body: user input, model replies, thinking blocks, sub-call summaries echoed back."
+      },
+      "tool-io": {
+        "label": "Tool I/O",
+        "description": "One step of the tool-call loop: tool_use request, tool_result return."
+      },
+      "runtime": {
+        "label": "Runtime status",
+        "description": "Harness-injected ephemeral notifications local to this call: token-usage this turn, diagnostics, file-modified, plan-mode toggle, unnamed system-reminder fallback. Not guaranteed to recur."
+      },
+      "other": {
+        "label": "Other",
+        "description": "Misc and unidentified: images, inline placeholders, command echo, content of unknown origin."
+      }
     }
   },
   "diff": {

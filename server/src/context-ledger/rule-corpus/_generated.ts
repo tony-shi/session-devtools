@@ -12,6 +12,44 @@ import type { Rule, Exclusions, VersionManifest } from "./schema";
 
 export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
   {
+    "ruleId": "claude-code.messages.agent-types-listing.v1",
+    "slotId": "messages.inline.system-reminder",
+    "verifiedFor": "2.1.150",
+    "sourceUnits": [],
+    "description": "harness 在 user turn 注入的「可用 agent 类型列表」声明。列出 Agent 工具可调度的子代理类型(claude / claude-code-guide / Explore / general-purpose / Plan 等),含每个 agent 的 description 与允许工具集。本质是能力声明(归 environment & resources),非临时事件。",
+    "stability": "dynamic",
+    "sourcemapRef": "claude-code/runtime/agent-registry.ts",
+    "materialization": "presence",
+    "priority": 10,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "prefix",
+      "mechanism": "system_reminder_pattern",
+      "category": "harness_injection"
+    },
+    "pattern": "<system-reminder>\nAvailable agent types for the Agent tool:"
+  },
+  {
+    "ruleId": "claude-code.messages.deferred-tools-listing.v1",
+    "slotId": "messages.inline.system-reminder",
+    "verifiedFor": "2.1.150",
+    "sourceUnits": [],
+    "description": "harness 在 user turn 注入的「deferred tools 可用列表」声明。本质是工具能力声明(后端 attribution 归 environment & resources),非临时事件。常见来源:ToolSearch / 异步加载的 MCP 工具 / 大量已注册但未在 schema 列出的能力。",
+    "stability": "dynamic",
+    "sourcemapRef": "claude-code/runtime/tool-search.ts (deferred tool registry)",
+    "materialization": "presence",
+    "priority": 10,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "prefix",
+      "mechanism": "system_reminder_pattern",
+      "category": "harness_injection"
+    },
+    "pattern": "<system-reminder>\nThe following deferred tools are now available via ToolSearch."
+  },
+  {
     "ruleId": "claude-code.messages.away-summary.v1",
     "slotId": [
       "messages.inline.free-text",

@@ -379,6 +379,32 @@
       "prevParseFailed": "上一条 call 的请求体解析失败，无法对照。",
       "noPrev": "这是会话的第一次请求，没有可对照的上一次。",
       "goSetup": "去配置代理 →"
+    },
+    "lensGroup": {
+      "instructions": {
+        "label": "系统指令",
+        "description": "Claude Code 注入给模型的指令性内容:身份、行为规则、风格、流程、工具用法策略、thinking 频率指引。这类内容不随用户/会话改变,删了模型不知道该怎么做。"
+      },
+      "environment": {
+        "label": "环境与资源",
+        "description": "模型当前可见的事实与可用能力:env / git / billing / 工具 schema / skills / memory(CLAUDE.md) / userEmail / currentDate / 可用 deferred 工具 / 可用 agent 类型。删了模型不知道有什么资源/事实。"
+      },
+      "conversation": {
+        "label": "对话主体",
+        "description": "用户与模型的对话来回:用户输入、模型回复、思考过程、子调用回填的摘要。"
+      },
+      "tool-io": {
+        "label": "工具交互",
+        "description": "工具调用循环的一步:tool_use 调用请求、tool_result 回执。"
+      },
+      "runtime": {
+        "label": "运行时通知",
+        "description": "harness 在某次调用现场注入的临时事件/状态通知:本次 token-usage、本次 diagnostics、文件被改、plan-mode 切换、未具名的 system-reminder 兜底。下一轮就不一定有。"
+      },
+      "other": {
+        "label": "其他",
+        "description": "杂项与未识别:图片、内联占位、命令回显、原因未明的内容。"
+      }
     }
   },
   "diff": {

@@ -217,3 +217,100 @@ export type RoleId =
   | "messages.misc"
   | "tools.builtin"
   | "other.unknown";
+
+// ─── L0 意图分组（IntentGroupId）：把 14 个 RoleId 聚合到 6 个本质类别 ──────────
+//
+// 设计原则（本质维度，无歧义）：每个 group 有一句客观的判定准则，不依赖动机解释。
+//   - instructions  「告诉模型该怎么做」                — 行为规则
+//   - environment   「告诉模型当前可见的事实/可用的能力」 — 上下文与资源
+//   - conversation  「用户与模型的语义来回」            — 对话本体
+//   - tool-io       「工具调用循环的一步」              — 工具执行
+//   - runtime       「harness 动态注入的临时事件通知」  — 运行时状态
+//   - other         「以上都不是」                      — 杂项
+//
+// 注意：messages.injection 这一个 role 跨两组（memory-contents/skill-listing 归
+// environment，reminder 类归 runtime）。groupOf(leaf) 在 lens-framework 里加 ruleId
+// 级 override 解决；其他 13 个 role 走纯静态 ROLE_TO_GROUP。
+
+export type IntentGroupId =
+  | "instructions"
+  | "environment"
+  | "conversation"
+  | "tool-io"
+  | "runtime"
+  | "other";
+
+// group 颜色与 rolePalette 同族色相协调，但比每个 role 的精确色更深/浓一档，
+// 作为 pill 行"分组标签"显示时与 pill 本身的细分色区分。
+// 文案不在这里——走 i18n（attribution.lensGroup.<id>.{label,description}）。
+export const intentGroupPalette: Record<IntentGroupId, { color: string }> = {
+  instructions: { color: "#4f46e5" }, // 深靛蓝（行为规则的权威感）
+  environment:  { color: "#0891b2" }, // 深青（信息）
+  conversation: { color: "#7c3aed" }, // 深紫
+  "tool-io":    { color: "#db2777" }, // 深粉
+  runtime:      { color: "#a21caf" }, // 深品红
+  other:        { color: "#6b7280" }, // 中性深灰
+};
+
+/** i18n key 前缀 —— 配合 useTranslation().t() 取 label / description。
+ *  例:t(`${intentGroupI18nKey(g)}.label`) → "行为指令" / "Instructions" */
+export function intentGroupI18nKey(g: IntentGroupId): string {
+  return `attribution.lensGroup.${g}`;
+}
+
+// 静态 role→group 映射。messages.injection 是默认 runtime，由 lens-framework 的
+// groupOf(leaf) 用 origin.ruleId 进一步细分 memory-contents/skill-listing → environment。
+export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
+  // ── Instructions（行为规则）
+  "system.core":         "instructions",  // identity / intro / # Doing tasks / # Tone & style / 各种行为段
+  "system.tool-policy":  "instructions",  // # Using your tools
+
+  // ── Environment & Resources（事实与能力）
+  "system.env":          "environment",   // # Environment / gitStatus
+  "system.billing":      "environment",   // billing header（noise 类，但本质是 env 标识）
+  "tools.builtin":       "environment",   // 工具 schema 是"模型可用的能力"，与调用本身（tool-io）分开
+  "messages.skills":     "environment",   // skill_listing 是"可用 skill"声明
+
+  // ── Conversation（对话本体）
+  "messages.human":      "conversation",
+  "messages.thinking":   "conversation",
+  "messages.assistant":  "conversation",
+
+  // ── Tool I/O（工具执行循环）
+  "messages.tool-use":   "tool-io",
+  "messages.tool-result":"tool-io",
+
+  // ── Runtime status（动态注入；memory-contents / skill-listing 在 groupOf 里被 override 到 environment）
+  "messages.injection":  "runtime",
+
+  // ── Other（杂项）
+  "messages.misc":       "other",         // image / image-placeholder / local-command
+  "other.unknown":       "other",
+};
+
+// 模块加载期自检：保证未来加新 RoleId 时编译报错；以及 ROLE_TO_GROUP 不遗漏。
+// (TypeScript 的 Record 强制要求所有 RoleId 键存在，这一行作为运行时双保险。)
+{
+  const allRoles: RoleId[] = [
+    "system.core", "system.tool-policy", "system.env", "system.billing",
+    "messages.human", "messages.thinking", "messages.assistant",
+    "messages.tool-use", "messages.tool-result",
+    "messages.injection", "messages.skills", "messages.misc",
+    "tools.builtin", "other.unknown",
+  ];
+  for (const r of allRoles) {
+    if (!(r in ROLE_TO_GROUP)) {
+      throw new Error(`[lens-palette] ROLE_TO_GROUP 漏映射 RoleId="${r}"`);
+    }
+  }
+}
+
+// group 在 pill 行中的视觉顺序（左 → 右）。同 group 内的 pills 紧贴，不同 group 间留间隔。
+export const INTENT_GROUP_ORDER: IntentGroupId[] = [
+  "instructions",
+  "environment",
+  "conversation",
+  "tool-io",
+  "runtime",
+  "other",
+];

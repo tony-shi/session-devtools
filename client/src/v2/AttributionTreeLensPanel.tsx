@@ -46,7 +46,15 @@ import {
 // DiffPanel 旧入口已废弃，但其中的 SelectedDiffDetail 仍然复用（行级 inline diff）。
 import type { DiffSection, DiffTreeResult, PinInfo } from "./diff-tree-types";
 import { SelectedDiffDetail } from "./DiffPanel";
-import { diffUnderlineFor, sectionFrame } from "./lens-palette";
+import {
+  diffUnderlineFor,
+  sectionFrame,
+  intentGroupPalette,
+  intentGroupI18nKey,
+  INTENT_GROUP_ORDER,
+  type IntentGroupId,
+} from "./lens-palette";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { BRAND } from "./shared/brand";
 
@@ -122,6 +130,59 @@ function LensSwitcher({
 // 空桶（leafCount === 0）直接不渲染：本 call 没数据的分类不应该占视觉空间，
 // 即使是为了"展示完整 lens 字典"。用户问的是这个 call 的数据。
 
+// 单个 bucket pill —— 复用在分组和平铺两种渲染路径下。
+function BucketPill({
+  bucket, leafCount, totalChars, isActive, onClick,
+}: {
+  bucket: { id: string; label: string; color: string; description?: string };
+  leafCount: number;
+  totalChars: number;
+  isActive: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={onClick}
+          style={{
+            display: "inline-flex", alignItems: "baseline", gap: 5,
+            padding: "3px 7px", borderRadius: 4,
+            border: isActive ? `1px solid ${bucket.color}` : "1px solid transparent",
+            background: isActive ? `${bucket.color}1a` : "transparent",
+            color: "#374151",
+            fontSize: 11,
+            cursor: "pointer",
+            transition: "background 0.1s, border-color 0.1s",
+          }}
+        >
+          <span style={{
+            width: 6, height: 6, borderRadius: 1,
+            background: bucket.color, alignSelf: "center",
+          }} />
+          <span style={{ fontWeight: 600, color: "#1f2937" }}>{leafCount}</span>
+          <span style={{ color: "#6b7280" }}>{bucket.label}</span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={6} className="max-w-xs">
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 1, background: bucket.color }} />
+            {bucket.label}
+          </div>
+          {bucket.description && (
+            <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{bucket.description}</div>
+          )}
+          <div style={{ opacity: 0.65, fontSize: 10 }}>
+            {leafCount} leaf · {fmtK(totalChars)} chars
+          </div>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function BucketPillRow({
   lens, selectedBucketId, onSelect, leaves,
 }: {
@@ -130,45 +191,120 @@ function BucketPillRow({
   onSelect: (bucketId: string | null) => void;
   leaves: LeafLite[];
 }) {
+  const { t } = useTranslation();
   const stats = useMemo(() => bucketStatsOf(lens, leaves), [lens, leaves]);
   // 过滤掉本 call 没有命中的桶。如果全部为空（罕见 — 一般是 leaves 全跑空），
   // 整个 pill 行不渲染，避免留个空 row。
   const nonEmptyStats = stats.filter(s => s.leafCount > 0);
   if (nonEmptyStats.length === 0) return null;
+
+  // L0 意图分组渲染：若 lens 的 buckets 携带 groupId（当前仅 structure lens），按
+  // INTENT_GROUP_ORDER 分块，同 group 内 pills 紧贴 + 顶部一个显著 group 标签；不同
+  // group 间用细虚线分隔。其他 lens（cache / diff / audit）的 buckets 不带 groupId，
+  // 回退到平铺渲染。group 文案走 i18n（attribution.lensGroup.<id>.label/description）。
+  const hasGroups = nonEmptyStats.some(s => s.bucket.groupId !== undefined);
+  if (hasGroups) {
+    const byGroup = new Map<IntentGroupId, typeof nonEmptyStats>();
+    for (const s of nonEmptyStats) {
+      const g = (s.bucket.groupId ?? "other") as IntentGroupId;
+      if (!byGroup.has(g)) byGroup.set(g, []);
+      byGroup.get(g)!.push(s);
+    }
+    const orderedGroups = INTENT_GROUP_ORDER.filter(g => byGroup.has(g));
+    return (
+      <div style={{
+        display: "flex", alignItems: "stretch",
+        gap: 14, flexWrap: "wrap",
+        padding: "2px 0",
+      }}>
+        {orderedGroups.map((g, idx) => {
+          const color = intentGroupPalette[g].color;
+          const i18nBase = intentGroupI18nKey(g);
+          const groupLabel = t(`${i18nBase}.label`);
+          const groupDesc  = t(`${i18nBase}.description`);
+          const inGroup = byGroup.get(g)!;
+          const groupTotal = inGroup.reduce((s, x) => s + x.leafCount, 0);
+          return (
+            <div
+              key={g}
+              style={{
+                display: "flex", flexDirection: "column", gap: 4,
+                paddingLeft: idx === 0 ? 0 : 12,
+                borderLeft: idx === 0 ? "none" : "1px dashed #d1d5db",
+              }}
+            >
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      fontSize: 12, fontWeight: 700,
+                      color,
+                      cursor: "help",
+                      userSelect: "none",
+                    }}
+                  >
+                    <span style={{
+                      width: 7, height: 7, borderRadius: 999,
+                      background: color,
+                    }} />
+                    {groupLabel}
+                    <span style={{ color: "#9ca3af", fontWeight: 500, fontSize: 11 }}>
+                      · {groupTotal}
+                    </span>
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={6} className="max-w-sm">
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+                      <span style={{
+                        width: 8, height: 8, borderRadius: 999, background: color,
+                      }} />
+                      {groupLabel}
+                    </div>
+                    <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{groupDesc}</div>
+                    <div style={{ opacity: 0.65, fontSize: 10 }}>
+                      {inGroup.length} bucket{inGroup.length > 1 ? "s" : ""} · {groupTotal} leaf
+                    </div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                {inGroup.map(({ bucket, leafCount, totalChars }) => (
+                  <BucketPill
+                    key={bucket.id}
+                    bucket={bucket}
+                    leafCount={leafCount}
+                    totalChars={totalChars}
+                    isActive={selectedBucketId === bucket.id}
+                    onClick={() => onSelect(selectedBucketId === bucket.id ? null : bucket.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // 平铺渲染（无 group 概念的 lens：cache / diff / audit）。
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 6,
-      flexWrap: "wrap",  // 桶过多时换行（前端样式处理布局问题）
+      flexWrap: "wrap",
       padding: "2px 0",
     }}>
-      {nonEmptyStats.map(({ bucket, leafCount, totalChars }) => {
-        const isActive = selectedBucketId === bucket.id;
-        return (
-          <button
-            key={bucket.id}
-            type="button"
-            onClick={() => onSelect(isActive ? null : bucket.id)}
-            title={`${bucket.label}${bucket.description ? "：" + bucket.description : ""}\n${leafCount} 个 leaf · ${fmtK(totalChars)} chars`}
-            style={{
-              display: "inline-flex", alignItems: "baseline", gap: 6,
-              padding: "3px 8px", borderRadius: 4,
-              border: isActive ? `1px solid ${bucket.color}` : "1px solid transparent",
-              background: isActive ? `${bucket.color}1a` : "transparent",
-              color: "#374151",
-              fontSize: 11,
-              cursor: "pointer",
-              transition: "background 0.1s, border-color 0.1s",
-            }}
-          >
-            <span style={{
-              width: 6, height: 6, borderRadius: 1,
-              background: bucket.color, alignSelf: "center",
-            }} />
-            <span style={{ fontWeight: 600, color: "#1f2937" }}>{leafCount}</span>
-            <span style={{ color: "#6b7280" }}>{bucket.label}</span>
-          </button>
-        );
-      })}
+      {nonEmptyStats.map(({ bucket, leafCount, totalChars }) => (
+        <BucketPill
+          key={bucket.id}
+          bucket={bucket}
+          leafCount={leafCount}
+          totalChars={totalChars}
+          isActive={selectedBucketId === bucket.id}
+          onClick={() => onSelect(selectedBucketId === bucket.id ? null : bucket.id)}
+        />
+      ))}
     </div>
   );
 }
