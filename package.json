@@ -55,6 +55,8 @@
     "voice": "npx tsx scripts/voice/synth.ts",
     "voice:agent-loop:zh": "npx tsx scripts/voice/synth.ts agent-loop --lang zh --provider mock",
     "voice:agent-loop:en": "npx tsx scripts/voice/synth.ts agent-loop --lang en --provider mock",
+    "voice:watch": "npx tsx scripts/voice/watch.ts",
+    "voice:watch:agent-loop": "npx tsx scripts/voice/watch.ts agent-loop --langs zh,en --provider mock",
     "prepack": "npm run build",
     "prepublishOnly": "node -e \"if (process.env.PUBLISH_FROM_SCRIPT !== '1') { console.error('ERROR: Use scripts/publish.sh instead of npm publish directly.'); process.exit(1); }\"",
     "start": "node bin/session-devtools.js",
