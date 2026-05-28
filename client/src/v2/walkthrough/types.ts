@@ -39,6 +39,13 @@ export interface Step {
   // 英文字幕(选填,逐句对齐 lines 下标;缺位自动 fallback 到 lines)。
   // 双语支持的最小侵入面 —— 不加这一行,既有 story 文件零改动。
   linesEn?: string[];
+  // 节奏控制:每一行**之后**留白多少毫秒。下标对齐 lines[],缺省 PACE.beat(200)。
+  // 这是作者唯一应该调的节奏旋钮 —— 文字长度自然决定播放时长(mock 估算 / TTS 实测),
+  // 留白决定戏剧性停顿。**不要去改 manifest 里的 durMs**,那是机器算的,改了下次合成被覆盖。
+  // 推荐用 ./pace.ts 的 PACE.* 语义常量,比裸数字易读:
+  //   pauseAfter: [PACE.breath, PACE.dwell, PACE.beat]
+  // 双语共用同一份 pauseAfter —— 语义节拍点和语言无关,一句话"该停"在哪儿 zh/en 都该停。
+  pauseAfter?: number[];
 }
 
 export interface Story {

@@ -1,7 +1,16 @@
 // Episode 1: 看懂 Claude Code 的 Agent Loop。
-// 文案取自 docs/pr/script/agent-loop.md。流程骨架阶段:每步只标「哪一幕」+ 文案。
+// 文案取自 docs/pr/script/agent-loop.md。
+//
+// 节奏控制:用 PACE.* 标注每句之后的留白。原则:
+//   - 普通断句 → PACE.beat(默认,可省略整个 pauseAfter)
+//   - 段落转折 / 让概念落地 → PACE.breath
+//   - 关键定义之后 / 话题切换 → PACE.pause
+//   - 戏剧性 punchline / "想象一下" → PACE.dwell
+// **千万不要去改 manifest 里的 durMs。** 那是合成产物,改了下次跑被覆盖。
+// 想让某句更慢:加 pauseAfter 留白;想让某句更短:把文案改短。仅此两条。
 
 import type { Story } from "../types";
+import { PACE } from "../pace";
 
 export const agentLoopStory: Story = {
   id: "agent-loop",
@@ -28,6 +37,9 @@ export const agentLoopStory: Story = {
         "Inside that box, it is observing, acting, and observing again.",
         "That continuous work record is a Session.",
       ],
+      // 节奏示范:转折句后 pause 让观众想一下,定义句 dwell 让 "Session" 这个词落地。
+      // 其它幕 / 其它集没填 pauseAfter,自动走 PACE.beat —— 留给你按这个套路逐幕标。
+      pauseAfter: [PACE.breath, PACE.breath, PACE.pause, PACE.breath, PACE.dwell],
     },
     {
       act: "conversation",

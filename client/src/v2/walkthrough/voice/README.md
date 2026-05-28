@@ -147,54 +147,91 @@ const srt = manifestToSrt(manifest);
 
 ---
 
-## 调节奏:不接 TTS 也能"听"出快慢
+## 调节奏:作者只有两个旋钮
 
-合成出来的 manifest 给每一拍一个 `durMs`(mock 是字数估算,真 TTS 是实测)。你不需要等真 TTS 就能在浏览器里**直接试整集节奏**。
+设计原则:**节奏的真正语义 = 文字本身有多长 + 你决定在哪儿留白**。其它都是衍生。
 
-### URL 工具箱
-
-| URL 参数 | 作用 | 试用例 |
+| 旋钮 | 调什么 | 改哪里 |
 |---|---|---|
-| `?speed=0.7` | **全局**慢到 70%(durMs × 1.43) | 觉得 mock 估算偏快、想看"配合慢一点的口播"时 |
-| `?speed=1.3` | 加速 30% | 想看"如果有人语速偏快" |
-| `?dev=1` | 右下角 dev HUD,显示当前拍的 durMs / gapMs / speed / 总时长 | 边播边盯当前句的具体毫秒数 |
-| 组合 | `?speed=0.85&dev=1&lang=zh` | 边慢一点边看数据 |
+| **文字本身** | 这一句的"播放时长"(mock 估算字数;真 TTS 实测语音) | `stories/<id>.ts` 的 `lines[]` |
+| **句末留白 `pauseAfter`** | 这一句完了之后停几毫秒,给观众消化 | `stories/<id>.ts` 的 `pauseAfter: []`,用 `PACE.*` |
 
-底部那条 3px 进度条**始终在线**,显示整集已播 + 当前拍内进度,给你"节奏感"的直观反馈。
+manifest 里的 `durMs` 是**机器算的中间产物**,作者不该看也不该改 —— 改了下次合成被覆盖。
 
-### 三种快慢调节,选适合的力度
+### `pauseAfter` 用法
 
-#### 力度 1:整集统一调(秒)
-URL 加 `?speed=0.8`,回车,立刻生效。**不改任何文件**。  
-找到舒服的整体倍率(假设是 0.85)后:把它"烧进" manifest —— 跑 `npm run voice:agent-loop:zh -- --gap 350` 或直接编辑 zh.json,把所有 durMs 乘 1.18(= 1/0.85)。这样 `?speed=1` 默认就是你想要的节奏。
+```ts
+import { PACE } from "../pace";
 
-#### 力度 2:某一段拖太久 / 闪太快(分钟)
-打开 `?dev=1`,记下"觉得不对劲那一拍"的 `step / beat / durMs`。直接编辑 `client/public/voice/agent-loop/zh.json`:
-
-```jsonc
 {
-  "stepIdx": 5,
-  "lines": [
-    { "idx": 2, "text": "现在把它们串起来 ……", "durMs": 4200, "gapMs": 300 }
-                                       //   ↑ 改它,从 3800 → 4200 慢 400ms
-  ]
+  act: "conversation",
+  focus: "overview",
+  lines: [
+    "Claude Code 第一眼看上去,像终端里的编程聊天框。",
+    "你输入一句需求,它回你一段解释。",
+    "但如果它只是聊天,它就不能修 bug、跑测试、改代码。",
+    "在这个框里面,它正在观察、行动、再观察。",
+    "这段连续的工作记录,就是 Session。",
+  ],
+  pauseAfter: [
+    PACE.breath,   // 500ms — 第一次提到 Claude Code,呼吸一下
+    PACE.breath,   // 500ms — 自然断句
+    PACE.pause,    // 900ms — "如果它只是聊天" 是转折,让观众停一下
+    PACE.breath,   // 500ms
+    PACE.dwell,    // 1500ms — punchline "就是 Session",留白让概念落地
+  ],
 }
 ```
 
-保存。Vite 监听到 `public/` 改动会**热刷新**;浏览器自动重载,新值立刻生效。试听,不行再改。
+**五档语义,够用**(见 `pace.ts`):
 
-#### 力度 3:文案改了 / 加了新拍(几分钟)
-改了 `agent-loop.ts` 里的 `lines[]`、要重新合成:
+| 常量 | ms | 用场景 |
+|---|---|---|
+| `PACE.none` | 0 | 把多句焊死成一团,慎用 |
+| `PACE.beat` | 200 | 默认,正常断句呼吸(可省略整个 pauseAfter) |
+| `PACE.breath` | 500 | 段落小转折 |
+| `PACE.pause` | 900 | 关键定义之后 / 话题切换 |
+| `PACE.dwell` | 1500 | punchline 之后 / 让观众脑补 |
 
-```bash
-npm run voice:agent-loop:zh
+`pauseAfter` **跨语言共享** —— 节奏点是语义,不该因为换译就改。
+
+### 工作流(主线)
+
+1. **写文案**(`stories/<id>.ts`):写 `lines[]` + `linesEn[]`。一句话别太长(超 20 字考虑断句)
+2. **标节拍**:在 `pauseAfter` 里挑关键的 3-5 句标 `PACE.breath / pause / dwell`,其它省略走默认
+3. **合成**:`npm run voice:agent-loop:zh`
+4. **试听**:打开 `/demo/agent-loop`,听整集节奏感
+5. 不顺 → 改 `pauseAfter` 或拆/合并 `lines[]` 的句子,**重跑第 3 步**
+
+### 辅助工具(诊断 / 试探,不是日常)
+
+底部那条 3px 进度条**始终在线**,显示整集已播 + 当前拍内进度。
+
+| URL 参数 | 作用 | 适用场景 |
+|---|---|---|
+| `?speed=0.7` 或 `?speed=1.3` | 整体节奏放缩(不动 manifest) | "如果配音整体再慢一点感觉如何" —— 找到舒服的倍率后,**不要烧进 manifest**;改 PACE.beat 默认值或者重写 mock 估算公式才是正路 |
+| `?dev=1` | 右下角 HUD 显示当前拍 durMs / gapMs / 数据源 | 排查 "这一拍为什么这么短/长" |
+
+`?speed=` 是**试探**工具,不是设置工具。如果你发现整集系统性偏快/偏慢:
+- 偏快 → 在 `pace.ts` 把 `PACE.beat` 从 200 调到 300
+- 单句偏快 → 把那一句 `pauseAfter` 升一档(beat → breath)
+- 单句偏慢 → 把那一句文案改短
+
+绝对不要"全集烧 ?speed=0.85"那种做法 —— 那是把作者的精修变成机器化处理,反方向。
+
+### 单句精修的极端情况
+
+如果你**真的**需要修某个具体毫秒数(比如文案不能短了,但 PACE 五档都不合适),**改 `pauseAfter[i]` 用裸数字**:
+
+```ts
+pauseAfter: [PACE.breath, 720, PACE.breath]   // 中间这句要 720ms,不在 PACE 五档里
 ```
 
-Hash 缓存只会重合成你改动的那几句,其它走 cache。manifest 重写,浏览器刷新即可。如果想强制全合成(比如换了倍率公式):删 `.cache/voice/` 重跑。
+不要去碰 manifest 的 `durMs`。
 
-### 配合接真 TTS 时
+### 接真 TTS 之后
 
-接 MiniMax / ElevenLabs 后,`durMs` 变成**实测**值,你之前调的 `?speed` 仍然有效 —— 视觉节拍照常被倍率放缩,但**音频本身不变速**(变速会改音调)。所以接真 TTS 前的 `?speed` 调整,本质上是在告诉你"实际配音应该比 mock 估算的快/慢多少",可以告诉配音师 / TTS provider 用对应的语速参数。
+`durMs` 自动变实测值 —— 你之前用 `pauseAfter` 标的节拍点全部继续生效。如果接 TTS 后某一句"听起来比 mock 慢/快很多",微调那一拍的 `pauseAfter` 即可。
 
 ---
 

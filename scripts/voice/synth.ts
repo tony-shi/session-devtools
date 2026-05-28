@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 
 import { STORIES } from "../../client/src/v2/walkthrough/stories";
 import { pickLines } from "../../client/src/v2/walkthrough/i18n";
+import { PACE } from "../../client/src/v2/walkthrough/pace";
 import type { Lang, LineCue, Manifest, StepManifest } from "../../client/src/v2/walkthrough/voice/types";
 import type { TTSProvider } from "./providers/types";
 import { MockProvider } from "./providers/mock";
@@ -34,7 +35,8 @@ interface Cli {
   storyId: string;
   lang: Lang;
   providerName: "mock" | "minimax" | "elevenlabs";
-  gapMs: number;
+  /** 默认留白(ms),仅当 step.pauseAfter[idx] 没填时用。语义上是 PACE.beat */
+  defaultGapMs: number;
   outDir: string;
   cacheDir: string;
 }
@@ -57,13 +59,14 @@ function parseArgs(): Cli {
     console.error("--provider must be mock | minimax | elevenlabs");
     process.exit(2);
   }
-  const gapMs = parseInt(get("--gap", "300"), 10);
+  // 命令行 --gap 仅在 step.pauseAfter[i] 缺省时生效。默认走 PACE.beat,语义对齐 pace.ts。
+  const defaultGapMs = parseInt(get("--gap", String(PACE.beat)), 10);
 
   const here = dirname(fileURLToPath(import.meta.url));
   const repoRoot = resolve(here, "../..");
   const outDir = resolve(repoRoot, get("--out", "client/public/voice"));
   const cacheDir = resolve(repoRoot, ".cache/voice");
-  return { storyId, lang, providerName, gapMs, outDir, cacheDir };
+  return { storyId, lang, providerName, defaultGapMs, outDir, cacheDir };
 }
 
 function buildProvider(name: Cli["providerName"]): TTSProvider {
@@ -118,6 +121,9 @@ async function main() {
   for (const [stepIdx, step] of story.steps.entries()) {
     const lines = pickLines(step, cli.lang);
     const cues: LineCue[] = [];
+    // 节奏:每一行的"句末留白"。优先级 step.pauseAfter[i] → --gap → PACE.beat。
+    // pauseAfter 跨语言共用 —— 节拍点是语义,不该因为中英换译就改。
+    const pauseAfter = step.pauseAfter ?? [];
     for (const [lineIdx, text] of lines.entries()) {
       const key = hashKey(text, `${cli.providerName}:${cli.lang}`, cli.lang);
       const fileName = `${stepIdx}-${lineIdx}.mp3`;
@@ -155,14 +161,15 @@ async function main() {
         console.warn(`  [${stepIdx}-${lineIdx}] synth failed, fell back to mock: ${(e as Error).message}`);
       }
 
+      const gap = pauseAfter[lineIdx] ?? cli.defaultGapMs;
       cues.push({
         idx: lineIdx,
         text,
         ...(haveAudio ? { audio: audioRel } : {}),
         durMs,
-        gapMs: cli.gapMs,
+        gapMs: gap,
       });
-      totalMs += durMs + cli.gapMs;
+      totalMs += durMs + gap;
     }
     stepsOut.push({ stepIdx, lines: cues });
   }
