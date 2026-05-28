@@ -372,30 +372,42 @@ export function DemoStage() {
   //   3) 没 manifest:沿用原 BEAT_MS 计时(向后兼容,无音轨也能 demo)
   // speed 倍率作用于 cue.durMs / cue.gapMs / BEAT_MS,**不影响**音频本身播放速度
   //   (调音频 playbackRate 会改音调,违背"试听节奏"的目的;真要试快慢就不要 mp3,只看节拍)
+  //
+  // 关键修复(对比旧版):
+  //   - 旧版在 `beat >= n-1` 时整个 effect 早 return → 最后一拍连音频都不播。新版把"播音频"
+  //     和"调度推进"分开 —— 最后一拍**仍播音频**,只是不再 setTimeout(advance)
+  //   - 加 `beat >= n` 真早 return,防 stale render:切幕时旧 beat 暂时 > 新 step 长度,
+  //     旧逻辑会用 cue=null 走 BEAT_MS 分支,造成"切幕第一拍前先出现 BEAT_MS 鬼影定时器"
   useEffect(() => {
     setLineStartAt(performance.now());
     if (!playing) return;
     if (forcesManualBeat(mode)) return;
     const n = STORIES[storyId]?.steps[index]?.lines.length ?? 0;
-    if (beat >= n - 1) return;
+    if (n === 0 || beat >= n) return;   // stale render 防御 + 出错兜底
+    const isLast = beat >= n - 1;
 
     const cue = manifest?.steps.find((s) => s.stepIdx === index)?.lines[beat] ?? null;
     const scaledDur = (cue?.durMs ?? BEAT_MS) / speed;
     const scaledGap = (cue?.gapMs ?? 0) / speed;
     const advance = () => setBeat((b) => b + 1);
 
-    // 有音频 → 播 + 等 ended;无音频或加载失败 → 走 scaledDur;再无 cue → 走 scaledDur(BEAT_MS / speed)
     let audio: HTMLAudioElement | null = null;
     let timer: number | undefined;
     if (cue?.audio && speed === 1) {
       // 只有 speed=1 时才用音频驱动;变速时音频会和动画失步,直接走计时
       audio = new Audio(`/voice/${manifest!.storyId}/${cue.audio}`);
-      const onEnd = () => { timer = window.setTimeout(advance, scaledGap); };
-      const onErr = () => { timer = window.setTimeout(advance, scaledDur + scaledGap); };
-      audio.addEventListener("ended", onEnd, { once: true });
-      audio.addEventListener("error", onErr, { once: true });
-      audio.play().catch(onErr);
-    } else {
+      // 监听 ended / error 来调度推进;最后一拍不调度,但音频仍然播
+      if (!isLast) {
+        const onEnd = () => { timer = window.setTimeout(advance, scaledGap); };
+        const onErr = () => { timer = window.setTimeout(advance, scaledDur + scaledGap); };
+        audio.addEventListener("ended", onEnd, { once: true });
+        audio.addEventListener("error", onErr, { once: true });
+      }
+      // autoplay 被浏览器拦下 → 非最后一拍 fallback 到计时;最后一拍就静默(用户已经看到字幕)
+      audio.play().catch(() => {
+        if (!isLast) timer = window.setTimeout(advance, scaledDur + scaledGap);
+      });
+    } else if (!isLast) {
       timer = window.setTimeout(advance, scaledDur + scaledGap);
     }
     return () => {

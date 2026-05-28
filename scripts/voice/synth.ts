@@ -149,6 +149,10 @@ async function main() {
   let cached = 0;
   let failed = 0;
   const builtAt = new Date().toISOString();
+  const t0 = Date.now();
+  const totalLines = story.steps.reduce((n, s) => n + pickLines(s, cli.lang).length, 0);
+  let seq = 0;
+  console.log(`⟳ ${story.id} / ${cli.lang} / ${cli.providerName}${cli.voiceName ? ":" + cli.voiceName : ""} · ${totalLines} lines`);
 
   for (const [stepIdx, step] of story.steps.entries()) {
     const lines = pickLines(step, cli.lang);
@@ -157,6 +161,8 @@ async function main() {
     // pauseAfter 跨语言共用 —— 节拍点是语义,不该因为中英换译就改。
     const pauseAfter = step.pauseAfter ?? [];
     for (const [lineIdx, text] of lines.entries()) {
+      seq += 1;
+      const lineT0 = Date.now();
       // voice 也参与 hash —— 换 voice 必须重合成,否则放错音
       const key = hashKey(text, `${cli.providerName}:${cli.voiceName ?? "default"}:${cli.lang}`, cli.lang);
 
@@ -164,27 +170,38 @@ async function main() {
       let haveAudio = false;
       let ext: "mp3" | "wav" = "mp3";
       let audioBytes: Buffer | null = null;
+      let status: "synth" | "cached" | "fail" = "synth";
       try {
         const hit = await readCache(cli.cacheDir, key);
         if (hit) {
           audioBytes = hit.audio;
           durMs = hit.durMs;
           cached += 1;
+          status = "cached";
         } else {
           const res = await provider.synth({ text, lang: cli.lang });
           audioBytes = res.audio;
           durMs = res.durMs;
           await writeCache(cli.cacheDir, key, res.audio, durMs);
           synthed += 1;
+          status = "synth";
         }
       } catch (e) {
         // 单句失败:回退到 mock 估算,manifest 仍产出
         failed += 1;
+        status = "fail";
         const mockRes = await new MockProvider().synth({ text, lang: cli.lang });
         audioBytes = mockRes.audio;
         durMs = mockRes.durMs;
-        console.warn(`  [${stepIdx}-${lineIdx}] synth failed, fell back to mock: ${(e as Error).message}`);
+        console.warn(`  [${String(seq).padStart(3)}/${totalLines}] s${stepIdx}:${lineIdx} ✗ synth failed → mock fallback: ${(e as Error).message}`);
       }
+      const elapsed = Date.now() - lineT0;
+      const sym = status === "cached" ? "●" : status === "synth" ? "→" : "✗";
+      const tag = status === "cached" ? "cached" : status === "synth" ? `synth ${elapsed}ms` : "fallback";
+      const preview = text.length > 28 ? text.slice(0, 28) + "…" : text;
+      // 颜色码:cache 灰 / 新合成 青 / 失败 红;不支持颜色的终端依然清晰
+      const color = status === "cached" ? "\x1b[90m" : status === "synth" ? "\x1b[36m" : "\x1b[31m";
+      console.log(`  ${color}[${String(seq).padStart(3)}/${totalLines}] s${stepIdx}:${lineIdx} ${sym} ${tag.padEnd(13)} ${String(durMs).padStart(5)}ms  "${preview}"\x1b[0m`);
 
       // 写盘:扩展名由内容嗅探(google → mp3,gemini → wav,mock 无音频)
       if (audioBytes && audioBytes.length > 0) {
@@ -219,11 +236,10 @@ async function main() {
   const manifestPath = join(storyOutDir, `${cli.lang}.json`);
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
 
-  // 友好报表
+  // 总结(per-line 日志在上面已经一条条打过了,这里只是收尾)
   const totalSec = (totalMs / 1000).toFixed(1);
-  console.log(`✓ ${story.id} / ${cli.lang}`);
-  console.log(`  ${stepsOut.reduce((n, s) => n + s.lines.length, 0)} lines · ${totalSec}s total`);
-  console.log(`  ${synthed} synthed · ${cached} cached · ${failed} fallback`);
+  const wall = ((Date.now() - t0) / 1000).toFixed(1);
+  console.log(`\n✓ done in ${wall}s · ${totalSec}s narration · ${synthed} synthed · ${cached} cached · ${failed} fallback`);
   console.log(`  → ${manifestPath}`);
 }
 

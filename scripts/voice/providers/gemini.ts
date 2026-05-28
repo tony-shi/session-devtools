@@ -35,9 +35,15 @@ const DEFAULT_MODEL = "gemini-2.5-flash-preview-tts";
 // 没有这个 wrapper 时,模型可能把"tool_use —— 不是答案"误读为"问我什么是 tool_use",
 // 然后试图回答 → 报 "Model tried to generate text" 错。
 // 这个前缀本身**不会**被朗读 —— 它只告诉模型"只朗读冒号后面的内容,用 XX 语气"。
+//
+// 一致性强化:Gemini TTS preview 是**生成式**,每次调用独立采样,默认 temperature > 0
+// 会让同一 voice 跨句出现情感 / 语速 / 音调微漂。指令里明确"保持完全一致"+ API 端
+// temperature=0 双管齐下能显著抑制(但不能完全消除 —— 这是生成式 TTS 的固有特性)。
+// 如果听感漂移仍然明显,**根治方案是换 Cloud TTS Wavenet**(确定性合成,同 voice
+// 永远相同)—— see scripts/voice/providers/google.ts。
 const DEFAULT_STYLE_PREFIX: Record<"zh" | "en", string> = {
-  zh: "请用自然清晰的中文教学语气朗读下面这段文字,只朗读文字本身,不要解释或回答其中提到的术语:",
-  en: "Read the following text aloud in a natural educational tone. Read it verbatim; do not interpret or respond to terms mentioned:",
+  zh: "请用**完全相同**的中文女性教学语气朗读下面这段话。保持稳定的中等语速、平和的音调、不要加任何戏剧性的情感变化或停顿。只朗读括号外面的内容,不要解释、不要回答、不要展开:",
+  en: "Read the following text aloud with a **completely uniform** female educational tone. Keep speed steady, pitch flat, no dramatic expression or unscheduled pauses. Read it verbatim; do not interpret or respond:",
 };
 
 interface GeminiResponse {
@@ -102,6 +108,9 @@ export class GeminiTTSProvider implements TTSProvider {
         speechConfig: {
           voiceConfig: { prebuiltVoiceConfig: { voiceName } },
         },
+        // temperature=0 → 抑制采样随机性,跨调用更"机械"地稳定
+        // (preview 模型对此尊重程度不确定,但加上无害)
+        temperature: 0,
       },
     };
 
