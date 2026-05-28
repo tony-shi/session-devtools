@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { SessionV2 } from "./types";
-import type { SessionDrilldown, UserTurn, InterTurnBlock, CompactEvent } from "./drilldown-types";
+import type { SessionDrilldown, UserTurn, InterTurnBlock, CompactEvent, IntervalEvent } from "./drilldown-types";
 import { apiV2 } from "./api";
 import type { SideCall } from "./api";
 import type { SubAgentSummary } from "./drilldown-types";
@@ -367,6 +367,28 @@ export function SessionDetailV2({ session, onClose }: Props) {
     return m;
   }, [turns]);
 
+  // Side call → JSONL 锚点反向索引：聚合 controller 已回填的 generatedByProxyRequestId
+  // (+ ai-title 兜底未捕获 proxy) 成 proxy/title → turnId，供 Background 行反向跳转。
+  const { anchorTurnByProxyId, anchorTurnByAiTitle } = useMemo(() => {
+    const byProxy = new Map<number, number>();
+    const byAiTitle = new Map<string, number>();
+    const visit = (ev: IntervalEvent, turnId: number) => {
+      const pid = ev.generatedByProxyRequestId;
+      if (pid != null && !byProxy.has(pid)) byProxy.set(pid, turnId);
+      if (ev.kind === "ai-title") {
+        try {
+          const t = (JSON.parse(ev.rawJson) as { aiTitle?: string }).aiTitle;
+          if (t && !byAiTitle.has(t)) byAiTitle.set(t, turnId);
+        } catch { /* skip malformed */ }
+      }
+    };
+    for (const turn of turns) {
+      turn.leadingEvents.forEach(ev => visit(ev, turn.id));
+      for (const call of turn.calls) call.intervalEvents.forEach(ev => visit(ev, turn.id));
+    }
+    return { anchorTurnByProxyId: byProxy, anchorTurnByAiTitle: byAiTitle };
+  }, [turns]);
+
   const onJumpToCall = useCallback((callId: number, lens?: "request" | "response") => {
     const call = callById.get(callId);
     if (!call) return;
@@ -576,6 +598,9 @@ export function SessionDetailV2({ session, onClose }: Props) {
               <BackgroundCallsPanel
                 sessionId={session.session_id}
                 onOpenSideCall={(pid) => goNav({ level: "side-call", proxyRequestId: pid })}
+                anchorTurnByProxyId={anchorTurnByProxyId}
+                anchorTurnByAiTitle={anchorTurnByAiTitle}
+                onJumpToAnchor={(turnId) => goNav({ level: "turn", turnId })}
               />
             )}
             {navLevel === "side-call" && selectedProxyRequestId != null && (
