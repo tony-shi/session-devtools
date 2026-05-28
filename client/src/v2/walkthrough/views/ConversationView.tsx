@@ -112,8 +112,8 @@ export function ConversationView({ turns, focus, playing, restartNonce }: { turn
           return (
             <div key={it.id} ref={i === target ? targetRef : undefined} style={{ opacity: dimmed ? 0.3 : 1, transition: "opacity .4s ease" }}>
               {framed ? (
-                <div style={{ border: "2px solid #6366f1", borderRadius: 14, padding: "16px 16px 12px", position: "relative", background: "#fff" }}>
-                  <div style={{ position: "absolute", top: -11, left: 16, background: "#6366f1", color: "#fff", fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 999 }}>
+                <div style={{ border: `2px solid ${ACTOR_COLOR.llm.main}`, borderRadius: 14, padding: "16px 16px 12px", position: "relative", background: "#fff" }}>
+                  <div style={{ position: "absolute", top: -11, left: 16, background: ACTOR_COLOR.llm.main, color: "#fff", fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 999 }}>
                     Turn {it.id} · 轮次
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>{bubbles}</div>

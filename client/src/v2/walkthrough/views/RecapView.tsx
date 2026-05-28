@@ -44,21 +44,21 @@ export function RecapView({ beat }: { beat: number }) {
           <div style={{ marginTop: 22, paddingTop: 18, borderTop: "1px dashed #e5e7eb", animation: "wt-rise .4s ease both" }}>
             <div style={{ position: "relative", paddingBottom: 52 }}>
               <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 10, fontSize: 14, fontWeight: 700 }}>
-                <span style={{ padding: "7px 14px", borderRadius: 10, background: "#eef2ff", color: "#4338ca", border: "1px solid #c7d2fe" }}>收集上下文</span>
+                <span style={{ padding: "7px 14px", borderRadius: 10, background: ACTOR_COLOR.llm.bg, color: ACTOR_COLOR.llm.main, border: `1px solid ${ACTOR_COLOR.llm.border}` }}>收集上下文</span>
                 <span style={{ color: "#cbd5e1" }}>→</span>
-                <span style={{ padding: "7px 14px", borderRadius: 10, background: "#f0fdfa", color: "#0f766e", border: "1px solid #99f6e4" }}>采取行动</span>
+                <span style={{ padding: "7px 14px", borderRadius: 10, background: ACTOR_COLOR.agent.bg, color: ACTOR_COLOR.agent.main, border: `1px solid ${ACTOR_COLOR.agent.border}` }}>采取行动</span>
                 <span style={{ color: "#cbd5e1" }}>→</span>
-                <span style={{ padding: "7px 14px", borderRadius: 10, background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0" }}>验证结果</span>
+                <span style={{ padding: "7px 14px", borderRadius: 10, background: ACTOR_COLOR.done.bg, color: ACTOR_COLOR.done.main, border: `1px solid ${ACTOR_COLOR.done.border}` }}>验证结果</span>
               </div>
               {/* 回环:验证结果(右)→ 沿底部折回 → 收集上下文(左),左端箭头朝上 */}
-              <div style={{ position: "absolute", left: "16%", right: "16%", top: 46, height: 22, borderLeft: "2px solid #6366f1", borderRight: "2px solid #16a34a", borderBottom: "2px dashed #94a3b8", borderBottomLeftRadius: 12, borderBottomRightRadius: 12, animation: "wt-loop 1.8s ease-in-out infinite" }} />
-              <div style={{ position: "absolute", left: "16%", top: 38, transform: "translateX(-6px)", color: "#6366f1", fontSize: 13, animation: "wt-loop 1.8s ease-in-out infinite" }}>▲</div>
+              <div style={{ position: "absolute", left: "16%", right: "16%", top: 46, height: 22, borderLeft: `2px solid ${ACTOR_COLOR.llm.main}`, borderRight: `2px solid ${ACTOR_COLOR.done.main}`, borderBottom: "2px dashed #94a3b8", borderBottomLeftRadius: 12, borderBottomRightRadius: 12, animation: "wt-loop 1.8s ease-in-out infinite" }} />
+              <div style={{ position: "absolute", left: "16%", top: 38, transform: "translateX(-6px)", color: ACTOR_COLOR.llm.main, fontSize: 13, animation: "wt-loop 1.8s ease-in-out infinite" }}>▲</div>
               <div style={{ position: "absolute", left: 0, right: 0, top: 74, textAlign: "center", fontSize: 12, color: "#64748b" }}>
                 ↩ 把 tool_result 塞回 context,回到开头 —— 直到 LLM 决定终止
               </div>
             </div>
             <div style={{ fontSize: 13, color: "#64748b", marginTop: 4, textAlign: "center" }}>
-              驱动它的只有两件事:<b style={{ color: "#6366f1" }}>模型</b>负责推理,<b style={{ color: "#0f766e" }}>工具</b>负责行动。
+              驱动它的只有两件事:<b style={{ color: ACTOR_COLOR.llm.main }}>模型</b>负责推理,<b style={{ color: ACTOR_COLOR.agent.main }}>工具</b>负责行动。
             </div>
           </div>
         )}

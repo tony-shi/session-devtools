@@ -1246,6 +1246,18 @@ export async function parseSessionDrilldown(
       }
     }
 
+    // 空 call 的 user 事件不升格为 turn。语义上 "turn = user → LLM 往返"，
+    // 没有任何 LLM 调用跟在后面（典型场景：会话末尾的 `/exit` —— 用户敲完
+    // session 就结束了，模型零参与）就不是一个 turn。这些事件会被后面的
+    // inter-turn block 扫描自然吃进 "after last (real) turn" 的 gap，渲染成
+    // 跨轮次 block 而不是一个 0-call 的伪轮次。skip 后 leadingEvents /
+    // midTurnInjections / durationMs / userInputLineIdx 全部随之丢弃 ——
+    // trailing user 事件的归属由 inter-turn block 接管。
+    if (rawCalls.length === 0) {
+      i = j + 1;
+      continue;
+    }
+
     turns.push({
       id: turns.length + 1,
       userInput: userText,

@@ -188,6 +188,26 @@ function findTemplateSlot(template: RequestTemplate, slotType: string): Template
  *  这里属于 AST builder 而非 matcher：matcher 只做 system[] 顶层大块路由；
  *  H1 是块内结构事实，需要 template.children 才能判定 known/unknown slot。
  */
+/**
+ * 把 H1 header 文本规范化为 slot id 末段 slug。规则:
+ *   - lowercase
+ *   - 非 [a-z0-9] 替换为 `-`
+ *   - 合并连续 `-`,去首尾 `-`
+ * 例:
+ *   "Memory"               → "memory"
+ *   "Harness"              → "harness"
+ *   "auto memory"          → "auto-memory"
+ *   "Tone and style"       → "tone-and-style"   ← 注意:与历史 "tone-style" 别名不同;
+ *                                                  历史别名走 template 枚举(headerToSlot),
+ *                                                  slug fallback 仅处理 template 未枚举的新 H1。
+ */
+export function slugifyHeader(header: string): string {
+  return header
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function splitByH1Headers(
   text: string,
   childSlots: TemplateSlot[],
@@ -249,31 +269,31 @@ function splitByH1Headers(
     const h1 = h1s[i]!;
     const nextStart = i + 1 < h1s.length ? h1s[i + 1]!.lineStart : text.length;
     const rawText = text.slice(h1.lineStart, nextStart);
-    const knownSlot = headerToSlot.get(h1.header) ?? unknownSlot;
-    if (knownSlot) {
-      out.push({
-        slotType: knownSlot.id,
-        jsonPath: parentJsonPath,
-        charRange: { start: h1.lineStart, end: nextStart },
-        rawText,
-        anchorEvidence: `# ${h1.header}`,
-        children: [],
-      });
-    } else {
-      out.push({
-        slotType: UNKNOWN_SLOT.SYSTEM_SECTION,
-        jsonPath: parentJsonPath,
-        charRange: { start: h1.lineStart, end: nextStart },
-        rawText,
-        anchorEvidence: `# ${h1.header}`,
-        children: [],
+    // 优先用 template 枚举的 slot(显式 header → slotId 映射,处理"Tone and style"→"tone-style"
+    // 这类简化别名);若未枚举(新版本新增 H1,如 # Harness/# Memory)→ slugify fallback
+    // → "system.main-prompt.section.<slug>"。corpus rule 的 slotId 与 slug 派生一致时即命中。
+    const enumeratedSlot = headerToSlot.get(h1.header);
+    const slug = slugifyHeader(h1.header);
+    const slotType = enumeratedSlot
+      ? enumeratedSlot.id
+      : `system.main-prompt.section.${slug}`;
+    out.push({
+      slotType,
+      jsonPath: parentJsonPath,
+      charRange: { start: h1.lineStart, end: nextStart },
+      rawText,
+      anchorEvidence: `# ${h1.header}`,
+      children: [],
+      ...(enumeratedSlot ? {} : {
         unknownMeta: {
           sectionHeader: h1.header,
-          reason: "H1 header not in template slot map",
+          reason: `H1 派生 slug=${slug}(无 template 枚举)`,
         },
-      });
-    }
+      }),
+    });
   }
+  // 兼容:unknownSlot 字段保留(template 仍可声明 fallback 槽);未来移除后可删
+  void unknownSlot;
 
   // literal anchor 子 slot 的尾部剥离。
   // 注意：它只处理 wire 中确实没有独立 H1 的追加尾段，例如早期 gitStatus 形态。

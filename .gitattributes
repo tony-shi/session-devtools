@@ -1,0 +1,3 @@
+# Mark auto-generated files so GitHub diff折叠 + linguist 不统计为手写代码。
+# Regenerate via `npm run corpus:sync`.
+server/src/context-ledger/rule-corpus/_generated.ts linguist-generated=true

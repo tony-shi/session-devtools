@@ -16,6 +16,67 @@
 
 ---
 
+## P. 产品解释层（官方 taxonomy + 页面展示 + 文档）
+
+### P1. 统一 Claude Code 官方心智模型的归因 taxonomy
+
+**目标**：把当前偏底层的 `structure / diff / cache / raw` 视图，向用户解释成“Claude Code 这次到底通过什么机制把内容放进 context / 发起调用 / 产生副作用”。这不是新增一套 parser，而是在现有归因数据上增加稳定的产品分类和展示文案。
+
+**统一分类**：
+
+| 分类 | 包含 | 用户问题 |
+|---|---|---|
+| Persistent context | `CLAUDE.md`、memory、rules | 哪些内容是每个 session 默认带进来的？ |
+| On-demand context | skills、commands | 哪些内容是因为我触发了命令 / skill 才加载的？ |
+| Runtime injection | system reminder、permission、hooks | Claude Code 中途偷偷塞了什么？ |
+| External tools | MCP、built-in tools、IDE context | 外部工具 / IDE / MCP 给模型提供了什么？ |
+| Isolated work | subagents、agent teams | 哪些工作发生在隔离上下文里，只把摘要带回主线？ |
+| Maintenance | compact、recap、title、memory extraction | 哪些后台维护动作影响了显示、成本、context 或后续 session？ |
+
+**首批落地**：
+
+- [ ] 在 attribution lens / leaf detail 中增加“官方机制分类”字段或 badge，不替换现有 structure/diff/cache。
+- [ ] 在 side call / background call 中标明 impact：`enters context` / `writes memory` / `UI-only` / `discarded` / `unknown`。
+- [ ] 在 skill、compact、sub-agent、ai-title、permission-mode、memory extraction 等已有事件上补齐 taxonomy 映射。
+- [ ] 对 unknown / parser 不支持的段落明确展示 `unknown`，不要伪造归因。
+
+### P2. 补页面展示与产品文档
+
+**目标**：每个页面先回答“我为什么要看这里”，再让用户下钻。把产品从“日志浏览器”推进到“Claude Code DevTools”。
+
+**首批落地**：
+
+- [ ] 每个主页面顶部补一句“这个页面回答什么问题”：
+  - Session List：我最近哪些 Claude Code session 值得检查？
+  - Session Overview：这次任务的成本、耗时、上下文变化和风险在哪里？
+  - Turn Detail：这个用户轮次经历了哪些 agent loop？
+  - LLM Call Detail：这次模型调用看到了什么、产出了什么、为什么和上次不同？
+  - Background Calls：Claude Code 在主对话之外偷偷/后台做了什么？
+- [ ] Session 顶部增加 `Coverage / Trust` 区域：
+  - proxy 是否开启 / 是否完整
+  - request-id 是否 exact match
+  - parser 是否支持当前 Claude Code version / entrypoint
+  - 有多少 call 被跳过或只能降级展示
+- [ ] 补齐产品文档：
+  - `docs/zh/product/session-detail.md`
+  - `docs/zh/product/turn-detail.md`
+  - `docs/zh/product/llm-detail.md`
+  - 英文文档按中文稳定后再同步
+
+**验收标准**：
+
+- 用户打开任意 session，不需要读源码或 README，就能知道每个视图回答什么问题。
+- 任意一个 context leaf / side call / maintenance event 至少能落到上述 taxonomy 的一个分类，落不到则明确标 `unknown`。
+- Session 顶部能直接判断这次分析是否可信：proxy coverage、request-id exactness、parser/version 支持状态一眼可见。
+
+**非目标**：
+
+- 不在第一批实现完整 agent teams 解析；先预留 taxonomy。
+- 不把 audit lens 暴露给普通用户；coverage/trust 只展示用户能理解的可信度摘要。
+- 不为 taxonomy 牺牲现有 raw / diff / cache 下钻能力。
+
+---
+
 ## A. 冗余逻辑（重复 helper）
 
 ### A1. CopyButton — 4 处一模一样 ✅ 干净可统合

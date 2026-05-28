@@ -165,13 +165,13 @@ function NodeBox({ node, active, ctxStage, showTools, highlightTool }: { node: N
           : (!showTools && <div style={{ fontSize: 13, color: "#94a3b8", fontStyle: "italic" }}>模型在判断该做什么…</div>)}
         {showTools && node.tools.map((t, i) => (
           <div key={i} style={{
-            border: `1px solid ${highlightTool ? "#6366f1" : "#e0e7ff"}`, borderRadius: 10, padding: "8px 10px", marginTop: i ? 6 : 0,
-            background: "#f8f9ff", boxShadow: highlightTool ? "0 0 0 3px rgba(99,102,241,0.22)" : "none",
+            border: `1px solid ${highlightTool ? ACTOR_COLOR.llm.main : ACTOR_COLOR.llm.border}`, borderRadius: 10, padding: "8px 10px", marginTop: i ? 6 : 0,
+            background: ACTOR_COLOR.llm.bg, boxShadow: highlightTool ? "0 0 0 3px rgba(217,119,87,0.22)" : "none",
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: "#fff", background: "#6366f1", borderRadius: 5, padding: "1px 8px" }}>{t.name}</span>
-              <span style={{ fontSize: 12, color: "#6366f1" }}>{t.explain}</span>
-              <span style={{ marginLeft: "auto", fontSize: 10, color: "#a5b4fc" }}>tool_use</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: "#fff", background: ACTOR_COLOR.llm.main, borderRadius: 5, padding: "1px 8px" }}>{t.name}</span>
+              <span style={{ fontSize: 12, color: ACTOR_COLOR.llm.main }}>{t.explain}</span>
+              <span style={{ marginLeft: "auto", fontSize: 10, color: ACTOR_COLOR.llm.border }}>tool_use</span>
             </div>
             <div style={{ fontFamily: "monospace", fontSize: 13, color: "#334155", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
               {t.name === "Bash" ? "$ " : ""}{t.param}
@@ -187,8 +187,8 @@ function NodeBox({ node, active, ctxStage, showTools, highlightTool }: { node: N
       {node.results.map((o, i) => (
         <div key={i} style={{ marginTop: i ? 10 : 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, fontSize: 13 }}>
-            <span style={{ color: o.isError ? "#b91c1c" : "#0f766e", fontWeight: 700 }}>{o.isError ? "✗" : "✓"} {o.name}</span>
-            <span style={{ marginLeft: "auto", fontSize: 10, color: "#99f6e4" }}>tool_result</span>
+            <span style={{ color: o.isError ? "#b91c1c" : ACTOR_COLOR.agent.main, fontWeight: 700 }}>{o.isError ? "✗" : "✓"} {o.name}</span>
+            <span style={{ marginLeft: "auto", fontSize: 10, color: ACTOR_COLOR.agent.border }}>tool_result</span>
           </div>
           <div style={{ fontFamily: "monospace", fontSize: 13, color: "#334155", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "8px 12px", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55 }}>
             {o.output || "(空)"}
@@ -211,13 +211,13 @@ function MoreNode({ remaining }: { remaining: number }) {
 function FinalNode({ text, calls, active }: { text: string; calls: number; active: boolean }) {
   return (
     <div style={{
-      borderRadius: 12, padding: "14px 18px", background: "#f0fdf4",
-      border: `1px solid ${active ? "#16a34a" : "#bbf7d0"}`, boxShadow: active ? "0 0 0 3px rgba(22,163,74,0.15)" : "none",
+      borderRadius: 12, padding: "14px 18px", background: ACTOR_COLOR.done.bg,
+      border: `1px solid ${active ? ACTOR_COLOR.done.main : ACTOR_COLOR.done.border}`, boxShadow: active ? "0 0 0 3px rgba(85,138,66,0.15)" : "none",
       transition: "box-shadow .3s, border-color .3s",
     }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: "#15803d", marginBottom: 6 }}>✅ 最后一次 LLM 调用 · 无 tool_use → 结论</div>
-      <div style={{ fontSize: 14, color: "#14532d", lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{text || "(无最终文本)"}</div>
-      <div style={{ fontSize: 12, color: "#16a34a", marginTop: 8 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: ACTOR_COLOR.done.main, marginBottom: 6 }}>✅ 最后一次 LLM 调用 · 无 tool_use → 结论</div>
+      <div style={{ fontSize: 14, color: "#2F4A26", lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{text || "(无最终文本)"}</div>
+      <div style={{ fontSize: 12, color: ACTOR_COLOR.done.main, marginTop: 8 }}>
         模型判断信息已充分,这一次不再请求工具,直接给出结论 —— 本轮共 {calls} 次调用,Turn 到此终止。
       </div>
     </div>
@@ -253,8 +253,8 @@ function ContextBar({ iter, tokens, lastText, active, stage }: { iter: number; t
   const full = stage === "full";
   return (
     <div style={{
-      border: `1px solid ${active ? "#6366f1" : "#eef2f6"}`, borderRadius: 10, background: "#fff", padding: "10px 14px",
-      boxShadow: active ? "0 0 0 3px rgba(99,102,241,0.13)" : "none", transition: "box-shadow .3s, border-color .3s",
+      border: `1px solid ${active ? ACTOR_COLOR.llm.main : "#eef2f6"}`, borderRadius: 10, background: "#fff", padding: "10px 14px",
+      boxShadow: active ? "0 0 0 3px rgba(217,119,87,0.13)" : "none", transition: "box-shadow .3s, border-color .3s",
     }}>
       <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>Context · 发给模型的</span>
@@ -265,13 +265,13 @@ function ContextBar({ iter, tokens, lastText, active, stage }: { iter: number; t
           <div key={i} style={{ width: `${s.w}%`, background: s.c, opacity: 0.5 }} />
         ))}
         {full
-          ? <div style={{ width: `${lastPct}%`, background: "#6366f1", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11, fontWeight: 700, animation: "wt-rise .35s ease both" }}>{lastLabel}</div>
+          ? <div style={{ width: `${lastPct}%`, background: ACTOR_COLOR.llm.main, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11, fontWeight: 700, animation: "wt-rise .35s ease both" }}>{lastLabel}</div>
           : <div style={{ width: `${lastPct}%`, border: "1px dashed #cbd5e1", borderRadius: 4, color: "#cbd5e1", fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>待填入</div>}
       </div>
       <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 6 }}>前缀:系统 · 记忆 · 规则 · 历史 · 工具定义(各种 agent 注入)</div>
       {full && (
-        <div style={{ marginTop: 6, background: "#eef2ff", border: "1px solid #e0e7ff", borderRadius: 8, padding: "6px 10px", animation: "wt-rise .35s ease both" }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: "#6366f1" }}>{lastLabel}:</span>{" "}
+        <div style={{ marginTop: 6, background: ACTOR_COLOR.llm.bg, border: `1px solid ${ACTOR_COLOR.llm.border}`, borderRadius: 8, padding: "6px 10px", animation: "wt-rise .35s ease both" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: ACTOR_COLOR.llm.main }}>{lastLabel}:</span>{" "}
           <span style={{ fontSize: 13, color: "#374151", wordBreak: "break-word" }}>{lastText || "(空)"}</span>
         </div>
       )}

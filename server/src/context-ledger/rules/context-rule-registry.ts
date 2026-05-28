@@ -15,6 +15,7 @@ import {
   CONTEXT_LEDGER_RULES,
   SUPPORTED_CLAUDE_CODE_VERSION,
 } from "./rule-registry";
+import { CORPUS_SLOT_BINDINGS } from "../rule-corpus/runtime";
 import type {
   ContextLedgerRule,
   RuleMatchMode,
@@ -78,24 +79,7 @@ export interface ContextRule {
 // WHY：旧 RuleLocationConstraint 只有 section/orderHint 等弱约束；新链路必须由 slotId
 // 决定候选 rule 集合，避免回到全表扫描。
 const SLOT_BINDINGS: Record<string, string[]> = {
-  "claude-code.billing-noise.v1": ["system.billing"],
-  "claude-code.system-prompt-identity.v1": ["system.identity"],
-
-  "claude-code.system-prompt-intro.standard.v1": ["system.main-prompt.section.prelude"],
-  "claude-code.system-prompt-intro.output-style.v1": ["system.main-prompt.section.prelude"],
-  "claude-code.system-prompt-system-section.v1": ["system.main-prompt.section.system"],
-  "claude-code.system-prompt-doing-tasks.v1": ["system.main-prompt.section.doing-tasks"],
-  "claude-code.system-prompt-actions-section.v1": ["system.main-prompt.section.actions"],
-  "claude-code.system-prompt-using-your-tools.v1": ["system.main-prompt.section.using-tools"],
-  "claude-code.system-prompt-output-efficiency.external.v1": ["system.main-prompt.section.output-efficiency"],
-  "claude-code.system-prompt-tone-style.external.v0": ["system.main-prompt.section.tone-style"],
-  "claude-code.system-prompt-tone-style.external.v1": ["system.main-prompt.section.tone-style"],
-  "claude-code.system-prompt-text-output-section.v1": ["system.main-prompt.section.text-output"],
-  "claude-code.system-prompt-session-guidance.v1": ["system.main-prompt.section.session-guidance"],
-  "claude-code.system-prompt-environment.v1": ["system.main-prompt.section.environment"],
-  "claude-code.system-prompt-auto-memory.v1": ["system.main-prompt.section.auto-memory"],
-  "claude-code.system-prompt-context-management.v1": ["system.main-prompt.section.context-management"],
-  "claude-code.system-prompt-gitstatus.v1": ["system.main-prompt.section.context"],
+  // ── system 系列(billing/identity + 15 条 H1 规则)已迁移至 corpus,在末尾 spread 注入 ──
 
   "claude-code.messages.user-context.v1": ["messages.inline.system-reminder"],
   "claude-code.messages.skill-listing.v1": ["messages.inline.system-reminder"],
@@ -132,6 +116,11 @@ const SLOT_BINDINGS: Record<string, string[]> = {
   "claude-code.messages.thinking-frequency.v1": ["messages.inline.system-reminder"],
 
   "claude-code.side-query.session-title.v1": ["side-query.system"],
+
+  // ── Corpus-managed bindings(spread at end → corpus 覆盖 legacy 若 ruleId 冲突)──
+  // Phase 2 起,迁到 corpus 的 rule 由此提供 slot 绑定;legacy 数组中的 hand binding
+  // 同步删除。若漏删 legacy hand binding,corpus 仍覆盖,行为正确(corpus = 单一真值)。
+  ...CORPUS_SLOT_BINDINGS,
 };
 
 function normalizeMatchMode(mode: RuleMatchMode): ContextRuleMatchMode {
