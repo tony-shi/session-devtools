@@ -13,13 +13,14 @@ import { BarChart3, TrendingUp, Zap, ChevronLeft, ChevronRight } from "lucide-re
 import type { SessionsV2Response, SummaryV2, SessionV2 } from "./v2/types";
 import { BRAND } from "./v2/shared/brand";
 
-// 内部录制用的教学画板 —— 仅 dev 可达;生产构建里这段是死分支,
-// 动态 import 会被剥离,npm 包/线上 app 完全不含 walkthrough。
-const DemoStage = import.meta.env.DEV
-  ? lazy(() => import("./v2/walkthrough/DemoStage").then((m) => ({ default: m.DemoStage })))
-  : null;
-const DemoIndex = import.meta.env.DEV
-  ? lazy(() => import("./v2/walkthrough/DemoIndex").then((m) => ({ default: m.DemoIndex })))
+// Optional local-only dev routes. To mount routes like /demo, create
+// `client/src/local-routes.tsx` (gitignored) exporting a default React component
+// that renders its own <Routes>...</Routes>. import.meta.glob returns an empty
+// object when the file is absent, so prod, CI, and fresh clones build cleanly.
+const localRoutesModules = import.meta.glob<{ default?: React.ComponentType }>("./local-routes.tsx");
+const localRoutesLoader = localRoutesModules["./local-routes.tsx"];
+const LocalRoutes = import.meta.env.DEV && localRoutesLoader
+  ? lazy(() => localRoutesLoader().then((m) => ({ default: m.default ?? (() => null) })))
   : null;
 
 type Tab = "sessions-v2" | "proxy-v2" | "trends";
@@ -291,14 +292,10 @@ function AppShell() {
               }
             />
             <Route path="/proxy" element={<ProxyV2Setup />} />
-            {/* 内部教学画板:仅 dev 注册,生产构建里剥离;不在主导航 */}
-            {import.meta.env.DEV && DemoIndex && (
-              <Route path="/demo" element={<Suspense fallback={null}><DemoIndex /></Suspense>} />
-            )}
-            {import.meta.env.DEV && DemoStage && (
-              <Route path="/demo/:storyId" element={<Suspense fallback={null}><DemoStage /></Suspense>} />
-            )}
           </Routes>
+          {LocalRoutes && (
+            <Suspense fallback={null}><LocalRoutes /></Suspense>
+          )}
         </main>
       </div>
     </div>
