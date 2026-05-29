@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate } from "react-router-dom";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { SessionV2 } from "./types";
-import type { SessionDrilldown, UserTurn, InterTurnBlock, CompactEvent } from "./drilldown-types";
+import type { SessionDrilldown, UserTurn, InterTurnBlock, CompactEvent, IntervalEvent } from "./drilldown-types";
 import { apiV2 } from "./api";
 import type { SideCall } from "./api";
 import type { SubAgentSummary } from "./drilldown-types";
@@ -367,6 +367,28 @@ export function SessionDetailV2({ session, onClose }: Props) {
     return m;
   }, [turns]);
 
+  // Side call → JSONL 锚点反向索引：聚合 controller 已回填的 generatedByProxyRequestId
+  // (+ ai-title 兜底未捕获 proxy) 成 proxy/title → turnId，供 Background 行反向跳转。
+  const { anchorTurnByProxyId, anchorTurnByAiTitle } = useMemo(() => {
+    const byProxy = new Map<number, number>();
+    const byAiTitle = new Map<string, number>();
+    const visit = (ev: IntervalEvent, turnId: number) => {
+      const pid = ev.generatedByProxyRequestId;
+      if (pid != null && !byProxy.has(pid)) byProxy.set(pid, turnId);
+      if (ev.kind === "ai-title") {
+        try {
+          const t = (JSON.parse(ev.rawJson) as { aiTitle?: string }).aiTitle;
+          if (t && !byAiTitle.has(t)) byAiTitle.set(t, turnId);
+        } catch { /* skip malformed */ }
+      }
+    };
+    for (const turn of turns) {
+      turn.leadingEvents.forEach(ev => visit(ev, turn.id));
+      for (const call of turn.calls) call.intervalEvents.forEach(ev => visit(ev, turn.id));
+    }
+    return { anchorTurnByProxyId: byProxy, anchorTurnByAiTitle: byAiTitle };
+  }, [turns]);
+
   const onJumpToCall = useCallback((callId: number, lens?: "request" | "response") => {
     const call = callById.get(callId);
     if (!call) return;
@@ -408,7 +430,14 @@ export function SessionDetailV2({ session, onClose }: Props) {
       <SheetContent
         side="right"
         showCloseButton={false}
-        className="!max-w-none p-0 gap-0 sm:max-w-none"
+        // 深链/点击进入时，Radix 抽屉默认把焦点移到内部第一个可聚焦元素（标题
+        // 按钮），导致标题常驻一个 focus ring（看起来像 URL 蓝框）。阻止开场
+        // auto-focus 即可消除；抽屉的焦点陷阱 / Esc 关闭不受影响。
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        // 抽屉容器是 tabindex=-1 的 div，被聚焦时浏览器会画原生（蓝色）focus
+        // outline，只露出左缘 → 看起来像一条蓝竖线，且与内部靛色"选中"竖条语义
+        // 打架。结构边交给中性 border-l + shadow，故抑制容器自身的 outline。
+        className="!max-w-none p-0 gap-0 sm:max-w-none focus:outline-hidden"
         style={{
           // Drawer width is responsive to "how much canvas does this state
           // need":
@@ -576,6 +605,9 @@ export function SessionDetailV2({ session, onClose }: Props) {
               <BackgroundCallsPanel
                 sessionId={session.session_id}
                 onOpenSideCall={(pid) => goNav({ level: "side-call", proxyRequestId: pid })}
+                anchorTurnByProxyId={anchorTurnByProxyId}
+                anchorTurnByAiTitle={anchorTurnByAiTitle}
+                onJumpToAnchor={(turnId) => goNav({ level: "turn", turnId })}
               />
             )}
             {navLevel === "side-call" && selectedProxyRequestId != null && (

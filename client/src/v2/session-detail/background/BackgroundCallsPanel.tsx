@@ -35,9 +35,17 @@ const tdStyle: React.CSSProperties = {
 
 export function BackgroundCallsPanel({
   sessionId, onOpenSideCall,
+  anchorTurnByProxyId, anchorTurnByAiTitle, onJumpToAnchor,
 }: {
   sessionId: string;
   onOpenSideCall: (proxyRequestId: number) => void;
+  /** proxyRequestId → 锚定 turn.id；缺席时该 side call 不显示反向跳转。
+   *  由 SessionDetailV2 从 drilldown.turns 的事件 generatedByProxyRequestId 反向聚合。 */
+  anchorTurnByProxyId: Map<number, number>;
+  /** aiTitle 文本 → 锚定 turn.id；用于 proxy 未捕获、仅 JSONL 留痕的 ai-title 行。 */
+  anchorTurnByAiTitle: Map<string, number>;
+  /** 点击"已在对话中"按钮时回调；负责把 nav 切到目标 turn。 */
+  onJumpToAnchor: (turnId: number) => void;
 }) {
   const [data, setData] = useState<SideCallsResponse | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ok" | "error">("loading");
@@ -108,9 +116,23 @@ export function BackgroundCallsPanel({
             </tr>
           </thead>
           <tbody>
-            {sideCalls.map((sc, i) => (
-              <SideCallRow key={sc.proxyRequestId ?? `uncaptured-${i}`} sc={sc} onOpen={onOpenSideCall} />
-            ))}
+            {sideCalls.map((sc, i) => {
+              // 反向锚点解析：先按 proxyRequestId 查，未捕获的 ai-title 兜底按
+              // title（=aiTitle）查。两者都找不到 → 该行没有反向跳转链接。
+              const anchorTurnId =
+                (sc.proxyRequestId != null ? anchorTurnByProxyId.get(sc.proxyRequestId) : undefined)
+                ?? (sc.kind === "generate_session_title" && sc.title ? anchorTurnByAiTitle.get(sc.title) : undefined)
+                ?? null;
+              return (
+                <SideCallRow
+                  key={sc.proxyRequestId ?? `uncaptured-${i}`}
+                  sc={sc}
+                  anchorTurnId={anchorTurnId}
+                  onOpen={onOpenSideCall}
+                  onJumpToAnchor={onJumpToAnchor}
+                />
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -118,7 +140,15 @@ export function BackgroundCallsPanel({
   );
 }
 
-function SideCallRow({ sc, onOpen }: { sc: SideCall; onOpen: (proxyRequestId: number) => void }) {
+function SideCallRow({
+  sc, anchorTurnId, onOpen, onJumpToAnchor,
+}: {
+  sc: SideCall;
+  /** 反向锚点：当 side call 在 transcript 中有对应行时，这里是承载它的 turn.id。null = 不可跳转。 */
+  anchorTurnId: number | null;
+  onOpen: (proxyRequestId: number) => void;
+  onJumpToAnchor: (turnId: number) => void;
+}) {
   return (
     <tr style={{ borderBottom: "1px solid #f3f4f6" }} className="hover:bg-neutral-50 transition-colors">
       <td style={tdStyle}>
@@ -147,7 +177,25 @@ function SideCallRow({ sc, onOpen }: { sc: SideCall; onOpen: (proxyRequestId: nu
         {sc.startedAt ? fmtDateShort(sc.startedAt) : "—"}
       </td>
       <td style={tdStyle}>
-        {sc.anchored ? (
+        {anchorTurnId != null ? (
+          // 反向跳转按钮：点击切到承载这条 side call JSONL 锚点行的 turn。
+          // 视觉沿用旧版"已在对话中" 绿底色，附加 hover 加深 + 下划线提示可点。
+          <button
+            type="button"
+            onClick={() => onJumpToAnchor(anchorTurnId)}
+            title={`跳到 Turn ${anchorTurnId} 的 JSONL 锚点行`}
+            style={{
+              fontSize: 10, padding: "2px 7px", borderRadius: 8,
+              background: "#ecfdf5", color: "#047857", fontWeight: 600,
+              whiteSpace: "nowrap", border: "1px solid #a7f3d0",
+              cursor: "pointer", textDecoration: "underline",
+            }}
+          >
+            → Turn {anchorTurnId}
+          </button>
+        ) : sc.anchored ? (
+          // 兜底：服务端标 anchored=true 但 drilldown 还没载入 / 反向索引未命中
+          // （理论上不应发生）。保留旧静态徽章，至少状态语义不丢。
           <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 8, background: "#ecfdf5", color: "#047857", fontWeight: 600, whiteSpace: "nowrap" }}>
             已在对话中
           </span>

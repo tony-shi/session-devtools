@@ -32,10 +32,14 @@ export function SessionDetailHeader({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  // 面包屑按钮统一 focus 样式：去掉浏览器默认 outline（深链进入时那个"蓝框"），
+  // 仅在键盘 focus（:focus-visible）时显示一个克制的靛色 ring —— 既不丢可访问性，
+  // 又不会在鼠标点击 / 抽屉开场 auto-focus 时常驻难看的方框。
+  const crumbBtnCls = "rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-indigo-400";
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 20px", borderBottom: "1px solid #e5e7eb", flexShrink: 0, background: "#fff", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, flex: 1 }}>
-        <button onClick={onNavSession} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}>
+        <button onClick={onNavSession} className={crumbBtnCls} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: navLevel === "session" ? BRAND.indigo500 : "#111827" }}>{title}</span>
         </button>
         {title !== sessionId && (
@@ -50,6 +54,7 @@ export function SessionDetailHeader({
             <>
               <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
               <button onClick={() => onNavigate({ level: "turn", turnId: crumbTurn.id })}
+                className={crumbBtnCls}
                 style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: navLevel === "turn" && !selectedCall ? BRAND.indigo500 : "#374151" }}>{t("sessionOverview.turn.label")} {crumbTurn.id}</span>
               </button>
@@ -73,6 +78,7 @@ export function SessionDetailHeader({
             <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
             <button
               onClick={() => onNavigate({ level: "compact-event", compactIdx: selectedCompactEventIdx })}
+              className={crumbBtnCls}
               style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, flexShrink: 0 }}
             >
               <span style={{
@@ -104,7 +110,7 @@ export function SessionDetailHeader({
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
         {loadState === "loading" && (
-          <span style={{ fontSize: 10, color: BRAND.indigo500, background: "#eff6ff", borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.loading")}</span>
+          <span style={{ fontSize: 10, color: BRAND.indigo500, background: BRAND.indigo50, borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.loading")}</span>
         )}
         {loadState === "error" && (
           <span style={{ fontSize: 10, color: "#dc2626", background: "#fef2f2", borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.error")}</span>

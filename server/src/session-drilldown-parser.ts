@@ -384,12 +384,21 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
   } else if (iev.type === "ai-title") {
     kind = "ai-title";
     preview = ((iev as { aiTitle?: string }).aiTitle ?? "").slice(0, 300);
-  } else if (iev.type === "permission-mode") {
-    // 纯客户端会话状态（default/acceptEdits/bypassPermissions/plan）。piK policy=always，
-    // 用于 --resume 恢复 + 遥测，不进 LLM context（模型只见 system prompt 里一句
-    // 通用的"工具按权限模式执行"，不含具体 mode 值）。当元数据行展示即可。
+  } else if (iev.type === "permission-mode" || iev.type === "mode") {
+    // 工具权限 / 会话操作模式（normal·default / acceptEdits / bypassPermissions / plan）。
+    // 两种 jsonl 形态同源、归为一类：
+    //   旧 {type:"permission-mode", permissionMode}
+    //   新 {type:"mode", mode, sessionId} —— cli.js 在 session 元数据 flush 时写
+    //       （紧跟 agent-setting：jZ(sessionFile,{type:"mode",mode:currentSessionMode,sessionId})），
+    //       基线模式记作 "normal"（旧形态记作 "default"）。
+    // 两者都在 cli.js 的 METADATA_TYPE_MARKERS 里 —— session-scoped 元数据，**不进 LLM
+    // context**（模型只见 system prompt 里一句通用权限说明，不含具体 mode 值）。当元数据行展示即可。
     kind = "permission-mode";
-    preview = String((iev as { permissionMode?: unknown }).permissionMode ?? "");
+    preview = String(
+      (iev as { mode?: unknown }).mode
+      ?? (iev as { permissionMode?: unknown }).permissionMode
+      ?? "",
+    );
   } else if (iev.type === "custom-title") {
     // 用户 /rename 设置的标题（读取优先级高于 ai-title）。piK always，非 context。
     kind = "custom-title";
@@ -1381,21 +1390,19 @@ export async function parseSessionDrilldown(
       }
       if (blockEvents.length === 0) continue;
 
-      // Build a label summarising what happened
+      // Build a label summarising what commands were invoked. Only count the
+      // *input* envelopes (<command-name> / <bash-input>); stdout/stderr is the
+      // RESULT of a command, not another command — historically lumping stdout
+      // into the label produced misleading titles like "/exit, Goodbye!" that
+      // read as two sibling commands.
       const cmdNames: string[] = [];
       for (const ev of blockEvents) {
-        if (ev.kind === "user:command" || ev.kind === "system:local_command") {
-          const raw = ev.contentPreview;
-          // Extract <command-name>/exit</command-name>
-          const cmdMatch = raw.match(/<command-name>([^<]+)<\/command-name>/);
-          if (cmdMatch) { cmdNames.push(cmdMatch[1].trim()); continue; }
-          // bash-input
-          const bashMatch = raw.match(/<bash-input>([^<\n]{0,40})/);
-          if (bashMatch) { cmdNames.push(`!${bashMatch[1].trim()}`); continue; }
-          // local-command-stdout (e.g. Bye!)
-          const stdoutMatch = raw.match(/<local-command-stdout>([^<\n]{0,40})/);
-          if (stdoutMatch) { cmdNames.push(stdoutMatch[1].trim()); }
-        }
+        if (ev.kind !== "user:command" && ev.kind !== "system:local_command") continue;
+        const raw = ev.contentPreview;
+        const cmdMatch = raw.match(/<command-name>([^<]+)<\/command-name>/);
+        if (cmdMatch) { cmdNames.push(cmdMatch[1].trim()); continue; }
+        const bashMatch = raw.match(/<bash-input>([^<\n]{0,40})/);
+        if (bashMatch) cmdNames.push(`!${bashMatch[1].trim()}`);
       }
       const label = cmdNames.length > 0
         ? [...new Set(cmdNames)].slice(0, 3).join(", ")

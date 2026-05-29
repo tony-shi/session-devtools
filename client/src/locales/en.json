@@ -28,6 +28,7 @@
     "noResults": "No matching sessions",
     "noSessions": "No sessions",
     "colTool": "Tool",
+    "colStatus": "Status",
     "colSession": "Session",
     "colWorkdir": "Workdir",
     "colUserTurns": "User Turns",
@@ -377,6 +378,14 @@
         "unparseable": "Version string unparseable",
         "baseline-missing": "Corpus has no version baseline"
       }
+    },
+    "howToRead": {
+      "title": "How to read this",
+      "step1": "Intent groups: the top bar slices the prompt by what each part is doing (system / tools / conversation …); width = share of context.",
+      "step2": "Drill in: click any group bar or table row to expand its segment list.",
+      "step3": "Trace a source: click a segment to see its origin, JSONL / request path, char share, and jump to the call that produced it.",
+      "step4": "Overlay lenses: the top Lens row adds Diff (added/removed vs. the previous call) / Cache (L1/L2/L3 hits).",
+      "sectionOpenHint": "Group expanded — click any segment above to see its attribution detail."
     }
   },
   "callLedger": {
@@ -487,6 +496,8 @@
     "alsoInN": "· +{{n}} more"
   },
   "terms": {
+    "viewSideCallDetail": "View detail",
+    "sideCallGeneratedBy": "Open the background request that generated it (proxy#{{proxyId}})",
     "callMinimap": "Call Minimap",
     "semanticCallChain": "Semantic Call Chain",
     "jsonlEventGraph": "JSONL Event Graph",
@@ -556,7 +567,7 @@
   "eventKindDesc": {
     "ai_title": "AI-generated session title (background Haiku call). Shown in the session list / --resume only; does NOT enter the conversation context. Overridden by a user /rename custom title.",
     "last_prompt": "Snapshot of the session's most recent user prompt (newlines flattened, truncated to 200 chars). For --resume / claude ps listing; does NOT enter context — the real prompt lives in the user message.",
-    "permission_mode": "Current tool permission mode (default / acceptEdits / bypassPermissions / plan). Client-side session state for --resume and telemetry; the specific mode value does NOT enter context (the model only sees a generic permission-mode line in the system prompt).",
+    "permission_mode": "Current tool / session mode (normal·default / acceptEdits / bypassPermissions / plan). Groups two same-origin JSONL shapes: legacy {type:\"permission-mode\"} and newer {type:\"mode\"} (written by cli.js on session-metadata flush; baseline recorded as normal). Client-side session state for --resume and telemetry; a session-scoped metadata entry whose mode value does NOT enter context (the model only sees a generic permission-mode line in the system prompt).",
     "file_history_snapshot": "File-checkpoint snapshot: backup pointers for files changed at a given message, used to rewind/restore. Backups live on disk and do NOT enter context; an empty snapshot is the session's initial baseline.",
     "custom_title": "Session title set by the user via /rename (takes read priority over the AI title). Display-only; does NOT enter context.",
     "agent_name": "Display name of a (sub-)agent session. Client-side session state; does NOT enter context.",

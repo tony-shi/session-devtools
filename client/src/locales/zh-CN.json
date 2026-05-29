@@ -28,6 +28,7 @@
     "noResults": "未找到匹配的会话",
     "noSessions": "暂无会话",
     "colTool": "工具",
+    "colStatus": "状态",
     "colSession": "会话",
     "colWorkdir": "工作区",
     "colUserTurns": "用户轮次",
@@ -373,6 +374,14 @@
         "unparseable": "版本号无法解析",
         "baseline-missing": "corpus 无版本基线"
       }
+    },
+    "howToRead": {
+      "title": "如何读这张图",
+      "step1": "意图分组：上方色条按「这段 prompt 在干什么」切块（系统指令 / 工具 / 对话 …），块宽 = 占上下文比例。",
+      "step2": "下钻：点任一分组条或下方表行，展开它的 segment 列表。",
+      "step3": "看来源：点一个 segment，这里显示它的来源、JSONL / 请求路径、字符占比，并可跳到产生它的 call。",
+      "step4": "叠加视角：顶部 Lens 行可叠加 Diff（与上一条 call 的增删）/ 缓存（L1/L2/L3 命中）。",
+      "sectionOpenHint": "已展开分组 —— 点上方任一 segment 查看其归因详情。"
     }
   },
   "callLedger": {
@@ -476,6 +485,8 @@
     "notCoveredHint": "本层未覆盖的部分"
   },
   "terms": {
+    "viewSideCallDetail": "查看详情",
+    "sideCallGeneratedBy": "打开生成它的后台请求（proxy#{{proxyId}}）",
     "callMinimap": "Call 概览",
     "semanticCallChain": "语义调用链",
     "jsonlEventGraph": "JSONL 事件图",
@@ -545,7 +556,7 @@
   "eventKindDesc": {
     "ai_title": "AI 自动生成的会话标题（后台 Haiku 调用）。仅用于会话列表 / --resume 显示，不进入对话 context；会被用户 /rename 的自定义标题覆盖。",
     "last_prompt": "会话最近一条用户 prompt 的快照（换行压平、截断到 200 字）。供 --resume / claude ps 列表显示，不进入 context；真正的 prompt 在对应的 user 消息里。",
-    "permission_mode": "当前工具权限模式（default / acceptEdits / bypassPermissions / plan）。客户端会话状态，用于 --resume 恢复与遥测；具体模式值不进入 context（模型只看到 system prompt 里一句通用的权限说明）。",
+    "permission_mode": "当前工具 / 会话模式（normal·default / acceptEdits / bypassPermissions / plan）。两种同源 JSONL 形态归为一类：旧 {type:\"permission-mode\"}、新 {type:\"mode\"}（cli.js 在会话元数据 flush 时写，基线模式记作 normal）。客户端会话状态，用于 --resume 恢复与遥测；属 session 级元数据，具体模式值不进入 context（模型只看到 system prompt 里一句通用的权限说明）。",
     "file_history_snapshot": "文件检查点快照：记录某条消息处被改动文件的备份指针，供回溯（rewind）还原。备份内容存在磁盘、不进入 context；空快照 = 会话起点的初始基线。",
     "custom_title": "用户通过 /rename 设置的会话标题（读取优先级高于 AI 标题）。仅用于显示，不进入 context。",
     "agent_name": "（子）agent 会话的显示名。客户端会话状态，不进入 context。",
