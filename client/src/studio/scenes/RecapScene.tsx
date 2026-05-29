@@ -20,7 +20,8 @@ const ROWS: Row[] = [
   { depth: 2, term: "LLM Call", desc: "一次带着具体 context 的模型请求", color: ACTOR_COLOR.llm.main, loop: "start", stage: STAGE_GATHER },
   { depth: 3, term: "tool_use", desc: "模型想做什么(提出的动作)", color: ACTOR_COLOR.llm.main, stage: STAGE_ACT },
   { depth: 3, term: "tool_result", desc: "现实返回了什么(执行的证据)", color: ACTOR_COLOR.agent.main, loop: "end", stage: STAGE_VERIFY },
-  { depth: 2, term: "└ 直到 LLM 自行决策停止", desc: "不再 tool_use → 跳出循环,给出最终结论", color: ACTOR_COLOR.done.main },
+  // final answer 与 LLM Call 同级(depth 2)、在 Turn 之下 —— 信息足够时模型不再 tool_use,Turn 结束。
+  { depth: 2, term: "final answer", desc: "模型不再 tool_use,给出最终回答 → Turn 结束", color: ACTOR_COLOR.done.main },
 ];
 
 const ROW_H = 62;        // 固定行高(用于 while 括号几何)

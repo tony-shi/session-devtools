@@ -2,41 +2,41 @@
   "storyId": "agent-loop",
   "lang": "en",
   "voice": "mock:default",
-  "builtAt": "2026-05-28T13:23:54.016Z",
-  "totalMs": 69760,
+  "builtAt": "2026-05-29T07:38:05.271Z",
+  "totalMs": 132460,
   "steps": [
     {
       "stepIdx": 0,
       "lines": [
         {
           "idx": 0,
-          "text": "At first glance, Claude Code looks like a coding chat box inside your terminal.",
-          "durMs": 3920,
-          "gapMs": 300
+          "text": "To understand Claude Code, don't start from the chat log.",
+          "durMs": 2800,
+          "gapMs": 500
         },
         {
           "idx": 1,
-          "text": "You type a request, and it replies with an explanation.",
+          "text": "More precisely, it's an execution chain: Session, Turn, LLM Call.",
           "durMs": 2800,
-          "gapMs": 300
+          "gapMs": 500
         },
         {
           "idx": 2,
-          "text": "But if it were only chat, it could not fix bugs, run tests, or edit code.",
-          "durMs": 4480,
-          "gapMs": 300
+          "text": "Start with the outermost layer — a Session, one complete conversation.",
+          "durMs": 3080,
+          "gapMs": 900
         },
         {
           "idx": 3,
-          "text": "Inside that box, it is observing, acting, and observing again.",
-          "durMs": 2800,
-          "gapMs": 300
+          "text": "Every user request, model call, tool call and result lives inside it, start to end,",
+          "durMs": 4200,
+          "gapMs": 500
         },
         {
           "idx": 4,
-          "text": "That continuous work record is a Session.",
-          "durMs": 1960,
-          "gapMs": 300
+          "text": "including the maintenance steps that happen along the way.",
+          "durMs": 2520,
+          "gapMs": 1500
         }
       ]
     },
@@ -45,27 +45,27 @@
       "lines": [
         {
           "idx": 0,
-          "text": "A Session is a continuous conversation inside a specific workspace.",
-          "durMs": 2800,
-          "gapMs": 300
+          "text": "Take one Turn out of the Session.",
+          "durMs": 1960,
+          "gapMs": 200
         },
         {
           "idx": 1,
-          "text": "A Turn is one request you send to Claude Code.",
-          "durMs": 2800,
-          "gapMs": 300
+          "text": "A Turn is one task the user starts — one user task, one Turn.",
+          "durMs": 3920,
+          "gapMs": 200
         },
         {
           "idx": 2,
-          "text": "You might assume one Turn means one model call.",
-          "durMs": 2520,
-          "gapMs": 300
+          "text": "A Session can hold many Turns, each with its own goal and process.",
+          "durMs": 3640,
+          "gapMs": 200
         },
         {
           "idx": 3,
-          "text": "But it is much more complex: Claude may need to think several times, inspect several things, and only then answer.",
-          "durMs": 5600,
-          "gapMs": 300
+          "text": "Remember this boundary: a Turn is the boundary of a user task.",
+          "durMs": 3360,
+          "gapMs": 200
         }
       ]
     },
@@ -74,27 +74,27 @@
       "lines": [
         {
           "idx": 0,
-          "text": "让我们聚焦其中一个 Turn,看看里面到底发生了什么 —— 先从用户输入开始。",
-          "durMs": 1120,
-          "gapMs": 300
+          "text": "Go inside one Turn — first the user input, the task for this round.",
+          "durMs": 3920,
+          "gapMs": 200
         },
         {
           "idx": 1,
-          "text": "Agent 开始准备上下文:先填入系统提示、记忆、规则、历史…",
-          "durMs": 800,
-          "gapMs": 300
+          "text": "The agent assembles the context: system prompt, memory, rules, history, tool definitions…",
+          "durMs": 3360,
+          "gapMs": 200
         },
         {
           "idx": 2,
-          "text": "再填入这一轮真正要解决的问题。",
-          "durMs": 800,
-          "gapMs": 300
+          "text": "then the real question for this round.",
+          "durMs": 1960,
+          "gapMs": 200
         },
         {
           "idx": 3,
-          "text": "打包完成,发起第一次 LLM 调用。",
-          "durMs": 840,
-          "gapMs": 300
+          "text": "Packed and sent — that's one LLM Call: context in, and the model decides the next step.",
+          "durMs": 4760,
+          "gapMs": 200
         }
       ]
     },
@@ -103,27 +103,27 @@
       "lines": [
         {
           "idx": 0,
-          "text": "极简单的任务,LLM 可能直接回答;但更多时候,它会决定先获取更多信息。",
-          "durMs": 800,
-          "gapMs": 300
+          "text": "For trivial tasks the model may answer directly; more often, it needs more evidence first.",
+          "durMs": 4200,
+          "gapMs": 200
         },
         {
           "idx": 1,
-          "text": "于是 LLM 返回一个特殊结果:tool_use。",
-          "durMs": 840,
-          "gapMs": 300
+          "text": "So instead of answering, it proposes a tool_use.",
+          "durMs": 2240,
+          "gapMs": 200
         },
         {
           "idx": 2,
-          "text": "tool_use 不是答案,只是模型提出的一个动作请求。",
-          "durMs": 800,
-          "gapMs": 300
+          "text": "A tool_use is not an answer — it's the model requesting an action.",
+          "durMs": 3640,
+          "gapMs": 200
         },
         {
           "idx": 3,
-          "text": "比如:读文件、搜代码、执行命令。",
-          "durMs": 800,
-          "gapMs": 300
+          "text": "For example: read a file, search code, run a command.",
+          "durMs": 2800,
+          "gapMs": 200
         }
       ]
     },
@@ -132,33 +132,33 @@
       "lines": [
         {
           "idx": 0,
-          "text": "接下来,Agent 真的去执行这个工具。",
-          "durMs": 800,
-          "gapMs": 300
+          "text": "Next, the agent actually runs the tool.",
+          "durMs": 1960,
+          "gapMs": 200
         },
         {
           "idx": 1,
-          "text": "执行完,工具返回 tool_result。",
-          "durMs": 800,
-          "gapMs": 300
+          "text": "When it finishes, it returns a tool_result.",
+          "durMs": 1960,
+          "gapMs": 200
         },
         {
           "idx": 2,
-          "text": "关键在这:模型不是自己幻想文件内容。",
-          "durMs": 800,
-          "gapMs": 300
+          "text": "Here's the key: the model doesn't hallucinate — it gets the tool's real output.",
+          "durMs": 3920,
+          "gapMs": 200
         },
         {
           "idx": 3,
-          "text": "它拿到工具返回的真实结果,再继续推理。",
-          "durMs": 800,
-          "gapMs": 300
+          "text": "And that result enters the context of the next LLM Call.",
+          "durMs": 3080,
+          "gapMs": 200
         },
         {
           "idx": 4,
-          "text": "tool_use 是模型提出的动作;tool_result 是世界返回的证据。",
-          "durMs": 840,
-          "gapMs": 300
+          "text": "tool_use is the action the model proposes; tool_result is the evidence the world returns.",
+          "durMs": 3920,
+          "gapMs": 200
         }
       ]
     },
@@ -167,39 +167,39 @@
       "lines": [
         {
           "idx": 0,
-          "text": "现在把它们串起来 —— 这是这个 Turn 真实的调用链路。",
-          "durMs": 1400,
-          "gapMs": 300
+          "text": "String them together — this is the Agent Loop, running between LLM Calls.",
+          "durMs": 3640,
+          "gapMs": 200
         },
         {
           "idx": 1,
-          "text": "Call 产生 tool_use,Agent 执行得到 tool_result。",
-          "durMs": 1400,
-          "gapMs": 300
+          "text": "A Call proposes a tool_use; execution returns a tool_result; it's fed back into context and triggers the next Call.",
+          "durMs": 5320,
+          "gapMs": 200
         },
         {
           "idx": 2,
-          "text": "tool_result 被塞回下一次 Call 的 context,上下文越滚越大。",
-          "durMs": 1400,
-          "gapMs": 300
+          "text": "The loop continues — the model gathers evidence step by step, understanding more each time.",
+          "durMs": 4200,
+          "gapMs": 200
         },
         {
           "idx": 3,
-          "text": "循环往复 —— 模型负责推理,工具负责行动,理解越来越完整。",
-          "durMs": 840,
-          "gapMs": 300
+          "text": "Until, at some call, the model decides it has enough.",
+          "durMs": 2800,
+          "gapMs": 200
         },
         {
           "idx": 4,
-          "text": "直到某一次调用,模型判断信息已充分 —— 不再 tool_use,而是给出最终结论。",
-          "durMs": 1120,
-          "gapMs": 300
+          "text": "It stops proposing tools and gives the final answer — and this Turn ends.",
+          "durMs": 3920,
+          "gapMs": 200
         },
         {
           "idx": 5,
-          "text": "从用户输入,到这最后一次 LLM 调用给出结果 —— 一个 Turn 就此终止。",
-          "durMs": 1960,
-          "gapMs": 300
+          "text": "Mind the hierarchy: the Agent Loop runs between LLM Calls — it sits under LLM Call, not beside Session or Turn.",
+          "durMs": 5880,
+          "gapMs": 200
         }
       ]
     },
@@ -208,51 +208,51 @@
       "lines": [
         {
           "idx": 0,
-          "text": "Session —— 一次完整的会话。",
-          "durMs": 840,
-          "gapMs": 300
+          "text": "Session — one complete conversation, organizing all the work.",
+          "durMs": 2520,
+          "gapMs": 200
         },
         {
           "idx": 1,
-          "text": "Turn —— 一次用户请求,以及为回答它的全部工作。",
-          "durMs": 840,
-          "gapMs": 300
+          "text": "Turn — one user task, and the whole process to complete it.",
+          "durMs": 3360,
+          "gapMs": 200
         },
         {
           "idx": 2,
-          "text": "LLM Call —— 一次带着具体 context 的模型请求。",
-          "durMs": 1680,
-          "gapMs": 300
+          "text": "LLM Call — one model decision, carrying its context.",
+          "durMs": 2520,
+          "gapMs": 200
         },
         {
           "idx": 3,
-          "text": "tool_use —— 模型想做什么。",
-          "durMs": 840,
-          "gapMs": 300
+          "text": "tool_use — what the model wants to do.",
+          "durMs": 2240,
+          "gapMs": 200
         },
         {
           "idx": 4,
-          "text": "tool_result —— 现实返回了什么 —— 指针又跳回 LLM Call,像一个 while 循环。",
-          "durMs": 2520,
-          "gapMs": 300
+          "text": "tool_result — what reality returned; fed back into context, triggering the next Call.",
+          "durMs": 3640,
+          "gapMs": 200
         },
         {
           "idx": 5,
-          "text": "出口只有一个 —— LLM 自行决策不再 tool_use,跳出循环、给出结论。",
-          "durMs": 1400,
-          "gapMs": 300
+          "text": "When there's enough, the model stops calling tools and gives the final answer — the Turn ends.",
+          "durMs": 4760,
+          "gapMs": 200
         },
         {
           "idx": 6,
-          "text": "把循环抽象出来,其实就是三个阶段:收集上下文 → 采取行动 → 验证结果。",
-          "durMs": 1400,
-          "gapMs": 300
+          "text": "Abstract the loop and it's three stages: gather context → take action → verify result.",
+          "durMs": 4200,
+          "gapMs": 200
         },
         {
           "idx": 7,
-          "text": "而驱动它的只有两件事:模型负责推理,工具负责行动。",
-          "durMs": 800,
-          "gapMs": 300
+          "text": "And only two things drive it: the model reasons, the tools act.",
+          "durMs": 3360,
+          "gapMs": 200
         }
       ]
     }
