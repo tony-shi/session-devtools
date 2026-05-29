@@ -34,10 +34,16 @@ export const ConversationScene = ({ turns, overviewEndFrame }: { turns: SceneTur
     if (innerRef.current) setContentH(innerRef.current.getBoundingClientRect().height);
   });
 
+  // 镜头:内容短 → 垂直居中(不再顶到上边留空板);内容长 → 跟随底部(最新可见)。
+  // contentH 随打字连续增长,所以这条曲线天生平滑。
   const usable = height - PAD * 2;
-  const overviewScroll = -Math.max(0, contentH - usable); // 跟随底部:最新内容贴底
-  // turn 阶段滚到顶(Turn 1 是第一轮,translateY 0 即把它带到最上)
-  const scrollY = interpolate(frame, [B - 8, B + 8], [overviewScroll, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const fits = contentH > 0 && contentH <= usable;
+  const centerY = (usable - contentH) / 2;
+  const followBottomY = -Math.max(0, contentH - usable);
+  const overviewY = fits ? centerY : followBottomY;
+  // turn 焦点态:要让框住的 Turn 1(第一轮)可见 —— 放得下就居中,放不下就从顶部显示。
+  const turnY = fits ? centerY : 0;
+  const scrollY = interpolate(frame, [B - 8, B + 8], [overviewY, turnY], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   // 焦点切换的淡入进度(0→1)
   const focusIn = interpolate(frame, [B, B + 14], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 

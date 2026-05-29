@@ -10,18 +10,19 @@ import type { Focus } from "../../v2/walkthrough/types";
 import type { VoiceManifest } from "./narration";
 
 export type BeatLoc = { stepIdx: number; focus: Focus; beat: number; beatCount: number };
+export type ClockSeg = BeatLoc & { start: number; end: number };
 
 export type ActClock = {
   total: number;                            // 这一幕总帧数
   at: (localFrame: number) => BeatLoc;      // 局部帧 → 当前拍
+  segments: ClockSeg[];                     // 每一拍的帧区间(供镜头按揭示帧缓动)
   stepStartFrame: (stepIdx: number) => number;
 };
 
 export function buildActClock(storyId: string, manifest: VoiceManifest, stepIdxs: number[], fps: number): ActClock {
   const story = STORIES[storyId];
   const f = (ms: number) => Math.round((ms / 1000) * fps);
-  type Seg = BeatLoc & { start: number; end: number };
-  const segs: Seg[] = [];
+  const segs: ClockSeg[] = [];
   const stepStart = new Map<number, number>();
   let cursor = 0;
   for (const stepIdx of stepIdxs) {
@@ -38,6 +39,7 @@ export function buildActClock(storyId: string, manifest: VoiceManifest, stepIdxs
   }
   return {
     total: cursor,
+    segments: segs,
     stepStartFrame: (s) => stepStart.get(s) ?? 0,
     at: (localFrame) => {
       const seg = segs.find((s) => localFrame < s.end) ?? segs[segs.length - 1];

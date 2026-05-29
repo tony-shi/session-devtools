@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import type { Focus } from "../../v2/walkthrough/types";
 import { sectionPalette } from "../../v2/lens-palette";
@@ -87,29 +87,76 @@ function isActive(node: Node, focus: Focus): boolean {
   }
 }
 
+const GAP = 16;
+
 export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActClock }) => {
   const frame = useCurrentFrame();
-  const { height } = useVideoConfig();
+  const { fps, height } = useVideoConfig();
   const nodes = buildNodes(turn);
+  const N = nodes.length;
   const { focus, beat, beatCount } = clock.at(frame);
-  const { count, ctxStage, showTools } = plan(focus, beat, nodes.length, beatCount);
+  const { count, ctxStage, showTools } = plan(focus, beat, N, beatCount);
   const hasFocus = FOCUSED.has(focus);
 
-  const innerRef = useRef<HTMLDivElement>(null);
-  const [contentH, setContentH] = useState(0);
-  useLayoutEffect(() => { if (innerRef.current) setContentH(innerRef.current.getBoundingClientRect().height); });
+  // 揭示时刻表:每个节点 index 在哪一帧变为"已揭示"(plan 的 count 越过它)。
+  // 用它把镜头按真实揭示帧缓动、给新节点淡入 —— 不再随 reveal 硬跳。
+  const revealFrame = useMemo(() => {
+    const rf = new Array<number>(N).fill(Infinity);
+    for (const seg of clock.segments) {
+      const c = plan(seg.focus, seg.beat, N, seg.beatCount).count;
+      for (let i = 0; i < c; i++) rf[i] = Math.min(rf[i], seg.start);
+    }
+    return rf;
+  }, [clock, N]);
+
+  // 全节点常驻渲染(布局稳定、可测量),揭示靠 opacity —— 这样能拿到每个节点真实高度,
+  // 镜头才能精确地"把已揭示的块"居中/跟随。
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [heights, setHeights] = useState<number[]>([]);
+  useLayoutEffect(() => {
+    const hs = itemRefs.current.map((el) => (el ? el.getBoundingClientRect().height : 0));
+    // 仅当高度真的变了才 setState —— 否则每帧新数组引用会触发无限重渲染。
+    setHeights((prev) => (prev.length === hs.length && prev.every((v, i) => Math.abs(v - hs[i]) < 0.5) ? prev : hs));
+  });
+
   const usable = height - PAD * 2;
-  const scrollY = -Math.max(0, contentH - usable);
+  // 已揭示前 c 个节点的总高
+  const revealedH = (c: number) => {
+    let h = 0;
+    for (let i = 0; i < c && i < heights.length; i++) h += (heights[i] || 0) + (i > 0 ? GAP : 0);
+    return h;
+  };
+  // 目标镜头:已揭示块短 → 居中;长 → 跟随底部(最新可见)。
+  const targetFor = (c: number) => {
+    const rh = revealedH(c);
+    return rh <= usable ? (usable - rh) / 2 : -(rh - usable);
+  };
+
+  // 镜头缓动:每进入一个新拍(segment),从"上一拍的镜头目标"缓动到"当前拍的目标"(~0.5s)。
+  // 按 segment 边界缓动 → 即使某一拍一次揭示多个节点,也是平滑滑动而非硬跳。
+  const EASE = Math.round(fps * 0.5);
+  const segIdx = clock.segments.findIndex((s) => frame < s.end);
+  const curSeg = segIdx >= 0 ? clock.segments[segIdx] : clock.segments[clock.segments.length - 1];
+  const prevSeg = segIdx > 0 ? clock.segments[segIdx - 1] : null;
+  const countAt = (s: typeof curSeg) => plan(s.focus, s.beat, N, s.beatCount).count;
+  const curCount = curSeg ? countAt(curSeg) : count;
+  const prevCount = prevSeg ? countAt(prevSeg) : curCount;
+  const segStart = curSeg ? curSeg.start : 0;
+  const scrollY = interpolate(frame, [segStart, segStart + EASE], [targetFor(prevCount), targetFor(curCount)], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+
+  const FADE = Math.round(fps * 0.35);
 
   return (
     <AbsoluteFill style={{ background: "#fff", fontFamily: FONT }}>
       <div style={{ position: "absolute", inset: 0, overflow: "hidden", padding: `${PAD}px 0` }}>
-        <div ref={innerRef} style={{ width: "100%", maxWidth: 1320, margin: "0 auto", padding: "0 40px", display: "flex", flexDirection: "column", gap: 16, transform: `translateY(${scrollY}px)` }}>
-          {nodes.slice(0, count).map((n, i) => {
+        <div style={{ width: "100%", maxWidth: 1320, margin: "0 auto", padding: "0 40px", display: "flex", flexDirection: "column", gap: GAP, transform: `translateY(${scrollY}px)` }}>
+          {nodes.map((n, i) => {
+            const revealed = i < count;
             const active = isActive(n, focus);
-            const dim = hasFocus && !active ? 0.4 : 1;
+            const fadeIn = Number.isFinite(revealFrame[i]) ? interpolate(frame, [revealFrame[i], revealFrame[i] + FADE], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 1;
+            const op = !revealed ? 0 : (hasFocus && !active ? 0.4 : 1) * fadeIn;
             return (
-              <div key={i} style={{ opacity: dim }}>
+              <div key={i} ref={(el) => { itemRefs.current[i] = el; }} style={{ opacity: op }}>
                 <Lane actor={n.kind === "final" ? "llm" : n.kind === "result" ? "agent" : n.kind === "task" ? "user" : "llm"}>
                   {n.kind === "final"
                     ? <FinalNode text={n.text} calls={n.calls} active={active} />
