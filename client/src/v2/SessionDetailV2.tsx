@@ -430,7 +430,14 @@ export function SessionDetailV2({ session, onClose }: Props) {
       <SheetContent
         side="right"
         showCloseButton={false}
-        className="!max-w-none p-0 gap-0 sm:max-w-none"
+        // 深链/点击进入时，Radix 抽屉默认把焦点移到内部第一个可聚焦元素（标题
+        // 按钮），导致标题常驻一个 focus ring（看起来像 URL 蓝框）。阻止开场
+        // auto-focus 即可消除；抽屉的焦点陷阱 / Esc 关闭不受影响。
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        // 抽屉容器是 tabindex=-1 的 div，被聚焦时浏览器会画原生（蓝色）focus
+        // outline，只露出左缘 → 看起来像一条蓝竖线，且与内部靛色"选中"竖条语义
+        // 打架。结构边交给中性 border-l + shadow，故抑制容器自身的 outline。
+        className="!max-w-none p-0 gap-0 sm:max-w-none focus:outline-hidden"
         style={{
           // Drawer width is responsive to "how much canvas does this state
           // need":
