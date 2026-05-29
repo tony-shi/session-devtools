@@ -89,6 +89,16 @@ function isActive(node: Node, focus: Focus): boolean {
 
 const GAP = 16;
 
+// 右侧解说栏:按 focus 给关键词式注解(强调 + 解释,不与旁白逐字重复)。随 beat 逐条浮现。
+const RAIL: Partial<Record<Focus, string[]>> = {
+  "call": ["① 组装 context", "系统 · 记忆 · 规则 · 历史 · 工具定义", "再填入本轮要解决的问题"],
+  "tool-use": ["② 模型不直接回答", "提出 tool_use:一个动作请求", "读文件 / 搜代码 / 跑命令"],
+  "tool-result": ["③ 执行 → tool_result", "拿到真实结果,不靠幻想", "结果进入下一次 Call 的 context"],
+  "loop": ["④ tool_result 塞回 context", "触发下一次 LLM Call", "context 越滚越大,理解越完整", "—— 这就是 Agent Loop"],
+};
+// loop 末段(final 已出现)切到"退出循环"注解 —— 退出说明从 final 卡片挪到这里。
+const RAIL_EXIT = ["⑤ 信息已足够", "模型不再 tool_use", "跳出循环 → 最终回答", "Turn 到此结束"];
+
 export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActClock }) => {
   const frame = useCurrentFrame();
   const { fps, height } = useVideoConfig();
@@ -97,6 +107,13 @@ export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActCloc
   const { focus, beat, beatCount } = clock.at(frame);
   const { count, ctxStage, showTools } = plan(focus, beat, N, beatCount);
   const hasFocus = FOCUSED.has(focus);
+
+  // 工具循环轮数 = 有 toolCalls 的 call 数。context 节点 iter < loopCount → 第几轮;= loopCount → Final 调用。
+  const loopCount = turn.calls.filter((c) => c.toolCalls.length).length;
+  // 当前活跃轮 = 已揭示的最后一个 context 节点的 iter(给右侧进度条)。
+  let activeIter = 0;
+  for (let i = 0; i < count && i < N; i++) { const nn = nodes[i]; if (nn.kind === "context") activeIter = nn.iter; }
+  const finalRevealed = count >= N;
 
   // 揭示时刻表:每个节点 index 在哪一帧变为"已揭示"(plan 的 count 越过它)。
   // 用它把镜头按真实揭示帧缓动、给新节点淡入 —— 不再随 reveal 硬跳。
@@ -145,31 +162,103 @@ export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActCloc
   const scrollY = interpolate(frame, [segStart, segStart + EASE], [targetFor(prevCount), targetFor(curCount)], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   const FADE = Math.round(fps * 0.35);
+  // 右栏解说内容:loop 末段(final 已现)切到"退出"注解,否则按 focus。
+  const railLines = focus === "loop" && finalRevealed ? RAIL_EXIT : (RAIL[focus] ?? []);
 
   return (
     <AbsoluteFill style={{ background: "#fff", fontFamily: FONT }}>
-      <div style={{ position: "absolute", inset: 0, overflow: "hidden", padding: `${PAD}px 0` }}>
-        <div style={{ width: "100%", maxWidth: 1320, margin: "0 auto", padding: "0 40px", display: "flex", flexDirection: "column", gap: GAP, transform: `translateY(${scrollY}px)` }}>
-          {nodes.map((n, i) => {
-            const revealed = i < count;
-            const active = isActive(n, focus);
-            const fadeIn = Number.isFinite(revealFrame[i]) ? interpolate(frame, [revealFrame[i], revealFrame[i] + FADE], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 1;
-            const op = !revealed ? 0 : (hasFocus && !active ? 0.4 : 1) * fadeIn;
-            return (
-              <div key={i} ref={(el) => { itemRefs.current[i] = el; }} style={{ opacity: op }}>
-                <Lane actor={n.kind === "final" ? "llm" : n.kind === "result" ? "agent" : n.kind === "task" ? "user" : "llm"}>
-                  {n.kind === "final"
-                    ? <FinalNode text={n.text} calls={n.calls} active={active} />
-                    : <NodeBox node={n} active={active} ctxStage={ctxStage} showTools={showTools} highlightTool={focus === "tool-use"} />}
-                </Lane>
-              </div>
-            );
-          })}
+      <div style={{ position: "absolute", inset: 0, display: "flex" }}>
+        {/* 左+中:滚动卡片(核心 loop 动画,保持简洁) */}
+        <div style={{ flex: 1, minWidth: 0, position: "relative", overflow: "hidden", padding: `${PAD}px 0 ${PAD}px 72px` }}>
+          <div style={{ width: "100%", maxWidth: 1040, display: "flex", flexDirection: "column", gap: GAP, transform: `translateY(${scrollY}px)` }}>
+            {nodes.map((n, i) => {
+              const revealed = i < count;
+              const active = isActive(n, focus);
+              const fadeIn = Number.isFinite(revealFrame[i]) ? interpolate(frame, [revealFrame[i], revealFrame[i] + FADE], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 1;
+              const op = !revealed ? 0 : (hasFocus && !active ? 0.4 : 1) * fadeIn;
+              // 每一轮工具循环在它的 context 节点前打 Loop N 标;final 调用的 context 打 Final 标。
+              const badge = n.kind === "context"
+                ? (n.iter < loopCount ? { label: `Loop ${n.iter + 1}`, color: ACTOR_COLOR.llm.main } : { label: "Final", color: ACTOR_COLOR.done.main })
+                : null;
+              return (
+                <div key={i} ref={(el) => { itemRefs.current[i] = el; }} style={{ opacity: op }}>
+                  {badge && (
+                    <div style={{ marginLeft: 80, marginBottom: 6, display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 16, fontWeight: 800, letterSpacing: 0.5, color: "#fff", background: badge.color, borderRadius: 999, padding: "3px 14px" }}>{badge.label}</span>
+                      <span style={{ flex: 1, height: 1, background: "#eef2f6" }} />
+                    </div>
+                  )}
+                  <Lane actor={n.kind === "final" ? "llm" : n.kind === "result" ? "agent" : n.kind === "task" ? "user" : "llm"}>
+                    {n.kind === "final"
+                      ? <FinalNode text={n.text} calls={n.calls} />
+                      : <NodeBox node={n} active={active} ctxStage={ctxStage} showTools={showTools} highlightTool={focus === "tool-use"} />}
+                  </Lane>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 右:解说栏(固定,不随卡片滚动)—— 进度推进 + 随旁白浮现的关键词注解 */}
+        <div style={{ width: 470, flexShrink: 0, padding: `${PAD}px 56px ${PAD}px 28px`, borderLeft: "1px solid #eef2f6", display: "flex", flexDirection: "column", gap: 36 }}>
+          <Progression activeIter={activeIter} loopCount={loopCount} />
+          <Rail lines={railLines} beat={beat} />
         </div>
       </div>
     </AbsoluteFill>
   );
 };
+
+// 循环进度条:Loop 1 · Loop 2 · … → Final,高亮当前轮。给"在推进"的感觉。
+function Progression({ activeIter, loopCount }: { activeIter: number; loopCount: number }) {
+  const Pill = ({ label, state }: { label: string; state: "done" | "cur" | "todo" }) => (
+    <span style={{
+      fontSize: 16, fontWeight: 700, padding: "5px 14px", borderRadius: 999, whiteSpace: "nowrap",
+      color: state === "cur" ? "#fff" : state === "done" ? ACTOR_COLOR.llm.main : "#cbd5e1",
+      background: state === "cur" ? ACTOR_COLOR.llm.main : state === "done" ? "#eef2ff" : "transparent",
+      border: `1px solid ${state === "todo" ? "#e5e7eb" : ACTOR_COLOR.llm.border}`,
+    }}>{label}</span>
+  );
+  const finalState = activeIter >= loopCount ? "cur" : "todo";
+  return (
+    <div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: "#94a3b8", letterSpacing: 0.5, marginBottom: 12 }}>循环进度</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {Array.from({ length: loopCount }).map((_, i) => (
+          <Pill key={i} label={`Loop ${i + 1}`} state={i < activeIter ? "done" : i === activeIter ? "cur" : "todo"} />
+        ))}
+        <span style={{ color: "#cbd5e1", fontSize: 18 }}>→</span>
+        <span style={{
+          fontSize: 16, fontWeight: 800, padding: "5px 14px", borderRadius: 999,
+          color: finalState === "cur" ? "#fff" : "#cbd5e1",
+          background: finalState === "cur" ? ACTOR_COLOR.done.main : "transparent",
+          border: `1px solid ${finalState === "cur" ? ACTOR_COLOR.done.main : "#e5e7eb"}`,
+        }}>Final</span>
+      </div>
+    </div>
+  );
+}
+
+// 解说栏:关键词注解随 beat 逐条浮现(已过的亮,未到的淡)。
+function Rail({ lines, beat }: { lines: string[]; beat: number }) {
+  if (lines.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {lines.map((ln, j) => {
+        const shown = j <= beat;
+        const emphasis = j === 0; // 第一行(带序号)作小标
+        return (
+          <div key={ln} style={{
+            fontSize: emphasis ? 26 : 23, fontWeight: emphasis ? 700 : 500,
+            color: emphasis ? "#334155" : "#475569", lineHeight: 1.5,
+            opacity: shown ? 1 : 0.14,
+            transform: shown ? "none" : "translateY(6px)",
+          }}>{ln}</div>
+        );
+      })}
+    </div>
+  );
+}
 
 const ACTOR = {
   user: { color: ACTOR_COLOR.user.main, label: "User" },
@@ -236,14 +325,12 @@ function NodeBox({ node, active, ctxStage, showTools, highlightTool }: { node: N
   );
 }
 
-function FinalNode({ text, calls, active }: { text: string; calls: number; active: boolean }) {
+// 简洁版:只留最终回答(双框 = 特化)。退出/原因说明已移到右侧解说栏,不再撑大卡片。
+function FinalNode({ text, calls }: { text: string; calls: number }) {
   return (
-    <div style={{ borderRadius: 14, padding: "18px 22px", background: "#f0fdf4", border: `1px solid ${active ? "#16a34a" : "#bbf7d0"}`, boxShadow: active ? "0 0 0 3px rgba(22,163,74,0.15)" : "none" }}>
-      <div style={{ fontSize: 19, fontWeight: 700, color: "#15803d", marginBottom: 10 }}>✅ LLM 自行决策停止 · 这一次不再 tool_use → 给出结论</div>
+    <div style={{ borderRadius: 14, padding: "18px 22px", background: "#f0fdf4", border: "2px solid #16a34a", boxShadow: "0 0 0 3px rgba(22,163,74,0.12)" }}>
+      <div style={{ fontSize: 18, fontWeight: 700, color: "#15803d", marginBottom: 10 }}>Final · 最终回答 · 本轮 {calls} 次 LLM 调用</div>
       <div style={{ fontSize: 21, color: "#14532d", lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{text || "(无最终文本)"}</div>
-      <div style={{ fontSize: 18, color: "#16a34a", marginTop: 12, lineHeight: 1.55 }}>
-        没有外部裁判,也没有固定轮数 —— 循环的退出完全由模型自己判断「信息已充分」。本轮共 {calls} 次 LLM 调用,Turn 到此终止。
-      </div>
     </div>
   );
 }
