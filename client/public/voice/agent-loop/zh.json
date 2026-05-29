@@ -1,9 +1,9 @@
 {
   "storyId": "agent-loop",
   "lang": "zh",
-  "voice": "mock:default",
-  "builtAt": "2026-05-28T14:30:37.087Z",
-  "totalMs": 183800,
+  "voice": "reindexed:from-existing-audio",
+  "builtAt": "2026-05-29T05:17:34.550Z",
+  "totalMs": 197016,
   "steps": [
     {
       "stepIdx": 0,
@@ -11,31 +11,36 @@
         {
           "idx": 0,
           "text": "Claude Code 第一眼看上去,像终端里的编程聊天框。",
-          "durMs": 5040,
+          "audio": "zh/0-0.wav",
+          "durMs": 4891,
           "gapMs": 500
         },
         {
           "idx": 1,
           "text": "你输入一句需求,它回你一段解释。",
-          "durMs": 2880,
+          "audio": "zh/0-1.wav",
+          "durMs": 3291,
           "gapMs": 500
         },
         {
           "idx": 2,
           "text": "但如果它只是聊天,它就不能修 bug、跑测试、改代码。",
-          "durMs": 4680,
+          "audio": "zh/0-2.wav",
+          "durMs": 5611,
           "gapMs": 900
         },
         {
           "idx": 3,
           "text": "在这个框里面,它正在观察、行动、再观察。",
-          "durMs": 3600,
+          "audio": "zh/0-3.wav",
+          "durMs": 4691,
           "gapMs": 500
         },
         {
           "idx": 4,
           "text": "这段连续的工作记录,就是 Session。",
-          "durMs": 3600,
+          "audio": "zh/0-4.wav",
+          "durMs": 2971,
           "gapMs": 1500
         }
       ]
@@ -46,25 +51,29 @@
         {
           "idx": 0,
           "text": "一个 Session,是在某个工作区下持续推进的一段会话。",
-          "durMs": 5040,
+          "audio": "zh/1-0.wav",
+          "durMs": 4891,
           "gapMs": 200
         },
         {
           "idx": 1,
           "text": "而一个 Turn,对应你向 Claude Code 发起的一次请求。",
-          "durMs": 5400,
+          "audio": "zh/1-1.wav",
+          "durMs": 4291,
           "gapMs": 200
         },
         {
           "idx": 2,
           "text": "你可能以为,一个 Turn 就是一次模型调用。",
-          "durMs": 3780,
+          "audio": "zh/1-2.wav",
+          "durMs": 3691,
           "gapMs": 200
         },
         {
           "idx": 3,
           "text": "但真实情况复杂得多:Claude 可能要想很多次、查很多次,最后才给出答案。",
-          "durMs": 6660,
+          "audio": "zh/1-3.wav",
+          "durMs": 7851,
           "gapMs": 200
         }
       ]
@@ -75,25 +84,29 @@
         {
           "idx": 0,
           "text": "让我们聚焦其中一个 Turn,看看里面到底发生了什么 —— 先从用户输入开始。",
-          "durMs": 6480,
+          "audio": "zh/2-0.wav",
+          "durMs": 6411,
           "gapMs": 200
         },
         {
           "idx": 1,
           "text": "Agent 开始准备上下文:先填入系统提示、记忆、规则、历史…",
-          "durMs": 5400,
+          "audio": "zh/2-1.wav",
+          "durMs": 8531,
           "gapMs": 200
         },
         {
           "idx": 2,
           "text": "再填入这一轮真正要解决的问题。",
-          "durMs": 2700,
+          "audio": "zh/2-2.wav",
+          "durMs": 3451,
           "gapMs": 200
         },
         {
           "idx": 3,
           "text": "打包完成,发起第一次 LLM 调用。",
-          "durMs": 2880,
+          "audio": "zh/2-3.wav",
+          "durMs": 3691,
           "gapMs": 200
         }
       ]
@@ -104,25 +117,29 @@
         {
           "idx": 0,
           "text": "极简单的任务,LLM 可能直接回答;但更多时候,它会决定先获取更多信息。",
-          "durMs": 6300,
+          "audio": "zh/3-0.wav",
+          "durMs": 8411,
           "gapMs": 200
         },
         {
           "idx": 1,
           "text": "于是 LLM 返回一个特殊结果:tool_use。",
-          "durMs": 4140,
+          "audio": "zh/3-1.wav",
+          "durMs": 4971,
           "gapMs": 200
         },
         {
           "idx": 2,
           "text": "tool_use 不是答案,只是模型提出的一个动作请求。",
-          "durMs": 4860,
+          "audio": "zh/3-2.wav",
+          "durMs": 4571,
           "gapMs": 200
         },
         {
           "idx": 3,
           "text": "比如:读文件、搜代码、执行命令。",
-          "durMs": 2880,
+          "audio": "zh/3-3.wav",
+          "durMs": 3451,
           "gapMs": 200
         }
       ]
@@ -133,31 +150,36 @@
         {
           "idx": 0,
           "text": "接下来,Agent 真的去执行这个工具。",
-          "durMs": 3420,
+          "audio": "zh/4-0.wav",
+          "durMs": 3371,
           "gapMs": 200
         },
         {
           "idx": 1,
           "text": "执行完,工具返回 tool_result。",
-          "durMs": 3600,
+          "audio": "zh/4-1.wav",
+          "durMs": 3211,
           "gapMs": 200
         },
         {
           "idx": 2,
           "text": "关键在这:模型不是自己幻想文件内容。",
-          "durMs": 3240,
+          "audio": "zh/4-2.wav",
+          "durMs": 3851,
           "gapMs": 200
         },
         {
           "idx": 3,
           "text": "它拿到工具返回的真实结果,再继续推理。",
-          "durMs": 3420,
+          "audio": "zh/4-3.wav",
+          "durMs": 4091,
           "gapMs": 200
         },
         {
           "idx": 4,
           "text": "tool_use 是模型提出的动作;tool_result 是世界返回的证据。",
-          "durMs": 6660,
+          "audio": "zh/4-4.wav",
+          "durMs": 6171,
           "gapMs": 200
         }
       ]
@@ -168,37 +190,43 @@
         {
           "idx": 0,
           "text": "现在把它们串起来 —— 这是这个 Turn 真实的调用链路。",
-          "durMs": 4680,
+          "audio": "zh/5-0.wav",
+          "durMs": 4771,
           "gapMs": 200
         },
         {
           "idx": 1,
           "text": "Call 产生 tool_use,Agent 执行得到 tool_result。",
-          "durMs": 6480,
+          "audio": "zh/5-1.wav",
+          "durMs": 5651,
           "gapMs": 200
         },
         {
           "idx": 2,
           "text": "tool_result 被塞回下一次 Call 的 context,上下文越滚越大。",
-          "durMs": 6840,
+          "audio": "zh/5-2.wav",
+          "durMs": 5531,
           "gapMs": 200
         },
         {
           "idx": 3,
           "text": "循环往复 —— 模型负责推理,工具负责行动,理解越来越完整。",
-          "durMs": 5040,
+          "audio": "zh/5-3.wav",
+          "durMs": 7571,
           "gapMs": 200
         },
         {
           "idx": 4,
           "text": "直到某一次调用,模型判断信息已充分 —— 不再 tool_use,而是给出最终结论。",
-          "durMs": 7020,
+          "audio": "zh/5-4.wav",
+          "durMs": 7771,
           "gapMs": 200
         },
         {
           "idx": 5,
           "text": "从用户输入,到这最后一次 LLM 调用给出结果 —— 一个 Turn 就此终止。",
-          "durMs": 6120,
+          "audio": "zh/5-5.wav",
+          "durMs": 7851,
           "gapMs": 200
         }
       ]
@@ -209,49 +237,57 @@
         {
           "idx": 0,
           "text": "Session —— 一次完整的会话。",
-          "durMs": 3060,
+          "audio": "zh/6-0.wav",
+          "durMs": 1091,
           "gapMs": 200
         },
         {
           "idx": 1,
           "text": "Turn —— 一次用户请求,以及为回答它的全部工作。",
-          "durMs": 4500,
+          "audio": "zh/6-1.wav",
+          "durMs": 4091,
           "gapMs": 200
         },
         {
           "idx": 2,
           "text": "LLM Call —— 一次带着具体 context 的模型请求。",
-          "durMs": 5040,
+          "audio": "zh/6-2.wav",
+          "durMs": 4891,
           "gapMs": 200
         },
         {
           "idx": 3,
           "text": "tool_use —— 模型想做什么。",
-          "durMs": 3060,
+          "audio": "zh/6-3.wav",
+          "durMs": 3091,
           "gapMs": 200
         },
         {
           "idx": 4,
           "text": "tool_result —— 现实返回了什么 —— 指针又跳回 LLM Call,像一个 while 循环。",
-          "durMs": 8280,
+          "audio": "zh/6-4.wav",
+          "durMs": 6411,
           "gapMs": 200
         },
         {
           "idx": 5,
           "text": "出口只有一个 —— LLM 自行决策不再 tool_use,跳出循环、给出结论。",
-          "durMs": 6480,
+          "audio": "zh/6-5.wav",
+          "durMs": 7771,
           "gapMs": 200
         },
         {
           "idx": 6,
           "text": "把循环抽象出来,其实就是三个阶段:收集上下文 → 采取行动 → 验证结果。",
-          "durMs": 5940,
+          "audio": "zh/6-6.wav",
+          "durMs": 8011,
           "gapMs": 200
         },
         {
           "idx": 7,
           "text": "而驱动它的只有两件事:模型负责推理,工具负责行动。",
-          "durMs": 4500,
+          "audio": "zh/6-7.wav",
+          "durMs": 6051,
           "gapMs": 200
         }
       ]
