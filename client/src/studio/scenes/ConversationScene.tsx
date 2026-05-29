@@ -31,7 +31,12 @@ export const ConversationScene = ({ turns, overviewEndFrame }: { turns: SceneTur
   const innerRef = useRef<HTMLDivElement>(null);
   const [contentH, setContentH] = useState(0);
   useLayoutEffect(() => {
-    if (innerRef.current) setContentH(innerRef.current.getBoundingClientRect().height);
+    if (!innerRef.current) return;
+    const h = innerRef.current.getBoundingClientRect().height;
+    // 仅当高度真的变了才 setState —— Player/Studio 缩放显示时 getBoundingClientRect 返回
+    // 带亚像素抖动的浮点,直接 setState 会每帧不等 → 无限重渲染(Maximum update depth)。
+    // headless 1:1 渲染无此问题,所以 still 是好的。容差 0.5px 吸收抖动。
+    setContentH((prev) => (Math.abs(prev - h) < 0.5 ? prev : h));
   });
 
   // 镜头:内容短 → 垂直居中(不再顶到上边留空板);内容长 → 跟随底部(最新可见)。
