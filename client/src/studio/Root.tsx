@@ -2,6 +2,7 @@ import { Composition } from "remotion";
 import { HelloProbe } from "./HelloProbe";
 import { ConversationScene } from "./scenes/ConversationScene";
 import { NarrationTrack } from "./scenes/NarrationTrack";
+import { AgentLoopStory, agentLoopStoryDuration } from "./scenes/AgentLoopStory";
 import { buildConversationTimeline, type SceneTurn } from "./scenes/timeline";
 import { getManifest, buildNarrationClips } from "./scenes/narration";
 import { conversationFixture } from "./fixtures/conversation";
@@ -52,6 +53,16 @@ export const RemotionRoot = () => {
         width={1920}
         height={1080}
         defaultProps={{ turns: conversationFixture }}
+      />
+      {/* 完整第一个 story:三幕串成一条 —— 这是核心 review 产物 */}
+      <Composition
+        id="AgentLoopStory"
+        component={AgentLoopStory}
+        durationInFrames={Math.max(1, agentLoopStoryDuration(CONV_LANG, FPS))}
+        fps={FPS}
+        width={1920}
+        height={1080}
+        defaultProps={{ lang: CONV_LANG }}
       />
     </>
   );
