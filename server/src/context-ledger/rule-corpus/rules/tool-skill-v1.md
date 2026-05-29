@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：Skill（执行 skill）。description 1315B，input_schema 327B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:Skill tool prompt fn (2.1.126)'
 materialization: exact_text
 attribution:

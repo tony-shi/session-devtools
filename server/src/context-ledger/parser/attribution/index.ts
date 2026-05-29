@@ -74,7 +74,7 @@ export function attributeSnapshot(snapshot: ParsedQuerySnapshot): SegmentAttribu
       const evaluation = findFirstRuleEvaluation(node, rules, snapshot.queryKind, ccVersion);
 
       if (evaluation) {
-        out.push(resolveFromEvaluation(node, evaluation));
+        out.push(resolveFromEvaluation(node, evaluation, ccVersion));
         continue;
       }
     }

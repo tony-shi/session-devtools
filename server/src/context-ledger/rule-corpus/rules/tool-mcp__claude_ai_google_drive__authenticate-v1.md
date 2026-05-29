@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: 'MCP tool: claude.ai Google Drive OAuth 认证发起。description 358c，总 562c。'
-stability: semi-static
+stability: static
 sourcemapRef: 'mcp:claudeai-proxy@drivemcp.googleapis.com/mcp/v1'
 materialization: exact_text
 attribution:

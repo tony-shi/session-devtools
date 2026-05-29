@@ -8,6 +8,8 @@ description: >-
   Claude Code system prompt intro 段（标准模式）。outputStyleConfig === null 时注入，以 'with
   software engineering tasks.' 结尾。
 stability: static
+displayName: "开场白"
+summary: "开场引导(旧版措辞)"
 sourcemapRef: >-
   restored-src/src/constants/prompts.ts +
   restored-src/src/constants/cyberRiskInstruction.ts

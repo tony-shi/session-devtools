@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：TaskCreate（创建任务）。description 2399B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:TaskCreate tool (2.1.126)'
 materialization: exact_text
 attribution:

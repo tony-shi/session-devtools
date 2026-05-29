@@ -110,10 +110,11 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
       ? msg.role
       : undefined;
 
-    // string content：整条作为 messages.text 段
+    // string content：整条作为 messages.text 段（role=system 走 mid-conversation
+    // system message slot，见上方 text block 注释）
     if (typeof content === "string") {
       out.push({
-        slotType: "messages.text",
+        slotType: roleNorm === "system" ? "messages.system-message" : "messages.text",
         jsonPath: `reqBody.messages[${mi}]`,
         rawText: content,
         anchorEvidence: "",
@@ -131,8 +132,13 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
 
       if (blk.type === "text") {
         const rawText = blk.text ?? "";
+        // 2.1.154+ beta：Opus 4.8 等 supported model 上，部分 harness 注入从
+        // <system-reminder> 迁移到 mid-conversation role:"system" message（裸文本，
+        // 无 <system-reminder> 包裹）。整段是一个注入单元（deferred-tools / agent-types
+        // 等），路由到独立 slot messages.system-message，不走 messages.text 的 inline
+        // 切分。role=user/assistant 的 text 仍走 messages.text。
         out.push({
-          slotType: "messages.text",
+          slotType: roleNorm === "system" ? "messages.system-message" : "messages.text",
           jsonPath,
           rawText,
           anchorEvidence: "",

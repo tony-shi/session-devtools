@@ -7,7 +7,9 @@ description: >-
   Claude Code system prompt 的 # Session-specific guidance section（external CLI
   标准变体）。hasEmbeddedSearchTools()=false，searchTools='the Glob or Grep'（Glob/Grep
   工具在 tool registry 中存在）。这是外部用户的真实场景。完整文本待真实 external fixture 观测后补充 exact 匹配。
-stability: dynamic
+stability: static
+displayName: "会话守则"
+summary: "本会话特定的行为指引(调度提议 / skill 触发等)"
 sourcemapRef: 'restored-src/src/constants/prompts.ts:352'
 materialization: shape
 attribution:

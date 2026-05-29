@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：Monitor（后台事件流监听）。description 5220B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:Monitor tool (2.1.126)'
 materialization: exact_text
 attribution:

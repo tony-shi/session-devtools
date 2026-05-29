@@ -6,7 +6,7 @@ sourceUnits: []
 description: >-
   Smoosh 内容：file-modified。当文件在两次 LLM 调用之间被修改时，harness 注入修改后内容到下一次请求的 SR
   中。filepath 与文件正文为动态部分。
-stability: semi-static
+stability: dynamic
 sourcemapRef: restored-src/src/utils/messages.ts (file_modified injection)
 materialization: exact_text
 attribution:

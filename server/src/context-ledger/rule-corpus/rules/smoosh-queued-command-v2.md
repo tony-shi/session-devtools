@@ -6,7 +6,7 @@ sourceUnits: []
 description: >-
   Smoosh 内容：queued_command。用户在 LLM 调用进行中发新消息时，CLI 把消息排队为 queued_command
   attachment，随下次 normalize 时被 wrap+smoosh 进上一条 tool_result 尾部。
-stability: semi-static
+stability: dynamic
 sourcemapRef: restored-src/src/utils/messages.ts queued_command flow
 materialization: exact_text
 attribution:

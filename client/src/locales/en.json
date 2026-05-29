@@ -309,57 +309,6 @@
     }
   },
   "attribution": {
-    "layoutProportional": "Proportional",
-    "layoutEqual": "Equal",
-    "layoutProportionalTitle": "Sized by char count",
-    "layoutEqualTitle": "All segments equal width",
-    "request": "Request",
-    "response": "Response",
-    "loading": "Loading attribution…",
-    "loadFailed": "Failed to load attribution: {{error}}",
-    "unavailable": "Attribution unavailable — proxy data may be missing for this call."
-  },
-  "callLedger": {
-    "historicalReuse": "Historical Reuse",
-    "historicalReuseSubtitle": "Carried over from past calls",
-    "newThisRound": "New This Round",
-    "newThisRoundSubtitle": "First time sent to model",
-    "modelGenerated": "Model output"
-  },
-  "callTab": {
-    "request": "Request",
-    "response": "Response",
-    "structure": "Raw Structure",
-    "attribution": "Request Attribution",
-    "diff": "Request Diff",
-    "cache": "Cache Analysis",
-    "responseAnalysis": "Response Analysis",
-    "raw": "Raw Data"
-  },
-  "rawTab": {
-    "noProxyTitle": "No proxy data captured",
-    "noProxyBody": "This call has no matching proxy request body. Attribution / Diff views rely on the local proxy capturing requests as they happen.",
-    "noProxyGuide": "Install and enable the proxy from the «{{tab}}» tab. Calls made afterwards will carry full request bodies.",
-    "noProxyCaveat": "Existing calls can't be backfilled — the proxy only records traffic while it's running.",
-    "noProxyStatusChecking": "Checking proxy status…",
-    "noProxyTitleStopped": "Proxy is not running",
-    "noProxyBodyStopped": "Once you start the local proxy, future calls will be recorded with full request / response bodies.",
-    "noProxyStartButton": "Start proxy",
-    "noProxyStartButtonBusy": "Starting…",
-    "noProxyStartFailed": "Start failed: {{error}}",
-    "noProxyRestartHint": "After the proxy starts, you must restart Claude Code so new calls go through the proxy. Existing calls can't be backfilled.",
-    "noProxyTitleRunning": "No proxy data for this call",
-    "noProxyBodyRunning": "The proxy is running, but this call has no matching request body. Common causes: (a) the call happened before the proxy started, or (b) Claude Code was not restarted after enabling the proxy, so the request still went through the original path.",
-    "noProxyManageHint": "For more settings and traffic browsing, go to the «{{tab}}» tab.",
-    "noProxyStatusRunning": "Proxy running",
-    "noProxyStatusStopped": "Proxy not running",
-    "noProxyGoStart": "Start it",
-    "noProxyRunningHintRestart": "Agents already running before the proxy started won't be captured. Restart the Agent (Claude Code) so its traffic goes through the proxy.",
-    "noProxyRunningHintThirdParty": "By default only api.anthropic.com is intercepted. If you use a third-party API (ANTHROPIC_BASE_URL points to your own gateway), add that hostname under «{{tab}}» → «{{section}}».",
-    "noProxyOpenProxyTab": "Open proxy settings →",
-    "noProxyDotTooltip": "This call has no matching proxy request body"
-  },
-  "attribution": {
     "loadFailed": "Attribution load failed",
     "loading": "Loading attribution…",
     "skip": {
@@ -409,7 +358,66 @@
         "label": "Other",
         "description": "Misc and unidentified: images, inline placeholders, command echo, content of unknown origin."
       }
+    },
+    "stability": {
+      "static": "static",
+      "dynamic": "dynamic"
+    },
+    "version": {
+      "ccLabel": "CC {{version}}",
+      "ccUnknown": "version unknown",
+      "baseline": "attribution baseline {{baseline}}",
+      "contextFailed": "Attribution context failed",
+      "contextFailedHint": "Billing header didn't match (likely the CC version format diverged from the baseline) — every version-dependent rule was skipped this call, so system prompt / system-reminder content shows as “unattributed”. Tool-call blocks are unaffected.",
+      "match": {
+        "exact": "Version matches baseline exactly",
+        "minor-match": "Same minor as baseline, usually compatible",
+        "minor-mismatch": "Minor differs from baseline, rules may have drifted",
+        "major-mismatch": "Major differs from baseline, attribution unreliable",
+        "unparseable": "Version string unparseable",
+        "baseline-missing": "Corpus has no version baseline"
+      }
     }
+  },
+  "callLedger": {
+    "historicalReuse": "Historical Reuse",
+    "historicalReuseSubtitle": "Carried over from past calls",
+    "newThisRound": "New This Round",
+    "newThisRoundSubtitle": "First time sent to model",
+    "modelGenerated": "Model output"
+  },
+  "callTab": {
+    "request": "Request",
+    "response": "Response",
+    "structure": "Raw Structure",
+    "attribution": "Request Attribution",
+    "diff": "Request Diff",
+    "cache": "Cache Analysis",
+    "responseAnalysis": "Response Analysis",
+    "raw": "Raw Data"
+  },
+  "rawTab": {
+    "noProxyTitle": "No proxy data captured",
+    "noProxyBody": "This call has no matching proxy request body. Attribution / Diff views rely on the local proxy capturing requests as they happen.",
+    "noProxyGuide": "Install and enable the proxy from the «{{tab}}» tab. Calls made afterwards will carry full request bodies.",
+    "noProxyCaveat": "Existing calls can't be backfilled — the proxy only records traffic while it's running.",
+    "noProxyStatusChecking": "Checking proxy status…",
+    "noProxyTitleStopped": "Proxy is not running",
+    "noProxyBodyStopped": "Once you start the local proxy, future calls will be recorded with full request / response bodies.",
+    "noProxyStartButton": "Start proxy",
+    "noProxyStartButtonBusy": "Starting…",
+    "noProxyStartFailed": "Start failed: {{error}}",
+    "noProxyRestartHint": "After the proxy starts, you must restart Claude Code so new calls go through the proxy. Existing calls can't be backfilled.",
+    "noProxyTitleRunning": "No proxy data for this call",
+    "noProxyBodyRunning": "The proxy is running, but this call has no matching request body. Common causes: (a) the call happened before the proxy started, or (b) Claude Code was not restarted after enabling the proxy, so the request still went through the original path.",
+    "noProxyManageHint": "For more settings and traffic browsing, go to the «{{tab}}» tab.",
+    "noProxyStatusRunning": "Proxy running",
+    "noProxyStatusStopped": "Proxy not running",
+    "noProxyGoStart": "Start it",
+    "noProxyRunningHintRestart": "Agents already running before the proxy started won't be captured. Restart the Agent (Claude Code) so its traffic goes through the proxy.",
+    "noProxyRunningHintThirdParty": "By default only api.anthropic.com is intercepted. If you use a third-party API (ANTHROPIC_BASE_URL points to your own gateway), add that hostname under «{{tab}}» → «{{section}}».",
+    "noProxyOpenProxyTab": "Open proxy settings →",
+    "noProxyDotTooltip": "This call has no matching proxy request body"
   },
   "diff": {
     "loading": "Loading diff…",

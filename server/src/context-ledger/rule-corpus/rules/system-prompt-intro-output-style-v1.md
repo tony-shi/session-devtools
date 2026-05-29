@@ -8,6 +8,8 @@ description: >-
   Claude Code system prompt intro 段（Output Style 模式）。outputStyleConfig !== null
   时注入，以 'according to your "Output Style" below' 替换标准措辞。
 stability: static
+displayName: "输出风格"
+summary: "输出风格约束(旧版)"
 sourcemapRef: restored-src/src/constants/prompts.ts
 materialization: normalized_text
 attribution:

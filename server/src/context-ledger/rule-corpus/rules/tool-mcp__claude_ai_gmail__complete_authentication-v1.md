@@ -6,7 +6,7 @@ sourceUnits: []
 description: >-
   MCP tool: claude.ai Gmail OAuth callback 完成。description 469c，含 input_schema 总
   880c。
-stability: semi-static
+stability: static
 sourcemapRef: 'mcp:claudeai-proxy@gmailmcp.googleapis.com/mcp/v1'
 materialization: exact_text
 attribution:

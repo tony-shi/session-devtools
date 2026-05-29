@@ -305,57 +305,6 @@
     }
   },
   "attribution": {
-    "layoutProportional": "按比例",
-    "layoutEqual": "等宽",
-    "layoutProportionalTitle": "按 char 数比例分配宽度",
-    "layoutEqualTitle": "所有段等宽（忽略大小）",
-    "request": "请求",
-    "response": "响应",
-    "loading": "归因加载中…",
-    "loadFailed": "归因树加载失败：{{error}}",
-    "unavailable": "归因数据不可用——此 call 可能缺少代理数据。"
-  },
-  "callLedger": {
-    "historicalReuse": "历史复用",
-    "historicalReuseSubtitle": "从过往 call 沿用",
-    "newThisRound": "本轮新处理",
-    "newThisRoundSubtitle": "这一轮第一次给模型",
-    "modelGenerated": "模型生成"
-  },
-  "callTab": {
-    "request": "请求",
-    "response": "响应",
-    "structure": "原始结构",
-    "attribution": "请求归因",
-    "diff": "请求对比",
-    "cache": "缓存分析",
-    "responseAnalysis": "响应分析",
-    "raw": "原始数据"
-  },
-  "rawTab": {
-    "noProxyTitle": "未捕获到代理数据",
-    "noProxyBody": "本次 call 没有匹配到代理请求体。Attribution / Diff 视角依赖本地代理同步抓取请求。",
-    "noProxyGuide": "请到「{{tab}}」标签页安装并启用代理，之后产生的 call 才会带完整请求体。",
-    "noProxyCaveat": "已存在的 call 无法补抓 —— 代理只能记录开启之后的流量。",
-    "noProxyStatusChecking": "正在检查代理状态…",
-    "noProxyTitleStopped": "代理未启动",
-    "noProxyBodyStopped": "启动本地代理后，新产生的 call 会被完整记录（含请求/响应原文）。",
-    "noProxyStartButton": "启动代理",
-    "noProxyStartButtonBusy": "启动中…",
-    "noProxyStartFailed": "启动失败：{{error}}",
-    "noProxyRestartHint": "代理启动后，需要 重启 Claude Code 才能让新的 call 走代理通道。已经存在的 call 无法补抓。",
-    "noProxyTitleRunning": "本次 call 没有代理数据",
-    "noProxyBodyRunning": "代理已在运行，但本次 call 没有匹配到代理请求体。常见原因：(a) 这次 call 发生在代理启动之前；(b) 代理启动后，Claude Code 没重启，发起请求仍走的是原始链路。",
-    "noProxyManageHint": "更多设置和流量查看，前往「{{tab}}」标签页。",
-    "noProxyStatusRunning": "代理运行中",
-    "noProxyStatusStopped": "代理未启动",
-    "noProxyGoStart": "去启动",
-    "noProxyRunningHintRestart": "代理启动之前已经在跑的 Agent 不会被记录，需要重启 Agent (Claude Code) 才能让流量走代理。",
-    "noProxyRunningHintThirdParty": "默认只拦截 api.anthropic.com。若使用第三方 API（ANTHROPIC_BASE_URL 指向自有网关），需要把对应域名加到「{{tab}}」→「{{section}}」。",
-    "noProxyOpenProxyTab": "打开代理设置 →",
-    "noProxyDotTooltip": "本次 call 没有匹配到代理请求体"
-  },
-  "attribution": {
     "loadFailed": "归因加载失败",
     "loading": "归因加载中…",
     "skip": {
@@ -405,7 +354,66 @@
         "label": "其他",
         "description": "杂项与未识别:图片、内联占位、命令回显、原因未明的内容。"
       }
+    },
+    "stability": {
+      "static": "静态",
+      "dynamic": "动态"
+    },
+    "version": {
+      "ccLabel": "CC {{version}}",
+      "ccUnknown": "版本未知",
+      "baseline": "归因基线 {{baseline}}",
+      "contextFailed": "归因上下文失败",
+      "contextFailedHint": "billing header 未命中（很可能 CC 版本格式与基线不兼容）——本次所有依赖版本号的规则被跳过，system prompt / system-reminder 等内容会显示为「未归因」。工具调用类不受影响。",
+      "match": {
+        "exact": "版本与基线完全一致",
+        "minor-match": "与基线同 minor，通常兼容",
+        "minor-mismatch": "minor 与基线不一致，可能有规则漂移",
+        "major-mismatch": "major 与基线不一致，归因结果不可信",
+        "unparseable": "版本号无法解析",
+        "baseline-missing": "corpus 无版本基线"
+      }
     }
+  },
+  "callLedger": {
+    "historicalReuse": "历史复用",
+    "historicalReuseSubtitle": "从过往 call 沿用",
+    "newThisRound": "本轮新处理",
+    "newThisRoundSubtitle": "这一轮第一次给模型",
+    "modelGenerated": "模型生成"
+  },
+  "callTab": {
+    "request": "请求",
+    "response": "响应",
+    "structure": "原始结构",
+    "attribution": "请求归因",
+    "diff": "请求对比",
+    "cache": "缓存分析",
+    "responseAnalysis": "响应分析",
+    "raw": "原始数据"
+  },
+  "rawTab": {
+    "noProxyTitle": "未捕获到代理数据",
+    "noProxyBody": "本次 call 没有匹配到代理请求体。Attribution / Diff 视角依赖本地代理同步抓取请求。",
+    "noProxyGuide": "请到「{{tab}}」标签页安装并启用代理，之后产生的 call 才会带完整请求体。",
+    "noProxyCaveat": "已存在的 call 无法补抓 —— 代理只能记录开启之后的流量。",
+    "noProxyStatusChecking": "正在检查代理状态…",
+    "noProxyTitleStopped": "代理未启动",
+    "noProxyBodyStopped": "启动本地代理后，新产生的 call 会被完整记录（含请求/响应原文）。",
+    "noProxyStartButton": "启动代理",
+    "noProxyStartButtonBusy": "启动中…",
+    "noProxyStartFailed": "启动失败：{{error}}",
+    "noProxyRestartHint": "代理启动后，需要 重启 Claude Code 才能让新的 call 走代理通道。已经存在的 call 无法补抓。",
+    "noProxyTitleRunning": "本次 call 没有代理数据",
+    "noProxyBodyRunning": "代理已在运行，但本次 call 没有匹配到代理请求体。常见原因：(a) 这次 call 发生在代理启动之前；(b) 代理启动后，Claude Code 没重启，发起请求仍走的是原始链路。",
+    "noProxyManageHint": "更多设置和流量查看，前往「{{tab}}」标签页。",
+    "noProxyStatusRunning": "代理运行中",
+    "noProxyStatusStopped": "代理未启动",
+    "noProxyGoStart": "去启动",
+    "noProxyRunningHintRestart": "代理启动之前已经在跑的 Agent 不会被记录，需要重启 Agent (Claude Code) 才能让流量走代理。",
+    "noProxyRunningHintThirdParty": "默认只拦截 api.anthropic.com。若使用第三方 API（ANTHROPIC_BASE_URL 指向自有网关），需要把对应域名加到「{{tab}}」→「{{section}}」。",
+    "noProxyOpenProxyTab": "打开代理设置 →",
+    "noProxyDotTooltip": "本次 call 没有匹配到代理请求体"
   },
   "diff": {
     "loading": "加载 diff…",

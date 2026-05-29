@@ -19,7 +19,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
 import { useAttributionGraph } from "./attribution-graph-context";
-import type { AttributionTreeResult } from "./attribution-tree-types";
+import type { AttributionTreeResult, VersionDiag } from "./attribution-tree-types";
 import {
   SECTION_META,
   computeSectionStats,
@@ -42,6 +42,7 @@ import {
   getBucket,
   bucketStatsOf,
   type Lens,
+  type BucketStat,
 } from "./lens-framework";
 // DiffPanel 旧入口已废弃，但其中的 SelectedDiffDetail 仍然复用（行级 inline diff）。
 import type { DiffSection, DiffTreeResult, PinInfo } from "./diff-tree-types";
@@ -183,6 +184,134 @@ function BucketPill({
   );
 }
 
+// 版本 badge：attribution 关键位置显示本次 call 的 cc_version + 与 corpus 基线的
+// 匹配状态。同时承担"为什么没归因"的诊断 —— contextOk=false（billing header 未命中，
+// 常见于 CC 版本格式漂移）时显示红色警告，解释 system prompt / reminder 类内容
+// 为何全部落「未归因」。文案走 i18n（attribution.version.*）。
+function VersionBadge({ diag }: { diag?: VersionDiag }) {
+  const { t } = useTranslation();
+  if (!diag) return null;
+  const failed = !diag.contextOk;
+  const lv = diag.matchLevel;
+  // 配色：绿(exact/minor-match) / 黄(minor-mismatch/unparseable/baseline-missing) / 红(失败/major)
+  let bg = "#f0fdf4", fg = "#15803d", border = "#bbf7d0", dot = "#22c55e";
+  if (failed || lv === "major-mismatch") {
+    bg = "#fef2f2"; fg = "#b91c1c"; border = "#fecaca"; dot = "#ef4444";
+  } else if (lv === "minor-mismatch" || lv === "unparseable" || lv === "baseline-missing") {
+    bg = "#fffbeb"; fg = "#b45309"; border = "#fde68a"; dot = "#f59e0b";
+  }
+  const label = failed
+    ? t("attribution.version.contextFailed")
+    : (diag.ccVersion
+        ? t("attribution.version.ccLabel", { version: diag.ccVersion })
+        : t("attribution.version.ccUnknown"));
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span style={{
+          display: "inline-flex", alignItems: "center", gap: 5,
+          padding: "2px 9px", borderRadius: 999,
+          fontSize: 11, fontWeight: 600, fontVariantNumeric: "tabular-nums",
+          background: bg, color: fg, border: `1px solid ${border}`,
+          cursor: "help", whiteSpace: "nowrap", userSelect: "none",
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: 999, background: dot }} />
+          {label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={6} className="max-w-sm">
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {failed ? (
+            <>
+              <div style={{ fontWeight: 700 }}>⚠️ {t("attribution.version.contextFailed")}</div>
+              <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{t("attribution.version.contextFailedHint")}</div>
+              {diag.contextFailureKind && (
+                <div style={{ opacity: 0.6, fontSize: 10 }}>kind: {diag.contextFailureKind}</div>
+              )}
+              {diag.baseline && (
+                <div style={{ opacity: 0.6, fontSize: 10 }}>{t("attribution.version.baseline", { baseline: diag.baseline })}</div>
+              )}
+            </>
+          ) : (
+            <>
+              <div style={{ fontWeight: 700 }}>
+                {diag.ccVersion ? t("attribution.version.ccLabel", { version: diag.ccVersion }) : t("attribution.version.ccUnknown")}
+              </div>
+              <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{t(`attribution.version.match.${lv}`)}</div>
+              {diag.baseline && (
+                <div style={{ opacity: 0.6, fontSize: 10 }}>{t("attribution.version.baseline", { baseline: diag.baseline })}</div>
+              )}
+            </>
+          )}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+// 单个 intent group 块：group label（带 i18n tooltip）+ 组内 pill 行。
+// isFirst 控制左分隔线（每行第一个 group 无左边框）。
+function GroupBlock({
+  g, isFirst, inGroup, selectedBucketId, onSelect,
+}: {
+  g: IntentGroupId;
+  isFirst: boolean;
+  inGroup: BucketStat[];
+  selectedBucketId: string | null;
+  onSelect: (bucketId: string | null) => void;
+}) {
+  const { t } = useTranslation();
+  const color = intentGroupPalette[g].color;
+  const i18nBase = intentGroupI18nKey(g);
+  const groupLabel = t(`${i18nBase}.label`);
+  const groupDesc  = t(`${i18nBase}.description`);
+  const groupTotal = inGroup.reduce((s, x) => s + x.leafCount, 0);
+  return (
+    <div style={{
+      display: "flex", flexDirection: "column", gap: 4,
+      paddingLeft: isFirst ? 0 : 12,
+      borderLeft: isFirst ? "none" : "1px dashed #d1d5db",
+    }}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            fontSize: 12, fontWeight: 700, color, cursor: "help", userSelect: "none",
+          }}>
+            <span style={{ width: 7, height: 7, borderRadius: 999, background: color }} />
+            {groupLabel}
+            <span style={{ color: "#9ca3af", fontWeight: 500, fontSize: 11 }}>· {groupTotal}</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={6} className="max-w-sm">
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+              <span style={{ width: 8, height: 8, borderRadius: 999, background: color }} />
+              {groupLabel}
+            </div>
+            <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{groupDesc}</div>
+            <div style={{ opacity: 0.65, fontSize: 10 }}>
+              {inGroup.length} bucket{inGroup.length > 1 ? "s" : ""} · {groupTotal} leaf
+            </div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+        {inGroup.map(({ bucket, leafCount, totalChars }) => (
+          <BucketPill
+            key={bucket.id}
+            bucket={bucket}
+            leafCount={leafCount}
+            totalChars={totalChars}
+            isActive={selectedBucketId === bucket.id}
+            onClick={() => onSelect(selectedBucketId === bucket.id ? null : bucket.id)}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function BucketPillRow({
   lens, selectedBucketId, onSelect, leaves,
 }: {
@@ -191,7 +320,6 @@ function BucketPillRow({
   onSelect: (bucketId: string | null) => void;
   leaves: LeafLite[];
 }) {
-  const { t } = useTranslation();
   const stats = useMemo(() => bucketStatsOf(lens, leaves), [lens, leaves]);
   // 过滤掉本 call 没有命中的桶。如果全部为空（罕见 — 一般是 leaves 全跑空），
   // 整个 pill 行不渲染，避免留个空 row。
@@ -204,86 +332,35 @@ function BucketPillRow({
   // 回退到平铺渲染。group 文案走 i18n（attribution.lensGroup.<id>.label/description）。
   const hasGroups = nonEmptyStats.some(s => s.bucket.groupId !== undefined);
   if (hasGroups) {
-    const byGroup = new Map<IntentGroupId, typeof nonEmptyStats>();
+    const byGroup = new Map<IntentGroupId, BucketStat[]>();
     for (const s of nonEmptyStats) {
       const g = (s.bucket.groupId ?? "other") as IntentGroupId;
       if (!byGroup.has(g)) byGroup.set(g, []);
       byGroup.get(g)!.push(s);
     }
     const orderedGroups = INTENT_GROUP_ORDER.filter(g => byGroup.has(g));
+    // 可控换行（替代 flex-wrap 随机断点）：≤3 个 group 排一行；≥4 个均分两行
+    // （第一行 ceil(n/2)，第二行余下），保证视觉整齐、不出现孤儿换行。
+    const n = orderedGroups.length;
+    const rowsOfGroups: IntentGroupId[][] = n <= 3
+      ? [orderedGroups]
+      : [orderedGroups.slice(0, Math.ceil(n / 2)), orderedGroups.slice(Math.ceil(n / 2))];
     return (
-      <div style={{
-        display: "flex", alignItems: "stretch",
-        gap: 14, flexWrap: "wrap",
-        padding: "2px 0",
-      }}>
-        {orderedGroups.map((g, idx) => {
-          const color = intentGroupPalette[g].color;
-          const i18nBase = intentGroupI18nKey(g);
-          const groupLabel = t(`${i18nBase}.label`);
-          const groupDesc  = t(`${i18nBase}.description`);
-          const inGroup = byGroup.get(g)!;
-          const groupTotal = inGroup.reduce((s, x) => s + x.leafCount, 0);
-          return (
-            <div
-              key={g}
-              style={{
-                display: "flex", flexDirection: "column", gap: 4,
-                paddingLeft: idx === 0 ? 0 : 12,
-                borderLeft: idx === 0 ? "none" : "1px dashed #d1d5db",
-              }}
-            >
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    style={{
-                      display: "inline-flex", alignItems: "center", gap: 6,
-                      fontSize: 12, fontWeight: 700,
-                      color,
-                      cursor: "help",
-                      userSelect: "none",
-                    }}
-                  >
-                    <span style={{
-                      width: 7, height: 7, borderRadius: 999,
-                      background: color,
-                    }} />
-                    {groupLabel}
-                    <span style={{ color: "#9ca3af", fontWeight: 500, fontSize: 11 }}>
-                      · {groupTotal}
-                    </span>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={6} className="max-w-sm">
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
-                      <span style={{
-                        width: 8, height: 8, borderRadius: 999, background: color,
-                      }} />
-                      {groupLabel}
-                    </div>
-                    <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{groupDesc}</div>
-                    <div style={{ opacity: 0.65, fontSize: 10 }}>
-                      {inGroup.length} bucket{inGroup.length > 1 ? "s" : ""} · {groupTotal} leaf
-                    </div>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-              <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-                {inGroup.map(({ bucket, leafCount, totalChars }) => (
-                  <BucketPill
-                    key={bucket.id}
-                    bucket={bucket}
-                    leafCount={leafCount}
-                    totalChars={totalChars}
-                    isActive={selectedBucketId === bucket.id}
-                    onClick={() => onSelect(selectedBucketId === bucket.id ? null : bucket.id)}
-                  />
-                ))}
-              </div>
-            </div>
-          );
-        })}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "2px 0" }}>
+        {rowsOfGroups.map((row, ri) => (
+          <div key={ri} style={{ display: "flex", alignItems: "stretch", gap: 14, flexWrap: "wrap" }}>
+            {row.map((g, gi) => (
+              <GroupBlock
+                key={g}
+                g={g}
+                isFirst={gi === 0}
+                inGroup={byGroup.get(g)!}
+                selectedBucketId={selectedBucketId}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        ))}
       </div>
     );
   }
@@ -909,14 +986,18 @@ export function AttributionTreeLensPanel({
         />
       )}
 
-      {/* Layer 0: lens toggle 行。基底（来源）永远 active 且不出现在 toggle 行；
-          只列出可切换的 lens（diff / cache / 可选 audit）。 */}
-      <LensSwitcher
-        lenses={visibleLenses.filter((l) => l.id !== LENSES[0].id)}
-        activeLenses={activeLenses}
-        baseLensId={LENSES[0].id}
-        onToggle={toggleLens}
-      />
+      {/* Layer 0: lens toggle 行 + 版本 badge。基底（来源）永远 active 且不出现在
+          toggle 行；只列出可切换的 lens（diff / cache / 可选 audit）。右侧版本 badge
+          显示本次 call 的 cc_version 与基线匹配状态，并在 ctx 失败时解释"为何未归因"。 */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <LensSwitcher
+          lenses={visibleLenses.filter((l) => l.id !== LENSES[0].id)}
+          activeLenses={activeLenses}
+          baseLensId={LENSES[0].id}
+          onToggle={toggleLens}
+        />
+        <VersionBadge diag={result?.snapshot?.versionDiag} />
+      </div>
 
       {/* Prelude（CachePanel 旧路径用过；统一后由 cache lens 自管） */}
       {prelude}

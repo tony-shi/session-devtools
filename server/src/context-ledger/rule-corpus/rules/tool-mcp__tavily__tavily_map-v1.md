@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: 'MCP tool: tavily_map（网站结构映射）。description 83c，总 1289c。'
-stability: semi-static
+stability: static
 sourcemapRef: 'mcp:tavily'
 materialization: exact_text
 attribution:

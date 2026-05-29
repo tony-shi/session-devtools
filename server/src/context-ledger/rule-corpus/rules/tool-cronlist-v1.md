@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：CronList（列出定时任务）。description 60B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:CronList tool (2.1.126)'
 materialization: exact_text
 attribution:

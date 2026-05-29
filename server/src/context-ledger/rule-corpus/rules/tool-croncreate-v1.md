@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：CronCreate（调度定时任务）。description 2341B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:CronCreate tool (2.1.126)'
 materialization: exact_text
 attribution:

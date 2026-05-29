@@ -6,7 +6,7 @@ sourceUnits: []
 description: >-
   Smoosh 内容：plan mode 进入/重申。前缀 'Plan mode is active...'，包含 plan
   文件路径与工作流说明。harness 注入，jsonl 无直接对应 attachment。
-stability: semi-static
+stability: dynamic
 sourcemapRef: restored-src/src/utils/messages.ts (plan mode prompt)
 materialization: shape
 attribution:

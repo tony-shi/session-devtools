@@ -185,6 +185,8 @@ export const rolePalette: Record<RoleId, SectionStyle> = {
   // 工具 I/O 族（粉）：tool-use / tool-result —— 对齐 provenance 的 工具调用/工具结果。
   "messages.tool-use":   { label: "Tool call",   barBg: "#f472b6", barText: "#fff", rowBg: "#fdf2f8", marker: "#ec4899", textColor: "#9d174d" },
   "messages.tool-result":{ label: "Tool result", barBg: "#ec4899", barText: "#fff", rowBg: "#fdf2f8", marker: "#db2777", textColor: "#9d174d" },
+  // Image（多模态用户输入）单列：group=conversation，用靛紫与对话文本族（human/assistant）拉开。
+  "messages.image":      { label: "Image",       barBg: "#818cf8", barText: "#fff", rowBg: "#eef2ff", marker: "#6366f1", textColor: "#3730a3" },
   // Harness 族（品红/洋红）：injection / skills。
   "messages.injection":  { label: "Injection",   barBg: "#c026d3", barText: "#fff", rowBg: "#fdf4ff", marker: "#a21caf", textColor: "#86198f" },
   // Skills 机制:专门识别的 skill_listing 注入,单列一类（与通用 injection 区分）。
@@ -217,6 +219,7 @@ export type RoleId =
   | "messages.assistant"
   | "messages.tool-use"
   | "messages.tool-result"
+  | "messages.image"
   | "messages.injection"
   | "messages.skills"
   | "messages.context"
@@ -286,6 +289,7 @@ export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
   "messages.human":      "conversation",
   "messages.thinking":   "conversation",
   "messages.assistant":  "conversation",
+  "messages.image":      "conversation",   // 用户贴的图（多模态输入）；tool_result 内的图归 tool-io
 
   // ── Tool I/O（工具执行循环）
   "messages.tool-use":   "tool-io",
@@ -306,7 +310,7 @@ export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
   const allRoles: RoleId[] = [
     "system.core", "system.tool-policy", "system.env", "system.billing",
     "messages.human", "messages.thinking", "messages.assistant",
-    "messages.tool-use", "messages.tool-result",
+    "messages.tool-use", "messages.tool-result", "messages.image",
     "messages.injection", "messages.skills", "messages.context", "messages.directive", "messages.misc",
     "tools.builtin", "other.unknown",
   ];

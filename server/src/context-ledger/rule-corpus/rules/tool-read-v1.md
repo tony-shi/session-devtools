@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：Read（读文件）。description 1635B，input_schema 740B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:Read tool prompt fn (2.1.126)'
 materialization: exact_text
 attribution:

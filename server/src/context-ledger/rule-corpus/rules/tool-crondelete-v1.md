@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：CronDelete（取消定时任务）。description 100B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:CronDelete tool (2.1.126)'
 materialization: exact_text
 attribution:

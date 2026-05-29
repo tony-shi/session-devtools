@@ -50,7 +50,10 @@ export const RuleMaterialization = z.enum([
 ]);
 export type RuleMaterialization = z.infer<typeof RuleMaterialization>;
 
-export const RuleStability = z.enum(["static", "semi-static", "dynamic"]);
+// 明确二元(用户要求:不接受模糊的 semi-static)。判据 = 内容来源:
+//   static  = CC 预置的指令/能力描述,会话内逐字稳定(system prompt 主体 / tool schema)
+//   dynamic = 运行时生成/注入的数据·事件·状态,依赖会话内可变状态(billing / env / git / reminder)
+export const RuleStability = z.enum(["static", "dynamic"]);
 export type RuleStability = z.infer<typeof RuleStability>;
 
 // sourceUnit relation —— Piebald 文本与运行时字节的关系(决定 drift 校验策略)。
@@ -107,6 +110,17 @@ export const RuleSchema = z.object({
   sourcemapRef: z.string().optional(),
   queryScope: z.enum(["main_session", "side_query", "any"]).optional(),
   materialization: RuleMaterialization.optional(),
+
+  // ── 用户向展示元数据(透出到前端 SerializedNode,供 attribution 面板做"导览"展示)──
+  // displayName:人类可读的段名（如"记忆"/"环境"），替代晦涩的 slotType slug。
+  // summary:一句话解读（告诉用户这段在 system prompt 里干什么），用户向、非技术。
+  // dynamicSource:仅 stability=dynamic 段填写——说明"变的是哪部分"
+  //   （如 environment 的 "date + git 分支/改动文件"；billing 的 "cc_version + attestation"）。
+  // stability 在本系统按"时间维度"语义:static=逐字永不变 / semi-static=模板化跨请求稳定
+  //   / dynamic=每轮或每次真变。区别于 materialization（内容能否逐字复现）。
+  displayName: z.string().optional(),
+  summary: z.string().optional(),
+  dynamicSource: z.string().optional(),
 
   // priority:候选评估时显式优先级。runtime first-match 取按 priority 降序的首条。
   // 约定:

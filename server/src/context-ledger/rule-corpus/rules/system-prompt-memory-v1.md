@@ -10,7 +10,9 @@ sourceUnits:
   # 若将来 # Memory 在 2.1.150+ 真合并了 agent-memory,可加回 partial
 description: >-
   Claude Code 2.1.150 起 # Memory section,合并并取代旧 # auto memory。包含 persistent file-based memory 使用指南、frontmatter schema(name/description/metadata.type)、链接语法 [[name]]、不该保存什么的判断、MEMORY.md 索引文件约定。memoryPath / 用户名 是动态字段。
-stability: dynamic
+stability: static
+displayName: "记忆"
+summary: "持久化记忆(CLAUDE.md / MEMORY.md)的存在与读写规则"
 sourcemapRef: "Piebald v2.1.150 system-prompt-memory-instructions + agent-memory-instructions"
 materialization: normalized_text
 attribution:

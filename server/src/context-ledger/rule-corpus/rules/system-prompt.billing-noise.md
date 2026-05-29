@@ -6,6 +6,9 @@ sourceUnits: []
 description: >-
   Claude Code 每次请求在 system[0] 主动注入的 attribution header。含动态字段 cc_version(fingerprint)和 cch(attestation),内容不可复现。只匹配 system section——messages 里相同文本是集成逻辑携带,不命中此 rule。
 stability: dynamic
+displayName: "计费头"
+summary: "Claude Code 注入的计费/版本头,归因锚点而非提示内容"
+dynamicSource: "cc_version fingerprint + cch attestation(每次请求变)"
 sourcemapRef: restored-src/src/constants/system.ts
 materialization: presence
 attribution:

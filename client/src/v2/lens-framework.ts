@@ -105,7 +105,7 @@ const ROLE_LENS_IDS: RoleId[] = [
   // environment & resources
   "system.env", "system.billing", "tools.builtin", "messages.skills", "messages.context",
   // conversation
-  "messages.human", "messages.thinking", "messages.assistant",
+  "messages.human", "messages.thinking", "messages.assistant", "messages.image",
   // tool-io
   "messages.tool-use", "messages.tool-result",
   // runtime status

@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: 'MCP tool: tavily_research（综合研究）。description 269c，总 766c。'
-stability: semi-static
+stability: static
 sourcemapRef: 'mcp:tavily'
 materialization: exact_text
 attribution:

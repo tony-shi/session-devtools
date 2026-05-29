@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: 'MCP tool: tavily_crawl（网页爬取）。description 101c，含 input_schema 总 1949c。'
-stability: semi-static
+stability: static
 sourcemapRef: 'mcp:tavily'
 materialization: exact_text
 attribution:

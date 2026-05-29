@@ -9,6 +9,9 @@ description: >-
   modelFamily, fastModeModel。用 regex 锚定固定结构（bullet 标签、顺序），通过 captureGroups
   提取各动态字段。
 stability: dynamic
+displayName: "环境"
+summary: "运行环境事实:工作目录 / 平台 / 日期 / git 概况"
+dynamicSource: "日期(每天)+ git 分支/状态(每次操作)"
 sourcemapRef: 'restored-src/src/constants/prompts.ts:651'
 materialization: normalized_text
 attribution:

@@ -27,6 +27,9 @@ describe("Phase 2 identity migration: corpus generated rule 与原手写常量 d
         "Claude Code system prompt 的固定身份标识行(57 chars)。" +
         "仅用于 attribution 识别锚点与 reconstruction 注入,不归因整段 system prompt 内容来源。",
       stability: "static",
+      // 用户向展示元数据(后端透出供 attribution 面板"导览"展示)
+      displayName: "身份",
+      summary: "固定身份标识行,标记这是 Claude Code 会话(归因锚点)",
       sourcemapRef: "restored-src/src/constants/system.ts",
       materialization: "exact_text",
       attribution: {

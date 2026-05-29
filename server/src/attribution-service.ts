@@ -40,6 +40,8 @@ import {
   type CoverageState,
 } from "./context-ledger/parser";
 import { parseQuery, attributeSnapshot } from "./context-ledger/parser";
+import { checkVersionAgainstBaseline } from "./context-ledger/rule-corpus/version-baseline";
+import { CORPUS_LEDGER_RULES_BY_ID } from "./context-ledger/rule-corpus/runtime";
 
 // ─── 服务层输出 ──────────────────────────────────────────────────────────────
 
@@ -102,6 +104,26 @@ export interface SerializedSnapshot {
    * UI 标签等无侵入派生。
    */
   ccVersion?: string;
+  /**
+   * 版本/归因上下文诊断（UI 关键位置的版本 badge + "为什么没归因"自助诊断）。
+   *   - contextOk=false 时，attributionContext 抽取失败（billing header 未命中等），
+   *     pipeline 会跳过所有依赖 ctx 的 rule（system prompt / system-reminder 类），
+   *     这些 leaf 全部落 unknown —— 这是"某段没有任何归因信息"的最常见根因。
+   *   - matchLevel 比对 proxy cc_version 与 corpus baseline（粗粒度温度计）。
+   */
+  versionDiag: {
+    contextOk: boolean;
+    /** ctx 失败原因（no_system_block_0 / system_block_0_not_text / billing_header_not_matched）。 */
+    contextFailureKind?: string;
+    /** proxy 实际 cc_version（ctx 成功时有；失败时为 null）。 */
+    ccVersion: string | null;
+    /** corpus 对齐的 baseline cc_version（如 "2.1.150"）。 */
+    baseline: string | null;
+    /** exact / minor-match / minor-mismatch / major-mismatch / unparseable / baseline-missing。 */
+    matchLevel: string;
+    /** 人类可读的一句话，可直接放进 UI tooltip。 */
+    message: string;
+  };
   roots: SerializedNode[];
   /** id → SerializedNode 摘要（不嵌套 children；children 在 roots 树里） */
   nodeSummaries: Record<string, SerializedNodeSummary>;
@@ -132,6 +154,18 @@ export interface SerializedNode {
   wireMeta?: SegmentNode["wireMeta"];
   cachePolicy?: SegmentNode["cachePolicy"];
   unknownMeta?: SegmentNode["unknownMeta"];
+  /**
+   * 用户向展示元数据（仅命中 corpus rule 的 leaf 有）。把后端 corpus 的"机器解读"
+   * 透出为前端可读的"导览"信息:displayName=人类可读段名 / summary=一句话解读 /
+   * stability=时间维度稳定性(static/semi-static/dynamic) / dynamicSource=动态段变的是哪部分。
+   * attribution 面板（如 system 区扁平列表）据此渲染。
+   */
+  ruleMeta?: {
+    displayName?: string;
+    summary?: string;
+    stability?: string;
+    dynamicSource?: string;
+  };
   children: SerializedNode[];
 }
 
@@ -620,6 +654,19 @@ export function readSessionEventsForLinker(sourceFile: string): LinkableJsonlEve
 
 // ─── ParsedQuerySnapshot → serializable ──────────────────────────────────────
 
+/** 命中 corpus rule 的 leaf → 用户向展示元数据(displayName/summary/stability/dynamicSource)。
+ *  wire fallback rule(wire.*)与非 rule origin 返回 undefined。 */
+function ruleMetaOf(origin: SegmentNode["origin"]): SerializedNode["ruleMeta"] {
+  if (origin?.kind !== "rule") return undefined;
+  const rule = CORPUS_LEDGER_RULES_BY_ID[origin.ruleId];
+  if (!rule) return undefined;
+  const meta: NonNullable<SerializedNode["ruleMeta"]> = { stability: rule.stability };
+  if (rule.displayName) meta.displayName = rule.displayName;
+  if (rule.summary) meta.summary = rule.summary;
+  if (rule.dynamicSource) meta.dynamicSource = rule.dynamicSource;
+  return meta;
+}
+
 function serializeNode(node: SegmentNode): SerializedNode {
   const isLeaf = node.children.length === 0;
   const redactedThinkingPreview = redactedThinkingPreviewOf(node);
@@ -627,6 +674,7 @@ function serializeNode(node: SegmentNode): SerializedNode {
     ?? (node.rawText.length > 200
       ? node.rawText.replace(/\s+/g, " ").trim().slice(0, 197) + "..."
       : node.rawText);
+  const ruleMeta = ruleMetaOf(node.origin);
   return {
     id: node.id,
     slotType: node.slotType,
@@ -644,6 +692,7 @@ function serializeNode(node: SegmentNode): SerializedNode {
     ...(node.wireMeta && { wireMeta: node.wireMeta }),
     ...(node.cachePolicy && { cachePolicy: node.cachePolicy }),
     ...(node.unknownMeta && { unknownMeta: node.unknownMeta }),
+    ...(ruleMeta && { ruleMeta }),
     children: node.children.map(serializeNode),
   };
 }
@@ -682,11 +731,20 @@ function serializeSnapshot(snapshot: ParsedQuerySnapshot): SerializedSnapshot {
   for (const node of Object.values(snapshot.index)) {
     nodeSummaries[node.id] = serializeSummary(node);
   }
+  const ctx = snapshot.attributionContext;
+  const ccVersion = ctx.ok ? ctx.ctx.ccVersion : undefined;
+  const report = checkVersionAgainstBaseline(ccVersion);
   return {
     queryKind: snapshot.queryKind,
-    ...(snapshot.attributionContext.ok && {
-      ccVersion: snapshot.attributionContext.ctx.ccVersion,
-    }),
+    ...(ccVersion && { ccVersion }),
+    versionDiag: {
+      contextOk: ctx.ok,
+      ...(!ctx.ok && { contextFailureKind: ctx.failure.kind }),
+      ccVersion: report.proxy?.ccVersion ?? ccVersion ?? null,
+      baseline: report.baseline?.ccVersion ?? null,
+      matchLevel: report.matchLevel,
+      message: report.message,
+    },
     roots: snapshot.roots.map(serializeNode),
     nodeSummaries,
   };

@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：WebFetch（抓取网页内容）。description 1479B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:WebFetch tool (2.1.126)'
 materialization: exact_text
 attribution:

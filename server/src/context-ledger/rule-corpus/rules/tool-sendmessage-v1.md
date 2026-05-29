@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：SendMessage（向 agent 发消息）。description 1189B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:SendMessage tool (2.1.126)'
 materialization: exact_text
 attribution:

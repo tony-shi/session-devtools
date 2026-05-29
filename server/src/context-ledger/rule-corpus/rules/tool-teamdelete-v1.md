@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：TeamDelete（删除 agent team）。description 619B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:TeamDelete tool (2.1.126)'
 materialization: exact_text
 attribution:

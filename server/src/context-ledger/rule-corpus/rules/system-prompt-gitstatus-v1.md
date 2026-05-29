@@ -8,6 +8,9 @@ description: >-
   system.main-prompt.section.context）。2.1.142 binary 里函数名 x98（sourcemap 旧名
   getGitStatusContext）。非 git 仓库时整个 slot 缺失。gitUser 是条件字段。
 stability: dynamic
+displayName: "Git 状态"
+summary: "当前 git 状态:分支、改动文件、最近提交"
+dynamicSource: "分支 / 改动文件 / 最近提交(每次 git 操作变)"
 sourcemapRef: 'binary:x98 (2.1.142) | restored-src getGitStatusContext (2.1.88)'
 materialization: shape
 attribution:

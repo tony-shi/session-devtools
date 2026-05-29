@@ -7,6 +7,8 @@ sourceUnits: []
 description: >-
   Claude Code 2.1.150 起的简化 intro(sys[2] 头部,# Harness 之前)。措辞从"Use the instructions below and the tools available to you to assist the user."简化掉,移除了 NEVER URLs 那句。prefix 锚定。
 stability: static
+displayName: "开场白"
+summary: "开场引导:用下列指令和可用工具协助用户"
 sourcemapRef: "Piebald v2.1.150 + tmp/ea0bc205_T2_C4 sys[2]"
 materialization: normalized_text
 attribution:

@@ -6,7 +6,7 @@ sourceUnits: []
 description: >-
   Smoosh 内容：plan mode 退出告知。前缀 '## Exited Plan Mode\n\nYou have exited plan
   mode.'。harness 注入，jsonl 无直接对应 attachment。
-stability: semi-static
+stability: dynamic
 sourcemapRef: restored-src/src/utils/messages.ts (plan mode exited)
 materialization: shape
 attribution:

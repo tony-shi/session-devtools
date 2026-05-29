@@ -7,8 +7,8 @@
 //   - 不渲染 notes；notesTemplate 留给 audit/view 层按 dynamicFields 派生展示。
 
 import type { Confidence, SegmentCategory } from "../../types";
-import { SUPPORTED_CLAUDE_CODE_VERSION } from "../../rules/context-rule-registry";
 import type { ContextRule } from "../../rules/context-rule-registry";
+import { parseCcVersion } from "../../version";
 import { parseSkillListingBody } from "../../rules/skill-listing-parser";
 import type { SegmentNode } from "../types";
 import type { RuleEvaluation } from "./rule-evaluator";
@@ -74,7 +74,11 @@ function reconstructableFromRule(rule: ContextRule): boolean {
   return rule.materialization === "exact_text";
 }
 
-function deriveConfidence(rule: ContextRule, evaluation: RuleEvaluation): Confidence {
+function deriveConfidence(
+  rule: ContextRule,
+  evaluation: RuleEvaluation,
+  proxyCcVersion?: string,
+): Confidence {
   let confidence: Confidence;
 
   if (evaluation.matchMode === "exact") {
@@ -89,9 +93,20 @@ function deriveConfidence(rule: ContextRule, evaluation: RuleEvaluation): Confid
     confidence = rule.attribution.confidenceOverride;
   }
 
-  // 未校对 rule：confidence 强制降级，避免未验证规则抬高 audit 结论。
-  if (rule.verifiedFor !== SUPPORTED_CLAUDE_CODE_VERSION) {
+  // 版本可信度降级（修正:不再硬绑全局单值 SUPPORTED_CLAUDE_CODE_VERSION——那会把
+  // 已对齐 2.1.150 的 corpus rule 在任何版本上误降为 inferred）。命中的 rule 已通过
+  // appliesTo 版本过滤(本就适用 proxy 版本)。只在两种情况降级:
+  //   1. rule 从未人工校对(verifiedFor=null)→ inferred
+  //   2. 已校对版本与 proxy 跨 major.minor(可能漂移)→ inferred;同 minor 视为可信
+  // 跨 minor 的粗粒度告警另有 versionDiag 承担,confidence 这里只表达"命中是否可信"。
+  if (!rule.verifiedFor) {
     confidence = "inferred";
+  } else if (proxyCcVersion) {
+    const pv = parseCcVersion(proxyCcVersion);
+    const rv = parseCcVersion(rule.verifiedFor);
+    if (pv && rv && (pv.major !== rv.major || pv.minor !== rv.minor)) {
+      confidence = "inferred";
+    }
   }
 
   return confidence;
@@ -107,9 +122,10 @@ function deriveConfidence(rule: ContextRule, evaluation: RuleEvaluation): Confid
 export function resolveFromEvaluation(
   node: SegmentNode,
   evaluation: RuleEvaluation,
+  proxyCcVersion?: string,
 ): SegmentAttribution {
   const { rule } = evaluation;
-  const confidence = deriveConfidence(rule, evaluation);
+  const confidence = deriveConfidence(rule, evaluation, proxyCcVersion);
 
   // —— 新模型：写入 node.origin —— //
   // fullyCovered：严格 v1。matchedChars 必须等于 rawChars 才算 full；

@@ -6,7 +6,7 @@ sourceUnits: []
 description: >-
   tool_result segment 的 smoosh 注入规则。当 tool_result rawText 尾部含有 task_reminder
   注入时，attribution 标记 smooshed_reminder flag（P1-2 后不再写 tail_injection_chars）。
-stability: semi-static
+stability: dynamic
 sourcemapRef: 'restored-src/src/utils/messages.ts:1835'
 attribution:
   patternFromBody: false

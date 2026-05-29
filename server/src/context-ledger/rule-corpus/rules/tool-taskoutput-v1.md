@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：TaskOutput（获取任务输出）。description 1056B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:TaskOutput tool (2.1.126)'
 materialization: exact_text
 attribution:

@@ -6,7 +6,7 @@ sourceUnits: []
 description: >-
   Smoosh 内容：plan mode 周期提醒。前缀 'Plan mode still active...'，内容含 plan file
   path。harness 注入，jsonl 无直接对应 attachment。
-stability: semi-static
+stability: dynamic
 sourcemapRef: restored-src/src/utils/messages.ts (plan mode reminder)
 materialization: shape
 attribution:

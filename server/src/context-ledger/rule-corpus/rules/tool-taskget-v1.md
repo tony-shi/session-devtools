@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：TaskGet（获取任务详情）。description 732B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:TaskGet tool (2.1.126)'
 materialization: exact_text
 attribution:

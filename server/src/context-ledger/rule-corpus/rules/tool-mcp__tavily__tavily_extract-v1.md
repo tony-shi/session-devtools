@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: 'MCP tool: tavily_extract（URL 内容提取）。description 79c，总 849c。'
-stability: semi-static
+stability: static
 sourcemapRef: 'mcp:tavily'
 materialization: exact_text
 attribution:

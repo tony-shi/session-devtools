@@ -6,7 +6,7 @@ sourceUnits: []
 description: >-
   Claude Code 工具：RemoteTrigger（调用 claude.ai remote-trigger API）。description
   452B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:RemoteTrigger tool (2.1.126)'
 materialization: exact_text
 attribution:

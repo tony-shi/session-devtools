@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: 'MCP tool: claude.ai Google Calendar OAuth callback 完成。description 489c，总 910c。'
-stability: semi-static
+stability: static
 sourcemapRef: 'mcp:claudeai-proxy@calendarmcp.googleapis.com/mcp/v1'
 materialization: exact_text
 attribution:

@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：EnterPlanMode。description 4022B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:EnterPlanMode tool (2.1.126)'
 materialization: exact_text
 attribution:

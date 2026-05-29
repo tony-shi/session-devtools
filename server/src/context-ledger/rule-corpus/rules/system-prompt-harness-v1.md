@@ -8,7 +8,9 @@ sourceUnits:
     relation: partial
 description: >-
   Claude Code 2.1.150 起新增的 # Harness section。位于 system[2] body,描述 harness 行为约定(markdown 渲染 / permission mode / system-reminder 注入 / 工具优先级 / 不可逆操作确认 / 诚实汇报等)。content 含 mode 列表与项目设置等少量动态,正文相对稳定。
-stability: dynamic
+stability: static
+displayName: "运行框架"
+summary: "Harness 运行环境说明:终端渲染、工具权限模式、hook 行为"
 sourcemapRef: "Piebald v2.1.150 system-prompt-harness-instructions"
 materialization: normalized_text
 attribution:

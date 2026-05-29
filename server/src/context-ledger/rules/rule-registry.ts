@@ -70,6 +70,12 @@ export interface ContextLedgerRule {
   stability: RuleStability;
   sourcemapRef?: string;
 
+  // 用户向展示元数据(透出到 SerializedNode.ruleMeta,供 attribution 面板"导览"展示)。
+  // displayName:人类可读段名;summary:一句话解读;dynamicSource:仅 dynamic 段,说明变的是哪部分。
+  displayName?: string;
+  summary?: string;
+  dynamicSource?: string;
+
   // queryScope：此 rule 适用的 query 类型。
   // "main_session" — 只匹配主对话（tools > 0, messages > 1）
   // "side_query"   — 只匹配 side query（tools = 0, messages = 1）

@@ -7,7 +7,9 @@ sourceUnits: []
 description: >-
   Claude Code system prompt 的 # auto memory section。buildMemoryLines()
   产出，唯一动态字段为 memoryDir（本地路径，用户私有）。其余全部为固定常量（TYPES_SECTION、WHAT_NOT_TO_SAVE 等）。
-stability: dynamic
+stability: static
+displayName: "记忆"
+summary: "持久化记忆(旧版 auto memory 段)"
 sourcemapRef: 'restored-src/src/memdir/memdir.ts:419 + restored-src/src/memdir/memoryTypes.ts'
 materialization: normalized_text
 attribution:

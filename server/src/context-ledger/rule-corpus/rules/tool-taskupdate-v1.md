@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：TaskUpdate（更新任务状态/字段）。description 2247B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:TaskUpdate tool (2.1.126)'
 materialization: exact_text
 attribution:

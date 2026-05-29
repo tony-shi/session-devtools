@@ -7,7 +7,7 @@ description: >-
   Smoosh 内容：task_reminder。每 10 个 assistant turn 触发，proxy 中作为
   <system-reminder>...</system-reminder> 段出现在 tool_result.content 字符串尾部。动态部分：可选
   task list（#id. [status] subject）。
-stability: semi-static
+stability: dynamic
 sourcemapRef: 'restored-src/src/utils/attachments.ts:3375 + messages.ts:3680'
 materialization: exact_text
 attribution:

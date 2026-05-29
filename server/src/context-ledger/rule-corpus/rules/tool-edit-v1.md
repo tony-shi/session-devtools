@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：Edit（文件字符串替换）。description 1094B，input_schema 552B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:Edit tool prompt fn (2.1.126)'
 materialization: exact_text
 attribution:

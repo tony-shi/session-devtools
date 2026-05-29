@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：Write（写文件）。description 620B，input_schema 348B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:Write tool prompt fn (2.1.126)'
 materialization: exact_text
 attribution:

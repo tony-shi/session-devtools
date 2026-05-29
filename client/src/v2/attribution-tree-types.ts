@@ -112,6 +112,14 @@ export interface SerializedNode {
   };
   cachePolicy?: { ttl: "5m" | "1h"; scope: "org" | "global" };
   unknownMeta?: { originalType?: string; sectionHeader?: string; reason?: string };
+  /** 用户向展示元数据（仅命中 corpus rule 的 leaf 有）。后端从 corpus 透出，
+   *  供 attribution 面板"导览"展示:displayName / summary / stability / dynamicSource。 */
+  ruleMeta?: {
+    displayName?: string;
+    summary?: string;
+    stability?: string;
+    dynamicSource?: string;
+  };
   children: SerializedNode[];
 }
 
@@ -124,8 +132,24 @@ export interface SerializedNodeSummary {
   origin: SegmentOrigin;
 }
 
+/** 版本/归因上下文诊断（server serializeSnapshot 透出）。UI 关键位置的版本 badge +
+ *  "为什么没归因"自助诊断：contextOk=false 时所有依赖 ctx 的 rule 被跳过，相关 leaf
+ *  全部落 unknown。 */
+export interface VersionDiag {
+  contextOk: boolean;
+  contextFailureKind?: string;
+  ccVersion: string | null;
+  baseline: string | null;
+  matchLevel: "exact" | "minor-match" | "minor-mismatch" | "major-mismatch" | "unparseable" | "baseline-missing" | string;
+  message: string;
+}
+
 export interface SerializedSnapshot {
   queryKind: string;
+  /** proxy system[0] billing-header 抽出的 cc_version（四段，如 "2.1.150.7e6"）。 */
+  ccVersion?: string;
+  /** 版本/上下文诊断（attribution endpoint 起透出）。旧缓存数据可能缺，故 optional。 */
+  versionDiag?: VersionDiag;
   roots: SerializedNode[];
   nodeSummaries: Record<string, SerializedNodeSummary>;
 }

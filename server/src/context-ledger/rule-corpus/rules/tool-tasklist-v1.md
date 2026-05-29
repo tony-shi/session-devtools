@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：TaskList（列出所有任务）。description 1564B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:TaskList tool (2.1.126)'
 materialization: exact_text
 attribution:

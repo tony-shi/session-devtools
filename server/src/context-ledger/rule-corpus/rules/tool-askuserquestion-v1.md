@@ -4,7 +4,7 @@ slotId: tools.builtin
 verifiedFor: 2.1.126
 sourceUnits: []
 description: Claude Code 工具：AskUserQuestion。description 1763B。
-stability: semi-static
+stability: static
 sourcemapRef: 'binary:AskUserQuestion tool (2.1.126)'
 materialization: exact_text
 attribution:

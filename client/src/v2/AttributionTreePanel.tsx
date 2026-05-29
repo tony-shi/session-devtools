@@ -97,8 +97,11 @@ const REMINDER_RULE_TO_ROLE: Record<string, RoleId> = {
   "claude-code.messages.memory-contents.v1":        "messages.context", // CLAUDE.md 内容
   "claude-code.messages.nested-memory-contents.v1": "messages.context", // 嵌套 memory 文件内容
   "claude-code.messages.user-context.v1":           "messages.context", // userEmail / currentDate 等事实
-  "claude-code.messages.deferred-tools-listing.v1": "messages.context", // ToolSearch 可用工具声明
-  "claude-code.messages.agent-types-listing.v1":    "messages.context", // 可用 sub-agent 类型声明
+  "claude-code.messages.deferred-tools-listing.v1": "messages.context", // ToolSearch 可用工具声明（<system-reminder> 版）
+  "claude-code.messages.agent-types-listing.v1":    "messages.context", // 可用 sub-agent 类型声明（<system-reminder> 版）
+  // 2.1.154+ role:"system" mid-conversation message 版（slot=messages.system-message，见 roleOf）
+  "claude-code.messages.deferred-tools-listing.v2": "messages.context",
+  "claude-code.messages.agent-types-listing.v2":    "messages.context",
   // 注入的行为指令 → messages.directive
   "claude-code.messages.thinking-frequency.v1":     "messages.directive", // thinking 频率指引
 };
@@ -132,6 +135,15 @@ export function roleOf(leaf: {
     }
     return "messages.injection";
   }
+  // 2.1.154+ beta:role:"system" mid-conversation message（slot=messages.system-message）。
+  // 同 system-reminder 按 ruleId 分流;默认归 messages.context（这类注入大多是上下文/能力声明）。
+  if (classSlot === "messages.system-message") {
+    if (origin?.kind === "rule") {
+      const sub = REMINDER_RULE_TO_ROLE[origin.ruleId];
+      if (sub) return sub;
+    }
+    return "messages.context";
+  }
   if (classSlot.startsWith("system.") || classSlot === "side-query.system") {
     if (classSlot === "system.billing") return "system.billing";
     if (classSlot === "system.main-prompt.section.using-tools") return "system.tool-policy";
@@ -147,13 +159,18 @@ export function roleOf(leaf: {
   if (classSlot === "messages.thinking" || rootSlotType === "messages.thinking")
     return "messages.thinking";
   // 工具调用 / 工具结果分列——对齐 provenance 的「工具调用 / 工具结果」。
+  // 注:tool_result 内的 image（截图工具等）在此被归 tool-result，先于下面的 image 判定。
   if (rootSlotType === "messages.tool_use") return "messages.tool-use";
   if (rootSlotType === "messages.tool_result") return "messages.tool-result";
+  // image 单列（多模态输入）：走到这里的 image 都不在 tool_result 内 = 用户贴的图，
+  // 本质是用户视觉输入 → messages.image（group=conversation）。image-placeholder 是
+  // 图被替换成的文本占位（[Image #2]），同源同类。
   if (
     classSlot === "messages.block.image" ||
-    classSlot === "messages.inline.image-placeholder" ||
-    classSlot === "messages.inline.local-command"
+    classSlot === "messages.inline.image-placeholder"
   )
+    return "messages.image";
+  if (classSlot === "messages.inline.local-command")
     return "messages.misc";
   if (messageRole === "assistant") return "messages.assistant";
   if (messageRole === "user") return "messages.human";
@@ -240,6 +257,14 @@ export interface LeafLite {
   // Diff 视角需要：本 leaf 相对前一次 call 的变化状态。由父组件从 diff-tree
   // 按 leafId 合并而来；attribution-tree 自身不带 diff 信息，所以是可选。
   diffKind?: "added" | "removed" | "modified" | "kept";
+  // 用户向展示元数据（命中 corpus rule 的 leaf 有）。来自 SerializedNode.ruleMeta。
+  // 供 LeafTable 做"导览"展示:displayName 替代晦涩 slotType / stability badge / summary。
+  ruleMeta?: {
+    displayName?: string;
+    summary?: string;
+    stability?: string;
+    dynamicSource?: string;
+  };
 }
 
 export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
@@ -262,6 +287,7 @@ export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
         ...(node.wireMeta?.messageRole && { messageRole: node.wireMeta.messageRole }),
         ...(node.wireMeta?.toolUseId && { toolUseId: node.wireMeta.toolUseId }),
         ...(node.cachePolicy && { cachePolicy: node.cachePolicy }),
+        ...(node.ruleMeta && { ruleMeta: node.ruleMeta }),
       });
       return;
     }
@@ -461,10 +487,15 @@ export function LeafTable({
         //     与 SelectedDetail 想表达的"占 context 多少"对齐
         //   - hover 这一行弹出 tooltip card（rule / 来源 / 解析状态）
         const skillListing = l.origin.kind === "rule" ? l.origin.payload?.skillListing : undefined;
+        // ruleMeta（命中 corpus rule 的 leaf）：用 displayName 替代晦涩 slotType，
+        // 用 summary（一句话解读）替代原文 preview。无 ruleMeta 的 leaf 保持原样。
+        const rm = l.ruleMeta;
         const rowLabel = skillListing
           ? `${t("skillListing.rowLabel")} · ${t("skillListing.rowSuffix", { count: skillListing.entries.length })}`
-          : shortSlot(l.slotType);
-        const rowPreview = skillListing ? "" : l.preview;
+          : (rm?.displayName ?? shortSlot(l.slotType));
+        const rowPreview = skillListing ? "" : (rm?.summary ?? l.preview);
+        // 动态来源后缀（仅 dynamic 段）："summary ← 变的是 X"
+        const previewSuffix = rm?.stability === "dynamic" && rm.dynamicSource ? ` ← ${rm.dynamicSource}` : "";
         const pct = skillListing && totalContextChars && totalContextChars > 0
           ? (l.charCount / totalContextChars) * 100
           : (total > 0 ? (l.charCount / total) * 100 : 0);
@@ -479,7 +510,8 @@ export function LeafTable({
             style={{
               display: "flex", alignItems: "center", gap: 12,
               padding: "6px 8px",
-              background: isSel ? BRAND.indigo50 : "transparent",
+              // 动态段（stability=dynamic）原位浅黄高亮,不重排——一眼看出"每轮/每次变"的段。
+              background: isSel ? BRAND.indigo50 : (rm?.stability === "dynamic" ? "#fffbeb" : "transparent"),
               border: "none", borderRadius: 4,
               cursor: "pointer", textAlign: "left",
               width: "100%",
@@ -488,14 +520,32 @@ export function LeafTable({
           >
             <span style={{ width: 8, height: 8, borderRadius: 2, background: fill, flexShrink: 0 }} />
             <span style={{
-              fontFamily: skillListing ? undefined : "ui-monospace, SFMono-Regular, monospace",
+              // displayName（中文导览名）用普通字体;晦涩 slotType slug 保持 mono。
+              fontFamily: (skillListing || rm?.displayName) ? undefined : "ui-monospace, SFMono-Regular, monospace",
               fontSize: 11,
               color: skillListing ? "#312e81" : "#111827",
-              fontWeight: skillListing ? 600 : undefined,
-              minWidth: 180, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              fontWeight: (skillListing || rm?.displayName) ? 600 : undefined,
+              minWidth: 150, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
             }}>
               {rowLabel}
             </span>
+            {rm?.stability && (() => {
+              // 明确二元:动态(琥珀,醒目)/ 静态(中性灰)。
+              const sc = rm.stability === "dynamic"
+                ? { c: "#b45309", bg: "#fef3c7", bd: "#fde68a" }
+                : { c: "#475569", bg: "#f1f5f9", bd: "#e2e8f0" };
+              return (
+                <span style={{
+                  display: "inline-flex", alignItems: "center",
+                  padding: "1px 6px", borderRadius: 3,
+                  fontSize: 9, fontWeight: 700, whiteSpace: "nowrap",
+                  color: sc.c, background: sc.bg, border: `1px solid ${sc.bd}`,
+                  flexShrink: 0,
+                }}>
+                  {t(`attribution.stability.${rm.stability}`)}
+                </span>
+              );
+            })()}
             <span style={{ fontSize: 11, color: "#374151", minWidth: 50 }}>{fmtK(l.charCount)}</span>
             <span style={{ fontSize: 10, color: "#9ca3af", minWidth: 60 }}>
               {skillListing && totalContextChars
@@ -504,6 +554,7 @@ export function LeafTable({
             </span>
             <span style={{ fontSize: 10, color: "#6b7280", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {rowPreview}
+              {previewSuffix && <span style={{ color: "#b45309" }}>{previewSuffix}</span>}
             </span>
             {getBadges && getBadges(l).map((b) => (
               <span

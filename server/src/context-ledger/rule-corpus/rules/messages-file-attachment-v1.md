@@ -8,7 +8,7 @@ description: >-
   携带文件全文，normalizeAttachmentForAPI 将其展开为 Read call + Read result 两条
   system-reminder 包裹的 synthetic
   messages。行号格式：{n}\t{line}（FileReadTool.ts）。truncated 时附带第三条截断提示。
-stability: semi-static
+stability: dynamic
 sourcemapRef: >-
   restored-src/src/utils/attachments.ts:3020 (generateFileAttachment) +
   restored-src/src/utils/messages.ts:3545 (case 'file') +
