@@ -9,17 +9,13 @@ const DemoStage = lazy(() =>
 const DemoIndex = lazy(() =>
   import("./v2/walkthrough/DemoIndex").then((m) => ({ default: m.DemoIndex }))
 );
-// Remotion-ized stories play through @remotion/player (single source = studio/scenes).
-const RemotionStoryPlayer = lazy(() =>
-  import("./v2/walkthrough/RemotionStoryPlayer").then((m) => ({ default: m.RemotionStoryPlayer }))
-);
 
+// 注:Story 1(agent-loop)已迁到 Remotion —— 预览用 `npm run studio`(单源 = studio/scenes)。
+// /demo 这套 live 路由只服务尚未 Remotion 化的存量 story,后续逐步减少。
 export default function LocalRoutes() {
   return (
     <Routes>
       <Route path="/demo" element={<Suspense fallback={null}><DemoIndex /></Suspense>} />
-      {/* Story 1 已 Remotion 化:走 Player(和渲染视频同一套场景),不再用旧 view */}
-      <Route path="/demo/agent-loop" element={<Suspense fallback={null}><RemotionStoryPlayer storyId="agent-loop" /></Suspense>} />
       <Route path="/demo/:storyId" element={<Suspense fallback={null}><DemoStage /></Suspense>} />
     </Routes>
   );
