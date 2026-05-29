@@ -28,6 +28,7 @@
     "noResults": "未找到匹配的会话",
     "noSessions": "暂无会话",
     "colTool": "工具",
+    "colStatus": "状态",
     "colSession": "会话",
     "colWorkdir": "工作区",
     "colUserTurns": "用户轮次",

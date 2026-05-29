@@ -4,7 +4,6 @@ import type { SessionV2, SessionsV2Response } from "./types";
 import { getSessionTitle, getSessionSubtitle } from "./session-display";
 import { AggregateLedger } from "./shared/AggregateLedger";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Pagination as PaginationNav,
@@ -25,6 +24,8 @@ import {
 } from "@/components/ui/select";
 import { BRAND } from "./shared/brand";
 import { selectionRowShadow } from "./shared/selection";
+import { StatusBadgeStrip, type StatusBadge } from "./shared/HeaderStats";
+import { renderStatusIcon } from "./shared/SessionBadges";
 
 const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
   claude: { bg: BRAND.indigo50, color: BRAND.indigo500 },
@@ -54,13 +55,33 @@ const TH: React.CSSProperties = {
   padding: "8px 12px", fontSize: 11, fontWeight: 600, color: "#9ca3af",
   textAlign: "left", letterSpacing: "0.03em",
   borderBottom: "1px solid #f3f4f6", whiteSpace: "nowrap",
+  // 表头吸顶：长列表滚动时列名常驻。背景必须不透明以遮住下方滚过的行；
+  // sticky 相对最近的滚动祖先生效，无滚动祖先时优雅退化为普通表头。
+  position: "sticky", top: 0, zIndex: 1, background: "#fafafa",
 };
+
+// session 行的风险信号 → 统一 StatusBadge[]（与 Session/Turn/Call 头部同款徽标）。
+// 数据全部来自列表 payload，无需额外请求：错误数 / 子 agent 数 / 无法回链代理的
+// call 数（llm_call_count 超出带 request-id 的 proxy 行数的部分）。
+function sessionRiskBadges(s: SessionV2, t: (k: string, o?: Record<string, unknown>) => string): StatusBadge[] {
+  const badges: StatusBadge[] = [];
+  if (s.claude_code_api_error_count > 0)
+    badges.push({ kind: "error", count: s.claude_code_api_error_count, tooltip: t("sessionOverview.badges.errors") });
+  if (s.sub_agent_count > 0)
+    badges.push({ kind: "subAgent", count: s.sub_agent_count, tooltip: t("sessionOverview.badges.subAgents") });
+  const proxyGap = Math.max(0, s.llm_call_count - s.proxy_request_id_count);
+  if (proxyGap > 0)
+    badges.push({ kind: "noProxy", count: proxyGap, tooltip: t("sessionOverview.badges.noProxyDetail", { count: proxyGap }) });
+  return badges;
+}
 
 
 function SessionRowV2({ session, onClick, maxTotal, selected = false }: { session: SessionV2; onClick: () => void; maxTotal: number; selected?: boolean }) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const fmtRelative = useRelativeTime();
   const badge = TOOL_BADGE[session.tool] ?? { bg: "#f3f4f6", color: "#374151" };
+  const riskBadges = sessionRiskBadges(session, t);
 
   const displayName = getSessionTitle(session);
 
@@ -83,20 +104,20 @@ function SessionRowV2({ session, onClick, maxTotal, selected = false }: { sessio
           : { background: hovered ? "#f9fafb" : "#fff" }),
       }}
     >
-      {/* 工具徽标 + proxy 链接质量小角标 */}
+      {/* 状态：风险信号（错误 / 子 agent / 无 proxy）。靠近会话标题（第 2 列），
+          不再散落到右侧。无风险时显示淡 "—" 占位以保持列对齐。 */}
       <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ fontSize: 11, padding: "2px 7px", borderRadius: 20, fontWeight: 600, background: badge.bg, color: badge.color }}>
-            {session.tool}
-          </span>
-          {/* 严格 request-id 匹配：proxy_request_id_count < llm_call_count
-              就说明有 LLM call 没有对应的 proxy 数据，归因会降级。全部匹配时不展示。 */}
-        </div>
+        {riskBadges.length > 0
+          ? <StatusBadgeStrip badges={riskBadges} size="compact" renderIcon={renderStatusIcon} />
+          : <span style={{ fontSize: 12, color: "#d1d5db" }}>—</span>}
       </td>
 
-      {/* 状态点 + 会话名 + 首条消息预览 */}
+      {/* 会话名 + 首条消息预览（工具徽标弱化为标题前的小灰 chip） */}
       <td style={{ padding: "10px 12px", maxWidth: 300 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+          <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, fontWeight: 600, background: badge.bg, color: badge.color, flexShrink: 0, opacity: 0.7 }}>
+            {session.tool}
+          </span>
           <p style={{ fontSize: 13, fontWeight: 500, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: preview ? 2 : 0 }}>
             {displayName}
           </p>
@@ -141,16 +162,7 @@ function SessionRowV2({ session, onClick, maxTotal, selected = false }: { sessio
         />
       </td>
 
-      {/* Sub agents */}
-      <td style={{ padding: "10px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
-        {session.sub_agent_count > 0 ? (
-          <Badge variant="violet" className="rounded-full px-2 text-[11px] font-medium">
-            {session.sub_agent_count}
-          </Badge>
-        ) : (
-          <span style={{ fontSize: 12, color: "#d1d5db" }}>—</span>
-        )}
-      </td>
+      {/* Sub-agent 计数已并入第 1 列「状态」徽标（靠近标题），此处不再单列。 */}
 
       {/* Models */}
       <td style={{ padding: "8px 12px", maxWidth: 130 }}>
@@ -384,14 +396,13 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
-            <tr style={{ background: "#fafafa" }}>
-              <th style={TH}>{t("dashboard.colTool")}</th>
+            <tr>
+              <th style={TH}>{t("dashboard.colStatus")}</th>
               <th style={TH}>{t("dashboard.colSession")}</th>
               <th style={TH}>{t("dashboard.colWorkdir")}</th>
               <th style={{ ...TH, textAlign: "right" }}>{t("dashboard.colUserTurns")}</th>
               <th style={{ ...TH, textAlign: "right" }}>{t("dashboard.colLlmCalls")}</th>
               <th style={TH}>{t("dashboard.colTokenLedger")}</th>
-              <th style={{ ...TH, textAlign: "right" }}>{t("dashboard.colSubAgent")}</th>
               <th style={TH}>{t("dashboard.colModel")}</th>
               <th style={{ ...TH, textAlign: "right" }}>{t("dashboard.colLastActive")}</th>
               <th style={TH} />

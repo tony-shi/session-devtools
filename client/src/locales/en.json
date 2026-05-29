@@ -28,6 +28,7 @@
     "noResults": "No matching sessions",
     "noSessions": "No sessions",
     "colTool": "Tool",
+    "colStatus": "Status",
     "colSession": "Session",
     "colWorkdir": "Workdir",
     "colUserTurns": "User Turns",
