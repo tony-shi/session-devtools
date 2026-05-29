@@ -1,32 +1,39 @@
 import type { SceneTurn } from "../scenes/timeline";
 
-// Phase 1 静态 fixture —— 代表性会话内容,形状即 SceneTurn(不依赖 server / drilldown)。
-// 内容仿真实 demo 会话(找关键文件那条 turn)。接真数据时,换成
-//   fromUserTurns(dd.turns) 的产物即可,Scene 不用改。
-// assistant 里特意放一个 markdown 表格,验证 Remotion 里 ReactMarkdown + GFM 表格渲染。
+// 自动 dump 自真实 session(scripts/voice/dump-fixture.ts)。
+// session: 5e7476cd-c9cf-4029-9256-416a249c61a4
+// title:   Analyze project purpose and functionality
+// 重新生成:npx tsx scripts/voice/dump-fixture.ts 5e7476cd-c9cf-4029-9256-416a249c61a4 --turn 2
 export const conversationFixture: SceneTurn[] = [
   {
-    id: 1,
-    user:
-      "找出这个仓库里最关键的 3 个文件,请先浏览目录结构,再搜索相关关键词,然后读取你判断最关键的文件,最后用一个表格给出:文件名 + 一句话职责。不要修改任何文件。",
-    assistant:
-      "我浏览了目录、搜索了关键词并读取了核心文件。最关键的 3 个:\n\n| 文件 | 一句话职责 |\n|---|---|\n| `server/main.ts` | 启动入口,装配路由与代理 |\n| `session-drilldown-parser.ts` | 把 jsonl 会话解析成结构化 Turn/Call |\n| `attribution-service.ts` | 把每段 context 归因到来源 |\n\n以上均未修改任何文件。",
-    llmCalls: 6,
-    tools: [
-      { name: "Bash", count: 2 },
-      { name: "Grep", count: 3 },
-      { name: "Read", count: 4 },
-    ],
+    "id": 1,
+    "user": "Answer in English. Briefly analyze what this project does in one sentence.",
+    "assistant": "This project is a session dashboard/devtool that parses Claude Code session JSONL logs and visualizes them — notably attributing each piece of context (system reminders, rules, injected content) back to its source through a \"lens\"-based attribution tree in a React client backed by a Node attribution service.",
+    "llmCalls": 1,
+    "tools": []
   },
   {
-    id: 2,
-    user: "很好。那 server/main.ts 里,代理是怎么挂上去的?给我关键几行。",
-    assistant:
-      "代理在启动时通过 `registerProxy(app)` 挂载:它注册一个 catch-all 路由,把匹配到的请求转发给上游,并在响应回来时落盘记录,供后续归因使用。关键就是「先注册业务路由,代理放最后兜底」这个顺序。",
-    llmCalls: 3,
-    tools: [
-      { name: "Read", count: 1 },
-      { name: "Grep", count: 1 },
-    ],
+    "id": 2,
+    "user": "Answer in English. What are the three most important code files in this project? List each filename and its role in one sentence.",
+    "assistant": "The three most important files, based on the data flow (parse → attribute → visualize):\n\n1. **`server/src/session-drilldown-parser.ts`** — Parses the raw Claude Code session JSONL into structured turns/LLM-calls/compact-events; it's the foundational ingestion layer everything else consumes.\n\n2. **`server/src/context-ledger/parser/attribution/jsonl-linker.ts`** — The attribution…",
+    "llmCalls": 3,
+    "tools": [
+      {
+        "name": "Bash",
+        "count": 2
+      }
+    ]
   },
+  {
+    "id": 3,
+    "user": "Answer in English. In the most important file, what are the three key methods or functions? List each name and its role in one sentence.",
+    "assistant": "The most important file is the attribution core, `server/src/context-ledger/parser/attribution/jsonl-linker.ts`. Its three key functions:\n\n1. **`linkJsonl(...)`** (the sole public entry, line 899) — Walks every node in a `ParsedQuerySnapshot` and dispatches each to the appropriate linker, rewriting nodes whose origin can be proven from JSONL.\n\n2. **`buildIndex(events)`** (line …",
+    "llmCalls": 2,
+    "tools": [
+      {
+        "name": "Bash",
+        "count": 1
+      }
+    ]
+  }
 ];

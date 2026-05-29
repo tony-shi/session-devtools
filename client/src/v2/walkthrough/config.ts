@@ -16,9 +16,11 @@ export interface StageTarget {
 //   "turn-io":    { sessionId: "b2c48fd5-...", turnId: 3 },
 //   "llm-call":   { sessionId: "b2c48fd5-...", turnId: 3, callId: 18 },
 export const STAGE_CONFIG: Record<ActId, StageTarget> = {
-  conversation: { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e" },
-  "turn-io": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1 },
-  "llm-call": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 1 },
+  // Story 1(agent-loop)第一幕的展示会话。换 session 改这里。
+  // turn 2 才有工具调用(2 轮),turn-io / llm-call 指向它(与 Remotion fixture 的 --turn 2 一致)。
+  conversation: { sessionId: "5e7476cd-c9cf-4029-9256-416a249c61a4" },
+  "turn-io": { sessionId: "5e7476cd-c9cf-4029-9256-416a249c61a4", turnId: 2 },
+  "llm-call": { sessionId: "5e7476cd-c9cf-4029-9256-416a249c61a4", turnId: 2, callId: 1 },
   recap: {}, // 回顾幕不依赖会话数据(静态结构图)
   // ep2(new):看见真实的 Context —— 复用真实 attribution 面板。callId 2 归因较丰富。
   "rc-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 2 },

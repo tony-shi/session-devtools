@@ -5,12 +5,15 @@
 //
 // Phase 2:只接 zh。en 之后加一行 import + 进 MANIFESTS 即可(或改 calculateMetadata 异步加载)。
 
-import zhManifest from "../../../public/voice/agent-loop/zh.json";
+import zhManifestJson from "../../../public/voice/agent-loop/zh.json";
+import type { Manifest } from "../../v2/walkthrough/voice/types";
 
-export type VoiceManifest = typeof zhManifest;
+// 用规范 Manifest 类型,而不是从 JSON 推断 —— JSON 里 audio 字段有无(mock 无 / 真 TTS 有)
+// 不应影响类型;Manifest.LineCue.audio 本就是可选。
+export type VoiceManifest = Manifest;
 
-const MANIFESTS: Record<string, VoiceManifest> = {
-  zh: zhManifest as VoiceManifest,
+const MANIFESTS: Record<string, Manifest> = {
+  zh: zhManifestJson as unknown as Manifest,
 };
 
 export function getManifest(lang: string): VoiceManifest | null {
