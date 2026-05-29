@@ -1,38 +1,55 @@
-import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate } from "remotion";
+import { useLayoutEffect, useRef, useState } from "react";
+import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, interpolateColors } from "remotion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ACTOR_COLOR } from "../../v2/walkthrough/actorPalette";
 import { buildConversationTimeline, type SceneTurn } from "./timeline";
 
-// 第一幕「会话」的 frame-driven 版本 —— 与现在 live 的 ConversationView 视觉一致,
-// 但所有动画都是 useCurrentFrame() 的纯函数:打字机、思考点、caret 全部按帧推进。
-// 同一个组件既能在 Remotion Studio 预览,又能 remotion render 出 mp4(将来还能塞进
-// @remotion/player 嵌进网页)—— 预览即出片,parity 由 Remotion 帧引擎保证。
+// 第一幕「会话」的 frame-driven 版本 —— 对齐 live ConversationView:
+//   - 内容自顶部向下排,跟随滚动(超出视口才上滚,保留最新)—— 不再底部锚定/居中
+//   - 焦点态随旁白切换:overview(step 0,全局播放) → turn(step 1,框住 Turn 1、其余变暗)
+//   - 打字机 / 思考点 / caret / 滚动 / 框选淡入 全是 useCurrentFrame() 的纯函数
+// overviewEndFrame:旁白 step 0 结束的帧(= 焦点从 overview 切到 turn 的时刻),由 Root 传入。
 
 const FONT =
   "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, -apple-system, 'Segoe UI', sans-serif";
-
 const MD_CSS = `.wt-md p{margin:0 0 8px}.wt-md p:last-child{margin-bottom:0}.wt-md ul,.wt-md ol{margin:4px 0;padding-left:20px}.wt-md li{margin:2px 0}.wt-md code{background:rgba(15,23,42,0.06);padding:1px 6px;border-radius:5px;font-size:0.92em}.wt-md table{border-collapse:collapse;font-size:0.95em;margin:4px 0}.wt-md th,.wt-md td{border:1px solid #e5e7eb;padding:6px 12px}.wt-md th{background:#f8fafc}`;
 
+const PAD = 70;
 const floorChars = (len: number, t: number) => Math.max(0, Math.floor(len * t));
 
-export const ConversationScene = ({ turns }: { turns: SceneTurn[] }) => {
+export const ConversationScene = ({ turns, overviewEndFrame }: { turns: SceneTurn[]; overviewEndFrame: number }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, height } = useVideoConfig();
   const tl = buildConversationTimeline(turns, fps);
 
-  // caret 闪烁:每 ~0.5s 翻转一次,帧驱动(不用 CSS keyframe,保证渲染确定)
+  const B = overviewEndFrame;
+  const isTurn = frame >= B;
+  const target = 0; // turn 焦点态强调第一轮
+
+  // 测量内容真实高度(含 markdown 表格)→ 决定 overview 阶段要不要上滚。
+  const innerRef = useRef<HTMLDivElement>(null);
+  const [contentH, setContentH] = useState(0);
+  useLayoutEffect(() => {
+    if (innerRef.current) setContentH(innerRef.current.getBoundingClientRect().height);
+  });
+
+  const usable = height - PAD * 2;
+  const overviewScroll = -Math.max(0, contentH - usable); // 跟随底部:最新内容贴底
+  // turn 阶段滚到顶(Turn 1 是第一轮,translateY 0 即把它带到最上)
+  const scrollY = interpolate(frame, [B - 8, B + 8], [overviewScroll, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  // 焦点切换的淡入进度(0→1)
+  const focusIn = interpolate(frame, [B, B + 14], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+
   const caretOn = Math.floor(frame / Math.round(fps * 0.5)) % 2 === 0;
 
   return (
     <AbsoluteFill style={{ background: "#fff", fontFamily: FONT }}>
       <style>{MD_CSS}</style>
-      {/* 底部锚定:对话像聊天一样从下往上堆,新内容贴着底部 —— 省掉 Phase 1 的滚动测量。
-          (超出整屏的滚动留到 Phase 2 polish。) */}
-      <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", justifyContent: "flex-end", padding: "70px 0" }}>
-        <div style={{ width: "100%", maxWidth: 900, margin: "0 auto", padding: "0 48px", display: "flex", flexDirection: "column", gap: 34 }}>
-          {tl.turns.map((tt) => {
-            if (frame < tt.start) return null; // 还没轮到这一轮
+      <div style={{ position: "absolute", inset: 0, overflow: "hidden", padding: `${PAD}px 0` }}>
+        <div ref={innerRef} style={{ width: "100%", maxWidth: 980, margin: "0 auto", padding: "0 48px", display: "flex", flexDirection: "column", gap: 34, transform: `translateY(${scrollY}px)` }}>
+          {tl.turns.map((tt, i) => {
+            if (frame < tt.start) return null;
 
             const userT = interpolate(frame, [tt.start, tt.userTypeEnd], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
             const userTyping = frame < tt.userTypeEnd;
@@ -41,25 +58,45 @@ export const ConversationScene = ({ turns }: { turns: SceneTurn[] }) => {
             const asstT = interpolate(frame, [tt.thinkEnd, tt.asstTypeEnd], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
             const asstTyping = asstActive && frame < tt.asstTypeEnd;
 
-            return (
-              <div key={tt.turn.id} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                <Bubble
-                  side="left"
-                  role="User"
-                  text={tt.turn.user.slice(0, floorChars(tt.turn.user.length, userT))}
-                  caret={userTyping && caretOn}
-                />
+            const bubbles = (
+              <>
+                <Bubble side="left" role="User" text={tt.turn.user.slice(0, floorChars(tt.turn.user.length, userT))} typing={userTyping} caretOn={caretOn} />
                 {inThink && <Thinking frame={frame} fps={fps} />}
                 {asstActive && (
-                  <Bubble
-                    side="right"
-                    role="Claude"
-                    markdown
-                    text={tt.turn.assistant.slice(0, floorChars(tt.turn.assistant.length, asstT))}
-                    caret={asstTyping && caretOn}
-                  />
+                  <Bubble side="right" role="Claude" markdown text={tt.turn.assistant.slice(0, floorChars(tt.turn.assistant.length, asstT))} typing={asstTyping} caretOn={caretOn} />
                 )}
-              </div>
+              </>
+            );
+
+            // 非目标轮:turn 焦点态下变暗
+            const dim = i === target ? 1 : interpolate(focusIn, [0, 1], [1, 0.3]);
+
+            if (i === target) {
+              // 目标轮:turn 阶段渐显框选 + 角标 + 底部统计(focusIn 驱动)
+              const borderCol = interpolateColors(focusIn, [0, 1], ["rgba(99,102,241,0)", "rgba(99,102,241,1)"]);
+              return (
+                <div key={tt.turn.id} style={{ position: "relative", border: `2px solid ${borderCol}`, borderRadius: 18, padding: 22, background: focusIn > 0.01 ? "#fff" : "transparent" }}>
+                  {focusIn > 0.01 && (
+                    <div style={{ position: "absolute", top: -16, left: 22, background: "#6366f1", color: "#fff", fontSize: 16, fontWeight: 700, padding: "3px 14px", borderRadius: 999, opacity: focusIn }}>
+                      Turn {tt.turn.id} · 轮次
+                    </div>
+                  )}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>{bubbles}</div>
+                  {focusIn > 0.01 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, marginTop: 18, paddingTop: 14, borderTop: "1px dashed #e5e7eb", fontSize: 18, opacity: focusIn }}>
+                      <span style={{ fontWeight: 700, color: ACTOR_COLOR.llm.main }}>{tt.turn.llmCalls} 次 LLM 调用</span>
+                      <span style={{ color: "#cbd5e1" }}>|</span>
+                      {tt.turn.tools.map((tool) => (
+                        <span key={tool.name} style={{ color: ACTOR_COLOR.agent.main, fontWeight: 600 }}>✓ {tool.name} ×{tool.count}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            return (
+              <div key={tt.turn.id} style={{ display: "flex", flexDirection: "column", gap: 16, opacity: dim }}>{bubbles}</div>
             );
           })}
         </div>
@@ -68,11 +105,13 @@ export const ConversationScene = ({ turns }: { turns: SceneTurn[] }) => {
   );
 };
 
-function Bubble({ side, role, text, caret, markdown }: { side: "left" | "right"; role: string; text: string; caret: boolean; markdown?: boolean }) {
+// typing:这条是否正在逐字打(稳定布尔,决定渲染纯文本还是 markdown);
+// caretOn:光标闪烁相位(只控制 ▍ 是否可见)。两者分开 —— 否则光标闪灭那半秒会误渲染半截 markdown。
+function Bubble({ side, role, text, typing, caretOn, markdown }: { side: "left" | "right"; role: string; text: string; typing: boolean; caretOn: boolean; markdown?: boolean }) {
   const left = side === "left";
   const c = left ? ACTOR_COLOR.user : ACTOR_COLOR.llm;
-  // 打字途中用纯文本(避免半截 markdown 抖动);打完那条再转 Markdown 渲染。
-  const showMd = markdown && !caret && text.length > 0;
+  const showMd = markdown && !typing && text.length > 0;
+  const caret = typing && caretOn;
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: left ? "flex-start" : "flex-end", gap: 8 }}>
       <span style={{ fontSize: 22, fontWeight: 600, letterSpacing: 0.5, color: c.main }}>{role}</span>
@@ -109,7 +148,6 @@ function Thinking({ frame, fps }: { frame: number; fps: number }) {
       <span>Claude is thinking</span>
       <span style={{ display: "inline-flex", gap: 5 }}>
         {[0, 1, 2].map((i) => {
-          // 三点错相位脉动,帧驱动(替代 CSS @keyframes,保证逐帧确定)
           const phase = ((frame / (fps * 1.2)) + i * 0.18) % 1;
           const opacity = 0.3 + 0.7 * (0.5 - 0.5 * Math.cos(phase * 2 * Math.PI));
           return <span key={i} style={{ width: 9, height: 9, borderRadius: 999, background: ACTOR_COLOR.llm.main, opacity }} />;

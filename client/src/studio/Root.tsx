@@ -17,16 +17,17 @@ const CONV_LANG = "zh";
 // 注:Phase 2 是「最快跑通 + 有声」,旁白(~47s)比对话视觉(~17s)长,视觉播完后定格;
 //     精确音画同步留作下一步(让对话节拍跟旁白走),这里先不调样式。
 const convVisual = buildConversationTimeline(conversationFixture, FPS).total;
-const convNarr = getManifest(CONV_LANG)
-  ? buildNarrationClips(getManifest(CONV_LANG)!, CONV_STEPS, FPS).totalFrames
-  : 0;
+const convManifest = getManifest(CONV_LANG);
+// 焦点切换点 = 旁白 step 0(overview)结束的帧;此后进入 turn 焦点态(框住 Turn 1)。
+const overviewEndFrame = convManifest ? buildNarrationClips(convManifest, [0], FPS).totalFrames : convVisual;
+const convNarr = convManifest ? buildNarrationClips(convManifest, CONV_STEPS, FPS).totalFrames : 0;
 const convDuration = Math.max(convVisual, convNarr, 1);
 
 // 第一幕 = 对话视觉 + 旁白音轨(同一条 Remotion 帧时间轴)。
 const Conversation = ({ turns }: { turns: SceneTurn[] }) => {
   return (
     <>
-      <ConversationScene turns={turns} />
+      <ConversationScene turns={turns} overviewEndFrame={overviewEndFrame} />
       <NarrationTrack lang={CONV_LANG} stepIdxs={CONV_STEPS} />
     </>
   );
