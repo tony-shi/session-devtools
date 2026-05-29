@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { BRAND } from "./shared/brand";
+import { selectionRowShadow } from "./shared/selection";
 
 const TOOL_BADGE: Record<string, { bg: string; color: string }> = {
   claude: { bg: BRAND.indigo50, color: BRAND.indigo500 },
@@ -73,7 +74,14 @@ function SessionRowV2({ session, onClick, maxTotal, selected = false }: { sessio
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      style={{ cursor: "pointer", background: selected ? "#eff6ff" : hovered ? "#f9fafb" : "#fff", transition: "background 0.1s" }}
+      style={{
+        cursor: "pointer", transition: "background 0.1s",
+        // 统一选中态（设计契约）：与左 rail 同款 3px 左条 + #eef2ff 底；
+        // 表格行用 inset box-shadow 画左条，避免 border-collapse 裁切。
+        ...(selected
+          ? selectionRowShadow(true, "indigo")
+          : { background: hovered ? "#f9fafb" : "#fff" }),
+      }}
     >
       {/* 工具徽标 + proxy 链接质量小角标 */}
       <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>

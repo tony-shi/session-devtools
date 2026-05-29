@@ -9,6 +9,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import type { CompactEvent, InterTurnBlock } from "../drilldown-types";
 import { BRAND } from "../shared/brand";
+import { selectionStyle, SELECTION_FG } from "../shared/selection";
 
 export function NavItem({
   label, sublabel, active, badge, badgeColor, badges, onClick, indent,
@@ -29,17 +30,16 @@ export function NavItem({
       style={{
         padding: indent ? "5px 10px 5px 28px" : "7px 12px 7px 16px",
         cursor: "pointer",
-        background: active ? "#eff6ff" : "transparent",
-        borderLeft: active ? "2px solid #6366f1" : "2px solid transparent",
         display: "flex", justifyContent: "space-between", alignItems: "center",
         gap: 4,
+        ...selectionStyle(active, "indigo"),
       }}
       className={!active ? "hover:bg-gray-100 transition-colors" : ""}
     >
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{
           fontSize: indent ? 11 : 12,
-          color: active ? BRAND.indigo500 : "#374151",
+          color: active ? SELECTION_FG : "#374151",
           fontWeight: active ? 600 : 400,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>{label}</div>
@@ -94,10 +94,9 @@ export function CompactEventNavItem({ ev, active, onClick }: { ev: CompactEvent;
       style={{
         padding: "7px 12px 7px 16px",
         cursor: "pointer",
-        background: active ? "#fff7ed" : "transparent",
-        borderLeft: active ? "2px solid #f97316" : "2px solid transparent",
         display: "flex", justifyContent: "space-between", alignItems: "center",
         gap: 4,
+        ...selectionStyle(active, "compact"),
       }}
       className={!active ? "hover:bg-amber-50 transition-colors" : ""}
       title={`${compactLabel} ${ordinal} · ${ev.trigger} · ${fmtTokens(ev.preTokens)} → ${fmtTokens(ev.postTokens)} (-${ratioPct}%)`}
@@ -105,11 +104,11 @@ export function CompactEventNavItem({ ev, active, onClick }: { ev: CompactEvent;
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{
           fontSize: 12,
-          color: active ? "#c2410c" : "#374151",
+          color: active ? SELECTION_FG : "#374151",
           fontWeight: active ? 600 : 400,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>
-          <strong style={{ fontWeight: 700, color: active ? "#9a3412" : "#111827" }}>
+          <strong style={{ fontWeight: 700, color: active ? SELECTION_FG : "#111827" }}>
             {compactLabel} {ordinal}
           </strong>
           {previewText && (
@@ -137,9 +136,8 @@ export function InterTurnNavItem({ block, active, onClick }: { block: InterTurnB
       style={{
         padding: "3px 12px 3px 22px",
         cursor: "pointer",
-        background: active ? BRAND.violetGradient50 : "transparent",
-        borderLeft: active ? "2px solid #a78bfa" : "2px solid transparent",
         display: "flex", alignItems: "center", gap: 5,
+        ...selectionStyle(active, "interturn"),
       }}
       className={!active ? "hover:bg-gray-50 transition-colors" : ""}
     >
@@ -148,7 +146,7 @@ export function InterTurnNavItem({ block, active, onClick }: { block: InterTurnB
       </span>
       <span style={{
         fontSize: 10,
-        color: active ? BRAND.violet600 : "#9ca3af",
+        color: active ? SELECTION_FG : "#9ca3af",
         fontStyle: "italic",
         overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         flex: 1,

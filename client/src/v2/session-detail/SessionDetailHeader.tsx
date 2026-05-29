@@ -104,7 +104,7 @@ export function SessionDetailHeader({
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
         {loadState === "loading" && (
-          <span style={{ fontSize: 10, color: BRAND.indigo500, background: "#eff6ff", borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.loading")}</span>
+          <span style={{ fontSize: 10, color: BRAND.indigo500, background: BRAND.indigo50, borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.loading")}</span>
         )}
         {loadState === "error" && (
           <span style={{ fontSize: 10, color: "#dc2626", background: "#fef2f2", borderRadius: 4, padding: "2px 8px" }}>{t("sessionOverview.status.error")}</span>
