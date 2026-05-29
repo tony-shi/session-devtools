@@ -383,6 +383,14 @@
       "prevParseFailed": "Previous call's request body failed to parse.",
       "noPrev": "This is the first request in the session — no previous to compare against.",
       "goSetup": "Configure proxy →"
+    },
+    "howToRead": {
+      "title": "How to read this",
+      "step1": "Intent groups: the top bar slices the prompt by what each part is doing (system / tools / conversation …); width = share of context.",
+      "step2": "Drill in: click any group bar or table row to expand its segment list.",
+      "step3": "Trace a source: click a segment to see its origin, JSONL / request path, char share, and jump to the call that produced it.",
+      "step4": "Overlay lenses: the top Lens row adds Diff (added/removed vs. the previous call) / Cache (L1/L2/L3 hits).",
+      "sectionOpenHint": "Group expanded — click any segment above to see its attribution detail."
     }
   },
   "diff": {

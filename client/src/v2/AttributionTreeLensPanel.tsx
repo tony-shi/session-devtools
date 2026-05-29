@@ -442,6 +442,41 @@ function DiffUnavailableBanner({
   );
 }
 
+// HowToReadCard —— 归因图右侧 Inspector 的"未选中"态。在用户还没点任何 segment
+// 时，这里不再留白，而是给一份"怎么读这张图"的结构化引导 + 下一步提示。一旦选中
+// 某个 leaf，外层用 SelectedDetail 取代它。消灭了评审指出的"下方大片空白、不知道
+// 该点哪里"。
+function HowToReadCard({ hasSection }: { hasSection: boolean }) {
+  const { t } = useTranslation();
+  const steps = [
+    t("attribution.howToRead.step1"),
+    t("attribution.howToRead.step2"),
+    t("attribution.howToRead.step3"),
+    t("attribution.howToRead.step4"),
+  ];
+  return (
+    <div style={{
+      border: "1px dashed #e5e7eb", borderRadius: 8, background: "#fafafa",
+      padding: "12px 14px", fontSize: 11, color: "#6b7280", lineHeight: 1.6,
+    }}>
+      <div style={{ fontWeight: 700, color: "#374151", marginBottom: 6 }}>
+        {t("attribution.howToRead.title")}
+      </div>
+      <ol style={{ margin: 0, paddingLeft: 16, display: "flex", flexDirection: "column", gap: 5 }}>
+        {steps.map((s, i) => <li key={i}>{s}</li>)}
+      </ol>
+      {hasSection && (
+        <div style={{
+          marginTop: 8, paddingTop: 8,
+          borderTop: `1px solid ${BRAND.indigo50}`, color: BRAND.indigo700,
+        }}>
+          {t("attribution.howToRead.sectionOpenHint")}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AttributionTreeLensPanel({
   sessionId, agentFileId, compactIdx, proxyRequestId, callId, prevCallId, hideDiff, onLinkSource, onLeafSelect, prelude,
 }: {
@@ -916,6 +951,16 @@ export function AttributionTreeLensPanel({
             </>
           )}
         </>
+      )}
+
+      {/* Inspector 未选中态（评审"收益最高单点"）：当没有任何 segment 详情可显示时，
+          用"如何读这张图"结构化引导填补下方空白，并明确告诉用户下一步点哪里 ——
+          消灭"默认态只有 section 表 + 大片空白、不知道该点哪"。一旦选中某个 leaf，
+          上方 SelectedDetail 接管，本卡自动隐藏。
+          放在下方而非右侧 320px：SelectedDetail / 行级 diff 需要全宽才好读（评审允许
+          "右侧或下方"二选一）。 */}
+      {!(selectedLeaf && selectedStat && sectionOf(selectedLeaf.rootSlotType) === selectedStat.id) && (
+        <HowToReadCard hasSection={selectedStat !== null} />
       )}
 
       {/* Layer 末尾：Diff lens 激活 + 有 removed leaves 时显示底部"被删除"卡 */}
