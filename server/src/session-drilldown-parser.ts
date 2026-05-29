@@ -384,12 +384,21 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
   } else if (iev.type === "ai-title") {
     kind = "ai-title";
     preview = ((iev as { aiTitle?: string }).aiTitle ?? "").slice(0, 300);
-  } else if (iev.type === "permission-mode") {
-    // 纯客户端会话状态（default/acceptEdits/bypassPermissions/plan）。piK policy=always，
-    // 用于 --resume 恢复 + 遥测，不进 LLM context（模型只见 system prompt 里一句
-    // 通用的"工具按权限模式执行"，不含具体 mode 值）。当元数据行展示即可。
+  } else if (iev.type === "permission-mode" || iev.type === "mode") {
+    // 工具权限 / 会话操作模式（normal·default / acceptEdits / bypassPermissions / plan）。
+    // 两种 jsonl 形态同源、归为一类：
+    //   旧 {type:"permission-mode", permissionMode}
+    //   新 {type:"mode", mode, sessionId} —— cli.js 在 session 元数据 flush 时写
+    //       （紧跟 agent-setting：jZ(sessionFile,{type:"mode",mode:currentSessionMode,sessionId})），
+    //       基线模式记作 "normal"（旧形态记作 "default"）。
+    // 两者都在 cli.js 的 METADATA_TYPE_MARKERS 里 —— session-scoped 元数据，**不进 LLM
+    // context**（模型只见 system prompt 里一句通用权限说明，不含具体 mode 值）。当元数据行展示即可。
     kind = "permission-mode";
-    preview = String((iev as { permissionMode?: unknown }).permissionMode ?? "");
+    preview = String(
+      (iev as { mode?: unknown }).mode
+      ?? (iev as { permissionMode?: unknown }).permissionMode
+      ?? "",
+    );
   } else if (iev.type === "custom-title") {
     // 用户 /rename 设置的标题（读取优先级高于 ai-title）。piK always，非 context。
     kind = "custom-title";

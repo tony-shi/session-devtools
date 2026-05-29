@@ -526,8 +526,9 @@ export function IntervalEventRow({
         // 非 context 事件 → 生成它的后台 proxy 请求：走 provenanceJump（header chip，
         // 与其它 jump chip 同款 LinkIcon + 靛色样式），不受 isSkipped 门控影响。
         provenanceJump={linkedProxyId != null && onOpenSideCall ? {
-          label: `proxy#${linkedProxyId}`,
-          tooltip: t("terms.sideCallGeneratedBy", { defaultValue: `打开生成它的后台请求 proxy#${linkedProxyId}` }),
+          // 标签用人话「查看详情」而非裸 proxy#<id>；proxy 号留在 tooltip 供排查。
+          label: t("terms.viewSideCallDetail", { defaultValue: "查看详情" }),
+          tooltip: t("terms.sideCallGeneratedBy", { proxyId: linkedProxyId, defaultValue: `打开生成它的后台请求（proxy#${linkedProxyId}）` }),
           onClick: () => onOpenSideCall(linkedProxyId),
         } : undefined}
       />
