@@ -80,6 +80,14 @@ export function RemotionStoryPlayer({ storyId }: { storyId: string }) {
             controls
             autoPlay
             loop
+            // 把真实错误打到屏幕(替代 Player 默认那个无信息的 ⚠️)—— 方便 debug。
+            errorFallback={({ error }) => (
+              <div style={{ position: "absolute", inset: 0, background: "#1e1b1b", color: "#fca5a5", padding: 32, fontFamily: "monospace", fontSize: 14, lineHeight: 1.5, overflow: "auto", whiteSpace: "pre-wrap" }}>
+                {"场景渲染出错(同样的帧在 remotion render 里是好的 → 多半是 Player 实时环境特有):\n\n"}
+                <b>{error.message}</b>
+                {"\n\n" + (error.stack ?? "")}
+              </div>
+            )}
           />
         </div>
       </div>
