@@ -97,11 +97,13 @@ export const cacheLens: Lens = {
 
 // ROLE_LENS_IDS 按 IntentGroup 顺序排列（左→右：instructions → environment →
 // conversation → tool-io → runtime → other），保证图例视觉与 group 分块顺序一致。
+// reminder 子类(messages.context / messages.directive)由 roleOf 按 origin.ruleId 拆出,
+// 各自静态映射到 ROLE_TO_GROUP 的正确组 —— 不再有 groupOf override 旁路。
 const ROLE_LENS_IDS: RoleId[] = [
   // instructions
-  "system.core", "system.tool-policy",
+  "system.core", "system.tool-policy", "messages.directive",
   // environment & resources
-  "system.env", "system.billing", "tools.builtin", "messages.skills",
+  "system.env", "system.billing", "tools.builtin", "messages.skills", "messages.context",
   // conversation
   "messages.human", "messages.thinking", "messages.assistant",
   // tool-io
@@ -118,43 +120,6 @@ const ROLE_BUCKETS: LensBucket[] = ROLE_LENS_IDS.map((r) => ({
   color: rolePalette[r].barBg,
   groupId: ROLE_TO_GROUP[r],
 }));
-
-/** L0 意图分组：给一个 leaf 返回它的 IntentGroup。
- *  规则:先按 origin.ruleId 做 messages.injection 的细分 override(默认 injection 归
- *  runtime,但很多 reminder 本质是"能力声明 / 事实 / 行为指令",需要拨到正确组),
- *  其余走纯静态 role→group 映射。 */
-export function groupOf(leaf: LeafLite): IntentGroupId {
-  // ruleId override(优先于 role 静态映射)
-  if (leaf.origin.kind === "rule") {
-    const rid = leaf.origin.ruleId;
-    if (RULE_TO_GROUP_OVERRIDE[rid]) return RULE_TO_GROUP_OVERRIDE[rid];
-  }
-  // 未识别 / 结构兜底
-  if (leaf.origin.kind === "unknown") return "other";
-  if (leaf.classSlot.endsWith(".unknown") || leaf.slotType.endsWith(".unknown")) return "other";
-  return ROLE_TO_GROUP[roleOf(leaf)];
-}
-
-// ruleId → group 的覆盖表。messages.injection role 默认归 runtime,但某些具名 reminder
-// 的本质不是临时事件,需要显式拨到正确组。维护契约:每条 override 必须能用一句话回答
-// "这段内容如果删了,模型会丢失什么 / 不知道什么"——丢"能力声明" → environment,
-// 丢"事实" → environment,丢"行为指引" → instructions,丢"临时通知" → runtime(默认)。
-const RULE_TO_GROUP_OVERRIDE: Record<string, IntentGroupId> = {
-  // ── 资源/事实声明(归 environment & resources)
-  // CLAUDE.md 内容 = 持久性资源,模型查这个知道项目约定
-  "claude-code.messages.memory-contents.v1":         "environment",
-  "claude-code.messages.nested-memory-contents.v1":  "environment",
-  // userEmail / currentDate / git diff 等用户身份与事实
-  "claude-code.messages.user-context.v1":            "environment",
-  // ToolSearch 暴露的 deferred tools — 是"还有这些能力可用"的声明
-  "claude-code.messages.deferred-tools-listing.v1":  "environment",
-  // 可用 sub-agent 类型 — 同上,能力声明
-  "claude-code.messages.agent-types-listing.v1":     "environment",
-
-  // ── 行为指令(归 instructions)
-  // "User messages may include a <system-reminder>..." 是 thinking 频率指导,本质是行为指令
-  "claude-code.messages.thinking-frequency.v1":      "instructions",
-};
 
 export const structureLens: Lens = {
   id: "structure",

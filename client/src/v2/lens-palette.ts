@@ -189,6 +189,11 @@ export const rolePalette: Record<RoleId, SectionStyle> = {
   "messages.injection":  { label: "Injection",   barBg: "#c026d3", barText: "#fff", rowBg: "#fdf4ff", marker: "#a21caf", textColor: "#86198f" },
   // Skills 机制:专门识别的 skill_listing 注入,单列一类（与通用 injection 区分）。
   "messages.skills":     { label: "Skills",      barBg: "#e879f9", barText: "#fff", rowBg: "#fdf4ff", marker: "#d946ef", textColor: "#86198f" },
+  // reminder 子类（harness 注入的元内容，非对话本体）。色跟 group 走而非 messages 暖色族：
+  //   messages.context  → environment（青，= 注入的上下文/能力声明：memory / user-context / deferred-tools / agent-types）
+  //   messages.directive→ instructions（靛蓝，= 注入的行为指令：thinking-frequency）
+  "messages.context":    { label: "Context inj", barBg: "#0891b2", barText: "#fff", rowBg: "#ecfeff", marker: "#0e7490", textColor: "#155e75" },
+  "messages.directive":  { label: "Directive",   barBg: "#4f46e5", barText: "#fff", rowBg: "#eef2ff", marker: "#4338ca", textColor: "#3730a3" },
   "messages.misc":       { label: "Msg misc",    barBg: "#a8a29e", barText: "#fff", rowBg: "#fafaf9", marker: "#78716c", textColor: "#44403c" },
   "tools.builtin":      { label: "Tools",      barBg: "#3b82f6", barText: "#fff", rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1e40af" },
   "other.unknown":      { label: "Other",      barBg: "#d1d5db", barText: "#374151", rowBg: "#fafafa", marker: "#9ca3af", textColor: "#374151" },
@@ -214,6 +219,8 @@ export type RoleId =
   | "messages.tool-result"
   | "messages.injection"
   | "messages.skills"
+  | "messages.context"
+  | "messages.directive"
   | "messages.misc"
   | "tools.builtin"
   | "other.unknown";
@@ -265,11 +272,15 @@ export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
   "system.core":         "instructions",  // identity / intro / # Doing tasks / # Tone & style / 各种行为段
   "system.tool-policy":  "instructions",  // # Using your tools
 
+  // ── Instructions（行为规则）— reminder 通道注入的指令也归这里
+  "messages.directive":  "instructions",  // thinking-frequency 等"注入的行为指引"
+
   // ── Environment & Resources（事实与能力）
   "system.env":          "environment",   // # Environment / gitStatus
   "system.billing":      "environment",   // billing header（noise 类，但本质是 env 标识）
   "tools.builtin":       "environment",   // 工具 schema 是"模型可用的能力"，与调用本身（tool-io）分开
   "messages.skills":     "environment",   // skill_listing 是"可用 skill"声明
+  "messages.context":    "environment",   // reminder 注入的上下文/能力：memory / user-context / deferred-tools / agent-types
 
   // ── Conversation（对话本体）
   "messages.human":      "conversation",
@@ -280,7 +291,8 @@ export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
   "messages.tool-use":   "tool-io",
   "messages.tool-result":"tool-io",
 
-  // ── Runtime status（动态注入；memory-contents / skill-listing 在 groupOf 里被 override 到 environment）
+  // ── Runtime status（harness 注入的临时事件/状态：token-usage / diagnostics / file-* / catch-all）
+  // messages.context / messages.directive 已由 roleOf 按 ruleId 拆出去，injection 现在只剩真·临时通知。
   "messages.injection":  "runtime",
 
   // ── Other（杂项）
@@ -295,7 +307,7 @@ export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
     "system.core", "system.tool-policy", "system.env", "system.billing",
     "messages.human", "messages.thinking", "messages.assistant",
     "messages.tool-use", "messages.tool-result",
-    "messages.injection", "messages.skills", "messages.misc",
+    "messages.injection", "messages.skills", "messages.context", "messages.directive", "messages.misc",
     "tools.builtin", "other.unknown",
   ];
   for (const r of allRoles) {

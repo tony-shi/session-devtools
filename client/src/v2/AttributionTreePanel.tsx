@@ -86,6 +86,23 @@ function isSystemSectionSlot(slotType: string): boolean {
   );
 }
 
+// system-reminder 子类 ruleId → role 映射。把 messages.inline.system-reminder 这个
+// 大杂烩按内容本质拆开（依据:Claude Code restored-src attachment.type 分类法 +
+// 跨 fixture 实证「会话内逐字稳定 = 能力声明，非每-call 动态」）:
+//   messages.context   → 注入的上下文/能力声明（environment group）
+//   messages.directive → 注入的行为指令（instructions group）
+//   未列出的 reminder（token-usage / diagnostics / file-* / catch-all）→ 默认 messages.injection（runtime）
+const REMINDER_RULE_TO_ROLE: Record<string, RoleId> = {
+  // 注入的上下文/能力声明 → messages.context
+  "claude-code.messages.memory-contents.v1":        "messages.context", // CLAUDE.md 内容
+  "claude-code.messages.nested-memory-contents.v1": "messages.context", // 嵌套 memory 文件内容
+  "claude-code.messages.user-context.v1":           "messages.context", // userEmail / currentDate 等事实
+  "claude-code.messages.deferred-tools-listing.v1": "messages.context", // ToolSearch 可用工具声明
+  "claude-code.messages.agent-types-listing.v1":    "messages.context", // 可用 sub-agent 类型声明
+  // 注入的行为指令 → messages.directive
+  "claude-code.messages.thinking-frequency.v1":     "messages.directive", // thinking 频率指引
+};
+
 /**
  * L2 语义角色判定。输入用 classSlot（system 取 section 级 / messages 取叶子自身）
  * + rootSlotType（区分 tool_result 上下文）+ messageRole + origin（识别 skills）。
@@ -99,11 +116,22 @@ export function roleOf(leaf: {
   origin?: SegmentOrigin;
 }): RoleId {
   const { classSlot, rootSlotType, messageRole, origin } = leaf;
-  // Skills 机制:skill_listing 与普通 reminder 共用 slot，只能靠 ruleId 区分。
-  // 我们专门解析了它（skillsBlock / SkillListingDetail），故单列一类。
+  // system-reminder 通道注入的内容共用同一个 slot（messages.inline.system-reminder），
+  // 只能靠 origin.ruleId 区分语义。分流:
+  //   - skill_listing → messages.skills（有专门解析 SkillListingDetail，单列）
+  //   - REMINDER_RULE_TO_ROLE 命中 → messages.context（注入的上下文/能力）
+  //     或 messages.directive（注入的行为指令）
+  //   - 其余 → messages.injection（真·运行时临时通知，默认）
+  // 各 role 经 ROLE_TO_GROUP 静态映射到正确 group（不再有 groupOf override 旁路）。
   if (origin?.kind === "rule" && origin.ruleId === "claude-code.messages.skill-listing.v1")
     return "messages.skills";
-  if (classSlot === "messages.inline.system-reminder") return "messages.injection";
+  if (classSlot === "messages.inline.system-reminder") {
+    if (origin?.kind === "rule") {
+      const sub = REMINDER_RULE_TO_ROLE[origin.ruleId];
+      if (sub) return sub;
+    }
+    return "messages.injection";
+  }
   if (classSlot.startsWith("system.") || classSlot === "side-query.system") {
     if (classSlot === "system.billing") return "system.billing";
     if (classSlot === "system.main-prompt.section.using-tools") return "system.tool-policy";
