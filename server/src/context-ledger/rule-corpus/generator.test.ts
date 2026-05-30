@@ -19,13 +19,11 @@ import { loadCorpus } from "./index";
 import type { Rule } from "./schema";
 
 describe("rule-corpus generator", () => {
-  it("loadCorpus() 不抛错;返回的对象有 rules/exclusions/manifests 三个数组键", () => {
-    // Phase 1 时此测试断言三者皆空;Phase 2 起 rules 会陆续填充,本测试只验结构。
+  it("loadCorpus() 不抛错;返回的对象有 rules 数组键", () => {
+    // Piebald exclusions/manifests 已脱钩,corpus 只含 rules。
     // 具体迁移内容的恒等性由 *-migration.test.ts 各自负责。
     const snap = loadCorpus();
     expect(Array.isArray(snap.rules)).toBe(true);
-    expect(Array.isArray(snap.exclusions)).toBe(true);
-    expect(Array.isArray(snap.manifests)).toBe(true);
   });
 
   it("generateLedgerRules({rules:[]}) === []", () => {

@@ -1,39 +1,14 @@
 // rule-corpus/schema.ts
 //
-// 5 层抽象的 zod schema(单一真值)。
+// corpus rule 的 zod schema(单一真值)。
 //
-//   L1 SourceUnit       —— Piebald md 文件 = 一个 unit(由 indexer 产出,这里只定类型)
-//   L2 RuntimeSlot      —— 已存在概念(parser slotId),无需新类型
-//   L3 Rule             —— corpus 文件 frontmatter + body 解码后的产物
-//   L4 UnitAccounting   —— covered / handled_elsewhere / out_of_scope / unsupported
-//   L5 VersionManifest  —— 每个 CC 版本一份
-//
-// schema 与现有 ContextLedgerRule / ContextRule 字段 1:1 对齐,生成器恒等映射。
+// rule 维护真值 = proxy 实际文本 + cli.js binary(固化性/版本),不再依赖 Piebald。
+// `sourceUnits` 字段保留为「可选文档性参考」—— 偶尔标注某 rule 对应 Piebald 哪个
+// source unit(加强理解),不参与任何 gate / 校验(Piebald 对照机制已脱钩)。
 
 import { z } from "zod";
 
-// ── L1: SourceUnit(由 indexer 扫 Piebald md 产出,corpus 只引 unitId)──────────
-
-export const SourceUnitKind = z.enum([
-  "system-prompt",
-  "tool-description",
-  "system-reminder",
-  "agent-prompt",
-  "data",
-  "skill",
-]);
-export type SourceUnitKind = z.infer<typeof SourceUnitKind>;
-
-export const SourceUnit = z.object({
-  unitId: z.string(),            // basename 去 .md,例 "system-prompt-memory-instructions"
-  file: z.string(),              // 相对 Piebald 仓根,例 "system-prompts/system-prompt-memory-instructions.md"
-  kind: SourceUnitKind,
-  ccVersion: z.string(),         // Piebald frontmatter 里的 ccVersion(可能与 manifest 主版本不同 — 单元各自有最初/最新 cc)
-  canonicalHash: z.string(),     // strip frontmatter + normalize whitespace 后的 sha256:16
-});
-export type SourceUnit = z.infer<typeof SourceUnit>;
-
-// ── L3: Rule 子结构 ───────────────────────────────────────────────────────────
+// ── Rule 子结构 ───────────────────────────────────────────────────────────────
 
 // 与 rules/rule-registry.ts 的 RuleMatchMode 完全一致(corpus 接受全部 5 值)。
 // "structural" 用于 tool_result / wire 协议级 rule(category=tool_result),不靠文本 pattern。
@@ -62,7 +37,8 @@ export type RuleMaterialization = z.infer<typeof RuleMaterialization>;
 export const RuleStability = z.enum(["static", "dynamic"]);
 export type RuleStability = z.infer<typeof RuleStability>;
 
-// sourceUnit relation —— Piebald 文本与运行时字节的关系(决定 drift 校验策略)。
+// sourceUnit relation —— 该 rule 对应的 Piebald source unit 与运行时字节的关系。
+// 纯文档性标注(Piebald 对照机制已脱钩,不再有 drift 校验)。
 export const SourceRelation = z.enum([
   "exact",            // Piebald 文本与运行时字节逐字相等
   "template",         // Piebald 含 ${var},运行时是变量替换后的字面
@@ -71,8 +47,9 @@ export const SourceRelation = z.enum([
 ]);
 export type SourceRelation = z.infer<typeof SourceRelation>;
 
+// 可选文档性参考:标注某 rule 偶尔对应的 Piebald source unit(加强理解,不参与校验)。
 export const RuleSourceUnitRef = z.object({
-  unitId: z.string(),         // 指向 L1 SourceUnit.unitId
+  unitId: z.string(),         // Piebald unit basename(去 .md)
   relation: SourceRelation,
 });
 
@@ -107,7 +84,7 @@ export const RuleSchema = z.object({
   verifiedFor: z.string().nullable(),
   appliesTo: VersionPredicate.optional(),
 
-  // Piebald 溯源(每条规则关联 0+ 个 SourceUnit,relation 决定 drift 校验策略)
+  // 可选文档性参考:偶尔标注对应的 Piebald source unit(加强理解,不参与校验)。
   sourceUnits: z.array(RuleSourceUnitRef).default([]),
 
   // 元数据(平移自 ContextLedgerRule)
@@ -162,68 +139,3 @@ export interface Rule extends RuleFrontmatter {
   // 来自文件相对路径(便于错误信息回链)
   filePath: string;
 }
-
-// ── L4: UnitAccounting(coverage contract)──────────────────────────────────────
-
-export const UnitAccounting = z.discriminatedUnion("status", [
-  z.object({
-    unitId: z.string(),
-    status: z.literal("covered"),
-    ruleIds: z.array(z.string()).min(1),
-  }),
-  z.object({
-    unitId: z.string(),
-    status: z.literal("handled_elsewhere"),
-    reason: z.string(),
-  }),
-  z.object({
-    unitId: z.string(),
-    status: z.literal("out_of_scope"),
-    reason: z.string(),
-  }),
-  z.object({
-    unitId: z.string(),
-    status: z.literal("unsupported"),
-    reason: z.string(),
-  }),
-]);
-export type UnitAccounting = z.infer<typeof UnitAccounting>;
-
-// Exclusions 文件 frontmatter(列 non-covered 三态;covered 由 rules 自动推导)
-export const ExclusionsSchema = z.object({
-  ccVersion: z.string(),
-  piebaldRef: z.string(),
-  // 三态各自一个数组;covered 状态不在这里维护(由 rules 推导)
-  handled_elsewhere: z.array(z.object({ unitId: z.string(), reason: z.string() })).default([]),
-  out_of_scope: z.array(z.object({ unitId: z.string(), reason: z.string() })).default([]),
-  unsupported: z.array(z.object({ unitId: z.string(), reason: z.string() })).default([]),
-});
-export type Exclusions = z.infer<typeof ExclusionsSchema>;
-
-// ── L5: VersionManifest ───────────────────────────────────────────────────────
-
-export const VersionManifestSchema = z.object({
-  ccVersion: z.string(),
-  piebaldRef: z.object({
-    repo: z.string(),       // 例 "Piebald-AI/claude-code-system-prompts"
-    tag: z.string(),        // 例 "v2.1.150"
-    commit: z.string(),     // 短 SHA
-  }),
-  rulesetVersion: z.string(),
-  generatedAt: z.string(),  // ISO timestamp
-  coverageBaseline: z.object({
-    sourceUnitsTotal: z.number().int().nonnegative(),
-    accounted: z.object({
-      covered: z.number().int().nonnegative(),
-      handled_elsewhere: z.number().int().nonnegative(),
-      out_of_scope: z.number().int().nonnegative(),
-      unsupported: z.number().int().nonnegative(),
-    }),
-    runtimeFixture: z.object({
-      path: z.string(),
-      chars: z.number().int().nonnegative(),
-      covered: z.number().int().nonnegative(),
-    }).optional(),
-  }),
-});
-export type VersionManifest = z.infer<typeof VersionManifestSchema>;

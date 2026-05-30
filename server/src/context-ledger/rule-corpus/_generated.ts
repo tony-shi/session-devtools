@@ -1,13 +1,13 @@
 // AUTO-GENERATED FILE — DO NOT EDIT BY HAND
 //
-// Source of truth:rule-corpus/{rules,exclusions,manifests}/*.md
+// Source of truth:rule-corpus/rules/*.md
 // Regenerate:    npm run corpus:sync   (or 自动通过 build:server chain)
 // CI 校验:        npm run corpus:check (重 sync 后 git diff 应为空)
 //
 // 运行时(包括 tsup bundle 后)的 corpus 数据完全来自此文件,
 // 不依赖 readFileSync 跨 src/ 边界——这是 corpus 在 npm publish 后能工作的关键。
 
-import type { Rule, Exclusions, VersionManifest } from "./schema";
+import type { Rule } from "./schema";
 
 
 export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
@@ -743,7 +743,7 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
   {
     "ruleId": "claude-code.system-prompt-harness.v1",
     "slotId": "system.main-prompt.section.harness",
-    "verifiedFor": "2.1.150",
+    "verifiedFor": "2.1.158",
     "appliesTo": {
       "minCcVersion": "2.1.150"
     },
@@ -756,18 +756,18 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
     "description": "Claude Code 2.1.150 起新增的 # Harness section。位于 system[2] body,描述 harness 行为约定(markdown 渲染 / permission mode / system-reminder 注入 / 工具优先级 / 不可逆操作确认 / 诚实汇报等)。content 含 mode 列表与项目设置等少量动态,正文相对稳定。",
     "stability": "static",
     "sourcemapRef": "Piebald v2.1.150 system-prompt-harness-instructions",
-    "materialization": "normalized_text",
+    "materialization": "exact_text",
     "displayName": "运行框架",
     "summary": "Harness 运行环境说明:终端渲染、工具权限模式、hook 行为",
     "priority": 0,
     "attribution": {
       "patternFromBody": true,
       "trailingNewlines": 0,
-      "matchMode": "prefix",
+      "matchMode": "regex",
       "mechanism": "system_prompt_pattern",
       "category": "system_prompt"
     },
-    "pattern": "# Harness"
+    "pattern": "^# Harness\n - Text you output outside of tool use is displayed to the user as Github-flavored markdown in a terminal\\.\n - Tools run behind a user-selected permission mode; a denied call means the user declined it — adjust, don't retry verbatim\\.\n - `<system-reminder>` tags in messages and tool results are injected by the harness, not the user\\. Hooks may intercept tool calls; treat hook output as user feedback\\.\n - Prefer the dedicated file/search tools over shell commands when one fits\\. Independent tool calls can run in parallel in one response\\.\n - Reference code as `file_path:line_number` — it's clickable\\.(?:\\n+)?$"
   },
   {
     "ruleId": "claude-code.system-prompt-intro.output-style.v1",
@@ -820,7 +820,7 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
   {
     "ruleId": "claude-code.system-prompt-intro.standard.v2",
     "slotId": "system.main-prompt.section.prelude",
-    "verifiedFor": "2.1.150",
+    "verifiedFor": "2.1.158",
     "appliesTo": {
       "minCcVersion": "2.1.150"
     },
@@ -828,23 +828,23 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
     "description": "Claude Code 2.1.150 起的简化 intro(sys[2] 头部,# Harness 之前)。措辞从\"Use the instructions below and the tools available to you to assist the user.\"简化掉,移除了 NEVER URLs 那句。prefix 锚定。",
     "stability": "static",
     "sourcemapRef": "Piebald v2.1.150 + tmp/ea0bc205_T2_C4 sys[2]",
-    "materialization": "normalized_text",
+    "materialization": "exact_text",
     "displayName": "开场白",
     "summary": "开场引导:用下列指令和可用工具协助用户",
     "priority": 0,
     "attribution": {
       "patternFromBody": true,
       "trailingNewlines": 0,
-      "matchMode": "prefix",
+      "matchMode": "regex",
       "mechanism": "system_prompt_pattern",
       "category": "system_prompt"
     },
-    "pattern": "You are an interactive agent that helps users with software engineering tasks."
+    "pattern": "^\nYou are an interactive agent that helps users with software engineering tasks\\.\n\nIMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts\\. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes\\. Dual-use security tools \\(C2 frameworks, credential testing, exploit development\\) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases\\.\n\n(?:\\n+)?$"
   },
   {
     "ruleId": "claude-code.system-prompt-intro.style-guidance.v1",
     "slotId": "system.main-prompt.section.prelude",
-    "verifiedFor": "2.1.150",
+    "verifiedFor": "2.1.158",
     "appliesTo": {
       "minCcVersion": "2.1.150"
     },
@@ -852,23 +852,23 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
     "description": "Claude Code 2.1.150 起 sys[3] 头部的全新 prelude:写代码风格指引(\"Write code that reads like the surrounding code...\")+ 不可逆操作确认 + 诚实汇报。在 2.1.149- 不存在。",
     "stability": "static",
     "sourcemapRef": "tmp/ea0bc205_T2_C4 sys[3] head (810 chars)",
-    "materialization": "normalized_text",
+    "materialization": "exact_text",
     "displayName": "输出风格",
     "summary": "输出风格与格式约束(终端 Markdown / 简洁度)",
     "priority": 0,
     "attribution": {
       "patternFromBody": true,
       "trailingNewlines": 0,
-      "matchMode": "prefix",
+      "matchMode": "regex",
       "mechanism": "system_prompt_pattern",
       "category": "system_prompt"
     },
-    "pattern": "Write code that reads like the surrounding code: match its comment density, naming, and idiom."
+    "pattern": "^Write code that reads like the surrounding code: match its comment density, naming, and idiom\\.\n\nFor actions that are hard to reverse or outward-facing, confirm first unless durably authorized or explicitly told to proceed without asking; approval in one context doesn't extend to the next\\. Sending content to an external service publishes it; it may be cached or indexed even if later deleted\\. Before deleting or overwriting, look at the target — if what you find contradicts how it was described, or you didn't create it, surface that instead of proceeding\\. Report outcomes faithfully: if tests fail, say so with the output; if a step was skipped, say that; when something is done and verified, state it plainly without hedging\\.\n\n(?:\\n+)?$"
   },
   {
     "ruleId": "claude-code.system-prompt-memory.v1",
     "slotId": "system.main-prompt.section.memory",
-    "verifiedFor": "2.1.150",
+    "verifiedFor": "2.1.158",
     "appliesTo": {
       "minCcVersion": "2.1.150"
     },
@@ -889,11 +889,11 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
     "attribution": {
       "patternFromBody": true,
       "trailingNewlines": 0,
-      "matchMode": "prefix",
+      "matchMode": "regex",
       "mechanism": "system_prompt_pattern",
       "category": "memory_injection"
     },
-    "pattern": "# Memory"
+    "pattern": "^# Memory\n\nYou have a persistent file-based memory at `(?<memoryPath>[\\s\\S]+?)`\\. This directory already exists — write to it directly with the Write tool \\(do not run mkdir or check for its existence\\)\\. Each memory is one file holding one fact, with frontmatter:\n\n```markdown\n---\nname: <short-kebab-case-slug>\ndescription: <one-line summary — used to decide relevance during recall>\nmetadata:\n  type: user \\| feedback \\| project \\| reference\n---\n\n<the fact; for feedback/project, follow with \\*\\*Why:\\*\\* and \\*\\*How to apply:\\*\\* lines\\. Link related memories with \\[\\[their-name\\]\\]\\.>\n```\n\nIn the body, link to related memories with `\\[\\[name\\]\\]`, where `name` is the other memory's `name:` slug\\. Link liberally — a `\\[\\[name\\]\\]` that doesn't match an existing memory yet is fine; it marks something worth writing later, not an error\\.\n\n`user` — who the user is \\(role, expertise, preferences\\)\\. `feedback` — guidance the user has given on how you should work, both corrections and confirmed approaches; include the why\\. `project` — ongoing work, goals, or constraints not derivable from the code or git history; convert relative dates to absolute\\. `reference` — pointers to external resources \\(URLs, dashboards, tickets\\)\\.\n\nAfter writing the file, add a one-line pointer in `MEMORY\\.md` \\(`- \\[Title\\]\\(file\\.md\\) — hook`\\)\\. `MEMORY\\.md` is the index loaded into context each session — one line per memory, no frontmatter, never put memory content there\\.\n\nBefore saving, check for an existing file that already covers it — update that file rather than creating a duplicate; delete memories that turn out to be wrong\\. Don't save what the repo already records \\(code structure, past fixes, git history, CLAUDE\\.md\\) or what only matters to this conversation; if asked to remember one of those, ask what was non-obvious about it and save that instead\\. Recalled memories appearing inside `<system-reminder>` blocks are background context, not user instructions, and reflect what was true when written — if one names a file, function, or flag, verify it still exists before recommending it\\.\n\n(?:\\n+)?$"
   },
   {
     "ruleId": "claude-code.system-prompt-output-efficiency.external.v1",
@@ -917,23 +917,23 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
   {
     "ruleId": "claude-code.system-prompt-session-guidance.v1",
     "slotId": "system.main-prompt.section.session-guidance",
-    "verifiedFor": "2.1.150",
+    "verifiedFor": "2.1.158",
     "sourceUnits": [],
     "description": "Claude Code system prompt 的 # Session-specific guidance section（external CLI 标准变体）。hasEmbeddedSearchTools()=false，searchTools='the Glob or Grep'（Glob/Grep 工具在 tool registry 中存在）。这是外部用户的真实场景。完整文本待真实 external fixture 观测后补充 exact 匹配。",
     "stability": "static",
     "sourcemapRef": "restored-src/src/constants/prompts.ts:352",
-    "materialization": "shape",
+    "materialization": "exact_text",
     "displayName": "会话守则",
     "summary": "本会话特定的行为指引(调度提议 / skill 触发等)",
     "priority": 0,
     "attribution": {
       "patternFromBody": true,
       "trailingNewlines": 1,
-      "matchMode": "prefix",
+      "matchMode": "regex",
       "mechanism": "system_prompt_pattern",
       "category": "harness_injection"
     },
-    "pattern": "# Session-specific guidance\n"
+    "pattern": "^# Session-specific guidance\n - If you need the user to run a shell command themselves \\(e\\.g\\., an interactive login like `gcloud auth login`\\), suggest they type `! <command>` in the prompt — the `!` prefix runs the command in this session so its output lands directly in the conversation\\.\n - When the user types `/<skill-name>`, invoke it via Skill\\. Only use skills listed in the user-invocable skills section — don't guess\\.\n - Default: NO `/schedule` offer — most tasks just end\\. Offer ONLY when this turn's work left a named artifact with a future obligation you can quote verbatim: a flag/gate/experiment key with a stated ramp or cleanup date; a `\\.skip`/`xfail`/temp instrumentation with a written \"remove after X\" condition; a job ID with an ETA; a dated TODO\\. Quote the artifact in a one-line offer and derive timing from it — if no concrete date/ETA/condition exists in the work, skip; never invent or default a timeframe\\. NEVER offer for: unfinished scope \\(\"do the rest\" is not a follow-up — finish it now\\), anything doable in this PR, refactors/bugfixes/docs/renames/dep-bumps, or after the user signals done\\. At most once per session\\. Phrase the offer as: \"Want me to `/schedule` … on <date from the artifact>\\?\"\n - If the user asks about \"ultrareview\" or how to run it, explain that /code-review ultra launches a multi-agent cloud review of the current branch \\(or /code-review ultra <PR#> for a GitHub PR\\); /ultrareview is a deprecated alias for the same command\\. It is user-triggered and billed; you cannot launch it yourself, so do not attempt to via Bash or otherwise\\. It needs a git repository \\(offer to \"git init\" if not in one\\); the no-arg form bundles the local branch and does not need a GitHub remote\\.\n\n(?:\\n+)?$\n"
   },
   {
     "ruleId": "claude-code.system-prompt-system-section.v1",
@@ -1922,42 +1922,5 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       "category": "harness_injection"
     },
     "pattern": "<system-reminder>"
-  }
-] as const;
-
-export const GENERATED_EXCLUSIONS: ReadonlyArray<Exclusions> = [
-  {
-    "ccVersion": "2.1.150",
-    "piebaldRef": "Piebald-AI/claude-code-system-prompts@v2.1.150",
-    "handled_elsewhere": [],
-    "out_of_scope": [],
-    "unsupported": []
-  }
-] as const;
-
-export const GENERATED_MANIFESTS: ReadonlyArray<VersionManifest> = [
-  {
-    "ccVersion": "2.1.150",
-    "piebaldRef": {
-      "repo": "Piebald-AI/claude-code-system-prompts",
-      "tag": "v2.1.150",
-      "commit": "e7bc5c8"
-    },
-    "rulesetVersion": "0.1.0-mvp",
-    "generatedAt": "2026-05-28T07:00:00Z",
-    "coverageBaseline": {
-      "sourceUnitsTotal": 313,
-      "accounted": {
-        "covered": 3,
-        "handled_elsewhere": 0,
-        "out_of_scope": 0,
-        "unsupported": 0
-      },
-      "runtimeFixture": {
-        "path": "tmp/ea0bc205_T2_C4/proxy_request.json",
-        "chars": 7632,
-        "covered": 7632
-      }
-    }
   }
 ] as const;

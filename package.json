@@ -51,8 +51,6 @@
     "corpus:sync": "npx tsx server/scripts/corpus-sync.ts",
     "corpus:check": "npx tsx server/scripts/corpus-sync.ts --check",
     "coverage": "npx tsx server/scripts/coverage-report.ts",
-    "drift": "npx tsx server/scripts/check-piebald-drift.ts",
-    "piebald:sync": "npx tsx server/scripts/piebald-snapshot.ts",
     "prepack": "npm run build",
     "prepublishOnly": "node -e \"if (process.env.PUBLISH_FROM_SCRIPT !== '1') { console.error('ERROR: Use scripts/publish.sh instead of npm publish directly.'); process.exit(1); }\"",
     "start": "node bin/session-devtools.js",

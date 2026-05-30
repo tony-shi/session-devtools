@@ -1,7 +1,7 @@
 ---
 ruleId: claude-code.system-prompt-intro.style-guidance.v1
 slotId: system.main-prompt.section.prelude
-verifiedFor: "2.1.150"
+verifiedFor: "2.1.158"
 appliesTo: { minCcVersion: "2.1.150" }
 sourceUnits: []
 description: >-
@@ -10,11 +10,11 @@ stability: static
 displayName: "输出风格"
 summary: "输出风格与格式约束(终端 Markdown / 简洁度)"
 sourcemapRef: "tmp/ea0bc205_T2_C4 sys[3] head (810 chars)"
-materialization: normalized_text
+materialization: exact_text
 attribution:
   patternFromBody: true
   trailingNewlines: 0
-  matchMode: prefix
+  matchMode: regex
   mechanism: system_prompt_pattern
   category: system_prompt
 ---
@@ -28,5 +28,9 @@ slotId 仍为 `system.main-prompt.section.prelude`(splitByH1Headers 对 sys[3] �
 ## pattern
 
 ```text
-Write code that reads like the surrounding code: match its comment density, naming, and idiom.
+^Write code that reads like the surrounding code: match its comment density, naming, and idiom\.
+
+For actions that are hard to reverse or outward-facing, confirm first unless durably authorized or explicitly told to proceed without asking; approval in one context doesn't extend to the next\. Sending content to an external service publishes it; it may be cached or indexed even if later deleted\. Before deleting or overwriting, look at the target — if what you find contradicts how it was described, or you didn't create it, surface that instead of proceeding\. Report outcomes faithfully: if tests fail, say so with the output; if a step was skipped, say that; when something is done and verified, state it plainly without hedging\.
+
+(?:\n+)?$
 ```

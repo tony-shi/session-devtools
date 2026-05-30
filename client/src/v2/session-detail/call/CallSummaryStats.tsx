@@ -5,7 +5,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 
 export function SummaryStat({
-  label, tooltip, children, valueColor = "#111827", mono = false, size = "meta", minWidth, dotColor,
+  label, tooltip, children, valueColor = "#111827", mono = false, minWidth, dotColor,
 }: {
   label: string;
   tooltip: React.ReactNode;

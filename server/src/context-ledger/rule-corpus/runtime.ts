@@ -15,7 +15,7 @@ import {
   generateContextRules,
   generateSlotBindings,
 } from "./generator";
-import { GENERATED_RULES, GENERATED_EXCLUSIONS, GENERATED_MANIFESTS } from "./_generated";
+import { GENERATED_RULES } from "./_generated";
 import type { Rule } from "./schema";
 import type { ContextLedgerRule } from "../rules/rule-registry";
 import type { ContextRule } from "../rules/context-rule-registry";
@@ -24,8 +24,6 @@ import type { ContextRule } from "../rules/context-rule-registry";
 // 这里加 placeholder filePath 仅为满足 Rule 类型契约;下游 generator/evaluator 均不读它。
 const CORPUS = {
   rules: GENERATED_RULES.map((r) => ({ ...r, filePath: `_generated:${r.ruleId}` })) as Rule[],
-  exclusions: GENERATED_EXCLUSIONS,
-  manifests: GENERATED_MANIFESTS,
 };
 
 export const CORPUS_LEDGER_RULES: ContextLedgerRule[] = generateLedgerRules(CORPUS);

@@ -1,35 +1,35 @@
 // version-baseline.test.ts
 //
-// 验证 corpus baseline 比对的 5 个 matchLevel 都按预期返回。
-// 当前 baseline = 2.1.150(manifests/claude-code-2.1.150.md)。
+// 验证 corpus baseline 比对的各 matchLevel 都按预期返回。
+// baseline = 本地常量 CORPUS_BASELINE_CCVERSION(已脱离 Piebald manifest)。
 
 import { describe, expect, it } from "vitest";
-import { checkVersionAgainstBaseline, getActiveBaseline } from "./version-baseline";
+import { checkVersionAgainstBaseline, getActiveBaseline, CORPUS_BASELINE_CCVERSION } from "./version-baseline";
 
 describe("VersionBaseline check", () => {
-  it("baseline 已存在(corpus 至少有一个 manifest)", () => {
+  it("baseline 来自本地常量", () => {
     const b = getActiveBaseline();
-    expect(b).not.toBeNull();
-    expect(b!.ccVersion).toBe("2.1.150");
+    expect(b.ccVersion).toBe(CORPUS_BASELINE_CCVERSION);
   });
 
   it("exact:proxy = baseline", () => {
-    const r = checkVersionAgainstBaseline("2.1.150");
+    const r = checkVersionAgainstBaseline(CORPUS_BASELINE_CCVERSION);
     expect(r.matchLevel).toBe("exact");
   });
 
   it("exact:proxy 带 fingerprint 仍等同", () => {
-    const r = checkVersionAgainstBaseline("2.1.150.7e6");
+    const r = checkVersionAgainstBaseline(`${CORPUS_BASELINE_CCVERSION}.7e6`);
     expect(r.matchLevel).toBe("exact");
   });
 
-  it("minor-match:同 minor 不同 patch", () => {
-    const r = checkVersionAgainstBaseline("2.1.149");
+  it("minor-match:同 major.minor 不同 patch", () => {
+    // baseline 2.1.x → 用同 minor 不同 patch 的版本
+    const r = checkVersionAgainstBaseline("2.1.1");
     expect(r.matchLevel).toBe("minor-match");
     expect(r.message).toContain("appliesTo 处理细节差异");
   });
 
-  it("minor-mismatch:major 同 minor 不同(2.1.150 vs 2.2.x)", () => {
+  it("minor-mismatch:major 同 minor 不同(2.2.x)", () => {
     const r = checkVersionAgainstBaseline("2.2.0");
     expect(r.matchLevel).toBe("minor-mismatch");
     expect(r.message).toContain("⚠️");

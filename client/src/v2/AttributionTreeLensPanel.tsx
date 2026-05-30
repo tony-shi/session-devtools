@@ -42,7 +42,6 @@ import {
   getBucket,
   bucketStatsOf,
   type Lens,
-  type BucketStat,
 } from "./lens-framework";
 // DiffPanel 旧入口已废弃，但其中的 SelectedDiffDetail 仍然复用（行级 inline diff）。
 import type { DiffSection, DiffTreeResult, PinInfo } from "./diff-tree-types";
@@ -51,7 +50,6 @@ import {
   diffUnderlineFor,
   sectionFrame,
   intentGroupPalette,
-  intentGroupI18nKey,
   INTENT_GROUP_ORDER,
   type IntentGroupId,
   ROLE_TO_GROUP,

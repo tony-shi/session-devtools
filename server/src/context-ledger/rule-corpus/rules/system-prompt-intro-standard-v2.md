@@ -1,7 +1,7 @@
 ---
 ruleId: claude-code.system-prompt-intro.standard.v2
 slotId: system.main-prompt.section.prelude
-verifiedFor: "2.1.150"
+verifiedFor: "2.1.158"
 appliesTo: { minCcVersion: "2.1.150" }
 sourceUnits: []
 description: >-
@@ -10,11 +10,11 @@ stability: static
 displayName: "开场白"
 summary: "开场引导:用下列指令和可用工具协助用户"
 sourcemapRef: "Piebald v2.1.150 + tmp/ea0bc205_T2_C4 sys[2]"
-materialization: normalized_text
+materialization: exact_text
 attribution:
   patternFromBody: true
   trailingNewlines: 0
-  matchMode: prefix
+  matchMode: regex
   mechanism: system_prompt_pattern
   category: system_prompt
 ---
@@ -27,5 +27,10 @@ attribution:
 ## pattern
 
 ```text
-You are an interactive agent that helps users with software engineering tasks.
+^
+You are an interactive agent that helps users with software engineering tasks\.
+
+IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts\. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes\. Dual-use security tools \(C2 frameworks, credential testing, exploit development\) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases\.
+
+(?:\n+)?$
 ```

@@ -1,5 +1,23 @@
 # Rule Corpus 重构 + 2.1.150 对齐 — 实施总结
 
+> **2026-05-30 更新 — Piebald 对照层已脱钩(降级)**
+> 实测:21 个关注段里只有 2 个(harness/memory)能对齐 Piebald,311+ unexplained 永远 out_of_scope。
+> 结论:Piebald 作为"逐段 ground truth 对照"投入产出比失衡(详见 `tmp/*/PIEBALD-ALIGNMENT.md`、
+> `EXACT-EXTRACTION.md`)。**单次请求的真正 ground truth = proxy body + cli.js binary**(全、同版本、可 grep)。
+> 决策:
+>   - **删除**:`check-piebald-drift.ts` / `piebald-snapshot.ts` / `indexer/piebald-source-units.ts` /
+>     `supported-versions.ts` / `exclusions/` / `manifests/` / schema 的 `SourceUnit`/`UnitAccounting`/
+>     `Exclusions`/`VersionManifest` / `_generated` 的 `GENERATED_EXCLUSIONS`/`GENERATED_MANIFESTS` /
+>     `npm run drift`+`piebald:sync`。
+>   - **改造**:`version-baseline.ts` 的 baseline 从 manifest → 本地常量 `CORPUS_BASELINE_CCVERSION="2.1.158"`。
+>   - **保留**:corpus MD 容器(rules/ 单一真值)+ generator + `_generated.ts` + appliesTo + 展示元数据 +
+>     `sourceUnits` 字段(降为可选文档性参考)+ `coverage-report.ts`(proxy 驱动诊断)。
+>   - **rule 改为 proxy + cli.js binary 自维护**;Piebald 仅留 CHANGELOG 当版本变更信号(人工偶尔参考,零代码依赖)。
+> 下方历史记录保留(描述脱钩前的状态)。
+
+---
+
+
 **完成阶段**:Phase 1-6 + Codex Review 3 个 P1/P2 修复 + 版本告警机制 **全部完成**
 **测试**:`npm test` **231 passed** / 1 skipped(改前 211 → 改后 231)
 **system 区覆盖率(tmp/ea0bc205_T2_C4)**:46.6% → **100%**

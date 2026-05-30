@@ -25,19 +25,13 @@ import { fileURLToPath } from "node:url";
 import matter from "gray-matter";
 import {
   RuleSchema,
-  ExclusionsSchema,
-  VersionManifestSchema,
   type Rule,
-  type Exclusions,
-  type VersionManifest,
 } from "./schema";
 
 // ESM-compatible __dirname(package.json type=module)
 const CORPUS_ROOT = dirname(fileURLToPath(import.meta.url));  // server/src/context-ledger/rule-corpus
 
 const RULES_DIR = join(CORPUS_ROOT, "rules");
-const EXCLUSIONS_DIR = join(CORPUS_ROOT, "exclusions");
-const MANIFESTS_DIR = join(CORPUS_ROOT, "manifests");
 
 // 从 MD body 抽 pattern。
 // 解析契约(防 P1-2 嵌套 fence 截断):
@@ -110,45 +104,15 @@ export function loadAllRules(): Rule[] {
   return rules;
 }
 
-/** 加载一个 exclusions/*.md 文件。 */
-export function loadExclusionsFile(filePath: string): Exclusions {
-  const { data } = matter(readFileSync(filePath, "utf8"));
-  const parsed = ExclusionsSchema.safeParse(data);
-  if (!parsed.success) {
-    throw new Error(`[corpus] ${filePath} exclusions schema 失败:\n${parsed.error.message}`);
-  }
-  return parsed.data;
-}
-
-export function loadAllExclusions(): Exclusions[] {
-  return listMdFiles(EXCLUSIONS_DIR).map(loadExclusionsFile);
-}
-
-/** 加载一个 manifests/*.md 文件。 */
-export function loadManifestFile(filePath: string): VersionManifest {
-  const { data } = matter(readFileSync(filePath, "utf8"));
-  const parsed = VersionManifestSchema.safeParse(data);
-  if (!parsed.success) {
-    throw new Error(`[corpus] ${filePath} manifest schema 失败:\n${parsed.error.message}`);
-  }
-  return parsed.data;
-}
-
-export function loadAllManifests(): VersionManifest[] {
-  return listMdFiles(MANIFESTS_DIR).map(loadManifestFile);
-}
-
-/** 一次性加载整个 corpus(供 generator 使用)。 */
+/** 一次性加载整个 corpus(供 generator 使用)。
+ *  注:Piebald exclusions/manifests 已脱钩(corpus 改 proxy + cli.js binary 自维护),
+ *  corpus 现在只含 rules。 */
 export interface CorpusSnapshot {
   rules: Rule[];
-  exclusions: Exclusions[];
-  manifests: VersionManifest[];
 }
 
 export function loadCorpus(): CorpusSnapshot {
   return {
     rules: loadAllRules(),
-    exclusions: loadAllExclusions(),
-    manifests: loadAllManifests(),
   };
 }

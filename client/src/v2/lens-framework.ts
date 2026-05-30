@@ -20,9 +20,6 @@ import {
   cachePalette,
   auditPalette,
   rolePalette,
-  ROLE_TO_GROUP,
-  intentGroupPalette,
-  type RoleId,
   type IntentGroupId,
 } from "./lens-palette";
 
