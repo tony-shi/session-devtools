@@ -50,9 +50,15 @@ export const RuleMaterialization = z.enum([
 ]);
 export type RuleMaterialization = z.infer<typeof RuleMaterialization>;
 
-// 明确二元(用户要求:不接受模糊的 semi-static)。判据 = 内容来源:
-//   static  = CC 预置的指令/能力描述,会话内逐字稳定(system prompt 主体 / tool schema)
-//   dynamic = 运行时生成/注入的数据·事件·状态,依赖会话内可变状态(billing / env / git / reminder)
+// 明确二元(用户要求:不接受模糊的 semi-static)。判据 = 内容可复现性(NOT 会话内时间稳定):
+//   static  = 完全固定文本,任何用户/项目/时间/会话下逐字一样,可 exact 复现
+//             (identity / harness / prelude / session-guidance / tool schema)
+//   dynamic = 含运行时插值值(路径/cwd/日期/git/用户数据)或每次重新生成
+//             (memory ← memoryPath / environment ← cwd / git-status / billing ← fingerprint)
+// 注意:判据是"能否跨环境逐字复现",不是"同一会话内是否变"。memory 的 memoryPath 在
+//   同一会话内不变,但它是 {home}/.claude/projects/<项目>/memory/ 运行时插值——换用户/项目
+//   就变,故 dynamic。含动态字段的段用 Rule.dynamicSource 说明"变的是哪部分",保留二元的
+//   同时不丢"主体是固定指令"的信息。
 export const RuleStability = z.enum(["static", "dynamic"]);
 export type RuleStability = z.infer<typeof RuleStability>;
 

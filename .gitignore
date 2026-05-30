@@ -75,3 +75,5 @@ resources/
 # Local-only dev routes / walkthrough studio (intentionally untracked, see App.tsx).
 client/src/v2/walkthrough/
 client/src/local-routes.tsx
+CLAUDE.md
+agent.md

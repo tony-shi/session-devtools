@@ -1,5 +1,3 @@
-import { useTranslation } from "react-i18next";
-
 export interface TokenMetric {
   id: string;
   /** Canonical English label — used as fallback when no labelKey translation exists. */
@@ -99,25 +97,3 @@ export const TOKEN_METRICS: Record<string, TokenMetric> = {
     tooltipKey: "metrics.cacheRatio.tooltip",
   },
 };
-
-export function getMetric(id: string): TokenMetric {
-  const m = TOKEN_METRICS[id];
-  if (!m) throw new Error(`Unknown metric id: ${id}`);
-  return m;
-}
-
-/**
- * Returns the display label (always canonical English) plus the
- * localised tooltip string (when a tooltipKey is defined).
- * Components that only need the label can just read `m.label` directly.
- */
-export function useMetricLabel(id: string): { label: string; tooltip: string; color: string } {
-  const { t } = useTranslation();
-  const m = TOKEN_METRICS[id];
-  if (!m) return { label: id, tooltip: "", color: "#6b7280" };
-  return {
-    label: m.labelKey ? t(m.labelKey, m.label) : m.label,
-    tooltip: m.tooltipKey ? t(m.tooltipKey, m.description) : m.description,
-    color: m.color,
-  };
-}

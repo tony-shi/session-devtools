@@ -29,4 +29,3 @@ export function getSessionSubtitle(session: SessionV2): string | null {
 
 // 保留旧名称作为别名，避免破坏其他调用处
 export const getSessionDisplayName = getSessionTitle;
-export const getSessionSummary = getSessionSubtitle;

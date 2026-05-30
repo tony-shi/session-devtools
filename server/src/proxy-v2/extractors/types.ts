@@ -21,5 +21,3 @@ export interface ExtractInput {
   isStream: boolean;
   sseEvents?: Array<{ eventType: string; data: string }>;
 }
-
-export type Extractor = (input: ExtractInput) => Partial<ProxyMeta>;

@@ -52,23 +52,3 @@ export function brandAreaGradient() {
     ],
   };
 }
-
-/** Common axis-label style — keep call sites tiny. */
-export const AXIS_LABEL_STYLE = {
-  fontSize: 9,
-  color: CHART_COLORS.axisLabel,
-} as const;
-
-/** Common value-axis preset (no axis line, no tick, splitLine = #f1f5f9). */
-export const VALUE_AXIS_BASE = {
-  axisLine: { show: false },
-  axisTick: { show: false },
-  splitLine: { lineStyle: { color: CHART_COLORS.splitLine } },
-} as const;
-
-/** Common category-axis preset (no axis line, no tick, no splitLine by default). */
-export const CATEGORY_AXIS_BASE = {
-  axisLine: { show: false },
-  axisTick: { show: false },
-  splitLine: { show: false },
-} as const;

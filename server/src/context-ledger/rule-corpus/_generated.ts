@@ -573,11 +573,12 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
     },
     "sourceUnits": [],
     "description": "Claude Code system prompt 的 # auto memory section。buildMemoryLines() 产出，唯一动态字段为 memoryDir（本地路径，用户私有）。其余全部为固定常量（TYPES_SECTION、WHAT_NOT_TO_SAVE 等）。",
-    "stability": "static",
+    "stability": "dynamic",
     "sourcemapRef": "restored-src/src/memdir/memdir.ts:419 + restored-src/src/memdir/memoryTypes.ts",
     "materialization": "normalized_text",
     "displayName": "记忆",
     "summary": "持久化记忆(旧版 auto memory 段)",
+    "dynamicSource": "memoryDir(本地路径,用户私有);指令主体固定常量",
     "priority": 0,
     "attribution": {
       "patternFromBody": true,
@@ -878,11 +879,12 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       }
     ],
     "description": "Claude Code 2.1.150 起 # Memory section,合并并取代旧 # auto memory。包含 persistent file-based memory 使用指南、frontmatter schema(name/description/metadata.type)、链接语法 [[name]]、不该保存什么的判断、MEMORY.md 索引文件约定。memoryPath / 用户名 是动态字段。",
-    "stability": "static",
+    "stability": "dynamic",
     "sourcemapRef": "Piebald v2.1.150 system-prompt-memory-instructions + agent-memory-instructions",
     "materialization": "normalized_text",
     "displayName": "记忆",
     "summary": "持久化记忆(CLAUDE.md / MEMORY.md)的存在与读写规则",
+    "dynamicSource": "memoryPath(随用户 home / 项目路径插值,如 ~/.claude/projects/<项目>/memory/);指令主体固定",
     "priority": 0,
     "attribution": {
       "patternFromBody": true,

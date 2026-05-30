@@ -134,24 +134,6 @@ export class ProxyTrafficController {
     }
   }
 
-  // ── Proxy request detail ──────────────────────────────────────────────────────
-  @Get("requests/:id")
-  requestDetail(@Param("id") id: string) {
-    const db = getDb();
-    const row = db.prepare(`
-      SELECT id, ts, started_at, sni, method, url, status,
-             bytes_in, bytes_out, duration_ms,
-             req_headers, res_headers, sse_event_count, is_stream
-      FROM proxy_requests WHERE id = ?
-    `).get(Number(id)) as Record<string, unknown> | undefined;
-    if (!row) throw Object.assign(new Error("not found"), { status: 404 });
-    return {
-      ...row,
-      req_headers: parseJsonField(row.req_headers as string, {}),
-      res_headers: parseJsonField(row.res_headers as string, {}),
-    };
-  }
-
   // ── Proxy SSE stream ──────────────────────────────────────────────────────────
   @Get("stream")
   stream(

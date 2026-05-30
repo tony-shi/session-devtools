@@ -20,16 +20,6 @@ export function fmtPct(n: number | null): string {
   return n >= 10 ? `${n.toFixed(1)}%` : `${n.toFixed(2)}%`;
 }
 
-export function fmtBytes(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
-  if (n >= 1_000)     return (n / 1_000).toFixed(1) + "k";
-  return String(n);
-}
-
-export function charsToTokens(chars: number): number {
-  return Math.round(chars / 4);
-}
-
 // ─── 时间 ─────────────────────────────────────────────────────────────────────
 
 export function fmtDateShort(iso: string): string {
@@ -99,11 +89,6 @@ export function shortToolUseId(id: string): string {
   return id.length > 14 ? `${id.slice(0, 10)}...` : id;
 }
 
-export function shortMessageId(id: string | null | undefined): string {
-  if (!id) return "";
-  return id.length > 18 ? `${id.slice(0, 10)}...${id.slice(-5)}` : id;
-}
-
 export function formatJsonlLines(call: LlmCall): string {
   const rawLines = call.jsonlFrameLineIdxs?.length
     ? call.jsonlFrameLineIdxs
@@ -120,21 +105,6 @@ export function formatJsonlLines(call: LlmCall): string {
 }
 
 // ─── Call / Tool-use 语义提取 ─────────────────────────────────────────────────
-
-// One-line semantic summary of what a call did.
-export function callDescription(call: LlmCall): string {
-  const tcs = call.toolCalls;
-  if (tcs.length === 0) {
-    if (call.assistantText) return "answered";
-    if (call.stopReason === "end_turn") return "end_turn";
-    return call.stopReason ?? "";
-  }
-  // Group tool names; count parallels
-  const counts: Record<string, number> = {};
-  for (const tc of tcs) counts[tc.name] = (counts[tc.name] ?? 0) + 1;
-  const parts = Object.entries(counts).map(([name, n]) => n > 1 ? `${name} ×${n}` : name);
-  return parts.join(" + ");
-}
 
 export function toolUseIdsFromIntervalEvent(ev: IntervalEvent): string[] {
   // 关联键有两条独立路径，hover 联动需同时覆盖：

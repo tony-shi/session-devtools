@@ -7,4 +7,3 @@ export function isVisibilityEnabled(): boolean {
 }
 
 export const VISIBILITY_CACHE_CAPACITY = 1000;
-export const VISIBILITY_WORKER_CONCURRENCY = 2;

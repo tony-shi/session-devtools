@@ -1,8 +1,6 @@
 // 前端镜像 server/src/attribution-service.ts 的输出类型。
 // 保持与后端结构一致，方便直接 JSON.parse 后消费。
 
-export type OriginKind = "rule" | "jsonl" | "structural" | "unknown";
-
 export type Confidence = "definitive" | "estimated" | "inferred" | "unknown";
 
 export interface DynamicField {

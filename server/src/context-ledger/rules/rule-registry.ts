@@ -36,9 +36,6 @@ import type {
 // 数组顺序拼装)。corpus 单一真值见 ../rule-corpus/。
 // (CORPUS_LEDGER_RULES_BY_ID 在文件后部的"corpus 全量获取"区一并 import,这里不重复)
 
-// 当前唯一支持的 Claude Code 版本。改这里时必须同步把所有 rule 的 verifiedFor 清零并重新人工校对。
-export const SUPPORTED_CLAUDE_CODE_VERSION = "2.1.126";
-
 // ── 类型定义 ──────────────────────────────────────────────────────────────────
 
 export type RuleStability = "static" | "semi-static" | "dynamic";
@@ -384,13 +381,6 @@ export interface ContextLedgerRule {
 //
 // 因此拆 v0/v1 两条 byte-exact rule + appliesTo 版本范围。**不用 regex tolerance**——
 // 把 wire 形态差异交给版本维度表达，rule 严格 byte-equal，未见过的形态明确暴露成 no_rule_matched。
-const TONE_STYLE_NM3_OUTPUT_555B =
-  "# Tone and style\n" +
-  " - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.\n" +
-  " - Your responses should be short and concise.\n" +
-  " - When referencing specific functions or pieces of code include the pattern file_path:line_number to allow the user to easily navigate to the source code location.\n" +
-  " - Do not use a colon before tool calls. Your tool calls may not be shown directly in the output, so text like \"Let me read the file:\" followed by a read tool call should just be \"Let me read the file.\" with a period.";
-
 // 老形态（2.1.140 及更早）：leaf = Nm3 输出 + 尾 `\n\n` = 557B。
 // 已实测：2.1.139.6c9 (15aa1c88 #47) / 2.1.140.453 (427a2904 T3 C1) 都是 557B。
 // 边界 = 2.1.140 → 2.1.141 之间（Anthropic 把 cache 切点放到 Nm3 之后）。
@@ -868,53 +858,3 @@ export const CONTEXT_LEDGER_RULES: ContextLedgerRule[] = [
   // ── system-injected recap prompts ────────────────────────────────────────
   // ── side query rules ──────────────────────────────────────────────────────
 ];
-
-export const CONTEXT_LEDGER_RULE_BY_ID: ReadonlyMap<string, ContextLedgerRule> = new Map(
-  CONTEXT_LEDGER_RULES.map((rule) => [rule.ruleId, rule]),
-);
-
-export function getContextLedgerRule(ruleId: string): ContextLedgerRule | undefined {
-  return CONTEXT_LEDGER_RULE_BY_ID.get(ruleId);
-}
-
-// ── 校对状态汇总（B1.4）─────────────────────────────────────────────────────────
-
-// 单条 rule 是否已对照 SUPPORTED_CLAUDE_CODE_VERSION 校对通过。
-// 只有严格相等才算 verified；任何其它字符串（含旧版号）等同于 null。
-export function isRuleVerified(rule: ContextLedgerRule): boolean {
-  return rule.verifiedFor === SUPPORTED_CLAUDE_CODE_VERSION;
-}
-
-export interface RuleVerificationSummary {
-  supportedVersion: string;
-  total: number;
-  verified: number;
-  pending: number;
-  pendingRuleIds: string[];
-}
-
-export function getRuleVerificationSummary(): RuleVerificationSummary {
-  const pending: string[] = [];
-  for (const rule of CONTEXT_LEDGER_RULES) {
-    if (!isRuleVerified(rule)) pending.push(rule.ruleId);
-  }
-  return {
-    supportedVersion: SUPPORTED_CLAUDE_CODE_VERSION,
-    total: CONTEXT_LEDGER_RULES.length,
-    verified: CONTEXT_LEDGER_RULES.length - pending.length,
-    pending: pending.length,
-    pendingRuleIds: pending,
-  };
-}
-
-// ── 兼容旧导出（过渡期，待下一阶段清理） ────────────────────────────────────────
-// proxy-attribution.ts 等使用旧名称的代码在本次一并迁移；
-// 若仍有外部引用，此处保留临时别名避免编译中断。
-/** @deprecated 使用 ContextLedgerRule */
-export type AttributionRule = ContextLedgerRule;
-/** @deprecated 使用 CONTEXT_LEDGER_RULES */
-export const ATTRIBUTION_RULES = CONTEXT_LEDGER_RULES;
-/** @deprecated 使用 CONTEXT_LEDGER_RULE_BY_ID */
-export const ATTRIBUTION_RULE_BY_ID = CONTEXT_LEDGER_RULE_BY_ID;
-/** @deprecated 使用 getContextLedgerRule */
-export const getAttributionRule = getContextLedgerRule;

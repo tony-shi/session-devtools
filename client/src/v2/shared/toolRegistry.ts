@@ -52,6 +52,3 @@ export function classifyToolName(name: string): string {
 export function getToolPalette(name: string): ToolPalette {
   return PALETTES[classifyToolName(name)] ?? FALLBACK;
 }
-
-/** Stable ordering for legends. */
-export const TOOL_KEYS_ORDERED = ["Read", "Write", "Edit", "Bash", "Grep", "Glob", "Agent", "WebFetch"] as const;

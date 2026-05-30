@@ -1,8 +1,5 @@
 // Proxy traffic.jsonl 行解析器。
-// 只暴露 parseTrafficLine（单行 → 结构化记录）；
-// parseTrafficFile 已由 cache-sync-worker / cold-indexer 替代，不再导出。
-import { createReadStream, existsSync } from "node:fs";
-import readline from "node:readline";
+// 只暴露 parseTrafficLine（单行 → 结构化记录）。
 import { extractProxyMeta } from "../proxy-v2/extractors/index.ts";
 import type { ProxyMeta } from "../proxy-v2/extractors/index.ts";
 
@@ -149,20 +146,4 @@ export function parseTrafficLine(line: string): Omit<ProxyRequest, "jsonl_file" 
     req_has_tools: proxyMeta.req_has_tools === null ? null : (proxyMeta.req_has_tools ? 1 : 0),
     request_id: requestId,
   };
-}
-
-// 保留仅供迁移脚本使用的文件全量解析（不再在 sync 主流程中调用）
-export async function parseTrafficFile(filePath: string): Promise<Array<Omit<ProxyRequest, "jsonl_file" | "jsonl_byte_offset">>> {
-  if (!existsSync(filePath)) return [];
-  const results: Array<Omit<ProxyRequest, "jsonl_file" | "jsonl_byte_offset">> = [];
-  const rl = readline.createInterface({
-    input: createReadStream(filePath),
-    crlfDelay: Infinity,
-  });
-  for await (const line of rl) {
-    if (!line.trim()) continue;
-    const rec = parseTrafficLine(line);
-    if (rec) results.push(rec);
-  }
-  return results;
 }

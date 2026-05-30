@@ -11,10 +11,7 @@
 
 import type { Confidence, SegmentCategory } from "../types";
 import type { VersionPredicate } from "../version";
-import {
-  CONTEXT_LEDGER_RULES,
-  SUPPORTED_CLAUDE_CODE_VERSION,
-} from "./rule-registry";
+import { CONTEXT_LEDGER_RULES } from "./rule-registry";
 import { CORPUS_SLOT_BINDINGS } from "../rule-corpus/runtime";
 import type {
   ContextLedgerRule,
@@ -197,5 +194,3 @@ export function getContextRulesForSlotId(slotId: string): ContextRule[] {
   }
   return CONTEXT_RULES_BY_SLOT_ID.get(slotId) ?? [];
 }
-
-export { SUPPORTED_CLAUDE_CODE_VERSION };

@@ -65,60 +65,6 @@ export function diffUnderlineFor(
   return null;
 }
 
-// ─── Diff 纹理（方案 B：彩色斜纹 — 已弃用） ──────────────────────────────────
-//
-// 保留代码方便 PrevComparisonBar 的 modified-prev / removed 段在没有"下划色条"
-// 渲染通路时仍能用纹理表达（PrevComparisonBar 是 section-level 的统计 bar，
-// 不走 FisheyeStrip，没有 underline 概念）。
-//
-// 直接作为 CSS background-image 的值。叠加到 bar 上，底色（provenance 类别色）
-// 通过条纹间隔透出 → 既能看出"这是什么内容（来源）"，也能看出"这段是新增/
-// 修改/删除"。
-//
-// 为了让纹理在任何 provenance 底色上都辨识度高：
-//   - 条纹 alpha ≈ 0.65~0.7（足够鲜明、不至于完全遮住底色）
-//   - 间隔 transparent（底色 100% 透出）
-//   - 条纹 4px 宽 + ~5px 间隔，斜 45° 节奏，远看是"色条 bar"，近看仍能看到底色
-//
-// 角度区分（add / modified 视觉拉开）：
-//   - added：45°（左下→右上）
-//   - modified：-45°（左上→右下）
-//   - removed：45°（角度同 add，但色相红 / 仅在 Prev bar 与 RemovedFooter 出现，
-//     不会与 add 在同一 bar 上同时出现）。
-
-export const diffStripeColors = {
-  added:    "rgba(22,163,74,0.70)",   // 绿
-  modified: "rgba(234,179,8,0.75)",   // 黄
-  removed:  "rgba(220,38,38,0.70)",   // 红
-} as const;
-
-export const diffTextures = {
-  /** 新增：45° 绿斜纹 */
-  added:
-    `repeating-linear-gradient(45deg, ` +
-    `${diffStripeColors.added} 0 4px, transparent 4px 9px)`,
-  /** 修改：-45° 黄斜纹 */
-  modified:
-    `repeating-linear-gradient(-45deg, ` +
-    `${diffStripeColors.modified} 0 4px, transparent 4px 9px)`,
-  /** 删除：45° 红斜纹（用于 PrevComparisonBar 的 removed 段、RemovedFooter） */
-  removed:
-    `repeating-linear-gradient(45deg, ` +
-    `${diffStripeColors.removed} 0 4px, transparent 4px 9px)`,
-} as const;
-
-/** 给定 diffKind 返回叠加纹理的 CSS background-image，没有纹理时返回 null。
- *  注意：removed leaf 不会出现在本轮的主 LeafStrip 里，但 PrevComparisonBar /
- *  RemovedFooter 会直接调用 diffTextures.removed，所以函数仍支持 "removed"。 */
-export function diffTextureFor(
-  kind: "added" | "modified" | "removed" | "kept" | undefined | null,
-): string | null {
-  if (kind === "added")    return diffTextures.added;
-  if (kind === "modified") return diffTextures.modified;
-  if (kind === "removed")  return diffTextures.removed;
-  return null;
-}
-
 // ─── Cache：lens pill 用色，不参与 bar 染色 ────────────────────────────────
 
 export const cachePalette = {

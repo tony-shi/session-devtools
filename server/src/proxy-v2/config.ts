@@ -5,7 +5,6 @@ import { PROXY_SERVER_PATHS } from "./paths";
 import { normalizeHost } from "./host-normalize";
 
 export const LISTEN_HOST = "127.0.0.1";
-export const DEBUG = !!process.env.API_DASHBOARD_PROXY_DEBUG;
 
 export type UpstreamProxy = {
   protocol: "http";

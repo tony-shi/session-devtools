@@ -56,7 +56,3 @@ export const EVENT_PALETTES: Record<IntervalEventKind, EventPalette> = {
   "worktree-state":           META_NONCONTEXT,
   "unknown":                  SLATE_MUTED,
 };
-
-export function getEventPalette(kind: IntervalEventKind): EventPalette {
-  return EVENT_PALETTES[kind] ?? SLATE_MUTED;
-}

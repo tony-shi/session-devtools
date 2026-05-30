@@ -241,10 +241,3 @@ export function startAutoSyncV2(files?: { tool: string; path: string }[]): void 
   console.log(`[sync-v2] Auto-sync enabled, interval=${SYNC_INTERVAL / 1000}s`);
   backgroundSyncV2(files);
 }
-
-export function stopAutoSyncV2(): void {
-  if (_syncTimer) {
-    clearTimeout(_syncTimer);
-    _syncTimer = null;
-  }
-}
