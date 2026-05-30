@@ -54,6 +54,8 @@ import {
   intentGroupI18nKey,
   INTENT_GROUP_ORDER,
   type IntentGroupId,
+  ROLE_TO_GROUP,
+  type RoleId,
 } from "./lens-palette";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -75,79 +77,94 @@ function LensSwitcher({
 }) {
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: 6,
+      display: "flex", alignItems: "center", gap: 8,
       padding: "2px 0", flexWrap: "wrap",
     }}>
       <span style={{ fontWeight: 600, color: "#4b5563", letterSpacing: "0.04em", textTransform: "uppercase", fontSize: 10 }}>
         视角
       </span>
-      {lenses.map((lens) => {
-        const isActive = activeLenses.has(lens.id);
-        const isBase = lens.id === baseLensId;
-        const description = isBase
-          ? (lens.description ?? "") + "（基底视角，不能关闭）"
-          : lens.description ?? "";
-        return (
-          <button
-            key={lens.id}
-            type="button"
-            onClick={() => onToggle(lens.id)}
-            disabled={isBase}
-            title={description}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 5,
-              padding: "3px 9px", borderRadius: 6,
-              border: isActive ? "1px solid #6366f1" : "1px solid #e5e7eb",
-              background: isActive ? BRAND.indigo50 : "transparent",
-              color: isActive ? BRAND.indigo700 : "#6b7280",
-              fontWeight: isActive ? 700 : 500,
-              fontSize: 11,
-              cursor: isBase ? "default" : "pointer",
-              opacity: isBase && !isActive ? 0.5 : 1,
-              transition: "background 0.1s, border-color 0.1s",
-            }}
-          >
-            <span style={{
-              display: "inline-flex", alignItems: "center", justifyContent: "center",
-              width: 10, height: 10, borderRadius: 2,
-              border: `1px solid ${isActive ? BRAND.indigo500 : "#cbd5e1"}`,
-              background: isActive ? BRAND.indigo500 : "transparent",
-              color: "#fff",
-              fontSize: 8, fontWeight: 700, lineHeight: 1,
-            }}>
-              {isActive ? "✓" : ""}
-            </span>
-            {lens.label}
-          </button>
-        );
-      })}
+      <div style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 2,
+        background: "#f3f4f6", // 浅灰色容器底色
+        padding: 3,
+        borderRadius: 8,
+      }}>
+        {lenses.map((lens) => {
+          const isActive = activeLenses.has(lens.id);
+          const isBase = lens.id === baseLensId;
+          const description = isBase
+            ? (lens.description ?? "") + "（基底视角，不能关闭）"
+            : lens.description ?? "";
+          return (
+            <button
+              key={lens.id}
+              type="button"
+              onClick={() => onToggle(lens.id)}
+              disabled={isBase}
+              title={description}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 5,
+                padding: "4px 10px",
+                borderRadius: 6,
+                border: "none",
+                background: isActive ? "#ffffff" : "transparent", // 激活时为白色小卡片
+                boxShadow: isActive ? "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)" : "none", // 激活时带投影
+                color: isActive ? "#312e81" : "#4b5563", // 激活时字色加深
+                fontWeight: isActive ? 700 : 500,
+                fontSize: 11,
+                cursor: isBase ? "default" : "pointer",
+                transition: "all 0.15s ease",
+              }}
+            >
+              <span style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                width: 6, height: 6, borderRadius: "50%",
+                background: isActive ? "#6366f1" : "#d1d5db", // 圆点替代复选框
+                transition: "background 0.15s",
+              }} />
+              {lens.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-// ─── BucketPillRow ──────────────────────────────────────────────────────────
-//
-// 当前 lens 的桶 pill 行。点击 pill = 把那个桶设为过滤；再点一次取消。
-// 空桶（leafCount === 0）直接不渲染：本 call 没数据的分类不应该占视觉空间，
-// 即使是为了"展示完整 lens 字典"。用户问的是这个 call 的数据。
-
-// 单个 bucket pill —— 复用在分组和平铺两种渲染路径下。
+// 单个 bucket pill/badge
 function BucketPill({
-  bucket, leafCount, totalChars, isActive, onClick,
+  bucket, leafCount, totalChars, isActive, onClick, variant = "pill",
 }: {
   bucket: { id: string; label: string; color: string; description?: string };
   leafCount: number;
   totalChars: number;
   isActive: boolean;
   onClick: () => void;
+  variant?: "pill" | "badge";
 }) {
+  const isBadge = variant === "badge";
+  const badgeBg = isActive ? `${bucket.color}1e` : "#f3f4f6"; // 激活时彩色微透底色，未激活时灰色底色
+  const badgeTextColor = isActive ? bucket.color : "#4b5563";
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <button
           type="button"
           onClick={onClick}
-          style={{
+          style={isBadge ? {
+            display: "inline-flex", alignItems: "center", gap: 4,
+            padding: "2px 6px", borderRadius: 4,
+            border: "none",
+            background: badgeBg,
+            color: badgeTextColor,
+            fontSize: 10.5,
+            fontWeight: isActive ? 700 : 500,
+            cursor: "pointer",
+            transition: "all 0.1s ease",
+          } : {
             display: "inline-flex", alignItems: "baseline", gap: 5,
             padding: "3px 7px", borderRadius: 4,
             border: isActive ? `1px solid ${bucket.color}` : "1px solid transparent",
@@ -158,12 +175,26 @@ function BucketPill({
             transition: "background 0.1s, border-color 0.1s",
           }}
         >
-          <span style={{
-            width: 6, height: 6, borderRadius: 1,
-            background: bucket.color, alignSelf: "center",
-          }} />
-          <span style={{ fontWeight: 600, color: "#1f2937" }}>{leafCount}</span>
-          <span style={{ color: "#6b7280" }}>{bucket.label}</span>
+          {!isBadge && (
+            <span style={{
+              width: 6, height: 6, borderRadius: 1,
+              background: bucket.color, alignSelf: "center",
+            }} />
+          )}
+          {isBadge ? (
+            <>
+              <span style={{ fontWeight: 700, color: isActive ? bucket.color : "#1f2937" }}>
+                {bucket.id === "added" ? "+" : bucket.id === "removed" ? "-" : bucket.id === "modified" ? "*" : ""}
+                {leafCount}
+              </span>
+              <span>{bucket.label}</span>
+            </>
+          ) : (
+            <>
+              <span style={{ fontWeight: 600, color: "#1f2937" }}>{leafCount}</span>
+              <span style={{ color: "#6b7280" }}>{bucket.label}</span>
+            </>
+          )}
         </button>
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={6} className="max-w-xs">
@@ -184,130 +215,154 @@ function BucketPill({
   );
 }
 
-// 版本 badge：attribution 关键位置显示本次 call 的 cc_version + 与 corpus 基线的
-// 匹配状态。同时承担"为什么没归因"的诊断 —— contextOk=false（billing header 未命中，
-// 常见于 CC 版本格式漂移）时显示红色警告，解释 system prompt / reminder 类内容
-// 为何全部落「未归因」。文案走 i18n（attribution.version.*）。
-function VersionBadge({ diag }: { diag?: VersionDiag }) {
+
+
+function MajorCategoryPill({
+  groupId, leafCount, totalChars, isActive, onClick,
+}: {
+  groupId: IntentGroupId;
+  leafCount: number;
+  totalChars: number;
+  isActive: boolean;
+  onClick: () => void;
+}) {
   const { t } = useTranslation();
-  if (!diag) return null;
-  const failed = !diag.contextOk;
-  const lv = diag.matchLevel;
-  // 配色：绿(exact/minor-match) / 黄(minor-mismatch/unparseable/baseline-missing) / 红(失败/major)
-  let bg = "#f0fdf4", fg = "#15803d", border = "#bbf7d0", dot = "#22c55e";
-  if (failed || lv === "major-mismatch") {
-    bg = "#fef2f2"; fg = "#b91c1c"; border = "#fecaca"; dot = "#ef4444";
-  } else if (lv === "minor-mismatch" || lv === "unparseable" || lv === "baseline-missing") {
-    bg = "#fffbeb"; fg = "#b45309"; border = "#fde68a"; dot = "#f59e0b";
-  }
-  const label = failed
-    ? t("attribution.version.contextFailed")
-    : (diag.ccVersion
-        ? t("attribution.version.ccLabel", { version: diag.ccVersion })
-        : t("attribution.version.ccUnknown"));
+  const color = intentGroupPalette[groupId].color;
+  const label = t(`attribution.lensGroup.${groupId}.label`);
+  const description = t(`attribution.lensGroup.${groupId}.description`);
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <span style={{
-          display: "inline-flex", alignItems: "center", gap: 5,
-          padding: "2px 9px", borderRadius: 999,
-          fontSize: 11, fontWeight: 600, fontVariantNumeric: "tabular-nums",
-          background: bg, color: fg, border: `1px solid ${border}`,
-          cursor: "help", whiteSpace: "nowrap", userSelect: "none",
-        }}>
-          <span style={{ width: 6, height: 6, borderRadius: 999, background: dot }} />
-          {label}
-        </span>
+        <button
+          type="button"
+          onClick={onClick}
+          style={{
+            display: "inline-flex", alignItems: "baseline", gap: 5,
+            padding: "3px 8px", borderRadius: 4,
+            border: isActive ? `1px solid ${color}` : "1px solid #e5e7eb",
+            background: isActive ? `${color}14` : "transparent",
+            color: isActive ? color : "#374151",
+            fontWeight: isActive ? 700 : 500,
+            fontSize: 11,
+            cursor: "pointer",
+            transition: "all 0.1s ease",
+          }}
+        >
+          <span style={{
+            width: 6, height: 6, borderRadius: "50%",
+            background: color, alignSelf: "center",
+          }} />
+          <span style={{ fontWeight: 700 }}>{leafCount}</span>
+          <span>{label}</span>
+          {isActive && <span style={{ fontSize: 9, opacity: 0.8, marginLeft: 2 }}>▾</span>}
+        </button>
       </TooltipTrigger>
-      <TooltipContent side="bottom" sideOffset={6} className="max-w-sm">
+      <TooltipContent side="top" sideOffset={6} className="max-w-xs">
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {failed ? (
-            <>
-              <div style={{ fontWeight: 700 }}>⚠️ {t("attribution.version.contextFailed")}</div>
-              <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{t("attribution.version.contextFailedHint")}</div>
-              {diag.contextFailureKind && (
-                <div style={{ opacity: 0.6, fontSize: 10 }}>kind: {diag.contextFailureKind}</div>
-              )}
-              {diag.baseline && (
-                <div style={{ opacity: 0.6, fontSize: 10 }}>{t("attribution.version.baseline", { baseline: diag.baseline })}</div>
-              )}
-            </>
-          ) : (
-            <>
-              <div style={{ fontWeight: 700 }}>
-                {diag.ccVersion ? t("attribution.version.ccLabel", { version: diag.ccVersion }) : t("attribution.version.ccUnknown")}
-              </div>
-              <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{t(`attribution.version.match.${lv}`)}</div>
-              {diag.baseline && (
-                <div style={{ opacity: 0.6, fontSize: 10 }}>{t("attribution.version.baseline", { baseline: diag.baseline })}</div>
-              )}
-            </>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+            {label}
+          </div>
+          {description && (
+            <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{description}</div>
           )}
+          <div style={{ opacity: 0.65, fontSize: 10 }}>
+            {leafCount} leaf · {fmtK(totalChars)} chars
+          </div>
         </div>
       </TooltipContent>
     </Tooltip>
   );
 }
 
-// 单个 intent group 块：group label（带 i18n tooltip）+ 组内 pill 行。
-// isFirst 控制左分隔线（每行第一个 group 无左边框）。
-function GroupBlock({
-  g, isFirst, inGroup, selectedBucketId, onSelect,
+function StructureLensFilter({
+  selectedGroupId,
+  onSelectGroup,
+  selectedBucketId,
+  onSelectBucket,
+  leaves,
 }: {
-  g: IntentGroupId;
-  isFirst: boolean;
-  inGroup: BucketStat[];
+  selectedGroupId: IntentGroupId | null;
+  onSelectGroup: (groupId: IntentGroupId | null) => void;
   selectedBucketId: string | null;
-  onSelect: (bucketId: string | null) => void;
+  onSelectBucket: (bucketId: string | null) => void;
+  leaves: LeafLite[];
 }) {
-  const { t } = useTranslation();
-  const color = intentGroupPalette[g].color;
-  const i18nBase = intentGroupI18nKey(g);
-  const groupLabel = t(`${i18nBase}.label`);
-  const groupDesc  = t(`${i18nBase}.description`);
-  const groupTotal = inGroup.reduce((s, x) => s + x.leafCount, 0);
+  const stats = useMemo(() => bucketStatsOf(getLens("structure"), leaves), [leaves]);
+
+  // Calculate group stats
+  const groupStats = useMemo(() => {
+    const map = new Map<IntentGroupId, { leafCount: number; totalChars: number }>();
+    for (const s of stats) {
+      const g = s.bucket.groupId;
+      if (!g) continue;
+      const cur = map.get(g) ?? { leafCount: 0, totalChars: 0 };
+      cur.leafCount += s.leafCount;
+      cur.totalChars += s.totalChars;
+      map.set(g, cur);
+    }
+    return map;
+  }, [stats]);
+
+  const totalCount = useMemo(() => {
+    let sum = 0;
+    for (const v of groupStats.values()) sum += v.leafCount;
+    return sum;
+  }, [groupStats]);
+
+  if (totalCount === 0) return null;
+
   return (
-    <div style={{
-      display: "flex", flexDirection: "column", gap: 4,
-      paddingLeft: isFirst ? 0 : 12,
-      borderLeft: isFirst ? "none" : "1px dashed #d1d5db",
-    }}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span style={{
-            display: "inline-flex", alignItems: "center", gap: 6,
-            fontSize: 12, fontWeight: 700, color, cursor: "help", userSelect: "none",
-          }}>
-            <span style={{ width: 7, height: 7, borderRadius: 999, background: color }} />
-            {groupLabel}
-            <span style={{ color: "#9ca3af", fontWeight: 500, fontSize: 11 }}>· {groupTotal}</span>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={6} className="max-w-sm">
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 999, background: color }} />
-              {groupLabel}
-            </div>
-            <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{groupDesc}</div>
-            <div style={{ opacity: 0.65, fontSize: 10 }}>
-              {inGroup.length} bucket{inGroup.length > 1 ? "s" : ""} · {groupTotal} leaf
-            </div>
-          </div>
-        </TooltipContent>
-      </Tooltip>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-        {inGroup.map(({ bucket, leafCount, totalChars }) => (
-          <BucketPill
-            key={bucket.id}
-            bucket={bucket}
-            leafCount={leafCount}
-            totalChars={totalChars}
-            isActive={selectedBucketId === bucket.id}
-            onClick={() => onSelect(selectedBucketId === bucket.id ? null : bucket.id)}
-          />
-        ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "2px 0" }}>
+      {/* Row 1: Major Categories */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <span style={{ fontWeight: 600, color: "#4b5563", letterSpacing: "0.04em", textTransform: "uppercase", fontSize: 10, marginRight: 4 }}>
+          分类
+        </span>
+        {INTENT_GROUP_ORDER.map((g) => {
+          const gs = groupStats.get(g);
+          if (!gs || gs.leafCount === 0) return null;
+          return (
+            <MajorCategoryPill
+              key={g}
+              groupId={g}
+              leafCount={gs.leafCount}
+              totalChars={gs.totalChars}
+              isActive={selectedGroupId === g}
+              onClick={() => onSelectGroup(selectedGroupId === g ? null : g)}
+            />
+          );
+        })}
       </div>
+
+      {/* Row 2: Sub-categories (Dynamic) */}
+      {selectedGroupId && (() => {
+        const subCategories = stats.filter((s) => s.bucket.groupId === selectedGroupId && s.leafCount > 0);
+        if (subCategories.length === 0) return null;
+        return (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            paddingLeft: 24,
+            marginTop: 2,
+            flexWrap: "wrap",
+          }}>
+            <span style={{ color: "#d1d5db", fontSize: 11, marginRight: 2, userSelect: "none" }}>└─</span>
+            {subCategories.map(({ bucket, leafCount, totalChars }) => (
+              <BucketPill
+                key={bucket.id}
+                bucket={bucket}
+                leafCount={leafCount}
+                totalChars={totalChars}
+                isActive={selectedBucketId === bucket.id}
+                onClick={() => onSelectBucket(selectedBucketId === bucket.id ? null : bucket.id)}
+              />
+            ))}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -326,52 +381,16 @@ function BucketPillRow({
   const nonEmptyStats = stats.filter(s => s.leafCount > 0);
   if (nonEmptyStats.length === 0) return null;
 
-  // L0 意图分组渲染：若 lens 的 buckets 携带 groupId（当前仅 structure lens），按
-  // INTENT_GROUP_ORDER 分块，同 group 内 pills 紧贴 + 顶部一个显著 group 标签；不同
-  // group 间用细虚线分隔。其他 lens（cache / diff / audit）的 buckets 不带 groupId，
-  // 回退到平铺渲染。group 文案走 i18n（attribution.lensGroup.<id>.label/description）。
-  const hasGroups = nonEmptyStats.some(s => s.bucket.groupId !== undefined);
-  if (hasGroups) {
-    const byGroup = new Map<IntentGroupId, BucketStat[]>();
-    for (const s of nonEmptyStats) {
-      const g = (s.bucket.groupId ?? "other") as IntentGroupId;
-      if (!byGroup.has(g)) byGroup.set(g, []);
-      byGroup.get(g)!.push(s);
-    }
-    const orderedGroups = INTENT_GROUP_ORDER.filter(g => byGroup.has(g));
-    // 可控换行（替代 flex-wrap 随机断点）：≤3 个 group 排一行；≥4 个均分两行
-    // （第一行 ceil(n/2)，第二行余下），保证视觉整齐、不出现孤儿换行。
-    const n = orderedGroups.length;
-    const rowsOfGroups: IntentGroupId[][] = n <= 3
-      ? [orderedGroups]
-      : [orderedGroups.slice(0, Math.ceil(n / 2)), orderedGroups.slice(Math.ceil(n / 2))];
-    return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "2px 0" }}>
-        {rowsOfGroups.map((row, ri) => (
-          <div key={ri} style={{ display: "flex", alignItems: "stretch", gap: 14, flexWrap: "wrap" }}>
-            {row.map((g, gi) => (
-              <GroupBlock
-                key={g}
-                g={g}
-                isFirst={gi === 0}
-                inGroup={byGroup.get(g)!}
-                selectedBucketId={selectedBucketId}
-                onSelect={onSelect}
-              />
-            ))}
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  // 平铺渲染（无 group 概念的 lens：cache / diff / audit）。
+  // 平铺渲染（无 group 概念的 lens：cache / diff / audit），加上小分类名和 Badge 渲染。
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 6,
       flexWrap: "wrap",
       padding: "2px 0",
     }}>
+      <span style={{ fontWeight: 600, color: "#9ca3af", letterSpacing: "0.04em", textTransform: "uppercase", fontSize: 9.5, marginRight: 4 }}>
+        {lens.label}
+      </span>
       {nonEmptyStats.map(({ bucket, leafCount, totalChars }) => (
         <BucketPill
           key={bucket.id}
@@ -380,6 +399,7 @@ function BucketPillRow({
           totalChars={totalChars}
           isActive={selectedBucketId === bucket.id}
           onClick={() => onSelect(selectedBucketId === bucket.id ? null : bucket.id)}
+          variant="badge"
         />
       ))}
     </div>
@@ -658,6 +678,7 @@ function DiffUnavailableBanner({
 
 export function AttributionTreeLensPanel({
   sessionId, agentFileId, compactIdx, proxyRequestId, callId, prevCallId, hideDiff, onLinkSource, onLeafSelect, prelude,
+  onVersionDiagLoaded,
 }: {
   sessionId: string;
   /** Present iff rendering a sub-agent call — routes to sub-agent endpoint. */
@@ -683,6 +704,7 @@ export function AttributionTreeLensPanel({
   /** 在 LensSectionBar 之上额外渲染的节点。CachePanel 用此插入 L1/L2/L3 紧凑行，
    *  让它们与下方 LensSectionBar 在同一容器内自然对齐（同宽 / 同 padding）。 */
   prelude?: React.ReactNode;
+  onVersionDiagLoaded?: (diag: VersionDiag | null) => void;
 }) {
   const { t } = useTranslation();
   const [result, setResult] = useState<AttributionTreeResult | null>(null);
@@ -692,6 +714,7 @@ export function AttributionTreeLensPanel({
   // 多 lens 同时激活：来源默认锁定 active，Diff/Cache/Audit 可独立 toggle on/off。
   // bucketFilters 是「每个 lens 选中的桶」的 map；过滤是各 lens 选择的 AND 合取。
   const [activeLenses, setActiveLenses] = useState<Set<string>>(new Set([LENSES[0].id]));
+  const [selectedGroupId, setSelectedGroupId] = useState<IntentGroupId | null>(null);
   const [bucketFilters, setBucketFilters] = useState<Record<string, string | null>>({});
   const [selectedSection, setSelectedSection] = useState<SectionId | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -720,6 +743,8 @@ export function AttributionTreeLensPanel({
   }
 
   // 选/取消选 lens 的某个桶。bucketId 传 null 取消该 lens 的过滤。
+  // 注意：当选择 structure 结构 lens 的具体子桶时，为了确保视觉联动，如果当前没有选中对应的大类，
+  // 我们可以也顺便设定它，但在普通的 filter 调用中我们直接使用。
   function setBucketFilter(lensId: string, bucketId: string | null) {
     setBucketFilters((prev) => {
       const next = { ...prev };
@@ -734,6 +759,7 @@ export function AttributionTreeLensPanel({
     let cancelled = false;
     setLoading(true); setError(null);
     setSelectedSection(null); setSelectedNodeId(null); setBucketFilters({});
+    setSelectedGroupId(null);
     const fetcher = proxyRequestId != null
       ? apiV2.sideCallAttributionTree(sessionId, proxyRequestId)
       : compactIdx != null
@@ -742,8 +768,18 @@ export function AttributionTreeLensPanel({
           ? apiV2.subAgentAttributionTree(sessionId, agentFileId, callId)
           : apiV2.attributionTree(sessionId, callId);
     fetcher
-      .then((r) => { if (!cancelled) setResult(r); })
-      .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
+      .then((r) => {
+        if (!cancelled) {
+          setResult(r);
+          onVersionDiagLoaded?.(r?.snapshot?.versionDiag ?? null);
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e));
+          onVersionDiagLoaded?.(null);
+        }
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [sessionId, agentFileId, compactIdx, proxyRequestId, callId]);
@@ -821,16 +857,34 @@ export function AttributionTreeLensPanel({
   // 注意：cache lens 的桶只用于联动 CacheTopologyStrip 高亮，不参与 leaf 过滤
   // （用户明确要求：cache 选中不应该 dim 主 bar 的 leaf）。
   const passesAllFilters = useMemo(() => {
-    const filters = Object.entries(bucketFilters).filter(([lid, b]) => !!b && lid !== "cache");
-    if (filters.length === 0) return null;
+    const otherFilters = Object.entries(bucketFilters).filter(
+      ([lid, b]) => !!b && lid !== "cache" && lid !== "structure"
+    );
+    const structureActive = activeLenses.has("structure");
+    const structureGroupFilter = structureActive ? selectedGroupId : null;
+    const structureSubFilter = structureActive ? bucketFilters["structure"] : null;
+
+    if (otherFilters.length === 0 && !structureGroupFilter && !structureSubFilter) return null;
+
     return (leaf: LeafLite): boolean => {
-      for (const [lid, bid] of filters) {
+      // 1. Structure filter (major group OR specific sub-category)
+      if (structureActive) {
+        const leafRole = getLens("structure").bucketOf(leaf) as RoleId;
+        if (structureSubFilter) {
+          if (leafRole !== structureSubFilter) return false;
+        } else if (structureGroupFilter) {
+          if (ROLE_TO_GROUP[leafRole] !== structureGroupFilter) return false;
+        }
+      }
+
+      // 2. Other lens filters
+      for (const [lid, bid] of otherFilters) {
         const ln = getLens(lid);
         if (ln.bucketOf(leaf) !== bid) return false;
       }
       return true;
     };
-  }, [bucketFilters]);
+  }, [bucketFilters, activeLenses, selectedGroupId]);
 
   const leaves = useMemo(() => {
     if (!passesAllFilters) return allLeaves;
@@ -847,14 +901,24 @@ export function AttributionTreeLensPanel({
   );
   // 用第一个有 bucket 过滤的 lens 的颜色作为过滤色（视觉一致性，避免多色混叠）。
   const filterAccentColor: string | null = useMemo(() => {
+    if (activeLenses.has("structure")) {
+      const subBid = bucketFilters["structure"];
+      if (subBid) {
+        const b = getBucket(getLens("structure"), subBid);
+        if (b) return b.color;
+      }
+      if (selectedGroupId) {
+        return intentGroupPalette[selectedGroupId]?.color ?? null;
+      }
+    }
     for (const [lid, bid] of Object.entries(bucketFilters)) {
-      if (!bid) continue;
+      if (!bid || lid === "structure") continue;
       const ln = getLens(lid);
       const b = getBucket(ln, bid);
       if (b) return b.color;
     }
     return null;
-  }, [bucketFilters]);
+  }, [bucketFilters, activeLenses, selectedGroupId]);
 
   const selectedStat = useMemo(() => {
     if (!selectedSection) return null;
@@ -997,7 +1061,6 @@ export function AttributionTreeLensPanel({
           baseLensId={LENSES[0].id}
           onToggle={toggleLens}
         />
-        <VersionBadge diag={result?.snapshot?.versionDiag} />
       </div>
 
       {/* Prelude（CachePanel 旧路径用过；统一后由 cache lens 自管） */}
@@ -1015,15 +1078,43 @@ export function AttributionTreeLensPanel({
           // 排除自己的桶过滤 + cache（cache 不过滤），按其余 lens 的桶过滤交集筛 leaves
           const otherFilters = Object.entries(bucketFilters)
             .filter(([lid, b]) => !!b && lid !== l.id && lid !== "cache");
-          const leavesForThisLens = otherFilters.length === 0
-            ? allLeaves
-            : allLeaves.filter((leaf) => {
-                for (const [lid, bid] of otherFilters) {
-                  const ln = getLens(lid);
-                  if (ln.bucketOf(leaf) !== bid) return false;
-                }
-                return true;
-              });
+          
+          const leavesForThisLens = allLeaves.filter((leaf) => {
+            // 1. 如果当前统计的 lens 不是 structure，且 structure 处于激活态，应用 structure 过滤
+            if (l.id !== "structure" && activeLenses.has("structure")) {
+              const subFilter = bucketFilters["structure"];
+              const leafRole = getLens("structure").bucketOf(leaf) as RoleId;
+              if (subFilter) {
+                if (leafRole !== subFilter) return false;
+              } else if (selectedGroupId) {
+                if (ROLE_TO_GROUP[leafRole] !== selectedGroupId) return false;
+              }
+            }
+            // 2. 应用其它常规过滤
+            for (const [lid, bid] of otherFilters) {
+              if (lid === "structure") continue;
+              const ln = getLens(lid);
+              if (ln.bucketOf(leaf) !== bid) return false;
+            }
+            return true;
+          });
+
+          if (l.id === "structure") {
+            return (
+              <StructureLensFilter
+                key={l.id}
+                selectedGroupId={selectedGroupId}
+                onSelectGroup={(gid) => {
+                  setSelectedGroupId(gid);
+                  setBucketFilter("structure", null);
+                }}
+                selectedBucketId={bucketFilters["structure"] ?? null}
+                onSelectBucket={(bid) => setBucketFilter("structure", bid)}
+                leaves={leavesForThisLens}
+              />
+            );
+          }
+
           return (
             <BucketPillRow
               key={l.id}

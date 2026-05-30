@@ -12,6 +12,7 @@ import { apiV2 } from "../../api";
 import type { CallDetail } from "../../drilldown-types";
 import type { MockLlmCall, MockDiffEntry } from "../../lib/mock-data";
 import type { CallTab } from "../session-nav";
+import type { VersionDiag } from "../../attribution-tree-types";
 import { fmtK, fmtGap, fmtDateShort, fmtDuration, shortModelName, modelColor } from "../../lib/format";
 import { BRAND } from "../../shared/brand";
 import { RiskBadge } from "../../shared/SessionBadges";
@@ -193,11 +194,13 @@ export function LlmCallDetailPanel({
   const [tab, setTab] = useState<CallTab>(requestedTab ?? "attribution");
   const [callDetail, setCallDetail] = useState<CallDetail | null>(null);
   const [callDetailLoading, setCallDetailLoading] = useState(true);
+  const [versionDiag, setVersionDiag] = useState<VersionDiag | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Load eagerly on mount — needed for Attribution (real segments) from first render
   useEffect(() => {
     if (callDetail?.callId === call.id) return;
+    setVersionDiag(null); // Reset version diag on call switch
     // 数据加载 effect：进入 loading 态再 fetch，是标准 React 数据同步模式。
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setCallDetailLoading(true);
@@ -236,6 +239,46 @@ export function LlmCallDetailPanel({
   const inputTotal = freshIn + call.cacheRead + call.cacheWrite;
   const cacheRatio = inputTotal > 0 ? call.cacheRead / inputTotal * 100 : null;
   const ccVersion = extractCcVersionFromRawRequest(callDetail?.rawRequestJson ?? null);
+  const getCcStatus = (diag: VersionDiag | null) => {
+    if (!diag) return { dotColor: undefined, tooltip: t("callSummary.cc.tooltip") };
+    const failed = !diag.contextOk;
+    const lv = diag.matchLevel;
+    let dotColor = "#22c55e"; // default green
+    if (failed || lv === "major-mismatch") {
+      dotColor = "#ef4444"; // red
+    } else if (lv === "minor-mismatch" || lv === "unparseable" || lv === "baseline-missing") {
+      dotColor = "#f59e0b"; // yellow
+    }
+
+    const title = failed
+      ? t("attribution.version.contextFailed")
+      : (diag.ccVersion
+          ? t("attribution.version.ccLabel", { version: diag.ccVersion })
+          : t("attribution.version.ccUnknown"));
+
+    const matchText = failed
+      ? t("attribution.version.contextFailedHint")
+      : t(`attribution.version.match.${lv}`);
+
+    const tooltipContent = (
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ fontWeight: 700 }}>{t("callSummary.cc.tooltip")}</div>
+        <div style={{ borderTop: "1px solid #e5e7eb", margin: "2px 0" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 5, fontWeight: 700, color: failed || lv === "major-mismatch" ? "#b91c1c" : lv === "minor-mismatch" || lv === "unparseable" || lv === "baseline-missing" ? "#b45309" : "#15803d" }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: dotColor }} />
+          {title}
+        </div>
+        <div style={{ opacity: 0.85, lineHeight: 1.4 }}>{matchText}</div>
+        {diag.baseline && (
+          <div style={{ opacity: 0.6, fontSize: 10 }}>{t("attribution.version.baseline", { baseline: diag.baseline })}</div>
+        )}
+      </div>
+    );
+
+    return { dotColor, tooltip: tooltipContent };
+  };
+
+  const ccStatus = getCcStatus(versionDiag);
   const duration = call.proxy?.durationMs != null ? fmtDuration(call.proxy.durationMs) : "";
   const deltaColor = call.cacheMiss ? "#b45309"
     : call.significantDelta > 10000 ? "#b91c1c"
@@ -269,7 +312,7 @@ export function LlmCallDetailPanel({
               paddingBottom: 2,
             }}
           >
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 18, flex: "0 0 auto" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 6, flex: "0 0 auto" }}>
               <SummaryStat
                 label={t("callSummary.model.label")}
                 tooltip={t("callSummary.model.tooltip")}
@@ -292,12 +335,19 @@ export function LlmCallDetailPanel({
               <SummaryStat label={t("callSummary.duration.label")} tooltip={t("callSummary.duration.tooltip")} minWidth={54}>
                 {duration || "—"}
               </SummaryStat>
-              <SummaryStat label={t("callSummary.cc.label")} tooltip={t("callSummary.cc.tooltip")} mono valueColor={ccVersion ? BRAND.indigo700 : "#64748b"} minWidth={96}>
+              <SummaryStat
+                label={t("callSummary.cc.label")}
+                tooltip={ccStatus.tooltip}
+                mono
+                valueColor={ccVersion ? BRAND.indigo700 : "#64748b"}
+                minWidth={96}
+                dotColor={ccStatus.dotColor}
+              >
                 {callDetailLoading ? "..." : ccVersion ?? "—"}
               </SummaryStat>
             </div>
             <div style={summaryDividerStyle} />
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 20, flex: "0 0 auto" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 8, flex: "0 0 auto" }}>
               <SummaryStat label={t("callSummary.context.label")} tooltip={t("callSummary.context.tooltip")} size="metric" minWidth={48}>
                 {fmtK(call.contextSize)}
               </SummaryStat>
@@ -396,6 +446,7 @@ export function LlmCallDetailPanel({
               callId={call.id}
               prevCallId={prevCallId}
               onLinkSource={onLinkSource}
+              onVersionDiagLoaded={setVersionDiag}
             />
           )}
 

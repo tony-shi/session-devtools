@@ -21,6 +21,7 @@ import {
   auditPalette,
   rolePalette,
   ROLE_TO_GROUP,
+  intentGroupPalette,
   type RoleId,
   type IntentGroupId,
 } from "./lens-palette";
@@ -95,39 +96,41 @@ export const cacheLens: Lens = {
 // 未识别（origin=unknown 或路由到 *.unknown 结构兜底槽）诚实归 "未识别"，不冒充 role。
 // roleOf 吃 leaf.classSlot（system section 级，flattenLeaves 已下沉）+ rootSlotType + messageRole。
 
-// ROLE_LENS_IDS 按 IntentGroup 顺序排列（左→右：instructions → environment →
-// conversation → tool-io → runtime → other），保证图例视觉与 group 分块顺序一致。
-// reminder 子类(messages.context / messages.directive)由 roleOf 按 origin.ruleId 拆出,
-// 各自静态映射到 ROLE_TO_GROUP 的正确组 —— 不再有 groupOf override 旁路。
-const ROLE_LENS_IDS: RoleId[] = [
-  // instructions
-  "system.core", "system.tool-policy", "messages.directive",
-  // environment & resources
-  "system.env", "system.billing", "tools.builtin", "messages.skills", "messages.context",
-  // conversation
-  "messages.human", "messages.thinking", "messages.assistant", "messages.image",
-  // tool-io
-  "messages.tool-use", "messages.tool-result",
-  // runtime status
-  "messages.injection",
-  // other
-  "messages.misc", "other.unknown",
-];
+const ROLE_BUCKETS: LensBucket[] = [
+  // ─── instructions ───
+  { id: "system.core", label: "核心指令", color: rolePalette["system.core"].marker, description: "Claude Code 的核心身份与任务指令模板（Doing tasks、Tone & style等）", groupId: "instructions" },
+  { id: "system.tool-policy", label: "工具策略", color: rolePalette["system.tool-policy"].marker, description: "工具使用规范与策略指引（Using your tools）", groupId: "instructions" },
+  { id: "messages.directive", label: "行为指引", color: rolePalette["messages.directive"].marker, description: "由 harness 动态注入的行为要求（如 thinking 频率等临时指令）", groupId: "instructions" },
 
-const ROLE_BUCKETS: LensBucket[] = ROLE_LENS_IDS.map((r) => ({
-  id: r,
-  label: rolePalette[r].label,
-  color: rolePalette[r].barBg,
-  groupId: ROLE_TO_GROUP[r],
-}));
+  // ─── environment ───
+  { id: "system.env", label: "环境与Git", color: rolePalette["system.env"].marker, description: "系统环境变量、Git 状态、工作目录等事实信息", groupId: "environment" },
+  { id: "messages.context", label: "上下文注入", color: rolePalette["messages.context"].marker, description: "由 harness 注入的辅助上下文（项目 CLAUDE.md、记忆、延时工具说明、代理类型等）", groupId: "environment" },
+  { id: "messages.injection", label: "运行时提醒", color: rolePalette["messages.injection"].marker, description: "harness 在运行现场注入的通知（Token 消耗、文件改动等运行时提示）", groupId: "environment" },
+  { id: "system.billing", label: "计费信息", color: rolePalette["system.billing"].marker, description: "账单限额、Token 预算等计费指示头", groupId: "environment" },
+  { id: "other.unknown", label: "未识别", color: rolePalette["other.unknown"].marker, description: "未能成功归因到具体规则的兜底内容", groupId: "environment" },
+
+  // ─── agent-loop ───
+  { id: "messages.thinking", label: "思考过程", color: rolePalette["messages.thinking"].marker, description: "Claude 产生的思考过程 (Thinking Block) 消耗", groupId: "agent-loop" },
+  { id: "messages.assistant", label: "回复文本", color: rolePalette["messages.assistant"].marker, description: "Claude 最终返回给用户的文本回复", groupId: "agent-loop" },
+  { id: "messages.tool-use", label: "工具调用", color: rolePalette["messages.tool-use"].marker, description: "Claude 发起的工具执行请求 (tool_use)", groupId: "agent-loop" },
+  { id: "messages.tool-result", label: "工具结果", color: rolePalette["messages.tool-result"].marker, description: "工具执行完毕后返回的输出回执 (tool_result)", groupId: "agent-loop" },
+
+  // ─── user-input ───
+  { id: "messages.human", label: "用户文本", color: rolePalette["messages.human"].marker, description: "用户在终端中直接输入的聊天文本", groupId: "user-input" },
+  { id: "messages.image", label: "图片附件", color: rolePalette["messages.image"].marker, description: "用户上传的多模态图片数据", groupId: "user-input" },
+  { id: "messages.misc", label: "命令输出", color: rolePalette["messages.misc"].marker, description: "其它杂项输入（命令回显、图片占位等）", groupId: "user-input" },
+
+  // ─── capabilities ───
+  { id: "tools.builtin", label: "内置工具", color: rolePalette["tools.builtin"].marker, description: "内置系统工具 of Schema 描述，声明模型具备哪些基本能力", groupId: "capabilities" },
+  { id: "messages.skills", label: "技能声明", color: rolePalette["messages.skills"].marker, description: "已安装 agent 技能或自定义 hooks 的声明与说明文档", groupId: "capabilities" },
+];
 
 export const structureLens: Lens = {
   id: "structure",
   label: "结构",
-  description: "按语义角色分类（物理三区之上）：核心指令 / 工具策略 / 环境·git / billing / 人类 / AI / 工具 I/O / 注入 / 杂项；未识别诚实标灰",
+  description: "按大类意图与细节角色二级分组：系统提示词 / 系统提醒 / 代理与工具 / 用户输入 / 能力与拓展",
   buckets: ROLE_BUCKETS,
   bucketOf(leaf) {
-    // 未识别优先：origin unknown，或路由到结构兜底 *.unknown 槽 → 不冒充具体 role。
     if (leaf.origin.kind === "unknown") return "other.unknown";
     if (leaf.classSlot.endsWith(".unknown") || leaf.slotType.endsWith(".unknown")) return "other.unknown";
     return roleOf(leaf);

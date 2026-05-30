@@ -332,28 +332,24 @@
     },
     "lensGroup": {
       "instructions": {
-        "label": "系统指令",
-        "description": "Claude Code 注入给模型的指令性内容:身份、行为规则、风格、流程、工具用法策略、thinking 频率指引。这类内容不随用户/会话改变,删了模型不知道该怎么做。"
+        "label": "系统提示词",
+        "description": "静态行为规则与全局设定：核心提示词、工具策略指引等。"
       },
       "environment": {
-        "label": "环境与资源",
-        "description": "模型当前可见的事实与可用能力:env / git / billing / 工具 schema / skills / memory(CLAUDE.md) / userEmail / currentDate / 可用 deferred 工具 / 可用 agent 类型。删了模型不知道有什么资源/事实。"
+        "label": "系统环境与提醒",
+        "description": "模型当前可见的运行上下文与系统框架注入的环境变量、Git 状态、计费状态与运行时通知。"
       },
-      "conversation": {
-        "label": "对话主体",
-        "description": "用户与模型的对话来回:用户输入、模型回复、思考过程、子调用回填的摘要。"
+      "agent-loop": {
+        "label": "代理与工具执行",
+        "description": "模型内部思考（Thinking Block）与发起/接收工具调用的执行循环。"
       },
-      "tool-io": {
-        "label": "工具交互",
-        "description": "工具调用循环的一步:tool_use 调用请求、tool_result 回执。"
+      "user-input": {
+        "label": "用户输入与文件",
+        "description": "用户直接发起的聊天对话文本、图片文件或命令执行回显。"
       },
-      "runtime": {
-        "label": "运行时通知",
-        "description": "harness 在某次调用现场注入的临时事件/状态通知:本次 token-usage、本次 diagnostics、文件被改、plan-mode 切换、未具名的 system-reminder 兜底。下一轮就不一定有。"
-      },
-      "other": {
-        "label": "其他",
-        "description": "杂项与未识别:图片、内联占位、命令回显、原因未明的内容。"
+      "capabilities": {
+        "label": "能力与拓展",
+        "description": "拓展链路上内置工具或自定义 Skills 的静态声明说明。"
       }
     },
     "stability": {
@@ -485,31 +481,31 @@
   },
   "callSummary": {
     "model": {
-      "label": "model",
+      "label": "模型",
       "tooltip": "本次 LLM 调用使用的模型。"
     },
     "time": {
-      "label": "time",
+      "label": "时间",
       "tooltip": "本次调用的时间。"
     },
     "duration": {
-      "label": "duration",
+      "label": "耗时",
       "tooltip": "代理记录到的请求耗时；没有 proxy 数据时为空。"
     },
     "stop": {
-      "label": "stop",
+      "label": "结束原因",
       "tooltip": "模型返回的 stop reason，表示本次响应为何结束。"
     },
     "tools": {
-      "label": "tools",
+      "label": "工具",
       "tooltip": "本次响应中模型发起的 tool_use 数量。"
     },
     "cc": {
-      "label": "cc",
+      "label": "CC 版本",
       "tooltip": "Claude Code 版本。归因规则会按这个版本选择匹配逻辑。"
     },
     "context": {
-      "label": "ctx",
+      "label": "上下文",
       "tooltip": "本次调用放入模型上下文窗口的 token 数。"
     },
     "delta": {
@@ -517,11 +513,11 @@
       "tooltip": "相对上一次 LLM 调用的上下文 token 变化。"
     },
     "output": {
-      "label": "out",
+      "label": "输出",
       "tooltip": "模型在本次调用中生成的 output tokens。"
     },
     "cache": {
-      "label": "cache",
+      "label": "缓存",
       "tooltip": "cache_read / (input + cache_read + cache_write)。悬停查看完整 token ledger。"
     }
   },

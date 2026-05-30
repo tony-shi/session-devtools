@@ -5,30 +5,30 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip
 import { HoverCard, HoverCardTrigger, HoverCardContent } from "@/components/ui/hover-card";
 
 export function SummaryStat({
-  label, tooltip, children, valueColor = "#111827", mono = false, size = "meta", minWidth,
+  label, tooltip, children, valueColor = "#111827", mono = false, size = "meta", minWidth, dotColor,
 }: {
   label: string;
-  tooltip: string;
+  tooltip: React.ReactNode;
   children: React.ReactNode;
   valueColor?: string;
   mono?: boolean;
   size?: "meta" | "metric";
   minWidth?: number;
+  dotColor?: string;
 }) {
   const valueSize = 11;
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <div
-          className="hover:bg-slate-50"
+          className="hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors duration-150"
           style={{
             display: "flex",
             flexDirection: "column",
             gap: 3,
             minWidth,
-            minHeight: size === "metric" ? 27 : 25,
-            justifyContent: "flex-start",
-            borderRadius: 4,
+            padding: "4px 8px",
+            borderRadius: 6,
             cursor: "help",
           }}
         >
@@ -57,11 +57,23 @@ export function SummaryStat({
               fontFamily: mono ? "ui-monospace, SFMono-Regular, monospace" : undefined,
             }}
           >
+            {dotColor && (
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: dotColor,
+                  flexShrink: 0,
+                  display: "inline-block",
+                }}
+              />
+            )}
             {children}
           </span>
         </div>
       </TooltipTrigger>
-      <TooltipContent className="max-w-[260px] text-xs">{tooltip}</TooltipContent>
+      <TooltipContent className="max-w-[280px] text-xs">{tooltip}</TooltipContent>
     </Tooltip>
   );
 }
@@ -86,16 +98,15 @@ export function CacheSummaryStat({
     <HoverCard openDelay={120} closeDelay={80}>
       <HoverCardTrigger asChild>
         <div
-          className="hover:bg-slate-50"
+          className="hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors duration-150"
           title={tooltip}
           style={{
             display: "flex",
             flexDirection: "column",
             gap: 3,
             minWidth,
-            minHeight: 27,
-            justifyContent: "flex-start",
-            borderRadius: 4,
+            padding: "4px 8px",
+            borderRadius: 6,
             cursor: "help",
           }}
         >

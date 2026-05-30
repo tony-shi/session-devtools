@@ -174,38 +174,31 @@ export type RoleId =
   | "tools.builtin"
   | "other.unknown";
 
-// ─── L0 意图分组（IntentGroupId）：把 14 个 RoleId 聚合到 6 个本质类别 ──────────
+// ─── L0 意图分组（IntentGroupId）：把 17 个 RoleId 聚合到 5 个本质类别 ──────────
 //
 // 设计原则（本质维度，无歧义）：每个 group 有一句客观的判定准则，不依赖动机解释。
-//   - instructions  「告诉模型该怎么做」                — 行为规则
-//   - environment   「告诉模型当前可见的事实/可用的能力」 — 上下文与资源
-//   - conversation  「用户与模型的语义来回」            — 对话本体
-//   - tool-io       「工具调用循环的一步」              — 工具执行
-//   - runtime       「harness 动态注入的临时事件通知」  — 运行时状态
-//   - other         「以上都不是」                      — 杂项
-//
-// 注意：messages.injection 这一个 role 跨两组（memory-contents/skill-listing 归
-// environment，reminder 类归 runtime）。groupOf(leaf) 在 lens-framework 里加 ruleId
-// 级 override 解决；其他 13 个 role 走纯静态 ROLE_TO_GROUP。
+//   - instructions  「系统提示词」                      — 静态行为规则
+//   - environment   「系统提醒与环境」                   — 动态系统环境状态与运行时框架提醒
+//   - agent-loop    「代理与工具执行」                   — 动态的 Agent 内部思考与外部工具调用循环
+//   - user-input    「用户输入与文件」                   — 用户显式输入的内容与执行命令
+//   - capabilities  「能力与拓展」                      — 拓展链路上关于“工具/技能”的静态定义
 
 export type IntentGroupId =
   | "instructions"
   | "environment"
-  | "conversation"
-  | "tool-io"
-  | "runtime"
-  | "other";
+  | "agent-loop"
+  | "user-input"
+  | "capabilities";
 
 // group 颜色与 rolePalette 同族色相协调，但比每个 role 的精确色更深/浓一档，
 // 作为 pill 行"分组标签"显示时与 pill 本身的细分色区分。
 // 文案不在这里——走 i18n（attribution.lensGroup.<id>.{label,description}）。
 export const intentGroupPalette: Record<IntentGroupId, { color: string }> = {
-  instructions: { color: "#4f46e5" }, // 深靛蓝（行为规则的权威感）
-  environment:  { color: "#0891b2" }, // 深青（信息）
-  conversation: { color: "#7c3aed" }, // 深紫
-  "tool-io":    { color: "#db2777" }, // 深粉
-  runtime:      { color: "#a21caf" }, // 深品红
-  other:        { color: "#6b7280" }, // 中性深灰
+  instructions: { color: "#4f46e5" }, // 靛蓝
+  environment:  { color: "#0891b2" }, // 青色
+  "agent-loop":  { color: "#7c3aed" }, // 紫色
+  "user-input": { color: "#0284c7" }, // 天蓝
+  capabilities: { color: "#c026d3" }, // 洋红
 };
 
 /** i18n key 前缀 —— 配合 useTranslation().t() 取 label / description。
@@ -214,40 +207,34 @@ export function intentGroupI18nKey(g: IntentGroupId): string {
   return `attribution.lensGroup.${g}`;
 }
 
-// 静态 role→group 映射。messages.injection 是默认 runtime，由 lens-framework 的
-// groupOf(leaf) 用 origin.ruleId 进一步细分 memory-contents/skill-listing → environment。
+// 静态 role→group 映射。
 export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
-  // ── Instructions（行为规则）
+  // ── Instructions（系统提示词）
   "system.core":         "instructions",  // identity / intro / # Doing tasks / # Tone & style / 各种行为段
   "system.tool-policy":  "instructions",  // # Using your tools
-
-  // ── Instructions（行为规则）— reminder 通道注入的指令也归这里
   "messages.directive":  "instructions",  // thinking-frequency 等"注入的行为指引"
 
-  // ── Environment & Resources（事实与能力）
+  // ── Environment（系统环境与提醒）
   "system.env":          "environment",   // # Environment / gitStatus
-  "system.billing":      "environment",   // billing header（noise 类，但本质是 env 标识）
-  "tools.builtin":       "environment",   // 工具 schema 是"模型可用的能力"，与调用本身（tool-io）分开
-  "messages.skills":     "environment",   // skill_listing 是"可用 skill"声明
+  "system.billing":      "environment",   // billing header
   "messages.context":    "environment",   // reminder 注入的上下文/能力：memory / user-context / deferred-tools / agent-types
+  "messages.injection":  "environment",   // injection 临时通知
+  "other.unknown":       "environment",   // 未识别的 slot
 
-  // ── Conversation（对话本体）
-  "messages.human":      "conversation",
-  "messages.thinking":   "conversation",
-  "messages.assistant":  "conversation",
-  "messages.image":      "conversation",   // 用户贴的图（多模态输入）；tool_result 内的图归 tool-io
+  // ── Agent Loop（代理与工具执行）
+  "messages.thinking":   "agent-loop",
+  "messages.assistant":  "agent-loop",
+  "messages.tool-use":   "agent-loop",
+  "messages.tool-result":"agent-loop",
 
-  // ── Tool I/O（工具执行循环）
-  "messages.tool-use":   "tool-io",
-  "messages.tool-result":"tool-io",
+  // ── User Input（用户输入与文件）
+  "messages.human":      "user-input",
+  "messages.image":      "user-input",
+  "messages.misc":       "user-input",    // 命令输出等
 
-  // ── Runtime status（harness 注入的临时事件/状态：token-usage / diagnostics / file-* / catch-all）
-  // messages.context / messages.directive 已由 roleOf 按 ruleId 拆出去，injection 现在只剩真·临时通知。
-  "messages.injection":  "runtime",
-
-  // ── Other（杂项）
-  "messages.misc":       "other",         // image / image-placeholder / local-command
-  "other.unknown":       "other",
+  // ── Capabilities（能力与拓展）
+  "tools.builtin":       "capabilities",  // 工具 schema 是"模型可用的能力"
+  "messages.skills":     "capabilities",  // skill_listing 是"可用 skill"声明
 };
 
 // 模块加载期自检：保证未来加新 RoleId 时编译报错；以及 ROLE_TO_GROUP 不遗漏。
@@ -271,8 +258,7 @@ export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
 export const INTENT_GROUP_ORDER: IntentGroupId[] = [
   "instructions",
   "environment",
-  "conversation",
-  "tool-io",
-  "runtime",
-  "other",
+  "agent-loop",
+  "user-input",
+  "capabilities",
 ];
