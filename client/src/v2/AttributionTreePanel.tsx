@@ -12,6 +12,8 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { FisheyeStrip } from "./fisheye-strip";
 import type { FisheyeStatus } from "./fisheye-strip";
 import type {
@@ -19,6 +21,7 @@ import type {
   SerializedNode,
   SegmentOrigin,
   JsonlEventKindObject,
+  DynamicField,
 } from "./attribution-tree-types";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { LinkIcon, SegmentView } from "./shared/EventUnitCard";
@@ -26,8 +29,9 @@ import { EVENT_PALETTES } from "./shared/eventPalette";
 import type { IntervalEventKind } from "./drilldown-types";
 import { useAttributionGraph } from "./attribution-graph-context";
 import { sectionPalette, rolePalette, UNKNOWN_FILL as PALETTE_UNKNOWN_FILL, type RoleId } from "./lens-palette";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Info } from "lucide-react";
 import { BRAND } from "./shared/brand";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 // ─── 类型与配色 ─────────────────────────────────────────────────────────────
 
@@ -201,6 +205,13 @@ export function shortSlot(slotType: string): string {
     .replace("system.main-prompt-block", "sys.main")
     .replace("messages.", "msg.")
     .replace("tools.builtin.", "tool.");
+}
+
+// 对外展示用 label：所有 UI 位置（主 bar 块 / 鱼眼 hover / 二级 strip / 表格行）统一走它,
+// 保证同一段在各处显示同一个对外名,不再混用内部 slug。优先 ruleMeta.displayName（对外
+// 中文名,如"会话守则"）;未填 displayName 的段（messages/tools 多数）退回 shortSlot slug。
+export function leafLabel(leaf: { slotType: string; ruleMeta?: { displayName?: string } }): string {
+  return leaf.ruleMeta?.displayName ?? shortSlot(leaf.slotType);
 }
 
 export function originLabel(origin: SegmentOrigin): string {
@@ -424,23 +435,24 @@ export function LeafStrip({
         ]}
       />
 
-      {/* Strip — getLabel 返回 shortSlot；命中 skill_listing 的 leaf 显示
-          "Skills 注册" 友好标签。模块按段宽决定 inside / 隐藏。
-          minCount=5 让 attribution leaves 天然开启鱼眼。 */}
+      {/* Strip — getLabel 统一走 leafLabel(对外名,优先 displayName);命中 skill_listing
+          的 leaf 显示 "Skills 注册" 友好标签。模块按段宽决定 inside / 隐藏。
+          minCount=5 让 attribution leaves 天然开启鱼眼。hover 用对外名 + 字符数,
+          不带 ruleId(技术信息归选中后的 ⓘ)。 */}
       <FisheyeStrip<LeafItem>
         items={items}
         getColor={(it) => getColor ? getColor(it.leaf) : leafFill(it.leaf)}
         getUnderlineColor={getUnderlineColor ? (it) => getUnderlineColor(it.leaf) : undefined}
         getLabel={(it) => {
           const sl = it.leaf.origin.kind === "rule" ? it.leaf.origin.payload?.skillListing : undefined;
-          return sl ? t("skillListing.title") : shortSlot(it.leaf.slotType);
+          return sl ? t("skillListing.title") : leafLabel(it.leaf);
         }}
         getTitle={(it) => {
           const sl = it.leaf.origin.kind === "rule" ? it.leaf.origin.payload?.skillListing : undefined;
           if (sl) {
             return `${t("skillListing.title")} · ${t("skillListing.rowSuffix", { count: sl.entries.length })} · ${fmtK(it.leaf.charCount)} chars`;
           }
-          return `${shortSlot(it.leaf.slotType)} · ${fmtK(it.leaf.charCount)} chars · ${originLabel(it.leaf.origin)}`;
+          return `${leafLabel(it.leaf)} · ${fmtK(it.leaf.charCount)} chars`;
         }}
         height={SUB_BAR_HEIGHT}
         background="transparent"
@@ -472,11 +484,35 @@ export function LeafTable({
 }) {
   const { t } = useTranslation();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const total = leaves.reduce((s, l) => s + l.charCount, 0);
+  // 百分比口径恒定为「占整个 context」(全局分母),不随下钻/筛选变。分母优先用
+  // totalContextChars(全局),仅在未传时退回 leaves 之和(理论上不发生)。这样任何
+  // 视图下的 "X%" 都是"占整个 prompt 多少",消除"占筛选子集"的误读（旧逻辑 33.7%+66.3%=100%）。
+  const denom = (totalContextChars && totalContextChars > 0)
+    ? totalContextChars
+    : leaves.reduce((s, l) => s + l.charCount, 0);
   // 选中后只显示该 leaf 行，其他兄弟不再列出（避免与 SelectedDetail 重复信息）
   const visibleLeaves = selectedId ? leaves.filter((l) => l.nodeId === selectedId) : leaves;
+  // 汇总条：当前这批 leaves 的合计 + 占上下文比例。回答"我筛/钻的这批一共多大"
+  // ——取代会误导的"每行占子集%"。选中单行时不显示（单行自己那行就是答案）。
+  const groupChars = leaves.reduce((s, l) => s + l.charCount, 0);
+  const groupPct = denom > 0 ? (groupChars / denom) * 100 : 0;
+  const showSummary = !selectedId && leaves.length > 1;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {showSummary && (
+        <div style={{
+          display: "flex", alignItems: "baseline", gap: 8,
+          padding: "4px 8px", marginBottom: 2,
+          fontSize: 10, color: "#6b7280",
+          borderBottom: "1px solid #f3f4f6",
+        }}>
+          <span style={{ fontWeight: 600, color: "#374151" }}>{leaves.length} {t("attribution.detail.segments", { defaultValue: "段" })}</span>
+          <span style={{ color: "#d1d5db" }}>·</span>
+          <span>{t("attribution.detail.subtotal", { defaultValue: "合计" })} {fmtK(groupChars)}</span>
+          <span style={{ color: "#d1d5db" }}>·</span>
+          <span>{t("attribution.detail.ofContext", { defaultValue: "占上下文" })} {groupPct.toFixed(1)}%</span>
+        </div>
+      )}
       {visibleLeaves.map((l) => {
         const isSel = selectedId === l.nodeId;
         const fill = getColor ? getColor(l) : leafFill(l);
@@ -496,9 +532,8 @@ export function LeafTable({
         const rowPreview = skillListing ? "" : (rm?.summary ?? l.preview);
         // 动态来源后缀（仅 dynamic 段）："summary ← 变的是 X"
         const previewSuffix = rm?.stability === "dynamic" && rm.dynamicSource ? ` ← ${rm.dynamicSource}` : "";
-        const pct = skillListing && totalContextChars && totalContextChars > 0
-          ? (l.charCount / totalContextChars) * 100
-          : (total > 0 ? (l.charCount / total) * 100 : 0);
+        // 恒用全局分母：每行 % = 占整个 context（语义恒定,与汇总条同口径）。
+        const pct = denom > 0 ? (l.charCount / denom) * 100 : 0;
         const showTooltip = !!skillListing && hoveredId === l.nodeId;
         return (
           <div key={l.nodeId} style={{ position: "relative" }}>
@@ -547,10 +582,11 @@ export function LeafTable({
               );
             })()}
             <span style={{ fontSize: 11, color: "#374151", minWidth: 50 }}>{fmtK(l.charCount)}</span>
-            <span style={{ fontSize: 10, color: "#9ca3af", minWidth: 60 }}>
-              {skillListing && totalContextChars
-                ? `占 context ${pct.toFixed(1)}%`
-                : `${pct.toFixed(1)}%`}
+            <span
+              title={t("attribution.detail.ofContextTip", { defaultValue: "占整个请求上下文的比例（分母恒定 = 全部 context，不随筛选/下钻变化）" })}
+              style={{ fontSize: 10, color: "#9ca3af", minWidth: 84, whiteSpace: "nowrap" }}
+            >
+              {t("attribution.detail.ofContext", { defaultValue: "占上下文" })} {pct.toFixed(1)}%
             </span>
             <span style={{ fontSize: 10, color: "#6b7280", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {rowPreview}
@@ -908,6 +944,43 @@ function SkillListingDetail({
   );
 }
 
+// 把内容文本按 dynamicFields 的 [charStart,charEnd) 区间切片，动态值用琥珀高亮。
+// 让"哪部分是运行时变的"直接标在内容原位（取代另起的 dynamic fields 清单）。
+// 无 dynamicFields / 区间越界 → 原样纯文本返回。
+function renderContentWithDynamicHighlights(
+  text: string,
+  fields: DynamicField[] | undefined,
+): React.ReactNode {
+  if (!fields || fields.length === 0) return text;
+  // 按 charStart 排序 + 过滤越界/重叠，稳妥切片。
+  const valid = fields
+    .filter((f) => f.charStart >= 0 && f.charEnd <= text.length && f.charStart < f.charEnd)
+    .sort((a, b) => a.charStart - b.charStart);
+  if (valid.length === 0) return text;
+  const out: React.ReactNode[] = [];
+  let cursor = 0;
+  valid.forEach((f, i) => {
+    if (f.charStart < cursor) return; // 跳过与前一段重叠的
+    if (f.charStart > cursor) out.push(text.slice(cursor, f.charStart));
+    out.push(
+      <span
+        key={`dyn-${i}`}
+        title={`${f.name} · ${f.source} · 运行时动态值`}
+        style={{
+          background: "#fef3c7", color: "#92400e",
+          borderRadius: 2, padding: "0 2px",
+          boxShadow: "inset 0 -1px 0 #fcd34d",
+        }}
+      >
+        {text.slice(f.charStart, f.charEnd)}
+      </span>,
+    );
+    cursor = f.charEnd;
+  });
+  if (cursor < text.length) out.push(text.slice(cursor));
+  return out;
+}
+
 // ─── 叶子详情 ───────────────────────────────────────────────────────────────
 
 export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
@@ -921,9 +994,9 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
   // 否则 skillListing 分支会跳过这些 hook，违反 rules-of-hooks。
   const { t } = useTranslation();
   const { flashEvent, flashCall, flashToolUse } = useAttributionGraph();
-  // copy 按钮的"已复制"短暂反馈状态。复制的内容是 rawText（完整原文）；
-  // 仅当后端未带 rawText 时 fallback 到 preview（截断版）。
   const [copiedAt, setCopiedAt] = useState<number>(0);
+  const [rawMode, setRawMode] = useState(false);
+  const isSystemLeaf = sectionOf(leaf.rootSlotType) === "system";
 
   // 命中 skill_listing rule 时，走专属富展示，完全替换通用 leaf 详情布局。
   if (leaf.origin.kind === "rule" && leaf.origin.payload?.skillListing) {
@@ -994,7 +1067,8 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
   // Flat detail: top one-line metadata row + content + dynamic fields.
   // Identity bits (color / kindLabel / title / shortId) come from the
   // shared mapper so this stays in sync with Turn/Response renderings.
-  const { color, kindLabel, title, shortId } = leafOriginToCardHeader(leaf);
+  // 取 title + kindLabel 给 ⓘ 技术信息用;color/shortId 不再在 detail 展示(概览归选中行)。
+  const { kindLabel, title } = leafOriginToCardHeader(leaf);
   const requestPath = leaf.jsonPath ? leaf.jsonPath.replace(/^reqBody\./, "") : undefined;
   const confidence =
     leaf.origin.kind === "rule" || leaf.origin.kind === "jsonl"
@@ -1030,73 +1104,82 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
         : t("terms.jumpToCallLineTooltip", { callId: jumpTarget }))
     : undefined;
 
+  // detail 现在是「纯内容面板」：概览（displayName/stability/占比/summary/dynamicSource）
+  // 全在上方选中行,不在此重复。这里只补选中行没有的——渲染好的内容(动态值 inline 高亮)。
+  // 技术信息(jsonPath/ruleId/confidence)收进右上角 ⓘ hover;复制/跳转保留为小按钮。
+  const dynamicFields = leaf.origin.kind === "rule" ? leaf.origin.dynamicFields : undefined;
+  // 动态值高亮仅对 prose（非 JSON 树渲染)生效——JSON 走 SegmentView 树视图,不切片。
+  const contentText = leaf.rawText ?? leaf.preview;
+  const useHighlight = !hasJsonContent && dynamicFields && dynamicFields.length > 0;
+
   return (
     <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* Inline metadata strip — replaces the EventUnitCard shell so the
-          info reads as a single header line, not a labeled META footer
-          duplicated under a card with the same title in its header. */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 8,
-        fontSize: 11, color: "#374151",
-        paddingBottom: 6, borderBottom: "1px solid #e5e7eb",
-        flexWrap: "wrap",
-      }}>
-        <span style={{
-          width: 8, height: 8, borderRadius: 2,
-          background: color, flexShrink: 0,
-        }} />
-        {requestPath && (
-          <>
-            <code style={{
-              fontFamily: "ui-monospace, SFMono-Regular, monospace",
-              fontSize: 11, color: "#111827", fontWeight: 600,
-            }}>
-              {requestPath}
-            </code>
-            <span style={{ color: "#d1d5db" }}>·</span>
-          </>
+      {/* 右上角操作条:ⓘ 技术信息(hover) + 复制原文 + 跳转。不再有常驻 metadata 行——
+          概览在选中行,技术细节按需 hover。 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={t("attribution.detail.techInfo", { defaultValue: "原始信息" })}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 4,
+                border: "1px solid #e5e7eb", background: "#fff", color: "#9ca3af",
+                borderRadius: 4, padding: "2px 6px", cursor: "help", lineHeight: 1.3,
+                flexShrink: 0,
+              }}
+            >
+              <Info size={11} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={6} className="max-w-sm">
+            <div style={{ display: "flex", flexDirection: "column", gap: 3, fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 11 }}>
+              {requestPath && <div>{requestPath}</div>}
+              <div>{title ?? "—"}</div>
+              <div style={{ opacity: 0.7 }}>{originSuffix}</div>
+            </div>
+          </TooltipContent>
+        </Tooltip>
+        {isSystemLeaf ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setRawMode(v => !v); }}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              border: "1px solid #d1d5db", background: rawMode ? "#f3f4f6" : "#fff",
+              color: "#374151", borderRadius: 4, fontSize: 10, fontWeight: 600,
+              padding: "2px 7px", cursor: "pointer", lineHeight: 1.3,
+              flexShrink: 0, whiteSpace: "nowrap",
+            }}
+          >
+            {rawMode ? "← 渲染" : "查看原文"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            title={isFullRaw
+              ? `复制原文（${fullContent.length.toLocaleString()} 字符）`
+              : `复制（${fullContent.length.toLocaleString()} 字符 · 预览版，原文未提供）`}
+            onClick={handleCopy}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              border: "1px solid",
+              borderColor: isCopied ? "#16a34a" : "#d1d5db",
+              background: isCopied ? "#dcfce7" : "#fff",
+              color: isCopied ? "#15803d" : "#374151",
+              borderRadius: 4, fontSize: 10, fontWeight: 600,
+              padding: "2px 7px", cursor: "pointer", lineHeight: 1.3,
+              flexShrink: 0, whiteSpace: "nowrap",
+              transition: "background 0.12s, border-color 0.12s, color 0.12s",
+            }}
+          >
+            {isCopied ? (
+              <><Check size={10} strokeWidth={3} /> 已复制</>
+            ) : (
+              <><Copy size={10} /> 复制原文</>
+            )}
+          </button>
         )}
-        <span style={{
-          fontFamily: "ui-monospace, SFMono-Regular, monospace",
-          fontSize: 11, color: "#1f2937",
-        }}>
-          {title ?? "—"}
-        </span>
-        {shortId && (
-          <>
-            <span style={{ color: "#d1d5db" }}>·</span>
-            <span style={{ color: "#6b7280", fontSize: 10 }}>{shortId}</span>
-          </>
-        )}
-        <span style={{ color: "#d1d5db" }}>·</span>
-        <span style={{ color: "#6b7280", fontSize: 10 }}>{originSuffix}</span>
-        {/* copy 按钮：复制 leaf 的完整原文（rawText）。靠 marginLeft:auto 推到
-            右端；如果还有 jump 按钮，jump 紧跟其后排在更右。 */}
-        <button
-          type="button"
-          title={isFullRaw
-            ? `复制原文（${fullContent.length.toLocaleString()} 字符）`
-            : `复制（${fullContent.length.toLocaleString()} 字符 · 预览版，原文未提供）`}
-          onClick={handleCopy}
-          style={{
-            marginLeft: "auto",
-            display: "inline-flex", alignItems: "center", gap: 4,
-            border: "1px solid",
-            borderColor: isCopied ? "#16a34a" : "#d1d5db",
-            background: isCopied ? "#dcfce7" : "#fff",
-            color: isCopied ? "#15803d" : "#374151",
-            borderRadius: 4, fontSize: 10, fontWeight: 600,
-            padding: "2px 7px", cursor: "pointer", lineHeight: 1.3,
-            flexShrink: 0, whiteSpace: "nowrap",
-            transition: "background 0.12s, border-color 0.12s, color 0.12s",
-          }}
-        >
-          {isCopied ? (
-            <><Check size={10} strokeWidth={3} /> 已复制</>
-          ) : (
-            <><Copy size={10} /> 复制原文</>
-          )}
-        </button>
         {handleJumpSource && (
           <button
             type="button"
@@ -1119,42 +1202,84 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
         )}
       </div>
 
-      {/* Skill listing 专属渲染已由 SelectedDetail 顶部的 SkillListingDetail
-          分支接管（命中 claude-code.messages.skill-listing.v1 时早 return），
-          此处通用布局只处理其他 leaf 类型。 */}
-
-      {/* Content — sole focus of the rest of the panel. JSON-parseable
-          payloads start in tree mode (toggle to raw available); prose
-          stays as a plain block. */}
-      <SegmentView
-        seg={{
-          content: leaf.rawText ?? leaf.preview,
-          monospace: leaf.origin.kind === "jsonl" || hasJsonContent,
-          rawJson: parsedRawJson,
-          defaultRaw: hasJsonContent,
-        }}
-      />
-
-      {/* Rule origin's dynamic field injection trail — collapsible aside
-          below the content. Orthogonal information, not part of the leaf
-          identity, so it stays out of the header. */}
-      {leaf.origin.kind === "rule" && leaf.origin.dynamicFields && leaf.origin.dynamicFields.length > 0 && (
-        <details style={{ fontSize: 10 }}>
-          <summary style={{ cursor: "pointer", color: BRAND.indigo500 }}>
-            {leaf.origin.dynamicFields.length} dynamic field{leaf.origin.dynamicFields.length > 1 ? "s" : ""}
-          </summary>
-          <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 4, paddingLeft: 8 }}>
-            {leaf.origin.dynamicFields.map((f, i) => (
-              <div key={i} style={{ display: "flex", gap: 6, fontSize: 10 }}>
-                <span style={{ fontFamily: "ui-monospace, monospace", color: BRAND.indigo700, minWidth: 100 }}>{f.name}</span>
-                <span style={{ color: "#6b7280" }}>{f.source}</span>
-                <span style={{ color: "#374151", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {f.valuePreview}
-                </span>
-              </div>
-            ))}
+      {/* 内容主体。system leaf 默认 markdown 渲染，可切换原文 box。*/}
+      {isSystemLeaf ? (
+        rawMode ? (
+          <div style={{ position: "relative", border: "1px solid #e5e7eb", borderRadius: 6, background: "#f9fafb" }}>
+            <div style={{ position: "absolute", top: 6, right: 8, zIndex: 1 }}>
+              <button
+                type="button"
+                onClick={handleCopy}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  border: "1px solid",
+                  borderColor: isCopied ? "#16a34a" : "#d1d5db",
+                  background: isCopied ? "#dcfce7" : "#fff",
+                  color: isCopied ? "#15803d" : "#374151",
+                  borderRadius: 4, fontSize: 10, fontWeight: 700,
+                  padding: "3px 9px", cursor: "pointer", lineHeight: 1.3,
+                  whiteSpace: "nowrap",
+                  transition: "background 0.12s, border-color 0.12s, color 0.12s",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+                }}
+              >
+                {isCopied ? (
+                  <><Check size={10} strokeWidth={3} /> 已复制</>
+                ) : (
+                  <><Copy size={10} /> 复制 · {fullContent.length.toLocaleString()} 字符</>
+                )}
+              </button>
+            </div>
+            <pre style={{
+              margin: 0, padding: "8px 10px", paddingTop: 36,
+              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+              fontSize: 11, lineHeight: 1.6,
+              whiteSpace: "pre-wrap", wordBreak: "break-word",
+              color: "#1f2937", maxHeight: 480, overflow: "auto",
+            }}>
+              {fullContent}
+            </pre>
           </div>
-        </details>
+        ) : useHighlight ? (
+          <pre style={{
+            margin: 0, padding: "8px 10px",
+            background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 6,
+            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+            fontSize: 12, lineHeight: 1.5,
+            whiteSpace: "pre-wrap", wordBreak: "break-word",
+            color: "#1f2937",
+          }}>
+            {renderContentWithDynamicHighlights(contentText, dynamicFields)}
+          </pre>
+        ) : (
+          <div className="md-prose" style={{
+            fontSize: 12, color: "#1f2937",
+            border: "1px solid #e5e7eb", borderRadius: 6, background: "#fff",
+            padding: "8px 12px",
+          }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentText}</ReactMarkdown>
+          </div>
+        )
+      ) : useHighlight ? (
+        <pre style={{
+          margin: 0, padding: "8px 10px",
+          background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 6,
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          fontSize: 12, lineHeight: 1.5,
+          whiteSpace: "pre-wrap", wordBreak: "break-word",
+          color: "#1f2937",
+        }}>
+          {renderContentWithDynamicHighlights(contentText, dynamicFields)}
+        </pre>
+      ) : (
+        <SegmentView
+          seg={{
+            content: contentText,
+            monospace: leaf.origin.kind === "jsonl" || hasJsonContent,
+            rawJson: parsedRawJson,
+            defaultRaw: hasJsonContent,
+          }}
+        />
       )}
     </div>
   );

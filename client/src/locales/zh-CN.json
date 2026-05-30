@@ -375,13 +375,12 @@
         "baseline-missing": "corpus 无版本基线"
       }
     },
-    "howToRead": {
-      "title": "如何读这张图",
-      "step1": "意图分组：上方色条按「这段 prompt 在干什么」切块（系统指令 / 工具 / 对话 …），块宽 = 占上下文比例。",
-      "step2": "下钻：点任一分组条或下方表行，展开它的 segment 列表。",
-      "step3": "看来源：点一个 segment，这里显示它的来源、JSONL / 请求路径、字符占比，并可跳到产生它的 call。",
-      "step4": "叠加视角：顶部 Lens 行可叠加 Diff（与上一条 call 的增删）/ 缓存（L1/L2/L3 命中）。",
-      "sectionOpenHint": "已展开分组 —— 点上方任一 segment 查看其归因详情。"
+    "detail": {
+      "techInfo": "原始信息",
+      "segments": "段",
+      "subtotal": "合计",
+      "ofContext": "占上下文",
+      "ofContextTip": "占整个请求上下文的比例（分母恒定 = 全部 context，不随筛选/下钻变化）"
     }
   },
   "callLedger": {

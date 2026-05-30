@@ -1046,8 +1046,8 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
     "sourcemapRef": "restored-src/src/constants/system.ts",
     "materialization": "presence",
     "displayName": "计费头",
-    "summary": "Claude Code 注入的计费/版本头,归因锚点而非提示内容",
-    "dynamicSource": "cc_version fingerprint + cch attestation(每次请求变)",
+    "summary": "Claude Code 发给服务端的版本/计费标记,不是给模型的提示内容",
+    "dynamicSource": "cc_version 指纹 + cch 客户端验证,每次请求都变",
     "priority": 0,
     "attribution": {
       "patternFromBody": true,
