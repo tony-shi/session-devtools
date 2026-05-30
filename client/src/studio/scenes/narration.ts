@@ -45,3 +45,19 @@ export function buildNarrationClips(
   }
   return { clips, totalFrames: cursor };
 }
+
+// 给定全局帧 → 当前旁白行(从 manifest 累加 durMs + gapMs)。字幕图层 / 预览用。
+export function frameToLine(lang: string, frame: number, fps: number): string {
+  const m = getManifest(lang);
+  if (!m) return "";
+  const f = (ms: number) => Math.round((ms / 1000) * fps);
+  let cursor = 0;
+  for (const step of m.steps) {
+    for (const line of step.lines) {
+      const dur = f(line.durMs);
+      if (frame < cursor + dur) return line.text;
+      cursor += dur + f(line.gapMs);
+    }
+  }
+  return "";
+}

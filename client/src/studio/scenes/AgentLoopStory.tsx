@@ -1,9 +1,9 @@
-import { AbsoluteFill, Sequence, useVideoConfig } from "remotion";
+import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig } from "remotion";
 import { ConversationScene } from "./ConversationScene";
 import { AgentLoopScene } from "./AgentLoopScene";
 import { RecapScene } from "./RecapScene";
 import { NarrationTrack } from "./NarrationTrack";
-import { getManifest, buildNarrationClips } from "./narration";
+import { getManifest, buildNarrationClips, frameToLine } from "./narration";
 import { buildActClock } from "./storyClock";
 import { conversationFixture } from "../fixtures/conversation";
 import { turnFixture } from "../fixtures/turn";
@@ -30,7 +30,9 @@ export function agentLoopStoryDuration(lang: string, fps: number): number {
   );
 }
 
-export const AgentLoopStory = ({ lang }: { lang: string }) => {
+// caption:字幕图层开关。预览默认开(便于按文本分析);出片要干净母带传 caption:false
+// (字幕走 SRT,见之前的字幕方案)。
+export const AgentLoopStory = ({ lang, caption = true }: { lang: string; caption?: boolean }) => {
   const { fps } = useVideoConfig();
   const m = getManifest(lang);
   if (!m) return <AbsoluteFill style={{ background: "#fff" }} />;
@@ -56,6 +58,31 @@ export const AgentLoopStory = ({ lang }: { lang: string }) => {
         <RecapScene clock={recapClock} />
       </Sequence>
       <NarrationTrack lang={lang} stepIdxs={ALL_STEPS} />
+      {caption && <NarrationCaption lang={lang} />}
     </AbsoluteFill>
   );
 };
+
+// 字幕图层:读当前帧的旁白行,底部居中显示。覆盖在场景之上(预览/分析用)。
+function NarrationCaption({ lang }: { lang: string }) {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const text = frameToLine(lang, frame, fps);
+  if (!text) return null;
+  return (
+    <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", padding: "0 80px 52px", pointerEvents: "none" }}>
+      <div style={{
+        maxWidth: 1560,
+        background: "rgba(15,23,42,0.84)",
+        color: "#fff",
+        fontSize: 38,
+        lineHeight: 1.5,
+        fontWeight: 500,
+        padding: "18px 36px",
+        borderRadius: 16,
+        textAlign: "center",
+        boxShadow: "0 12px 40px rgba(0,0,0,0.35)",
+      }}>{text}</div>
+    </AbsoluteFill>
+  );
+}

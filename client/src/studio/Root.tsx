@@ -62,7 +62,7 @@ export const RemotionRoot = () => {
         fps={FPS}
         width={1920}
         height={1080}
-        defaultProps={{ lang: CONV_LANG }}
+        defaultProps={{ lang: CONV_LANG, caption: true }}
       />
     </>
   );
