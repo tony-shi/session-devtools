@@ -24,24 +24,28 @@ export const RecapScene = ({ clock }: { clock: ActClock }) => {
   const beat = clock.at(frame).beat;
 
   return (
-    <AbsoluteFill style={{ background: "#fff", fontFamily: FONT, padding: "56px 72px", flexDirection: "column" }}>
-      <div style={{ fontSize: 20, fontWeight: 700, color: "#94a3b8", letterSpacing: 1, textTransform: "uppercase", marginBottom: 24 }}>
+    <AbsoluteFill style={{ background: "#fff", fontFamily: FONT, padding: "52px 72px 36px", flexDirection: "column" }}>
+      <div style={{ fontSize: 20, fontWeight: 700, color: "#94a3b8", letterSpacing: 1, textTransform: "uppercase", marginBottom: 20 }}>
         回顾 · 把它串成一个 while 循环
       </div>
 
       {/* 1) Session 含多个 Turn */}
       <SessionBand beat={beat} />
 
-      {/* 2) 放大的 Turn → while 流程图 + 伪代码 */}
-      <div style={{ display: "flex", gap: 56, marginTop: 18, flex: 1, minHeight: 0 }}>
-        <Flowchart beat={beat} />
-        <PseudoCode beat={beat} />
+      {/* 2) 放大的 Turn → while 流程图(主角,放大)+ 伪代码;垂直居中占满余下空间,不留底部死白。 */}
+      <div style={{ display: "flex", gap: 40, marginTop: 16, flex: 1, minHeight: 0, alignItems: "center" }}>
+        <div style={{ flex: 1.55, display: "flex", justifyContent: "center", alignItems: "center", minWidth: 0 }}>
+          <div style={{ transform: "scale(1.45)", transformOrigin: "center" }}><Flowchart beat={beat} /></div>
+        </div>
+        <div style={{ flex: 1, display: "flex", justifyContent: "center", minWidth: 0 }}>
+          <PseudoCode beat={beat} />
+        </div>
       </div>
 
-      {/* 二引擎收束 */}
-      <div style={{ height: 40, marginTop: 8 }}>
+      {/* 二引擎收束 —— 收尾一句,beat 7 出现 */}
+      <div style={{ height: 34, marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center" }}>
         {beat >= 7 && (
-          <div style={{ fontSize: 22, color: "#64748b", textAlign: "center" }}>
+          <div style={{ fontSize: 22, color: "#64748b" }}>
             驱动它的只有两件事:<b style={{ color: LLM }}>模型</b>负责推理,<b style={{ color: AGENT }}>工具</b>负责行动。
           </div>
         )}
@@ -97,7 +101,6 @@ function Flowchart({ beat }: { beat: number }) {
   const showDecide = beat >= 3;   // 菱形 + tool_use(要)
   const showResult = beat >= 4;   // tool_result + 回边
   const showExit = beat >= 5;     // 不要 → final answer
-  const stageOn = beat >= 6;
 
   return (
     <div style={{ position: "relative", width: W, height: H, flexShrink: 0 }}>
@@ -127,11 +130,11 @@ function Flowchart({ beat }: { beat: number }) {
       <EdgeLabel x={388} y={138} text="不要 → 退出" color={DONE} shown={showExit} />
       <EdgeLabel x={40} y={205} text="循环:塞回 context" color={LLM} shown={showResult} />
 
-      {/* 盒子 */}
-      <FlowBox b={BOX.call} color={LLM} title="LLM Call" sub="一次带 context 的模型决策" shown={showCall} stage={stageOn ? "收集上下文" : undefined} stageColor="#4338ca" />
+      {/* 盒子(不再贴三阶段标签 —— 例子简单,先不强调「收集/行动/验证」) */}
+      <FlowBox b={BOX.call} color={LLM} title="LLM Call" sub="一次带 context 的模型决策" shown={showCall} />
       <Diamond shown={showDecide} />
-      <FlowBox b={BOX.use} color={LLM} title="tool_use" sub="模型想做什么" shown={showDecide} stage={stageOn ? "采取行动" : undefined} stageColor={AGENT} />
-      <FlowBox b={BOX.result} color={AGENT} title="tool_result" sub="现实返回的证据" shown={showResult} stage={stageOn ? "验证结果" : undefined} stageColor="#15803d" />
+      <FlowBox b={BOX.use} color={LLM} title="tool_use" sub="模型想做什么" shown={showDecide} />
+      <FlowBox b={BOX.result} color={AGENT} title="tool_result" sub="现实返回的证据" shown={showResult} />
       <FlowBox b={BOX.final} color={DONE} title="final answer" sub="不再 tool_use,Turn 结束" shown={showExit} double />
     </div>
   );
@@ -173,17 +176,18 @@ function EdgeLabel({ x, y, text, color, shown }: { x: number; y: number; text: s
   return <div style={{ position: "absolute", left: x, top: y, fontSize: 15, fontWeight: 700, color, opacity: op(shown) }}>{text}</div>;
 }
 
-// 伪代码,逐行随 beat 点亮 —— 让"这是个 while"一眼可读。
+// 伪代码 —— 顺序上最后出现(顶部 → 流程图 → 伪代码),整段在流程图画完后一次点亮。
 function PseudoCode({ beat }: { beat: number }) {
+  if (beat < 6) return null;
   const lines: { code: string; comment?: string; on: boolean; indent: number; kind: "kw" | "body" | "exit" }[] = [
-    { code: "while 模型还要 tool_use:", on: beat >= 3, indent: 0, kind: "kw" },
-    { code: "tool_use", comment: "模型想做什么", on: beat >= 3, indent: 1, kind: "body" },
-    { code: "tool_result", comment: "塞回 context,绕回循环", on: beat >= 4, indent: 1, kind: "body" },
-    { code: "# 信息足够 → 跳出循环", on: beat >= 5, indent: 0, kind: "exit" },
-    { code: "final answer", comment: "Turn 结束", on: beat >= 5, indent: 0, kind: "exit" },
+    { code: "while 模型还要 tool_use:", on: true, indent: 0, kind: "kw" },
+    { code: "tool_use", comment: "模型想做什么", on: true, indent: 1, kind: "body" },
+    { code: "tool_result", comment: "塞回 context,绕回循环", on: true, indent: 1, kind: "body" },
+    { code: "# 信息足够 → 跳出循环", on: true, indent: 0, kind: "exit" },
+    { code: "final answer", comment: "Turn 结束", on: true, indent: 0, kind: "exit" },
   ];
   return (
-    <div style={{ flex: 1, minWidth: 0, alignSelf: "center" }}>
+    <div style={{ width: "100%", maxWidth: 560 }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: "#94a3b8", letterSpacing: 0.5, marginBottom: 14 }}>同一个东西,写成代码就是:</div>
       <div style={{ background: "#0f172a", borderRadius: 14, padding: "22px 26px", fontFamily: "monospace", fontSize: 23, lineHeight: 1.85 }}>
         {lines.map((l, i) => {

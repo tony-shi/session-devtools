@@ -1,55 +1,51 @@
-import { useLayoutEffect, useRef, useState } from "react";
 import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, interpolateColors } from "remotion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ACTOR_COLOR } from "../../v2/walkthrough/actorPalette";
 import { buildConversationTimeline, type SceneTurn } from "./timeline";
 
-// 第一幕「会话」的 frame-driven 版本 —— 对齐 live ConversationView:
-//   - 内容自顶部向下排,跟随滚动(超出视口才上滚,保留最新)—— 不再底部锚定/居中
-//   - 焦点态随旁白切换:overview(step 0,全局播放) → turn(step 1,框住 Turn 1、其余变暗)
-//   - 打字机 / 思考点 / caret / 滚动 / 框选淡入 全是 useCurrentFrame() 的纯函数
-// overviewEndFrame:旁白 step 0 结束的帧(= 焦点从 overview 切到 turn 的时刻),由 Root 传入。
+// 第一幕「会话」的 frame-driven 版本:
+//   - 整个 session 的 N 个 Turn 都渲染出来(和 recap 的「多个 Turn」一致),垂直居中、偏上,
+//     底部留白给字幕。纯 CSS(justify-center + 不对称留白),不测量 DOM、与缩放无关。
+//   - 焦点态随旁白切换:overview(step 0,整段会话) → turn(step 1,把「拿出来的那一轮」框住、其余变暗)。
+//     被框的就是下一幕要展开的 Turn;它正好是中间那一轮,居中后天然落在画面中心偏上。
+//   - 打字机 / 思考点 / caret / 框选淡入 全是 useCurrentFrame() 的纯函数。
+// overviewEndFrame:旁白 step 0 结束的帧(焦点从 overview 切到 turn 的时刻)。
+// focusTurnIdx:要「拿出来」的那一轮下标(下一幕展开的同一轮),被框住强调;缺省取最后一轮。
 
 const FONT =
   "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, -apple-system, 'Segoe UI', sans-serif";
 const MD_CSS = `.wt-md p{margin:0 0 8px}.wt-md p:last-child{margin-bottom:0}.wt-md ul,.wt-md ol{margin:4px 0;padding-left:20px}.wt-md li{margin:2px 0}.wt-md code{background:rgba(15,23,42,0.06);padding:1px 6px;border-radius:5px;font-size:0.92em}.wt-md table{border-collapse:collapse;font-size:0.95em;margin:4px 0}.wt-md th,.wt-md td{border:1px solid #e5e7eb;padding:6px 12px}.wt-md th{background:#f8fafc}`;
 
-const PAD = 70;
+const PAD_TOP = 70;
+// 视觉重心放在「中央偏上」:底部留出更大空白给字幕条 + 呼吸。内容整体垂直居中(justify-center)
+// 后被这条不对称留白往上推 —— 焦点(被框的那一轮)就落在画面中心偏上。
+const PAD_BOTTOM = 230;
 const floorChars = (len: number, t: number) => Math.max(0, Math.floor(len * t));
 
-export const ConversationScene = ({ turns, overviewEndFrame }: { turns: SceneTurn[]; overviewEndFrame: number }) => {
+export const ConversationScene = ({
+  turns,
+  overviewEndFrame,
+  focusTurnIdx,
+}: {
+  turns: SceneTurn[];
+  overviewEndFrame: number;
+  focusTurnIdx?: number;
+}) => {
   const frame = useCurrentFrame();
-  const { fps, height } = useVideoConfig();
+  const { fps } = useVideoConfig();
   const tl = buildConversationTimeline(turns, fps);
 
+  // 聚焦的目标轮 = 下一幕要展开的那一轮(由外部传入);它就是「拿出来的 Turn」(中间那一轮)。
+  const target =
+    focusTurnIdx != null && focusTurnIdx >= 0 && focusTurnIdx < tl.turns.length
+      ? focusTurnIdx
+      : tl.turns.length - 1;
+  // 渲染整段会话的所有轮次 —— 让「一个 Session 有多个 Turn」如实可见,和 recap 一致。
+  const visibleTurns = tl.turns;
+
   const B = overviewEndFrame;
-  const isTurn = frame >= B;
-  const target = 0; // turn 焦点态强调第一轮
-
-  // 测量内容真实高度(含 markdown 表格)→ 决定 overview 阶段要不要上滚。
-  const innerRef = useRef<HTMLDivElement>(null);
-  const [contentH, setContentH] = useState(0);
-  useLayoutEffect(() => {
-    if (!innerRef.current) return;
-    const h = innerRef.current.getBoundingClientRect().height;
-    // 仅当高度真的变了才 setState —— Player/Studio 缩放显示时 getBoundingClientRect 返回
-    // 带亚像素抖动的浮点,直接 setState 会每帧不等 → 无限重渲染(Maximum update depth)。
-    // headless 1:1 渲染无此问题,所以 still 是好的。容差 0.5px 吸收抖动。
-    setContentH((prev) => (Math.abs(prev - h) < 0.5 ? prev : h));
-  });
-
-  // 镜头:内容短 → 垂直居中(不再顶到上边留空板);内容长 → 跟随底部(最新可见)。
-  // contentH 随打字连续增长,所以这条曲线天生平滑。
-  const usable = height - PAD * 2;
-  const fits = contentH > 0 && contentH <= usable;
-  const centerY = (usable - contentH) / 2;
-  const followBottomY = -Math.max(0, contentH - usable);
-  const overviewY = fits ? centerY : followBottomY;
-  // turn 焦点态:要让框住的 Turn 1(第一轮)可见 —— 放得下就居中,放不下就从顶部显示。
-  const turnY = fits ? centerY : 0;
-  const scrollY = interpolate(frame, [B - 8, B + 8], [overviewY, turnY], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  // 焦点切换的淡入进度(0→1)
+  // 焦点淡入(0→1):把目标轮框起来 + 其余轮变暗。镜头不动,只是「就地强调」。
   const focusIn = interpolate(frame, [B, B + 14], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
   const caretOn = Math.floor(frame / Math.round(fps * 0.5)) % 2 === 0;
@@ -57,9 +53,32 @@ export const ConversationScene = ({ turns, overviewEndFrame }: { turns: SceneTur
   return (
     <AbsoluteFill style={{ background: "#fff", fontFamily: FONT }}>
       <style>{MD_CSS}</style>
-      <div style={{ position: "absolute", inset: 0, overflow: "hidden", padding: `${PAD}px 0` }}>
-        <div ref={innerRef} style={{ width: "100%", maxWidth: 980, margin: "0 auto", padding: "0 48px", display: "flex", flexDirection: "column", gap: 34, transform: `translateY(${scrollY}px)` }}>
-          {tl.turns.map((tt, i) => {
+      {/* 垂直居中 + 底部不对称留白 → 整段会话落在画面中心偏上,底部留给字幕。
+          overflow:hidden 裁掉超出画面的部分;flexShrink:0 保证正文是完整内容高度不被压缩。 */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          padding: `${PAD_TOP}px 0 ${PAD_BOTTOM}px`,
+        }}
+      >
+        <div
+          style={{
+            width: "100%",
+            maxWidth: 1280,
+            flexShrink: 0,
+            padding: "0 48px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 30,
+          }}
+        >
+          {visibleTurns.map((tt, i) => {
             if (frame < tt.start) return null;
 
             const userT = interpolate(frame, [tt.start, tt.userTypeEnd], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
@@ -71,7 +90,7 @@ export const ConversationScene = ({ turns, overviewEndFrame }: { turns: SceneTur
 
             const bubbles = (
               <>
-                <Bubble side="left" role="User" text={tt.turn.user.slice(0, floorChars(tt.turn.user.length, userT))} typing={userTyping} caretOn={caretOn} />
+                <Bubble side="left" role="用户" text={tt.turn.user.slice(0, floorChars(tt.turn.user.length, userT))} typing={userTyping} caretOn={caretOn} />
                 {inThink && <Thinking frame={frame} fps={fps} />}
                 {asstActive && (
                   <Bubble side="right" role="Claude" markdown text={tt.turn.assistant.slice(0, floorChars(tt.turn.assistant.length, asstT))} typing={asstTyping} caretOn={caretOn} />
@@ -83,7 +102,7 @@ export const ConversationScene = ({ turns, overviewEndFrame }: { turns: SceneTur
             const dim = i === target ? 1 : interpolate(focusIn, [0, 1], [1, 0.3]);
 
             if (i === target) {
-              // 目标轮:turn 阶段渐显框选 + 角标 + 底部统计(focusIn 驱动)
+              // 目标轮:turn 阶段渐显框选 + 角标 + 底部统计(focusIn 驱动)。框就地淡入,不移动镜头。
               const borderCol = interpolateColors(focusIn, [0, 1], ["rgba(99,102,241,0)", "rgba(99,102,241,1)"]);
               return (
                 <div key={tt.turn.id} style={{ position: "relative", border: `2px solid ${borderCol}`, borderRadius: 18, padding: 22, background: focusIn > 0.01 ? "#fff" : "transparent" }}>
@@ -124,15 +143,15 @@ function Bubble({ side, role, text, typing, caretOn, markdown }: { side: "left" 
   const showMd = markdown && !typing && text.length > 0;
   const caret = typing && caretOn;
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: left ? "flex-start" : "flex-end", gap: 8 }}>
-      <span style={{ fontSize: 22, fontWeight: 600, letterSpacing: 0.5, color: c.main }}>{role}</span>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: left ? "flex-start" : "flex-end", gap: 6 }}>
+      <span style={{ fontSize: 20, fontWeight: 600, letterSpacing: 0.5, color: c.main }}>{role}</span>
       <div
         style={{
-          maxWidth: "82%",
-          padding: "20px 26px",
-          borderRadius: 22,
-          fontSize: 28,
-          lineHeight: 1.65,
+          maxWidth: "84%",
+          padding: "15px 22px",
+          borderRadius: 20,
+          fontSize: 25,
+          lineHeight: 1.55,
           color: "#1f2937",
           background: c.bg,
           border: `1px solid ${c.border}`,

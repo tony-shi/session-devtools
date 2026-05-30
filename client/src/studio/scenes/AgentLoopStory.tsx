@@ -45,11 +45,13 @@ export const AgentLoopStory = ({ lang, caption = true }: { lang: string; caption
   const recapClock = buildActClock(STORY_ID, m, RECAP_STEPS, fps);
   // conversation 的焦点切换点 = 旁白 step 0 长度(局部帧)。
   const overviewEndFrame = buildNarrationClips(m, [0], fps).totalFrames;
+  // 「拿出来的那一轮」= 下一幕(Agent Loop)展开的同一轮 —— 按 userInput 对齐,保证连贯。
+  const focusTurnIdx = conversationFixture.findIndex((t) => t.user === turnFixture.userInput);
 
   return (
     <AbsoluteFill style={{ background: "#fff" }}>
       <Sequence from={0} durationInFrames={convLen} name="conversation">
-        <ConversationScene turns={conversationFixture} overviewEndFrame={overviewEndFrame} />
+        <ConversationScene turns={conversationFixture} overviewEndFrame={overviewEndFrame} focusTurnIdx={focusTurnIdx} />
       </Sequence>
       <Sequence from={convLen} durationInFrames={loopLen} name="agent-loop">
         <AgentLoopScene turn={turnFixture} clock={loopClock} />
