@@ -1,11 +1,10 @@
-// LlmCallDetailPanel —— 单个 LLM call 的详情视图：顶部 ledger header + Tabs
+// LlmCallDetailPanel —— 单个 LLM call 的详情视图：顶部紧凑摘要 + Tabs
 // （Attribution lens / Response / Raw）。含两个 file-internal 子件 RawTab /
 // RawCopyButton。
 //
 // 这个面板在 4 种模式下渲染（主 call / compact-call / sub-agent call / linked
 // panel），各模式的 onClose / onShowTurnContext / onLinkCall / onLinkSource /
 // compactIdx / agentFileId / prevCall 接法不同，是真正的变化点 —— 保留为 props。
-// 本批为纯抽取，逻辑零改动。
 
 import React, { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -13,15 +12,14 @@ import { apiV2 } from "../../api";
 import type { CallDetail } from "../../drilldown-types";
 import type { MockLlmCall, MockDiffEntry } from "../../lib/mock-data";
 import type { CallTab } from "../session-nav";
-import { fmtK, fmtGap, fmtDateShort, shortModelName, modelColor } from "../../lib/format";
+import { fmtK, fmtGap, fmtDateShort, fmtDuration, shortModelName, modelColor } from "../../lib/format";
 import { BRAND } from "../../shared/brand";
-import { UnifiedHeader, StatusBadgeStrip, type StatusBadge } from "../../shared/HeaderStats";
-import { renderStatusIcon, RiskBadge } from "../../shared/SessionBadges";
-import { NoProxyDot } from "../../shared/NoProxyDot";
+import { RiskBadge } from "../../shared/SessionBadges";
 import { CodeBlock } from "../../shared/CodeBlock";
 import { AttributionTreeLensPanel } from "../../AttributionTreeLensPanel";
 import { ResponseTreePanel } from "../../ResponseTreePanel";
 import { ProxyMissingEmptyState } from "../proxy/ProxyMissingEmptyState";
+import { SummaryStat, CacheSummaryStat } from "./CallSummaryStats";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Check, Copy } from "lucide-react";
@@ -116,6 +114,34 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
   );
 }
 
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+function extractCcVersionFromRawRequest(raw: Record<string, unknown> | null): string | null {
+  const system = raw?.system;
+  const blocks = Array.isArray(system) ? system : [system];
+  for (const block of blocks) {
+    const text = typeof block === "string"
+      ? block
+      : isRecord(block) && typeof block.text === "string"
+        ? block.text
+        : null;
+    if (!text) continue;
+    const match = /\bcc_version=(\d+\.\d+\.\d+\.[0-9a-fA-F]+)/.exec(text);
+    if (match?.[1]) return match[1];
+  }
+  return null;
+}
+
+const summaryDividerStyle: React.CSSProperties = {
+  alignSelf: "stretch",
+  width: 1,
+  minHeight: 27,
+  background: "#e5e7eb",
+  flex: "0 0 auto",
+};
+
 export function LlmCallDetailPanel({
   call, sessionId, agentFileId, compactIdx, mode = "main", requestedTab, jumpVersion,
   onShowTurnContext, onLinkCall, onLinkSource,
@@ -167,13 +193,6 @@ export function LlmCallDetailPanel({
   const [tab, setTab] = useState<CallTab>(requestedTab ?? "attribution");
   const [callDetail, setCallDetail] = useState<CallDetail | null>(null);
   const [callDetailLoading, setCallDetailLoading] = useState(true);
-  // Top ledger summary: in main mode it starts expanded for the at-a-glance
-  // overview, then auto-collapses on first interaction. In panel mode the
-  // user is "drilling into" something specific — the summary is just chrome
-  // taking vertical space, so it starts collapsed. Either mode, user can
-  // click the chevron to toggle.
-  const [summaryCollapsed, setSummaryCollapsed] = useState(mode === "panel");
-  const collapseSummary = () => { if (!summaryCollapsed) setSummaryCollapsed(true); };
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Load eagerly on mount — needed for Attribution (real segments) from first render
@@ -193,11 +212,6 @@ export function LlmCallDetailPanel({
       .finally(() => setCallDetailLoading(false));
   }, [call.id, sessionId, agentFileId, compactIdx]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset summary state when switching to a different call (panel reuse).
-  // Re-initializes per mode (panel = collapsed, main = expanded).
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setSummaryCollapsed(mode === "panel"); }, [call.id, mode]);
-
   // Force-apply the requested tab on every fresh jump (jumpVersion bumps).
   // Listening on jumpVersion alone — rather than [requestedTab] — means
   // even if the dispatcher sends the same tab twice in a row, we still
@@ -216,9 +230,21 @@ export function LlmCallDetailPanel({
   }, [call.id, jumpVersion]);
 
   const hasProxy = !!callDetail?.proxyRequestId;
-  const freshIn  = call.contextSize - call.cacheRead - call.cacheWrite;
-  const nearLimit = false;
+  const freshIn  = Math.max(call.contextSize - call.cacheRead - call.cacheWrite, 0);
   const prevCallId = call.id > 1 ? call.id - 1 : null;
+  const isFirstCall = prevCallId == null;
+  const inputTotal = freshIn + call.cacheRead + call.cacheWrite;
+  const cacheRatio = inputTotal > 0 ? call.cacheRead / inputTotal * 100 : null;
+  const ccVersion = extractCcVersionFromRawRequest(callDetail?.rawRequestJson ?? null);
+  const duration = call.proxy?.durationMs != null ? fmtDuration(call.proxy.durationMs) : "";
+  const deltaColor = call.cacheMiss ? "#b45309"
+    : call.significantDelta > 10000 ? "#b91c1c"
+    : call.significantDelta > 2000 ? "#b45309"
+    : call.significantDelta < -2000 ? "#15803d"
+    : "#334155";
+  const deltaTitle = call.cacheMiss
+    ? `缓存失效${call.gapSincePrevMs != null ? ` · ${fmtGap(call.gapSincePrevMs)} gap` : ""}。负 Δ 主要是缓存记账修正，内容增删请看 Diff。`
+    : "Prompt size delta vs previous call.";
 
   const TAB_DEFS: Array<{ id: CallTab; label: string }> = [
     { id: "attribution", label: t("callTab.attribution") },     // 请求（含 来源/Diff/Cache/Audit 多 lens）
@@ -229,26 +255,73 @@ export function LlmCallDetailPanel({
   return (
     <div ref={scrollContainerRef} style={{ flex: 1, overflowY: "auto", padding: mode === "panel" ? "12px 14px" : "16px 22px", minWidth: 0 }}>
 
-      {/* ── Header ──────────────────────────────── */}
-      {/* No outer paddingBottom/border here — UnifiedHeader below provides
-          the divider line, so we don't stack two borders. */}
-      <div>
-
-        {/* Title row — single global call id everywhere.
-            Right-side action chips adapt to mode:
-              · main mode  → 查看所在轮次 + 关闭
-              · panel mode → Open as main + 关闭
-            Both modes share the trailing `×` close button so the same
-            shape reads across left/right views. */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 14, fontWeight: 800, color: "#111827" }}>
-            {t("terms.callLabel")} {call.id}
-          </span>
-          {call.isCompaction && <RiskBadge type="compaction" />}
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            {/* Mode-specific primary action. onOpenAsMain takes precedence
-                (panel mode); falls back to onShowTurnContext (main mode);
-                neither shown if neither callback provided. */}
+      {/* ── Compact call summary ───────────────────── */}
+      <div style={{ paddingBottom: 10, marginBottom: 12, borderBottom: "1px solid #f3f4f6" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, minWidth: 0 }}>
+          <div
+            style={{
+              flex: "1 1 auto",
+              minWidth: 0,
+              overflowX: "auto",
+              display: "flex",
+              alignItems: "stretch",
+              gap: 12,
+              paddingBottom: 2,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 18, flex: "0 0 auto" }}>
+              <SummaryStat
+                label={t("callSummary.model.label")}
+                tooltip={t("callSummary.model.tooltip")}
+                minWidth={96}
+              >
+                <span style={{ width: 6, height: 6, borderRadius: 2, background: modelColor(call.model), flexShrink: 0 }} />
+                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 140 }}>
+                  {call.model ? shortModelName(call.model) : "—"}
+                </span>
+              </SummaryStat>
+              <SummaryStat label={t("callSummary.time.label")} tooltip={t("callSummary.time.tooltip")} minWidth={92}>
+                {call.timestamp ? fmtDateShort(call.timestamp) : "—"}
+              </SummaryStat>
+              <SummaryStat label={t("callSummary.stop.label")} tooltip={t("callSummary.stop.tooltip")} minWidth={76}>
+                {call.stopReason ?? "—"}
+              </SummaryStat>
+              <SummaryStat label={t("callSummary.tools.label")} tooltip={t("callSummary.tools.tooltip")} minWidth={34}>
+                {call.toolCalls?.length ?? 0}
+              </SummaryStat>
+              <SummaryStat label={t("callSummary.duration.label")} tooltip={t("callSummary.duration.tooltip")} minWidth={54}>
+                {duration || "—"}
+              </SummaryStat>
+              <SummaryStat label={t("callSummary.cc.label")} tooltip={t("callSummary.cc.tooltip")} mono valueColor={ccVersion ? BRAND.indigo700 : "#64748b"} minWidth={96}>
+                {callDetailLoading ? "..." : ccVersion ?? "—"}
+              </SummaryStat>
+            </div>
+            <div style={summaryDividerStyle} />
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 20, flex: "0 0 auto" }}>
+              <SummaryStat label={t("callSummary.context.label")} tooltip={t("callSummary.context.tooltip")} size="metric" minWidth={48}>
+                {fmtK(call.contextSize)}
+              </SummaryStat>
+              {!isFirstCall && (
+                <SummaryStat label={t("callSummary.delta.label")} tooltip={deltaTitle} valueColor={deltaColor} size="metric" minWidth={46}>
+                  {call.significantDelta >= 0 ? "+" : ""}{fmtK(call.significantDelta)}
+                </SummaryStat>
+              )}
+              <CacheSummaryStat
+                label={t("callSummary.cache.label")}
+                tooltip={t("callSummary.cache.tooltip")}
+                ratio={cacheRatio}
+                freshIn={freshIn}
+                cacheRead={call.cacheRead}
+                cacheWrite={call.cacheWrite}
+                output={call.outputTokens}
+                cacheMiss={call.cacheMiss}
+                gapMs={call.gapSincePrevMs}
+                minWidth={52}
+              />
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            {call.isCompaction && <RiskBadge type="compaction" />}
             {onOpenAsMain ? (
               <button
                 onClick={onOpenAsMain}
@@ -258,44 +331,15 @@ export function LlmCallDetailPanel({
                 {t("terms.openAsMain")}
               </button>
             ) : onShowTurnContext && (
-              <button onClick={onShowTurnContext} style={{ border: "1px solid #c7d2fe", background: BRAND.indigo50, color: BRAND.indigo500, borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
-                {t("terms.showInTurn")}
+              <button
+                onClick={onShowTurnContext}
+                style={{ border: "1px solid #c7d2fe", background: BRAND.indigo50, color: BRAND.indigo700, borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
+                title={t("terms.showInTurn")}
+              >
+                {t("terms.parentTurn", { defaultValue: "父级轮次 ↗" })}
               </button>
             )}
-            {call.model && (
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <div style={{ width: 7, height: 7, borderRadius: 2, background: modelColor(call.model), flexShrink: 0 }} />
-                <span style={{ fontSize: 11, color: "#6b7280" }}>{shortModelName(call.model)}</span>
-              </div>
-            )}
-            <span style={{ fontSize: 10, color: "#9ca3af" }}>{call.timestamp ? fmtDateShort(call.timestamp) : "—"}</span>
-            {call.stopReason && (
-              <span style={{ fontSize: 9, color: "#6b7280", background: "#f3f4f6", borderRadius: 3, padding: "1px 6px" }}>stop: {call.stopReason}</span>
-            )}
-            {call.proxy?.durationMs != null && (
-              <span style={{ fontSize: 9, color: "#6b7280" }}>{call.proxy.durationMs >= 1000 ? `${(call.proxy.durationMs / 1000).toFixed(1)}s` : `${call.proxy.durationMs}ms`}</span>
-            )}
-            {!callDetailLoading && !hasProxy && (
-              <NoProxyDot title={t("rawTab.noProxyDotTooltip")} />
-            )}
-            {/* Single chevron toggles ledger collapse/expand. Lives in the
-                title row so the position is stable across both states (the
-                old inline "展开 ▾" / absolute "收起 ▴" pair jumped between
-                the summary's compact bar and the UnifiedHeader's top-right
-                corner — the latter even overlapped OUTPUT). */}
-            <button
-              type="button"
-              onClick={() => setSummaryCollapsed(v => !v)}
-              title={summaryCollapsed ? "展开 token ledger" : "折叠 token ledger"}
-              style={{
-                border: "1px solid #e5e7eb", background: "#fff", color: "#64748b",
-                borderRadius: 6, padding: "1px 7px", fontSize: 11, lineHeight: 1.2,
-                cursor: "pointer", fontWeight: 600,
-              }}
-            >
-              {summaryCollapsed ? "ledger ▾" : "ledger ▴"}
-            </button>
-            {onClose && (
+            {mode === "panel" && onClose && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -314,83 +358,6 @@ export function LlmCallDetailPanel({
             )}
           </div>
         </div>
-
-        {(() => {
-          // Cache hit ratio — denominator includes cache_write so the value
-          // matches the Turn / Session header and the CallLedger thumbnail
-          // inside the call card. Previously this used (fresh + cacheRead)
-          // only, which dropped cache_write from the denominator and produced
-          // a different number than the Turn-level view of the same call.
-          const inputTotal = freshIn + call.cacheRead + call.cacheWrite;
-          const cacheRatio = inputTotal > 0 ? call.cacheRead / inputTotal * 100 : null;
-          // Call-level status badges — currently only "compaction" is meaningful
-          // at this granularity. Kept here so Call shares the same right-slot
-          // shape as Session/Turn (even when empty the slot stays consistent).
-          const callBadges: StatusBadge[] = call.isCompaction
-            ? [{ kind: "compaction", count: 1, tooltip: t("sessionOverview.badges.compaction") }]
-            : [];
-          // The first call in a session has no previous call → Δ vs prev is
-          // meaningless (would just echo contextSize). Hide that stat entirely
-          // in both collapsed and expanded summaries when prevCallId is null.
-          const isFirstCall = prevCallId == null;
-          if (summaryCollapsed) {
-            return (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 10,
-                padding: "6px 10px", borderTop: "1px solid #f3f4f6",
-                borderBottom: "1px solid #f3f4f6",
-                fontSize: 11, color: "#6b7280",
-              }}>
-                <span>{t("terms.ctxSuffix")} <strong style={{ color: "#374151" }}>{fmtK(call.contextSize)}</strong></span>
-                {!isFirstCall && (
-                  <span>Δ <strong style={{ color: "#374151" }}>{call.significantDelta >= 0 ? "+" : ""}{fmtK(call.significantDelta)}</strong></span>
-                )}
-                <span>{t("terms.toolsSuffix")} <strong style={{ color: "#374151" }}>{call.toolCalls?.length ?? 0}</strong></span>
-                <span>{t("terms.cacheSuffix")} <strong style={{ color: "#374151" }}>{cacheRatio != null ? `${cacheRatio.toFixed(0)}%` : "—"}</strong></span>
-              </div>
-            );
-          }
-          return (
-            <UnifiedHeader
-              stats={[
-                { label: "Context",   value: fmtK(call.contextSize),
-                  color: nearLimit ? "#ea580c" : undefined,
-                  tooltip: "Total input context (fresh + cache_read + cache_write)" },
-                ...(isFirstCall ? [] : [{
-                  label: call.cacheMiss ? "Δ (cache miss)" : "Δ vs prev",
-                  value: `${call.significantDelta >= 0 ? "+" : ""}${fmtK(call.significantDelta)}`,
-                  // On a cache miss the negative Δ is a cache_read re-accounting
-                  // artifact (accumulated cache_read snaps back to the clean
-                  // re-created count), NOT content shrinkage — show it neutral/
-                  // amber, never the green "content shrank" tint.
-                  color: call.cacheMiss ? "#d97706"
-                    : call.significantDelta > 10000 ? "#dc2626"
-                    : call.significantDelta > 2000 ? "#d97706"
-                    : call.significantDelta < -2000 ? "#16a34a" : undefined,
-                  tooltip: call.cacheMiss
-                    ? `缓存失效${call.gapSincePrevMs != null ? `（距上次调用 ${fmtGap(call.gapSincePrevMs)}，超过 ~1h 服务端缓存 TTL）` : ""}：整段前缀按 cache_creation 重算。累积命中的 cache_read 会比干净重建的计数略高，所以这个负 Δ 是缓存记账修正，不代表上下文内容缩水（内容增删请看 Diff）。`
-                    : "Prompt size delta vs previous call. Includes cache_read + cache_write, so it can be much larger than Input when most content is served from cache (e.g. first call after a compaction).",
-                }]),
-                { label: "Tool Calls", value: String(call.toolCalls?.length ?? 0) },
-              ]}
-              ledger={{
-                mode: "call",
-                freshIn,
-                cacheRead: call.cacheRead,
-                cacheWrite: call.cacheWrite,
-                output: call.outputTokens,
-                cacheRatio,
-                cacheMiss: call.cacheMiss,
-                gapMs: call.gapSincePrevMs,
-                ephemeral1h: call.cacheEphemeral1h,
-                ephemeral5m: call.cacheEphemeral5m,
-              }}
-              rightSlot={callBadges.length > 0
-                ? <StatusBadgeStrip badges={callBadges} renderIcon={renderStatusIcon} />
-                : undefined}
-            />
-          );
-        })()}
       </div>
 
       {/* No proxy — all three tabs collapse to the same prompt because
@@ -400,16 +367,11 @@ export function LlmCallDetailPanel({
         <ProxyMissingEmptyState />
       ) : (
         <>
-          {/* ── Tabs ────────────────────────────────────
-              onClickCapture on the wrapper folds the top ledger summary on
-              the first interaction the user makes anywhere inside the call
-              detail body (tab switch, attribution drill-in, ...) so the
-              tree gets more vertical room. The chevron in the collapsed
-              summary lets users re-expand. */}
-          <div onClickCapture={collapseSummary} style={{ display: "flex", flexDirection: "column" }}>
+          {/* ── Tabs ──────────────────────────────────── */}
+          <div style={{ display: "flex", flexDirection: "column" }}>
           <Tabs
             value={tab}
-            onValueChange={(v) => { setTab(v as CallTab); collapseSummary(); }}
+            onValueChange={(v) => { setTab(v as CallTab); }}
             className="mb-3.5"
           >
             <TabsList variant="line" className="h-auto border-b border-border w-full justify-start gap-0 rounded-none p-0">
@@ -468,4 +430,3 @@ export function LlmCallDetailPanel({
 
 
 // ─── Sub-Agent Session Panel ──────────────────────────────────────────────────
-

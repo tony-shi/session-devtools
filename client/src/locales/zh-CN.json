@@ -483,6 +483,48 @@
     "collapse": "收起",
     "notCoveredHint": "本层未覆盖的部分"
   },
+  "callSummary": {
+    "model": {
+      "label": "model",
+      "tooltip": "本次 LLM 调用使用的模型。"
+    },
+    "time": {
+      "label": "time",
+      "tooltip": "本次调用的时间。"
+    },
+    "duration": {
+      "label": "duration",
+      "tooltip": "代理记录到的请求耗时；没有 proxy 数据时为空。"
+    },
+    "stop": {
+      "label": "stop",
+      "tooltip": "模型返回的 stop reason，表示本次响应为何结束。"
+    },
+    "tools": {
+      "label": "tools",
+      "tooltip": "本次响应中模型发起的 tool_use 数量。"
+    },
+    "cc": {
+      "label": "cc",
+      "tooltip": "Claude Code 版本。归因规则会按这个版本选择匹配逻辑。"
+    },
+    "context": {
+      "label": "ctx",
+      "tooltip": "本次调用放入模型上下文窗口的 token 数。"
+    },
+    "delta": {
+      "label": "Δ",
+      "tooltip": "相对上一次 LLM 调用的上下文 token 变化。"
+    },
+    "output": {
+      "label": "out",
+      "tooltip": "模型在本次调用中生成的 output tokens。"
+    },
+    "cache": {
+      "label": "cache",
+      "tooltip": "cache_read / (input + cache_read + cache_write)。悬停查看完整 token ledger。"
+    }
+  },
   "terms": {
     "viewSideCallDetail": "查看详情",
     "sideCallGeneratedBy": "打开生成它的后台请求（proxy#{{proxyId}}）",
@@ -498,6 +540,7 @@
     "jsonlMetadata": "JSONL 元数据",
     "proxyRequestBody": "代理请求体",
     "showInTurn": "查看所在轮次",
+    "parentTurn": "父级轮次 ↗",
     "hide": "▲ 折叠",
     "show": "▼ 展开",
     "userInput": "用户输入",
