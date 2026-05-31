@@ -356,8 +356,8 @@ export function JsonlCallChain({
                   {/* Assistant text */}
                   {call.assistantText && !hideAssistantTextAsFinal && (
                     <div style={{ padding: "0 0 8px 0" }}>
-                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", marginBottom: 2, letterSpacing: "0.04em" }}>{t("terms.assistantResponseText").toUpperCase()}</div>
-                      <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, background: "#f9fafb", borderRadius: 6, padding: "5px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", fontFamily: "'Outfit', sans-serif", marginBottom: 2, letterSpacing: "0.05em" }}>{t("terms.assistantResponseText").toUpperCase()}</div>
+                      <div style={{ fontSize: 11, color: "#14532d", lineHeight: 1.55, background: "#f0fdf4", borderLeft: "2px solid #a7f3d0", borderRadius: "0 6px 6px 0", padding: "5px 10px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
                         {call.assistantText}
                       </div>
                     </div>

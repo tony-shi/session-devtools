@@ -75,7 +75,7 @@ export function ChainNarrativeNode({
           background: "transparent",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: tone.fg, letterSpacing: "0.05em", textTransform: "uppercase" }}>{label}</span>
+            <span style={{ fontSize: 10, fontWeight: 800, color: tone.fg, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.05em", textTransform: "uppercase" }}>{label}</span>
             {meta && <span style={{ fontSize: 10, color: "#94a3b8" }}>{meta}</span>}
             {handleJump && (
               <button
@@ -99,15 +99,42 @@ export function ChainNarrativeNode({
               </button>
             )}
           </div>
-          <div style={{ fontSize: 12, color: tone.fg, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          <div style={{
+            fontSize: 12,
+            color: tone.fg,
+            lineHeight: 1.6,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            background: tone.bg,
+            border: `1px solid ${tone.border}`,
+            borderRadius: 6,
+            padding: "8px 12px",
+            marginTop: 4,
+          }}>
             {shown}
           </div>
           {needsExpand && (
             <button
+              type="button"
               onClick={() => setExpanded(v => !v)}
-              style={{ marginTop: 5, fontSize: 10, color: tone.fg, background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 700 }}
+              style={{
+                marginTop: 6,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 10,
+                color: BRAND.indigo600,
+                background: "#f1f5f9",
+                border: "none",
+                borderRadius: 4,
+                padding: "3px 8px",
+                cursor: "pointer",
+                fontWeight: 700,
+                transition: "background 0.1s",
+              }}
+              className="hover:bg-slate-200 transition-colors"
             >
-              {expanded ? "Show less" : "Show more"}
+              {expanded ? "Show less ↑" : "Show more ↓"}
             </button>
           )}
         </div>
