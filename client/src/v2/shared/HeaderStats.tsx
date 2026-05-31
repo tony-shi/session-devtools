@@ -7,9 +7,12 @@
 // same visual rhythm as the Dashboard SummaryCardsV2.
 
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { AggregateLedger, type AggregateLedgerFullProps } from "./AggregateLedger";
 import { CallLedger, type CallLedgerFullProps } from "./CallLedger";
 import { BRAND } from "./brand";
+import { SummaryStat, CacheSummaryStat } from "../session-detail/call/CallSummaryStats";
+import { fmtK } from "../lib/format";
 
 export interface HeaderStat {
   label: string;
@@ -164,54 +167,89 @@ export interface UnifiedHeaderProps {
 }
 
 export function UnifiedHeader({ leadingLabel, stats, ledger, rightSlot }: UnifiedHeaderProps) {
-  // Call-mode ledger is the two-group layout — needs more horizontal real
-  // estate. Give it a wider flex basis so it doesn't get squeezed below its
-  // intended split.
-  const ledgerBasis = ledger.mode === "call" ? 480 : 360;
+  const { t } = useTranslation();
+
+  const freshIn = ledger.freshIn;
+  const cacheRead = ledger.cacheRead;
+  const cacheWrite = ledger.cacheWrite;
+  const output = ledger.output;
+
+  const inputTotal = freshIn + cacheRead + cacheWrite;
+  const cacheRatio = ledger.cacheRatio ?? (inputTotal > 0 ? (cacheRead / inputTotal) * 100 : null);
+
   return (
     <div style={{
-      display: "flex", alignItems: "flex-start", gap: 20, flexWrap: "wrap",
-      paddingBottom: 10, marginBottom: 14,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      paddingBottom: 10,
+      marginBottom: 14,
       borderBottom: "1px solid #f3f4f6",
+      flexWrap: "wrap",
+      width: "100%",
     }}>
-      {/* Left: counters */}
-      <div style={{ flex: "1 1 auto", minWidth: 0 }}>
-        <HeaderStatRow noDivider leadingLabel={leadingLabel} stats={stats} />
+      {/* Left zone: Metadata stats + Ledger metrics */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", flex: "1 1 auto", minWidth: 0 }}>
+        {leadingLabel && (
+          <SummaryStat
+            label={leadingLabel.label}
+            tooltip={`${leadingLabel.label}: ${leadingLabel.value}`}
+            minWidth={60}
+          >
+            {leadingLabel.value}
+          </SummaryStat>
+        )}
+
+        {stats.map(({ label, value, color, tooltip }) => (
+          <SummaryStat
+            key={label}
+            label={label}
+            tooltip={tooltip || label}
+            valueColor={color}
+          >
+            {value}
+          </SummaryStat>
+        ))}
+
+        {/* Divider before Ledger */}
+        <div style={{ alignSelf: "center", width: 1, height: 16, background: "#e5e7eb", margin: "2px 6px" }} />
+
+        {/* Compact Ledger Stats */}
+        <SummaryStat
+          label={t("callSummary.context.label", { defaultValue: "总输入" })}
+          tooltip={t("ledgerExplainer.inputSection", { defaultValue: "输入" }).replace("{{sigma}}", "∑ ")}
+          valueColor="#334155"
+        >
+          {fmtK(inputTotal)}
+        </SummaryStat>
+
+        <SummaryStat
+          label={t("callSummary.output.label", { defaultValue: "总输出" })}
+          tooltip={t("ledgerExplainer.outputSection", { defaultValue: "输出" }).replace("{{sigma}}", "∑ ")}
+          valueColor="#6366f1"
+        >
+          {fmtK(output)}
+        </SummaryStat>
+
+        <CacheSummaryStat
+          label={t("callSummary.cache.label", { defaultValue: "缓存" })}
+          tooltip={t("callSummary.cache.tooltip", { defaultValue: "缓存比例" })}
+          ratio={cacheRatio}
+          freshIn={freshIn}
+          cacheRead={cacheRead}
+          cacheWrite={cacheWrite}
+          output={output}
+          minWidth={52}
+        />
       </div>
 
-      {/* Vertical separator hides itself when the right blocks wrap below */}
-      <div style={{ width: 1, background: "#f3f4f6", alignSelf: "stretch" }} />
-
-      {/* Middle: token ledger — aggregate or call form, switched by mode. */}
-      <div style={{ flex: `1 1 ${ledgerBasis}px`, minWidth: 0 }}>
-        <LedgerSlot ledger={ledger} />
-      </div>
-
-      {/* Right: badges + model chip */}
+      {/* Right zone: Badges + Action buttons */}
       {rightSlot && (
-        <>
-          <div style={{ width: 1, background: "#f3f4f6", alignSelf: "stretch" }} />
-          <div style={{
-            display: "flex", alignItems: "center", gap: 6,
-            flex: "0 0 auto", alignSelf: "flex-start",
-            paddingTop: 14,  // align with stat values row
-          }}>
-            {rightSlot}
-          </div>
-        </>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          {rightSlot}
+        </div>
       )}
     </div>
   );
-}
-
-// Narrows the discriminated union and forwards the remaining fields to the
-// matching ledger component. Kept as a tiny component (not inline ternary)
-// so TypeScript can do exhaustive narrowing inside each branch.
-function LedgerSlot({ ledger }: { ledger: UnifiedHeaderLedger }) {
-  if (ledger.mode === "aggregate") {
-    const { mode: _m, ...rest } = ledger;
-    return <AggregateLedger size="full" noTopPadding {...rest} />;
-  }
-  const { mode: _m, ...rest } = ledger;
-  return <CallLedger size="full" noTopPadding {...rest} />;
 }

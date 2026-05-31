@@ -20,6 +20,27 @@ import { InterTurnBlockDetail } from "../compact/CompactEventPanel";
 import { JsonlCallChain } from "./JsonlCallChain";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
+const cardStyle: React.CSSProperties = {
+  backgroundColor: "#ffffff",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius)",
+  padding: "16px",
+  marginBottom: "20px",
+  boxShadow: "0 1px 2px rgba(0, 0, 0, 0.02)",
+};
+
+const cardTitleStyle: React.CSSProperties = {
+  fontSize: 10,
+  fontWeight: 700,
+  color: "#6b7280",
+  textTransform: "uppercase",
+  letterSpacing: "0.07em",
+  marginBottom: 12,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+};
+
 export function UserTurnDetailPanel({
   turn, onSelectCall, isMockSession = false, onSubAgentClick, trailingInterTurnBlock = null,
   onClose, onOpenAsMain,
@@ -259,14 +280,12 @@ export function UserTurnDetailPanel({
           Click on any cell or line marker jumps to the corresponding Call
           card via the anchor `turn-${turn.id}-call-${callId}`. */}
       {!noTools && (
-        <div id={minimapAnchorId} style={{ marginBottom: 16, scrollMarginTop: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: minimapOpen ? 8 : 0 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.07em" }}>
-              {t("terms.callMinimap")}
-            </span>
+        <div id={minimapAnchorId} style={{ ...cardStyle, scrollMarginTop: 16 }}>
+          <div style={cardTitleStyle}>
+            <span>{t("terms.callMinimap")}</span>
             <button
               onClick={() => setMinimapOpen(v => !v)}
-              style={{ fontSize: 10, color: "#9ca3af", background: "none", border: "none", cursor: "pointer", padding: "0 4px", lineHeight: 1 }}
+              style={{ fontSize: 10, color: "#9ca3af", background: "none", border: "none", cursor: "pointer", padding: "0 4px", lineHeight: 1, textTransform: "none", fontWeight: 500, letterSpacing: "normal" }}
             >
               {minimapOpen ? t("terms.hide") : t("terms.show")}
             </button>

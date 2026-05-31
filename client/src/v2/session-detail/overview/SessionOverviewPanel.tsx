@@ -19,6 +19,21 @@ import { TurnCard } from "../turn/TurnCard";
 import { ModelBreakdownBlock } from "./ModelBreakdownBlock";
 import { ContextTimelineChart } from "./ContextTimelineChart";
 
+const borderlessStyle: React.CSSProperties = {
+  marginBottom: "24px",
+};
+
+const toolTitleStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: "bold",
+  color: "#6b7280",
+  letterSpacing: "0.02em",
+  padding: "8px 12px 12px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+};
+
 export function SessionOverviewPanel() {
   const { t } = useTranslation();
   const { turns, drilldown, navigate } = useSessionDetail();
@@ -72,6 +87,7 @@ export function SessionOverviewPanel() {
   }, [turns, compactEvents.length]);
 
   const [modelsExpanded, setModelsExpanded] = React.useState(false);
+  const [toolsExpanded, setToolsExpanded] = React.useState(false);
   const multiModel = modelBreakdown && Object.keys(modelBreakdown).length > 1;
   const singleModel = modelBreakdown && Object.keys(modelBreakdown).length === 1
     ? Object.keys(modelBreakdown)[0] : null;
@@ -89,6 +105,8 @@ export function SessionOverviewPanel() {
     if (noProxyCalls > 0)    items.push({ kind: "noProxy",    count: noProxyCalls,    tooltip: t("sessionOverview.badges.noProxyDetail", { count: noProxyCalls }) });
     return items;
   })();
+
+  const dist = drilldown?.toolDistribution ?? [];
 
   return (
     <div style={{ padding: "20px 24px", flex: 1, overflowY: "auto" }}>
@@ -147,73 +165,87 @@ export function SessionOverviewPanel() {
         </div>
       )}
 
-      {/* Context Overview Timeline */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>
-          {t("sessionOverview.charts.contextTimeline")} {isMock && <MockBadge />}
+      {/* Responsive Borderless Grid Layout for Charts */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))",
+        gap: "24px",
+        marginBottom: "24px",
+      }}>
+        {/* Context Overview Timeline */}
+        <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            <ContextTimelineChart turns={turns} compactEvents={compactEvents} isMock={isMock} />
+          </div>
         </div>
-        <ContextTimelineChart turns={turns} compactEvents={compactEvents} isMock={isMock} />
-      </div>
 
-
-      {/* Tool Distribution */}
-      {(() => {
-        const dist = drilldown?.toolDistribution ?? [];
-        if (dist.length === 0) return null;
-        const maxCount = dist[0].count;
-        return (
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 8 }}>{t("sessionOverview.charts.toolUsage")}</div>
-            <div>
-              {dist.map(entry => {
+        {/* Tool Distribution */}
+        {dist.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <div style={toolTitleStyle}>
+              <span>{t("sessionOverview.charts.toolUsage").toUpperCase()}</span>
+              {dist.length > 5 && (
+                <button
+                  onClick={() => setToolsExpanded(v => !v)}
+                  style={{ fontSize: 10, color: "#6366f1", background: "none", border: "none", cursor: "pointer", padding: "0 4px", fontWeight: 600, textTransform: "none", letterSpacing: "normal" }}
+                >
+                  {toolsExpanded ? t("terms.hide") : t("terms.show") + ` (${dist.length})`}
+                </button>
+              )}
+            </div>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", gap: 3, padding: "0 12px" }}>
+              {(toolsExpanded ? dist : dist.slice(0, 5)).map(entry => {
                 const accent = getToolPalette(entry.name).accent;
+                const maxCount = dist[0].count;
                 return (
-                  <div key={entry.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-                    <span style={{ fontSize: 11, color: "#374151", width: 120, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
-                    <div style={{ flex: 1, height: 5, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
+                  <div key={entry.name} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 10, color: "#4b5563", width: 120, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
+                    <div style={{ flex: 1, height: 4, background: "#f3f4f6", borderRadius: 2, overflow: "hidden" }}>
                       <div style={{ width: `${(entry.count / maxCount) * 100}%`, height: "100%", background: accent, borderRadius: 2 }} />
                     </div>
-                    <span style={{ fontSize: 11, color: "#6b7280", width: 36, textAlign: "right", flexShrink: 0 }}>{entry.count}</span>
+                    <span style={{ fontSize: 10, color: "#6b7280", width: 36, textAlign: "right", flexShrink: 0 }}>{entry.count}</span>
                   </div>
                 );
               })}
             </div>
           </div>
-        );
-      })()}
+        )}
+      </div>
 
-      {/* User Turn List — timeline + bordered card (mirrors Turn detail's
-          Call list). The old USER/AGENT side rails are gone; the dialog feel
-          lives inside each card via the blue/green bubbles. */}
-      <div style={{ fontSize: 12, fontWeight: 600, color: "#374151", marginBottom: 10 }}>{t("sessionOverview.charts.userTurns")}</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 0, position: "relative" }}>
-        {/* Vertical spine — same geometry as the Call list spine, so the
-            two views read as one design system. */}
-        <div style={{ position: "absolute", left: 11, top: 8, bottom: 8, width: 2, background: "#e5e7eb", zIndex: 0 }} />
+      {/* User Turn List — borderless timeline stream */}
+      <div style={borderlessStyle}>
+        <div style={{ ...toolTitleStyle, paddingLeft: 0, paddingRight: 0 }}>
+          <span>{t("sessionOverview.charts.userTurns").toUpperCase()}</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 0, position: "relative" }}>
+          {/* Vertical spine — same geometry as the Call list spine, so the
+              two views read as one design system. */}
+          <div style={{ position: "absolute", left: 11, top: 8, bottom: 8, width: 2, background: "#e5e7eb", zIndex: 0 }} />
 
-        {turns.map((turn) => {
-          // Spine dot color: red on hard problems, indigo otherwise.
-          const dotColor = (turn.hasCompaction || turn.errorCount > 0) ? "#ef4444" : BRAND.indigo500;
-          return (
-            <div key={turn.id} style={{ position: "relative", zIndex: 1, marginBottom: 12 }}>
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                {/* Spine dot — anchors this turn to the timeline */}
-                <div style={{ flexShrink: 0, marginTop: 10, width: 24, display: "flex", justifyContent: "center" }}>
-                  <div style={{
-                    width: 14, height: 14, borderRadius: "50%",
-                    border: "2px solid #fff",
-                    background: dotColor,
-                    boxShadow: `0 0 0 2px ${dotColor}40`,
-                  }} />
-                </div>
-                {/* Card body */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <TurnCard turn={turn} onClick={() => onSelectTurn(turn)} />
+          {turns.map((turn) => {
+            // Spine dot color: red on hard problems, indigo otherwise.
+            const dotColor = (turn.hasCompaction || turn.errorCount > 0) ? "#ef4444" : BRAND.indigo500;
+            return (
+              <div key={turn.id} style={{ position: "relative", zIndex: 1, marginBottom: 12 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  {/* Spine dot — anchors this turn to the timeline */}
+                  <div style={{ flexShrink: 0, marginTop: 10, width: 24, display: "flex", justifyContent: "center" }}>
+                    <div style={{
+                      width: 14, height: 14, borderRadius: "50%",
+                      border: "2px solid #fff",
+                      background: dotColor,
+                      boxShadow: `0 0 0 2px ${dotColor}40`,
+                    }} />
+                  </div>
+                  {/* Card body */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <TurnCard turn={turn} onClick={() => onSelectTurn(turn)} />
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );

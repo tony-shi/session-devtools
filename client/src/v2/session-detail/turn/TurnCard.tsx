@@ -16,8 +16,8 @@ import { StatusBadgeStrip, type StatusBadge } from "../../shared/HeaderStats";
 import { renderStatusIcon } from "../../shared/SessionBadges";
 import { BRAND } from "../../shared/brand";
 
-const INPUT_PREVIEW_CHARS = 120;
-const OUTPUT_PREVIEW_CHARS = 200;
+const INPUT_PREVIEW_CHARS = 500;
+const OUTPUT_PREVIEW_CHARS = 1000;
 
 export function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () => void }) {
   const { t } = useTranslation();
@@ -61,21 +61,22 @@ export function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () =>
     ? new Date(turn.startedAt).toLocaleString(undefined, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
     : null;
 
-  // One bordered card — header + dialog body — mirroring the LLM Call card
+  // One borderless card — header + dialog body — mirroring the LLM Call card
   // structure inside the Turn detail. The header strip is the click target
   // (drill into the turn); the body keeps the user/agent dialog feel via
-  // blue/green bubbles so it still reads as a conversation.
+  // left/right color bars so it still reads as a conversation.
   return (
     <div
-      className="border border-gray-200 hover:border-indigo-500 transition-colors rounded-lg bg-white overflow-hidden"
+      style={{ display: "flex", flexDirection: "column" }}
     >
       {/* ── Header — same layout as Call card header ── */}
       <div
         onClick={onClick}
         style={{
           display: "flex", alignItems: "center", gap: 8,
-          padding: "7px 12px", borderBottom: "1px solid #f3f4f6",
+          padding: "5px 4px", borderBottom: "1px solid #f3f4f6",
           cursor: "pointer",
+          marginBottom: 10,
         }}
       >
         {/* Left: Turn label + timestamp (replaces the dropped horizontal divider) */}
@@ -110,25 +111,23 @@ export function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () =>
         )}
         {/* Right: badges + chevron */}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-          <StatusBadgeStrip badges={turnCardBadges} renderIcon={renderStatusIcon} />
-          <span style={{ fontSize: 10, color: "#d1d5db" }}>›</span>
+          <StatusBadgeStrip badges={turnCardBadges} renderIcon={renderStatusIcon} size="compact" />
+          <span style={{ fontSize: 11, color: "#6366f1", fontWeight: 600, cursor: "pointer" }}>
+            {t("terms.viewDetails")} ›
+          </span>
         </div>
       </div>
 
-      {/* ── Dialog body — bubbles preserve the conversation feel even though
-            the USER / AGENT side rails are gone. User left-aligned, agent
-            right-aligned. Max-width capped well under 100% on both sides so
-            the two parties don't visually pull to opposite edges of the
-            card — keeps the conversation feeling close. ── */}
-      <div style={{ padding: "10px 12px" }}>
-        {/* User bubble — left aligned, blue */}
-        <div style={{ display: "flex", marginBottom: 6 }}>
-          <div style={{ maxWidth: "78%" }}>
+      {/* ── Dialog body — bubbles replaced by clean, borderless Left-Blue/Right-Green indicator stripes ── */}
+      <div style={{ padding: "0 4px" }}>
+        {/* User bubble — left aligned, blue left indicator stripe */}
+        <div style={{ display: "flex", marginBottom: 8 }}>
+          <div style={{ width: "100%", maxWidth: "85%" }}>
             <div style={{
               fontSize: 12, color: "#1e3a5f", lineHeight: 1.55,
-              background: "#eff6ff", border: "1px solid #bfdbfe",
-              borderRadius: 8,
-              padding: "8px 12px",
+              background: "#f8fafc",
+              borderLeft: "3px solid #3b82f6",
+              padding: "6px 12px",
               whiteSpace: "pre-wrap", wordBreak: "break-word",
             }}>
               {inputShown}
@@ -136,7 +135,7 @@ export function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () =>
             {inputNeedsExpand && (
               <button
                 onClick={e => { e.stopPropagation(); setInputExpanded(v => !v); }}
-                style={{ marginTop: 4, fontSize: 11, color: BRAND.blue500, background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                style={{ marginTop: 4, fontSize: 10, color: BRAND.blue500, background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 600 }}
               >
                 {inputExpanded ? "Show less ↑" : "Show more ↓"}
               </button>
@@ -144,18 +143,18 @@ export function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () =>
           </div>
         </div>
 
-        {/* Mid-turn injections — yellow, left aligned just like user */}
+        {/* Mid-turn injections — yellow dashed left indicator stripe */}
         {turn.midTurnInjections?.map((inj, idx) => (
-          <div key={idx} style={{ display: "flex", marginBottom: 6 }}>
-            <div style={{ maxWidth: "78%" }}>
+          <div key={idx} style={{ display: "flex", marginBottom: 8 }}>
+            <div style={{ width: "100%", maxWidth: "85%" }}>
               <div style={{ fontSize: 9, fontWeight: 700, color: "#d97706", marginBottom: 3, letterSpacing: "0.05em" }}>
                 ↩ INTERRUPT · after call {inj.afterCallIndex}
               </div>
               <div style={{
                 fontSize: 12, color: "#78350f", lineHeight: 1.5,
-                background: "#fffbeb", border: "1px solid #fcd34d",
-                borderRadius: 8,
-                padding: "7px 11px",
+                background: "#fffbeb",
+                borderLeft: "3px dashed #d97706",
+                padding: "6px 12px",
                 whiteSpace: "pre-wrap", wordBreak: "break-word",
               }}>
                 {inj.text}
@@ -169,10 +168,10 @@ export function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () =>
           </div>
         ))}
 
-        {/* AI bubble — right aligned, green */}
+        {/* AI bubble — right aligned, green right indicator stripe */}
         {outputFull && (
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <div style={{ maxWidth: "78%" }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+            <div style={{ width: "100%", maxWidth: "85%", display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
               <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginBottom: 3 }}>
                 <button
                   onClick={e => { e.stopPropagation(); setMdMode(v => !v); }}
@@ -188,9 +187,11 @@ export function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () =>
               </div>
               <div style={{
                 fontSize: 12, color: "#14532d", lineHeight: 1.6,
-                background: "#f0fdf4", border: "1px solid #bbf7d0",
-                borderRadius: 8,
-                padding: "8px 12px",
+                background: "#f0fdf4",
+                borderRight: "3px solid #10b981",
+                padding: "6px 12px",
+                width: "100%",
+                textAlign: "left",
               }}>
                 {mdMode ? (
                   <div className="md-prose" style={{ fontSize: 12, lineHeight: 1.6 }}>
@@ -204,7 +205,7 @@ export function TurnCard({ turn, onClick }: { turn: MockUserTurn; onClick: () =>
                 <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   <button
                     onClick={e => { e.stopPropagation(); setOutputExpanded(v => !v); }}
-                    style={{ marginTop: 4, fontSize: 11, color: "#16a34a", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                    style={{ marginTop: 4, fontSize: 10, color: "#16a34a", background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 600 }}
                   >
                     {outputExpanded ? "Show less ↑" : "Show more ↓"}
                   </button>

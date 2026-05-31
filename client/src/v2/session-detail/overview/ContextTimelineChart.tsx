@@ -142,11 +142,22 @@ export function ContextTimelineChart({
       );
 
       return {
-        grid: { top: 36, bottom: 28, left: 12, right: 44, containLabel: false },
+        title: {
+          text: t("sessionOverview.charts.contextTimeline"),
+          left: 12,
+          top: 8,
+          textStyle: {
+            fontSize: 11,
+            fontWeight: "bold",
+            color: "#6b7280",
+            fontFamily: "var(--font-sans)",
+          }
+        },
+        grid: { top: 46, bottom: 28, left: 12, right: 44, containLabel: false },
         xAxis: {
           type: "category",
           data: xLabels,
-          axisLabel: { fontSize: 10, color: CHART_COLORS.axisLabel, interval: 0 },
+          axisLabel: { fontSize: 10, color: CHART_COLORS.axisLabel, interval: "auto" },
           axisLine: { show: false },
           axisTick: { show: false },
           splitLine: { show: false },
@@ -154,6 +165,7 @@ export function ContextTimelineChart({
         yAxis: {
           type: "value",
           min: 0,
+          splitNumber: 3,
           axisLabel: {
             fontSize: 9,
             color: CHART_COLORS.axisLabel,
@@ -245,7 +257,18 @@ export function ContextTimelineChart({
       );
 
       return {
-        grid: { top: 36, bottom: 28, left: 12, right: 44, containLabel: false },
+        title: {
+          text: t("sessionOverview.charts.contextTimeline"),
+          left: 12,
+          top: 8,
+          textStyle: {
+            fontSize: 11,
+            fontWeight: "bold",
+            color: "#6b7280",
+            fontFamily: "var(--font-sans)",
+          }
+        },
+        grid: { top: 46, bottom: 28, left: 12, right: 44, containLabel: false },
         xAxis: {
           type: "value",
           min: 0,
@@ -265,6 +288,7 @@ export function ContextTimelineChart({
         yAxis: {
           type: "value",
           min: 0,
+          splitNumber: 3,
           axisLabel: {
             fontSize: 9,
             color: CHART_COLORS.axisLabel,
