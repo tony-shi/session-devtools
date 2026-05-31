@@ -337,7 +337,7 @@ function StructureLensFilter({
 
   if (totalCount === 0) return null;
 
-  const coldGroups: IntentGroupId[] = ["instructions", "environment", "capabilities", "events"];
+  const coldGroups: IntentGroupId[] = ["capabilities", "instructions", "environment", "events"];
   const warmGroups: IntentGroupId[] = ["interaction"];
 
   const hasCold = coldGroups.some(g => (groupStats.get(g)?.leafCount ?? 0) > 0);

@@ -351,7 +351,7 @@
         "description": "内置工具的 Schema 描述、已安装 Skill 声明或子代理类型声明等拓展链路。"
       },
       "events": {
-        "label": "运行时事件",
+        "label": "运行时注入/时间",
         "description": "harness 随时间插入 messages 流中的动态事件提醒（Token 预警、文件改动等）。"
       },
       "interaction": {

@@ -95,6 +95,10 @@ export const cacheLens: Lens = {
 // roleOf 吃 leaf.classSlot（system section 级，flattenLeaves 已下沉）+ rootSlotType + messageRole。
 
 const ROLE_BUCKETS: LensBucket[] = [
+  // ─── capabilities
+  { id: "tools.builtin", label: "内置工具", color: rolePalette["tools.builtin"].marker, description: "内置系统工具 of Schema 描述，定义模型可用的基础工具", groupId: "capabilities" },
+  { id: "messages.skills", label: "注入能力", color: rolePalette["messages.skills"].marker, description: "延迟工具声明、可用 sub-agent 类型声明或已安装 skill 列表", groupId: "capabilities" },
+
   // ─── instructions
   { id: "system.core", label: "核心指令", color: rolePalette["system.core"].marker, description: "Claude Code 的核心身份与任务指令模板（identity、intro、harness等）", groupId: "instructions" },
   { id: "system.guidance", label: "行为准则", color: rolePalette["system.guidance"].marker, description: "会话守则、上下文管理策略等行为指导（session-guidance、context-management）", groupId: "instructions" },
@@ -106,10 +110,6 @@ const ROLE_BUCKETS: LensBucket[] = [
   { id: "system.env", label: "环境与Git", color: rolePalette["system.env"].marker, description: "系统环境变量、Git 状态、工作目录等事实信息", groupId: "environment" },
   { id: "system.billing", label: "计费信息", color: rolePalette["system.billing"].marker, description: "Token 计费头与 CC 版本噪音等指示", groupId: "environment" },
   { id: "messages.context", label: "注入上下文", color: rolePalette["messages.context"].marker, description: "由 harness 动态注入的上下文参数（如 userEmail、currentDate 等）", groupId: "environment" },
-
-  // ─── capabilities
-  { id: "tools.builtin", label: "内置工具", color: rolePalette["tools.builtin"].marker, description: "内置系统工具 of Schema 描述，定义模型可用的基础工具", groupId: "capabilities" },
-  { id: "messages.skills", label: "注入能力", color: rolePalette["messages.skills"].marker, description: "延迟工具声明、可用 sub-agent 类型声明或已安装 skill 列表", groupId: "capabilities" },
 
   // ─── events
   { id: "messages.injection", label: "运行时事件", color: rolePalette["messages.injection"].marker, description: "harness 随时间注入的临时运行时提醒（Token 消耗、文件改动等事件）", groupId: "events" },
@@ -128,7 +128,7 @@ const ROLE_BUCKETS: LensBucket[] = [
 export const structureLens: Lens = {
   id: "structure",
   label: "结构",
-  description: "按来源与语义进行二级归因：系统预设 / 环境与上下文 / 能力与拓展 / 运行时事件 / 对话与执行",
+  description: "按来源与语义进行二级归因：能力与拓展 / 系统预设 / 环境与上下文 / 运行时注入/时间 / 对话与执行",
   buckets: ROLE_BUCKETS,
   bucketOf(leaf) {
     if (leaf.origin.kind === "unknown") return "other.unknown";

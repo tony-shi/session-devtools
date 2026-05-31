@@ -210,9 +210,9 @@ export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
 
 // group 在 pill 行中的视觉顺序（左 → 右）。冷色轨在前，暖色轨在后。
 export const INTENT_GROUP_ORDER: IntentGroupId[] = [
+  "capabilities",
   "instructions",
   "environment",
-  "capabilities",
   "events",
   "interaction",
 ];
