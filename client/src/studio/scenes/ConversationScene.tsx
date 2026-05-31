@@ -19,8 +19,8 @@ const MD_CSS = `.wt-md p{margin:0 0 8px}.wt-md p:last-child{margin-bottom:0}.wt-
 
 const PAD_TOP = 70;
 // 视觉重心放在「中央偏上」:底部留出更大空白给字幕条 + 呼吸。内容整体垂直居中(justify-center)
-// 后被这条不对称留白往上推 —— 焦点(被框的那一轮)就落在画面中心偏上。
-const PAD_BOTTOM = 230;
+// 后被这条不对称留白往上推 —— 焦点(被框的那一轮)落在画面中心偏上,且底部不会压到字幕行。
+const PAD_BOTTOM = 285;
 const floorChars = (len: number, t: number) => Math.max(0, Math.floor(len * t));
 
 export const ConversationScene = ({

@@ -32,6 +32,7 @@ import type { TTSProvider } from "./providers/types";
 import { MockProvider } from "./providers/mock";
 import { GoogleTTSProvider } from "./providers/google";
 import { GeminiTTSProvider } from "./providers/gemini";
+import { MiniMaxProvider } from "./providers/minimax";
 
 // 加载 .env(Node 22 原生 API,无需 dotenv)。仓库根目录的 .env 在 cwd 下。
 try { process.loadEnvFile(".env"); } catch { /* 没 .env,走环境变量本身 */ }
@@ -104,7 +105,19 @@ function buildProvider(name: Cli["providerName"], voiceName?: string): TTSProvid
     return new GeminiTTSProvider({ apiKey, voiceName });
   }
   if (name === "minimax") {
-    throw new Error("minimax provider stub — see scripts/voice/providers/minimax.ts");
+    const apiKey = process.env.MINIMAX_API_KEY;
+    const groupId = process.env.MINIMAX_GROUP_ID;
+    if (!apiKey || !groupId) {
+      throw new Error("MINIMAX_API_KEY 和 MINIMAX_GROUP_ID 需在仓库根 .env 设置。见 providers/minimax.ts 顶部。");
+    }
+    return new MiniMaxProvider({
+      apiKey, groupId,
+      host: process.env.MINIMAX_API_HOST,
+      model: process.env.MINIMAX_MODEL,
+      voiceId: voiceName ?? process.env.MINIMAX_VOICE,
+      speed: process.env.MINIMAX_SPEED ? parseFloat(process.env.MINIMAX_SPEED) : undefined,
+      emotion: process.env.MINIMAX_EMOTION,
+    });
   }
   if (name === "elevenlabs") {
     throw new Error("elevenlabs provider stub — see scripts/voice/providers/elevenlabs.ts");

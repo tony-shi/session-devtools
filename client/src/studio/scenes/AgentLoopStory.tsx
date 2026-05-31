@@ -2,6 +2,7 @@ import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig } from "remotio
 import { ConversationScene } from "./ConversationScene";
 import { AgentLoopScene } from "./AgentLoopScene";
 import { RecapScene } from "./RecapScene";
+import { NextChapterScene } from "./NextChapterScene";
 import { NarrationTrack } from "./NarrationTrack";
 import { getManifest, buildNarrationClips, frameToLine } from "./narration";
 import { buildActClock } from "./storyClock";
@@ -18,6 +19,17 @@ const CONV_STEPS = [0, 1];
 const LOOP_STEPS = [2, 3, 4, 5];
 const RECAP_STEPS = [6];
 const ALL_STEPS = [0, 1, 2, 3, 4, 5, 6];
+// step6 拆成两幕:前 RECAP_CONTENT_LINES 句 = while 回顾;之后 = 「下一章」过渡(独立一幕,
+// 占据那两句旁白的帧区间,字幕自动对齐)。改了 recap 句数就改这个。
+const RECAP_CONTENT_LINES = 8;
+const TEASER_HOLD_S = 0.8; // 过渡幕最后一句字幕完后,多停一下再结束
+
+// step6 每句的帧长(durMs + gapMs → 帧),用来把 recap / next-chapter 切开。
+function recapLineFrames(m: ReturnType<typeof getManifest>, fps: number): number[] {
+  const step = m?.steps.find((s) => s.stepIdx === 6);
+  const fr = (ms: number) => Math.round((ms / 1000) * fps);
+  return step ? step.lines.map((l) => fr(l.durMs) + fr(l.gapMs)) : [];
+}
 
 // 给 Root 算总时长用。
 export function agentLoopStoryDuration(lang: string, fps: number): number {
@@ -26,7 +38,8 @@ export function agentLoopStoryDuration(lang: string, fps: number): number {
   return (
     buildNarrationClips(m, CONV_STEPS, fps).totalFrames +
     buildNarrationClips(m, LOOP_STEPS, fps).totalFrames +
-    buildNarrationClips(m, RECAP_STEPS, fps).totalFrames
+    buildNarrationClips(m, RECAP_STEPS, fps).totalFrames +
+    Math.round(fps * TEASER_HOLD_S)
   );
 }
 
@@ -39,7 +52,10 @@ export const AgentLoopStory = ({ lang, caption = true }: { lang: string; caption
 
   const convLen = buildNarrationClips(m, CONV_STEPS, fps).totalFrames;
   const loopLen = buildNarrationClips(m, LOOP_STEPS, fps).totalFrames;
-  const recapLen = buildNarrationClips(m, RECAP_STEPS, fps).totalFrames;
+  // recap 拆两幕:前 8 句 = while 回顾,之后 = 下一章过渡。
+  const rlf = recapLineFrames(m, fps);
+  const recapLen = rlf.slice(0, RECAP_CONTENT_LINES).reduce((a, b) => a + b, 0);
+  const teaserLen = rlf.slice(RECAP_CONTENT_LINES).reduce((a, b) => a + b, 0);
 
   const loopClock = buildActClock(STORY_ID, m, LOOP_STEPS, fps);
   const recapClock = buildActClock(STORY_ID, m, RECAP_STEPS, fps);
@@ -58,6 +74,9 @@ export const AgentLoopStory = ({ lang, caption = true }: { lang: string; caption
       </Sequence>
       <Sequence from={convLen + loopLen} durationInFrames={recapLen} name="recap">
         <RecapScene clock={recapClock} />
+      </Sequence>
+      <Sequence from={convLen + loopLen + recapLen} durationInFrames={teaserLen + Math.round(fps * TEASER_HOLD_S)} name="next-chapter">
+        <NextChapterScene />
       </Sequence>
       <NarrationTrack lang={lang} stepIdxs={ALL_STEPS} />
       {caption && <NarrationCaption lang={lang} />}

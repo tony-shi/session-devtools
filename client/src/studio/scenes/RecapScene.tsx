@@ -1,5 +1,6 @@
 import { AbsoluteFill, useCurrentFrame } from "remotion";
 import { ACTOR_COLOR } from "../../v2/walkthrough/actorPalette";
+import { conversationFixture } from "../fixtures/conversation";
 import type { ActClock } from "./storyClock";
 
 // recap 幕 —— 把整套结构收成一个「while 循环」:
@@ -17,14 +18,15 @@ const AGENT = ACTOR_COLOR.agent.main;
 const DONE = ACTOR_COLOR.done.main;
 const COND = "#d97706"; // 判定菱形:琥珀(决策色)
 
-const op = (on: boolean) => (on ? 1 : 0.12);
+// 未到的元素完全不出现(而不是淡灰);到点了再从 0 出现。
+const op = (on: boolean) => (on ? 1 : 0);
 
 export const RecapScene = ({ clock }: { clock: ActClock }) => {
   const frame = useCurrentFrame();
   const beat = clock.at(frame).beat;
 
   return (
-    <AbsoluteFill style={{ background: "#fff", fontFamily: FONT, padding: "52px 72px 36px", flexDirection: "column" }}>
+    <AbsoluteFill style={{ background: "#fff", fontFamily: FONT, padding: "48px 72px 150px", flexDirection: "column" }}>
       <div style={{ fontSize: 20, fontWeight: 700, color: "#94a3b8", letterSpacing: 1, textTransform: "uppercase", marginBottom: 20 }}>
         回顾 · 把它串成一个 while 循环
       </div>
@@ -35,7 +37,7 @@ export const RecapScene = ({ clock }: { clock: ActClock }) => {
       {/* 2) 放大的 Turn → while 流程图(主角,放大)+ 伪代码;垂直居中占满余下空间,不留底部死白。 */}
       <div style={{ display: "flex", gap: 40, marginTop: 16, flex: 1, minHeight: 0, alignItems: "center" }}>
         <div style={{ flex: 1.55, display: "flex", justifyContent: "center", alignItems: "center", minWidth: 0 }}>
-          <div style={{ transform: "scale(1.45)", transformOrigin: "center" }}><Flowchart beat={beat} /></div>
+          <div style={{ transform: "scale(1.28)", transformOrigin: "center" }}><Flowchart beat={beat} /></div>
         </div>
         <div style={{ flex: 1, display: "flex", justifyContent: "center", minWidth: 0 }}>
           <PseudoCode beat={beat} />
@@ -50,14 +52,15 @@ export const RecapScene = ({ clock }: { clock: ActClock }) => {
           </div>
         )}
       </div>
+
     </AbsoluteFill>
   );
 };
 
 // Session 容器 + 多个 Turn 盒子(beat 0 全现,beat 1 高亮 Turn 2 = 被放大的那个)。
 function SessionBand({ beat }: { beat: number }) {
-  const turns = [1, 2, 3];
   const expanded = 2;
+  const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
   return (
     <div style={{ border: "2px dashed #cbd5e1", borderRadius: 16, padding: "16px 22px", opacity: op(beat >= 0) }}>
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -65,19 +68,24 @@ function SessionBand({ beat }: { beat: number }) {
         <span style={{ fontSize: 18, color: "#94a3b8" }}>一次完整会话,组织起多个 Turn</span>
       </div>
       <div style={{ display: "flex", gap: 16, marginTop: 14 }}>
-        {turns.map((t) => {
+        {conversationFixture.map((tt) => {
+          const t = tt.id;
           const isExp = t === expanded;
           const hot = isExp && beat >= 1;
           return (
             <div key={t} style={{
-              flex: 1, padding: "12px 18px", borderRadius: 12,
+              flex: 1, padding: "12px 16px", borderRadius: 12,
               border: `2px solid ${hot ? LLM : "#e5e7eb"}`,
               background: hot ? "#eef2ff" : "#fff",
               boxShadow: hot ? `0 0 0 3px ${ACTOR_COLOR.llm.border}` : "none",
               opacity: t === expanded ? 1 : (beat >= 1 ? 0.4 : 1),
             }}>
-              <div style={{ fontSize: 20, fontWeight: 700, color: hot ? LLM : "#475569", fontFamily: "monospace" }}>Turn {t}</div>
-              <div style={{ fontSize: 15, color: "#94a3b8", marginTop: 2 }}>{t === expanded ? "一次用户任务 ↓ 放大" : "一次用户任务"}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 19, fontWeight: 700, color: hot ? LLM : "#475569", fontFamily: "monospace" }}>Turn {t}</span>
+                {isExp && <span style={{ fontSize: 13, color: LLM, fontWeight: 700 }}>↓ 放大</span>}
+              </div>
+              {/* 补上真实的用户问题 —— 更有信服感 */}
+              <div style={{ fontSize: 14, color: "#64748b", marginTop: 6, lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{clip(tt.user, 48)}</div>
             </div>
           );
         })}
@@ -87,12 +95,12 @@ function SessionBand({ beat }: { beat: number }) {
 }
 
 // 固定坐标的 while 流程图(容器 720×430)。
-const W = 720, H = 430;
+const W = 740, H = 462;
 const BOX = {
   call:   { x: 190, y: 24,  w: 220, h: 58 },
-  use:    { x: 190, y: 262, w: 220, h: 52 },
-  result: { x: 190, y: 342, w: 220, h: 52 },
-  final:  { x: 470, y: 136, w: 250, h: 58 },
+  use:    { x: 190, y: 282, w: 220, h: 52 }, // 和菱形拉开,「要」不再挤
+  result: { x: 190, y: 392, w: 220, h: 52 }, // 和 tool_use 拉开间距,容下「Agent 执行」
+  final:  { x: 452, y: 136, w: 232, h: 58 }, // 左移留右侧余量;y 使框中心 = 菱形中心 165,退出箭头正对卡片中心
 };
 const DIA = { cx: 300, cy: 165, r: 58 }; // 菱形(决策):还要 tool_use?
 
@@ -112,13 +120,16 @@ function Flowchart({ beat }: { beat: number }) {
           <marker id="rc-arr-loop" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
             <path d="M0 0 L10 5 L0 10 z" fill={LLM} />
           </marker>
+          <marker id="rc-arr-agent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill={AGENT} />
+          </marker>
         </defs>
         {/* LLM Call → 菱形 */}
         <path d={`M300 ${BOX.call.y + BOX.call.h} V ${DIA.cy - DIA.r}`} stroke="#64748b" strokeWidth={2} markerEnd="url(#rc-arr)" opacity={op(showDecide)} fill="none" />
         {/* 菱形 → tool_use(要 / yes) */}
         <path d={`M300 ${DIA.cy + DIA.r} V ${BOX.use.y}`} stroke="#64748b" strokeWidth={2} markerEnd="url(#rc-arr)" opacity={op(showDecide)} fill="none" />
-        {/* tool_use → tool_result */}
-        <path d={`M300 ${BOX.use.y + BOX.use.h} V ${BOX.result.y}`} stroke="#64748b" strokeWidth={2} markerEnd="url(#rc-arr)" opacity={op(showResult)} fill="none" />
+        {/* tool_use → tool_result —— Agent 真的去执行(teal 边,强调 agent 角色) */}
+        <path d={`M300 ${BOX.use.y + BOX.use.h} V ${BOX.result.y}`} stroke={AGENT} strokeWidth={2.5} markerEnd="url(#rc-arr-agent)" opacity={op(showResult)} fill="none" />
         {/* 回边:tool_result 左 → 上 → 绕回 LLM Call 左(loop) */}
         <path d={`M${BOX.result.x} ${BOX.result.y + BOX.result.h / 2} H 110 V 53 H ${BOX.call.x}`} stroke={LLM} strokeWidth={2.5} strokeDasharray="6 5" markerEnd="url(#rc-arr-loop)" opacity={op(showResult)} fill="none" />
         {/* 退出边:菱形右 → final answer(不要 / no) */}
@@ -126,9 +137,12 @@ function Flowchart({ beat }: { beat: number }) {
       </svg>
 
       {/* 边标签 */}
-      <EdgeLabel x={312} y={238} text="要" color="#64748b" shown={showDecide} />
-      <EdgeLabel x={388} y={138} text="不要 → 退出" color={DONE} shown={showExit} />
-      <EdgeLabel x={40} y={205} text="循环:塞回 context" color={LLM} shown={showResult} />
+      <EdgeLabel x={318} y={244} text="要" color="#64748b" shown={showDecide} />
+      {/* tool_use → tool_result 之间强调:由 Agent 去执行拿到 */}
+      <EdgeLabel x={316} y={352} text="Agent 执行" color={AGENT} shown={showResult} />
+      <EdgeLabel x={360} y={124} text="不要 → 退出" color={DONE} shown={showExit} />
+      {/* 回边说明:竖排在左侧留白里,避开回边线段 */}
+      <EdgeLabel x={64} y={302} text="循环 · 塞回 context" color={LLM} shown={showResult} rot={-90} />
 
       {/* 盒子(不再贴三阶段标签 —— 例子简单,先不强调「收集/行动/验证」) */}
       <FlowBox b={BOX.call} color={LLM} title="LLM Call" sub="一次带 context 的模型决策" shown={showCall} />
@@ -172,8 +186,8 @@ function Diamond({ shown }: { shown: boolean }) {
   );
 }
 
-function EdgeLabel({ x, y, text, color, shown }: { x: number; y: number; text: string; color: string; shown: boolean }) {
-  return <div style={{ position: "absolute", left: x, top: y, fontSize: 15, fontWeight: 700, color, opacity: op(shown) }}>{text}</div>;
+function EdgeLabel({ x, y, text, color, shown, rot }: { x: number; y: number; text: string; color: string; shown: boolean; rot?: number }) {
+  return <div style={{ position: "absolute", left: x, top: y, fontSize: 15, fontWeight: 700, color, opacity: op(shown), whiteSpace: "nowrap", transform: rot ? `rotate(${rot}deg)` : undefined, transformOrigin: "left top" }}>{text}</div>;
 }
 
 // 伪代码 —— 顺序上最后出现(顶部 → 流程图 → 伪代码),整段在流程图画完后一次点亮。

@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { AbsoluteFill, useCurrentFrame, useVideoConfig, interpolate, Easing } from "remotion";
 import type { Focus } from "../../v2/walkthrough/types";
-import { sectionPalette } from "../../v2/lens-palette";
 import { fmtK } from "../../v2/lib/format";
 import { ACTOR_COLOR } from "../../v2/walkthrough/actorPalette";
 import type { LoopTurn } from "../fixtures/turn";
@@ -55,7 +54,11 @@ function parseTool(name: string, inputPreview: string): ParsedTool {
       const v = o.command ?? o.file_path ?? o.pattern ?? o.path ?? o.url ?? o.query ?? Object.values(o)[0];
       if (v != null) param = String(v);
     }
-  } catch { /* 非 JSON */ }
+  } catch {
+    // 截断的 JSON(dump 截断)解析会失败:正则把首个值抠出来,并反转义 —— 不展示 {"command":...} 外壳。
+    const m = /"(?:command|file_path|pattern|path|url|query)"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(inputPreview ?? "");
+    if (m) param = m[1].replace(/\\"/g, '"').replace(/\\n/g, "\n").replace(/\\\\/g, "\\");
+  }
   return { name, explain: TOOL_VERB[name] ?? "调用工具", param };
 }
 
@@ -84,11 +87,10 @@ function plan(focus: Focus, beat: number, total: number, beatCount: number): { c
     case "tool-use": return { count: 3, ctxStage: "full", showTools: beat >= 1 };
     case "tool-result": return { count: 4, ctxStage: "full", showTools: true };
     case "loop": {
-      // 为 fixture(2 轮工具循环,9 个节点)调好的揭示节奏:让 Loop 2 的 context 单独占一拍
-      // (beat 1)成为活跃节点「塞回填充」,对上旁白「塞回 context,触发下一次 Call」。
+      // 一拍揭示一个节点,按顺序不跳过:beat0=4(Loop1 回顾)→ beat1 ctx1(塞回)→ beat2 resp1
+      // (Loop2 tool_use)→ beat3 res1(Loop2 tool_result)→ beat4 ctx2(final context)→ beat5 final。
       void beatCount;
-      const c = beat <= 0 ? 4 : beat === 1 ? 5 : beat === 2 ? 7 : beat === 3 ? 8 : total;
-      return { count: Math.min(total, c), ctxStage: "full", showTools: true };
+      return { count: Math.min(total, 4 + Math.max(0, beat)), ctxStage: "full", showTools: true };
     }
     default: return { count: total, ctxStage: "full", showTools: true };
   }
@@ -133,6 +135,19 @@ export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActCloc
     return rf;
   }, [clock, N]);
 
+  // 链路(塞回 / 执行)的行进与停留包络:draw 0→1(~0.7s 数据包行进),hold 到达后再停留 ~2.4s 再淡出。
+  const drawEnv = (rf: number) => Number.isFinite(rf)
+    ? interpolate(frame - rf, [0, Math.round(fps * 0.7)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
+    : 1;
+  const holdEnv = (rf: number) => Number.isFinite(rf)
+    ? interpolate(frame - rf, [0, Math.round(fps * 0.15), Math.round(fps * 2.4), Math.round(fps * 3.0)], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
+    : 0;
+  // 有「入链」的节点:每个 context(ctx0=用户输入组装进来,iter>0=tool_result 塞回)、每个 tool_result(tool_use 执行而来)。
+  const hasLink = (nd: Node) => nd.kind === "context" || nd.kind === "result";
+  // 联动进行时,把「源」(活跃节点正上方那个)一并点亮,直到链路淡出再变暗。
+  const activeHasLink = activeIdx >= 0 && activeIdx < N && hasLink(nodes[activeIdx]);
+  const activeHold = activeHasLink ? holdEnv(revealFrame[activeIdx]) : 0;
+
   // 右栏解说内容:loop 末段(final 已现)切到"退出"注解,否则按 focus。
   const railLines = focus === "loop" && finalRevealed ? RAIL_EXIT : (RAIL[focus] ?? []);
 
@@ -145,7 +160,9 @@ export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActCloc
             {nodes.map((n, i) => {
               if (i >= count) return null; // 未揭示:不渲染(让流从底部生长)
               const active = i === activeIdx; // 最新一个 = 活跃 = 高亮
-              const op = active ? 1 : 0.5; // 高亮/变暗;入场透明度由 enter 单独控制
+              const isLinkSource = activeHasLink && i === activeIdx - 1; // 联动的「源」(活跃节点上方那个)
+              const lit = active || (isLinkSource && activeHold > 0.15); // 框高亮(含联动源)
+              const op = active ? 1 : isLinkSource ? 0.5 + 0.5 * activeHold : 0.5; // 源随链路提亮,链路淡出再变暗
               // 入场 0→1(~0.6s):节点整体淡入 + 从上方「下拉」就位;内容比框体略晚浮现(见 EventRow/FinalNode)。
               const enter = Number.isFinite(revealFrame[i])
                 ? interpolate(frame, [revealFrame[i], revealFrame[i] + Math.round(fps * 0.6)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
@@ -156,13 +173,16 @@ export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActCloc
               const badge = n.kind === "context"
                 ? (n.iter < loopCount ? { label: `Loop ${n.iter + 1}`, color: ACTOR_COLOR.llm.main } : { label: "Final", color: ACTOR_COLOR.done.main })
                 : null;
-              // context 的「塞回联动」:后续每一轮的 context 用 inflow(0→1,~0.7s)驱动曲线 + 数据包行进,
-              // 到达(≈0.85)时该段填「工具结果」;connHold 让这条链路再多停留 ~2.4s(便于看清)后淡出。
-              const life = Number.isFinite(revealFrame[i]) ? frame - revealFrame[i] : 99999;
-              const isBackfill = n.kind === "context" && n.iter > 0;
-              const inflow = isBackfill ? interpolate(life, [0, Math.round(fps * 0.7)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 1;
-              const connHold = isBackfill ? interpolate(life, [0, Math.round(fps * 0.15), Math.round(fps * 2.4), Math.round(fps * 3.0)], [0, 1, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 0;
-              const nodeCtxStage: CtxStage = isBackfill ? (inflow >= 0.85 ? "full" : "prefix") : ctxStage;
+              // 入链(塞回 / 执行)进度:行进 draw + 停留 hold(仅在该节点活跃时显示自己的入链)。
+              const linked = hasLink(n);
+              const linkDraw = linked ? drawEnv(revealFrame[i]) : 1;
+              const linkHold = linked && active ? holdEnv(revealFrame[i]) : 0;
+              const isCtx = n.kind === "context";
+              const nodeCtxStage: CtxStage = isCtx ? (linkDraw >= 0.85 ? "full" : "prefix") : ctxStage;
+              // 用户输入(task)逐字填入 —— 复用对话幕的打字机感觉。
+              const typeT = n.kind === "task"
+                ? interpolate(frame, [revealFrame[i], revealFrame[i] + Math.round(fps * 1.4)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
+                : 1;
               return (
                 <div key={i} style={{ opacity: op }}>
                   {/* 入场:整框淡入 + 从上方下拉就位(translateY)。内容的二段浮现在 EventRow/FinalNode 里。 */}
@@ -175,8 +195,8 @@ export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActCloc
                     )}
                     <Lane actor={n.kind === "final" ? "llm" : n.kind === "result" ? "agent" : n.kind === "task" ? "user" : "llm"}>
                       {n.kind === "final"
-                        ? <FinalNode text={n.text} calls={n.calls} active={active} enter={enter} />
-                        : <NodeBox node={n} active={active} ctxStage={nodeCtxStage} showTools={showTools} highlightTool={focus === "tool-use"} enter={enter} inflow={inflow} connHold={connHold} />}
+                        ? <FinalNode text={n.text} calls={n.calls} active={lit} enter={enter} />
+                        : <NodeBox node={n} active={lit} ctxStage={nodeCtxStage} showTools={showTools} highlightTool={focus === "tool-use"} enter={enter} linkDraw={linkDraw} linkHold={linkHold} typeT={typeT} />}
                     </Lane>
                   </div>
                 </div>
@@ -277,15 +297,48 @@ function Lane({ actor, children }: { actor: keyof typeof ACTOR; children: React.
   );
 }
 
-function NodeBox({ node, active, ctxStage, showTools, highlightTool, enter = 1, inflow = 1, connHold = 0 }: { node: Node; active: boolean; ctxStage: CtxStage; showTools: boolean; highlightTool: boolean; enter?: number; inflow?: number; connHold?: number }) {
+// 可复用的「联动曲线」:从上方的源,向右甩进留白,再回勾进目标(带箭头 + 行进数据包 + 流动虚线)。
+// draw 0→1 控制数据包行进;hold 控制整体显隐(到达后停留几秒再淡出);坐标系 = box 尺寸的 viewBox。
+// 联动曲线:从 p0(上方源)甩到右侧 bulge,再「水平」左进 p3(目标右缘)——
+// 末端控制点与 p3 同 y,所以落点箭头是水平的。标签固定在曲线右侧(bulge 处)。无圆圈,虚线流动。
+function FlowLink({ accent, hold, label, p0, p3, bulge, box }: {
+  accent: string; hold: number; label?: string;
+  p0: readonly [number, number]; p3: readonly [number, number]; bulge: number;
+  box: { top: number; right: number; w: number; h: number };
+}) {
+  const f = useCurrentFrame();
+  if (hold <= 0.01) return null;
+  const mid = `fl-${Math.round(p3[0])}-${Math.round(p3[1])}-${accent.slice(1)}`;
+  const c1: [number, number] = [bulge, p0[1] + (p3[1] - p0[1]) * 0.25];
+  const c2: [number, number] = [bulge, p3[1]]; // 与 p3 同 y → 末端水平
+  return (
+    <div style={{ position: "absolute", top: box.top, right: box.right, width: box.w, height: box.h, opacity: hold, pointerEvents: "none", zIndex: 4 }}>
+      <svg width={box.w} height={box.h} viewBox={`0 0 ${box.w} ${box.h}`} style={{ position: "absolute", inset: 0, overflow: "visible" }}>
+        <defs>
+          <marker id={mid} viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill={accent} />
+          </marker>
+        </defs>
+        <path d={`M ${p0[0]} ${p0[1]} C ${c1[0]} ${c1[1]} ${c2[0]} ${c2[1]} ${p3[0]} ${p3[1]}`}
+          fill="none" stroke={accent} strokeWidth={4} strokeLinecap="round" strokeDasharray="10 7" strokeDashoffset={-((f * 0.9) % 17)} markerEnd={`url(#${mid})`} />
+      </svg>
+      {label && <div style={{ position: "absolute", left: bulge + 10, top: (p0[1] + p3[1]) / 2 - 13, fontSize: 18, fontWeight: 800, color: accent, whiteSpace: "nowrap" }}>{label}</div>}
+    </div>
+  );
+}
+
+function NodeBox({ node, active, ctxStage, showTools, highlightTool, enter = 1, linkDraw = 1, linkHold = 0, typeT = 1 }: { node: Node; active: boolean; ctxStage: CtxStage; showTools: boolean; highlightTool: boolean; enter?: number; linkDraw?: number; linkHold?: number; typeT?: number }) {
   if (node.kind === "task") {
+    const shown = node.text.slice(0, Math.floor(node.text.length * typeT));
     return (
       <EventRow accent={ACTOR.user.color} label="用户输入 · 本轮任务" active={active} enter={enter}>
-        <div style={{ fontSize: 22, color: "#1f2937", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{node.text}</div>
+        <div style={{ fontSize: 22, color: "#1f2937", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+          {shown}{typeT < 1 && <span style={{ color: ACTOR.user.color }}>▍</span>}
+        </div>
       </EventRow>
     );
   }
-  if (node.kind === "context") return <ContextBar iter={node.iter} tokens={node.tokens} lastText={node.lastText} active={active} stage={ctxStage} inflow={inflow} connHold={connHold} />;
+  if (node.kind === "context") return <ContextBar iter={node.iter} tokens={node.tokens} lastText={node.lastText} active={active} stage={ctxStage} inflow={linkDraw} connHold={linkHold} />;
   if (node.kind === "response") {
     return (
       <EventRow accent={ACTOR.llm.color} label="LLM 调用结果" active={active} enter={enter}>
@@ -299,9 +352,11 @@ function NodeBox({ node, active, ctxStage, showTools, highlightTool, enter = 1, 
               <span style={{ fontSize: 18, color: "#6366f1" }}>{t.explain}</span>
               <span style={{ marginLeft: "auto", fontSize: 15, color: "#a5b4fc" }}>tool_use</span>
             </div>
-            <div style={{ fontFamily: "monospace", fontSize: 19, color: "#334155", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-              {clipLines(t.name === "Bash" ? `$ ${softWrapBash(t.param)}` : t.param, 6)}
-            </div>
+            {t.name === "Bash"
+              ? <div style={{ background: "#0f172a", borderRadius: 10, padding: "12px 16px", fontFamily: "monospace", fontSize: 18, lineHeight: 1.65, color: "#e2e8f0", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  <span style={{ color: "#5eead4" }}>$ </span>{clipLines(softWrapBash(t.param), 6)}
+                </div>
+              : <div style={{ fontFamily: "monospace", fontSize: 19, color: "#334155", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{clipLines(t.param, 6)}</div>}
           </div>
         ))}
       </EventRow>
@@ -309,12 +364,16 @@ function NodeBox({ node, active, ctxStage, showTools, highlightTool, enter = 1, 
   }
   if (node.kind !== "result") return null;
   return (
-    <EventRow accent={ACTOR.agent.color} label="Agent 执行结果 · tool_result" active={active} enter={enter}>
+    <EventRow accent={ACTOR.agent.color} label="Agent 执行结果 · tool_result" active={active} enter={enter}
+      overlay={linkHold > 0.01 ? (
+        // tool_use → tool_result 的执行联动(靛蓝):从上面的 tool_use 框甩进本结果框,末端水平箭头
+        <FlowLink accent={ACTOR_COLOR.llm.main} hold={linkHold} label="执行"
+          p0={[255, 44]} p3={[245, 108]} bulge={358} box={{ top: -80, right: -160, w: 430, h: 166 }} />
+      ) : null}>
       {node.results.map((o, i) => (
         <div key={i} style={{ marginTop: i ? 12 : 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, fontSize: 19 }}>
             <span style={{ color: o.isError ? "#b91c1c" : "#0f766e", fontWeight: 700 }}>{o.isError ? "✗" : "✓"} {o.name}</span>
-            <span style={{ marginLeft: "auto", fontSize: 15, color: "#99f6e4" }}>tool_result</span>
           </div>
           <div style={{ fontFamily: "monospace", fontSize: 19, color: "#334155", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 16px", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55 }}>
             {clipLines(o.output, 7) || "(空)"}
@@ -337,12 +396,13 @@ function FinalNode({ text, calls, active, enter = 1 }: { text: string; calls: nu
   );
 }
 
-function EventRow({ accent, label, active, enter = 1, children }: { accent: string; label: string; active: boolean; enter?: number; children: React.ReactNode }) {
+function EventRow({ accent, label, active, enter = 1, overlay, children }: { accent: string; label: string; active: boolean; enter?: number; overlay?: React.ReactNode; children: React.ReactNode }) {
   // 内容比「框 + 标题」略晚浮现 —— 框先下拉到位、标题先亮,执行信息再淡入上移。
   const bodyOp = interpolate(enter, [0.4, 0.9], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   const bodyTy = interpolate(enter, [0.4, 0.9], [10, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   return (
-    <div style={{ border: `1px solid ${active ? accent : "#eef2f6"}`, borderRadius: 12, background: "#fff", padding: "14px 18px", boxShadow: active ? `0 0 0 3px ${accent}22` : "none" }}>
+    <div style={{ position: "relative", border: `1px solid ${active ? accent : "#eef2f6"}`, borderRadius: 12, background: "#fff", padding: "14px 18px", boxShadow: active ? `0 0 0 3px ${accent}22` : "none" }}>
+      {overlay}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
         <span style={{ width: 9, height: 9, borderRadius: 3, background: accent, flexShrink: 0 }} />
         <span style={{ fontSize: 18, fontWeight: 700, color: "#334155" }}>{label}</span>
@@ -353,70 +413,66 @@ function EventRow({ accent, label, active, enter = 1, children }: { accent: stri
 }
 
 function ContextBar({ iter, tokens, lastText, active, stage, inflow = 1, connHold = 0 }: { iter: number; tokens: number; lastText: string; active: boolean; stage: CtxStage; inflow?: number; connHold?: number }) {
-  const f = useCurrentFrame();
-  const prefixPct = Math.min(82, 56 + iter * 12);
-  const lastPct = 100 - prefixPct;
-  const lastLabel = iter === 0 ? "当前问题" : "工具结果";
-  const prefixSegs = [
-    { c: sectionPalette.system.barBg, w: prefixPct * 0.34 },
-    { c: sectionPalette.tools.barBg, w: prefixPct * 0.24 },
-    { c: sectionPalette.messages.barBg, w: prefixPct * 0.42 },
-  ];
-  const full = stage === "full";
-  // 塞回联动:iter>0 的 context,用 inflow(行进)+ connHold(到达后停留几秒)驱动 teal 曲线把 tool_result 流入本段。
   const TEAL = ACTOR_COLOR.agent.main;
-  const showInflow = iter > 0 && active && connHold > 0.01;
-  const connOp = connHold;
+  const full = stage === "full";
+  // 累积的 context 片段(左→右,越往后轮越多 → bar 越长):提示词、用户输入、每轮 tool_use/tool_result。
+  // 提示词把「系统/记忆/规则/历史/工具定义」合成一块,不再细分颜色。
+  const segs: { label: string; w: number; bg: string; fg: string }[] = [
+    { label: "提示词", w: 3.0, bg: "#e2e8f0", fg: "#475569" },
+    { label: "用户输入", w: 1.5, bg: "#ede9fe", fg: "#6d28d9" },
+  ];
+  for (let k = 1; k <= iter; k++) {
+    segs.push({ label: `tool_use ${k}`, w: 1.1, bg: "#e0e7ff", fg: "#4338ca" });
+    segs.push({ label: `tool_result ${k}`, w: 1.6, bg: "#ccfbf1", fg: TEAL });
+  }
+  const FULLW = 10.5; // 满宽对应的总 weight(ctx2 ≈ 94%)
+  const totalW = segs.reduce((s, c) => s + c.w, 0);
+  const barPct = Math.min(100, (totalW / FULLW) * 100);
+  const newestIdx = segs.length - 1;
+  // 每个 context 的最后一段都是「本次新填入」:ctx0 = 用户输入(由 task 组装进来),iter>0 = tool_result(塞回)。
+  const assemble = iter === 0;
+  const linkAccent = assemble ? "#6d28d9" : TEAL;
+  const linkLabel = assemble ? "组装" : "塞回";
   const segGlow = interpolate(inflow, [0.74, 0.88, 1], [0, 1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  // 塞回曲线:从 tool_result 右下角,向右甩进右侧留白,再回勾进「工具结果」段(带箭头)。
-  // 数据包沿曲线行进到该段(inflow);到达后链路停留几秒,期间虚线持续流动、数据包呼吸。坐标系 = SVG viewBox(440×190)。
-  const BZ = { p0: [285, 44] as const, c1: [432, 72] as const, c2: [412, 150] as const, p3: [200, 155] as const };
-  const drawT = interpolate(inflow, [0, 0.82], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const bezAt = (t: number, a: number, b: number, c: number, d: number) => {
-    const u = 1 - t; return u * u * u * a + 3 * u * u * t * b + 3 * u * t * t * c + t * t * t * d;
-  };
-  const blobX = bezAt(drawT, BZ.p0[0], BZ.c1[0], BZ.c2[0], BZ.p3[0]);
-  const blobY = bezAt(drawT, BZ.p0[1], BZ.c1[1], BZ.c2[1], BZ.p3[1]);
-  const dashShift = -((f * 0.9) % 19); // 虚线持续向段内流动(活着的感觉)
-  const blobR = 10 + Math.sin(f * 0.25) * 1.4; // 数据包轻微呼吸
+  const showInflow = active && connHold > 0.01;
   return (
     <div style={{ position: "relative", border: `1px solid ${active ? "#6366f1" : "#eef2f6"}`, borderRadius: 12, background: "#fff", padding: "14px 18px", boxShadow: active ? "0 0 0 3px rgba(99,102,241,0.13)" : "none" }}>
-      {showInflow && (
-        <div style={{ position: "absolute", top: -90, right: -170, width: 440, height: 190, opacity: connOp, pointerEvents: "none", zIndex: 3 }}>
-          <svg width={440} height={190} viewBox="0 0 440 190" style={{ position: "absolute", inset: 0, overflow: "visible" }}>
-            <defs>
-              <marker id="rs-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
-                <path d="M0 0 L10 5 L0 10 z" fill={TEAL} />
-              </marker>
-            </defs>
-            {/* 粗曲线:从结果框右下甩向右侧留白,再回勾进「工具结果」段,末端箭头 */}
-            <path
-              d={`M ${BZ.p0[0]} ${BZ.p0[1]} C ${BZ.c1[0]} ${BZ.c1[1]} ${BZ.c2[0]} ${BZ.c2[1]} ${BZ.p3[0]} ${BZ.p3[1]}`}
-              fill="none" stroke={TEAL} strokeWidth={4} strokeLinecap="round" strokeDasharray="11 8" strokeDashoffset={dashShift} markerEnd="url(#rs-arr)"
-            />
-            {/* 发光数据包,沿曲线行进到段,停留时轻微呼吸 */}
-            <circle cx={blobX} cy={blobY} r={blobR + 10} fill={TEAL} opacity={0.16} />
-            <circle cx={blobX} cy={blobY} r={blobR} fill={TEAL} />
-            <circle cx={blobX} cy={blobY} r={4} fill="#ffffff" opacity={0.85} />
-          </svg>
-          <div style={{ position: "absolute", left: 300, top: 2, fontSize: 15, fontWeight: 800, color: TEAL, whiteSpace: "nowrap" }}>塞回 ↩</div>
-        </div>
-      )}
       <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: "#334155" }}>Context · 发给模型的</span>
         <span style={{ marginLeft: "auto", fontSize: 16, color: "#94a3b8", fontFamily: "monospace" }}>{fmtK(tokens)} tok</span>
       </div>
-      <div style={{ display: "flex", height: 34, borderRadius: 8, overflow: "hidden", gap: 3 }}>
-        {prefixSegs.map((s, i) => (<div key={i} style={{ width: `${s.w}%`, background: s.c, opacity: 0.5 }} />))}
-        {full
-          ? <div style={{ width: `${lastPct}%`, background: segGlow > 0.01 ? TEAL : "#6366f1", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 16, fontWeight: 700, boxShadow: segGlow > 0.01 ? `inset 0 0 0 ${2 + Math.round(3 * segGlow)}px rgba(255,255,255,0.7)` : "none" }}>{lastLabel}</div>
-          : <div style={{ width: `${lastPct}%`, border: "1px dashed #cbd5e1", borderRadius: 6, color: "#cbd5e1", fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center" }}>待填入</div>}
+      {/* 左对齐:左侧固定,随 call 往右逐步加长 —— 提示词、用户输入、tool_use/tool_result 片段一目了然 */}
+      <div style={{ display: "flex", justifyContent: "flex-start", height: 40 }}>
+        <div style={{ position: "relative", display: "flex", width: `${barPct}%`, height: "100%", gap: 4 }}>
+          {segs.map((s, i) => {
+            const isNewest = i === newestIdx; // 最后一段 = 本次新填入(组装 / 塞回)
+            const filled = !isNewest || full; // 其余段常驻;最新段等到达再填
+            const wPct = (s.w / totalW) * 100;
+            return (
+              <div key={i} style={{
+                width: `${wPct}%`, height: "100%", borderRadius: 7,
+                display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden",
+                background: filled ? s.bg : "#fff",
+                border: filled ? "none" : "1.5px dashed #cbd5e1",
+                color: filled ? s.fg : "#cbd5e1", fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap",
+                boxShadow: isNewest && segGlow > 0.01 ? `inset 0 0 0 2px ${linkAccent}` : "none",
+              }}>
+                {filled ? s.label : "待填入"}
+              </div>
+            );
+          })}
+          {/* 组装/塞回曲线:落在 bar 右端(最新一段右缘),末端水平箭头,标签在右侧 */}
+          {showInflow && (
+            <FlowLink accent={linkAccent} hold={connHold} label={linkLabel}
+              p0={[60, 14]} p3={[60, 130]} bulge={152} box={{ top: -116, right: -150, w: 214, h: 156 }} />
+          )}
+        </div>
       </div>
-      <div style={{ fontSize: 16, color: "#9ca3af", marginTop: 8 }}>前缀:系统 · 记忆 · 规则 · 历史 · 工具定义(各种 agent 注入)</div>
-      {full && (
-        <div style={{ marginTop: 8, background: "#eef2ff", border: "1px solid #e0e7ff", borderRadius: 10, padding: "8px 14px" }}>
-          <span style={{ fontSize: 16, fontWeight: 700, color: "#6366f1" }}>{lastLabel}:</span>{" "}
-          <span style={{ fontSize: 19, color: "#374151", wordBreak: "break-word" }}>{lastText || "(空)"}</span>
+      <div style={{ fontSize: 15, color: "#9ca3af", marginTop: 8 }}>提示词 = 系统 · 记忆 · 规则 · 历史 · 工具定义(各种 agent 注入)</div>
+      {full && iter > 0 && (
+        <div style={{ marginTop: 8, background: "#f0fdfa", border: "1px solid #ccfbf1", borderRadius: 10, padding: "8px 14px" }}>
+          <span style={{ fontSize: 16, fontWeight: 700, color: TEAL }}>最新 tool_result:</span>{" "}
+          <span style={{ fontSize: 18, color: "#374151", wordBreak: "break-word" }}>{lastText || "(空)"}</span>
         </div>
       )}
     </div>

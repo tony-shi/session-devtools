@@ -108,9 +108,8 @@ export class GeminiTTSProvider implements TTSProvider {
         speechConfig: {
           voiceConfig: { prebuiltVoiceConfig: { voiceName } },
         },
-        // temperature=0 → 抑制采样随机性,跨调用更"机械"地稳定
-        // (preview 模型对此尊重程度不确定,但加上无害)
-        temperature: 0,
+        // 注意:**不要**设 temperature=0 —— 实测会让 TTS 返回 finishReason=OTHER + 空内容
+        // (没有音频)。跨调用一致性靠"整篇一次合成"(synth-context.ts)解决,不靠 temp。
       },
     };
 
