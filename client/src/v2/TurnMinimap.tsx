@@ -72,21 +72,21 @@ function classifyTool(name: string): ToolRow {
   return "Other";
 }
 
-// Color interpolation for red palette
-function redColor(value: number, max: number, dark: boolean): string {
-  if (max === 0 || value === 0) return dark ? "#fff1f2" : "#fff7f7";
+// Color interpolation for brand Indigo/Violet palette
+function brandColor(value: number, max: number, dark: boolean): string {
+  if (max === 0 || value === 0) return "#f8fafc";
   const t = Math.min(value / max, 1);
   if (dark) {
-    // Darker palette: light pink → deep crimson
-    const r = Math.round(255 - t * (255 - 127));
-    const g = Math.round(241 - t * 241);
-    const b = Math.round(242 - t * 242);
+    // Darker channel (response): light indigo/violet (#c7d2fe) -> deep violet/indigo (#312e81)
+    const r = Math.round(199 - t * (199 - 49));
+    const g = Math.round(210 - t * (210 - 46));
+    const b = Math.round(254 - t * (254 - 129));
     return `rgb(${r},${g},${b})`;
   } else {
-    // Brighter palette: very light → rose red
-    const r = Math.round(255 - t * (255 - 220));
-    const g = Math.round(247 - t * (247 - 38));
-    const b = Math.round(247 - t * (247 - 38));
+    // Brighter channel (request): very light indigo (#eef2ff) -> brand indigo (#818cf8)
+    const r = Math.round(238 - t * (238 - 129));
+    const g = Math.round(242 - t * (242 - 140));
+    const b = Math.round(255 - t * (255 - 248));
     return `rgb(${r},${g},${b})`;
   }
 }
@@ -290,8 +290,8 @@ function buildOption(data: MinimapData, tFn: (key: string, fallback?: string) =>
     // Both channels share the same max so colors are directly comparable:
     // same shade = same size, regardless of which half it's in.
     const sharedMax = Math.max(maxInput, maxOutput);
-    const topColor = redColor(inputSize,  sharedMax, false); // bright red = request
-    const botColor = redColor(outputSize, sharedMax, true);  // dark red = response
+    const topColor = brandColor(inputSize,  sharedMax, false); // bright indigo = request
+    const botColor = brandColor(outputSize, sharedMax, true);  // deep violet = response
 
     const children: object[] = [
       { type: "rect", shape: { x, y, width: w, height: topH },
@@ -401,13 +401,30 @@ function buildOption(data: MinimapData, tFn: (key: string, fallback?: string) =>
   return {
     animation: false,
     backgroundColor: "transparent",
+    title: {
+      text: t("terms.callMinimap", "CALL 概览"),
+      subtext: `${calls.length} calls · ${data.totalToolEvents} tools · req ${fmtK(data.totalInputSize)} · resp ${fmtK(data.totalOutputSize)}`,
+      left: 12,
+      top: 8,
+      textStyle: {
+        fontSize: 11,
+        fontWeight: "bold",
+        color: "#6b7280",
+        fontFamily: "var(--font-sans)",
+      },
+      subtextStyle: {
+        fontSize: 9,
+        color: "#9ca3af",
+        fontFamily: "var(--font-sans)",
+      }
+    },
     axisPointer: {
       type: "line", snap: true, link: [{ xAxisIndex: [0, 1] }],
       label: { backgroundColor: "#111827" },
     },
     grid: [
-      { id: "ctx",    left: PAD_L, right: PAD_R, top: 10, height: CTX_H },
-      { id: "matrix", left: PAD_L, right: PAD_R, top: 10 + CTX_H + GAP + X_LABEL_H, height: matrixH },
+      { id: "ctx",    left: PAD_L, right: PAD_R, top: 48, height: CTX_H },
+      { id: "matrix", left: PAD_L, right: PAD_R, top: 48 + CTX_H + GAP + X_LABEL_H, height: matrixH },
     ],
     dataZoom: [
       {
@@ -643,7 +660,7 @@ export function TurnMinimap({ turn, onSelectCall, onHoverCall }: TurnMinimapProp
     const data = buildData(turn);
     const rowCount = Math.max(data.activeRows.length, 1);
     const showZoom = turn.calls.length > ZOOM_THRESHOLD;
-    const totalH = 10 + CTX_H + GAP + X_LABEL_H + rowCount * ROW_H + (showZoom ? ZOOM_H : 10);
+    const totalH = 48 + CTX_H + GAP + X_LABEL_H + rowCount * ROW_H + (showZoom ? ZOOM_H : 10);
     if (containerRef.current) containerRef.current.style.height = `${totalH}px`;
     chart.resize();
     chart.setOption(buildOption(data, (key, fallback) => t(key, fallback ?? key) as string), true);
@@ -654,65 +671,8 @@ export function TurnMinimap({ turn, onSelectCall, onHoverCall }: TurnMinimapProp
   const data = buildData(turn);
 
   return (
-    <div style={{ background: "#ffffff", overflow: "hidden" }}>
-      {/* Legend */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 10px", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <div style={{ width: 16, height: 0, borderTop: "2px solid #6366f1" }} />
-          <span style={{ fontSize: 10, color: "#64748b", fontWeight: 600 }}>Context</span>
-        </div>
-        {data.subAgentEvents.length > 0 && (
-          <>
-            <div style={{ width: 1, height: 14, background: "#e5e7eb" }} />
-            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-              <div style={{ width: 16, height: 0, borderTop: "1.5px dashed #a855f7" }} />
-              <span style={{ fontSize: 10, color: "#7e22ce", fontWeight: 600 }}>if inline</span>
-              <span style={{ fontSize: 10, color: "#a855f7" }}>
-                saved {fmtK(data.totalSubAgentSavings)} via {data.subAgentEvents.length} sub-agent{data.subAgentEvents.length > 1 ? "s" : ""}
-              </span>
-            </div>
-          </>
-        )}
-        <div style={{ width: 1, height: 14, background: "#e5e7eb" }} />
-        {/* Dual cell legend */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <div style={{ width: 22, height: 18, borderRadius: 3, overflow: "hidden", display: "flex", flexDirection: "column", border: "1px solid #fecdd3" }}>
-            <div style={{ flex: 1, background: "#fca5a5" }} />
-            <div style={{ height: "0.5px", background: "#ffffff80" }} />
-            <div style={{ flex: 1, background: "#dc2626" }} />
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-            <span style={{ fontSize: 9, color: "#f87171", fontWeight: 600, lineHeight: 1.3 }}>↑ req</span>
-            <span style={{ fontSize: 9, color: "#9f1239", fontWeight: 600, lineHeight: 1.3 }}>↓ resp</span>
-          </div>
-          <span style={{ fontSize: 10, color: "#94a3b8" }}>
-            max {fmtK(Math.max(data.maxInput, data.maxOutput))}
-          </span>
-        </div>
-        {turn.calls.length > ZOOM_THRESHOLD && (
-          <Badge variant="rose" className="text-[10px] px-1.5 py-0">
-            {t("sessionOverview.minimap.dragWindow")}
-          </Badge>
-        )}
-        <span style={{ marginLeft: "auto", fontSize: 10, color: "#cbd5e1" }}>
-          {turn.calls.length} {t("sessionOverview.minimap.llmCalls", "LLM calls")} · {data.totalToolEvents} {t("sessionOverview.activity.toolCalls").toLowerCase()} · req {fmtK(data.totalInputSize)} · resp {fmtK(data.totalOutputSize)}
-        </span>
-      </div>
-
+    <div style={{ background: "transparent", overflow: "hidden" }}>
       <div ref={containerRef} style={{ width: "100%", height: 220 }} />
-
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 10px", borderTop: "1px solid #f1f5f9", fontSize: 10, color: "#94a3b8" }}>
-        <span style={{ fontWeight: 700, color: "#64748b" }}>cell:</span>
-        <span>{t("sessionOverview.minimap.reqSize")}</span>
-        <span>·</span>
-        <span>{t("sessionOverview.minimap.respSize")}</span>
-        <span>·</span>
-        <span>{t("sessionOverview.minimap.sharedScale")}</span>
-        <span>·</span>
-        <span>{t("sessionOverview.minimap.hoverHint")}</span>
-        <span>·</span>
-        <span>{t("sessionOverview.minimap.clickHint")}</span>
-      </div>
     </div>
   );
 }

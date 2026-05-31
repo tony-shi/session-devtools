@@ -148,6 +148,8 @@ export interface EventUnitCardProps {
 
   /** Tighter padding for nested contexts. */
   compact?: boolean;
+  /** Flat and borderless mode, with a colored left stripe. */
+  borderless?: boolean;
 }
 
 function fmtBytes(b: number): string {
@@ -173,7 +175,7 @@ export function EventUnitCard(props: EventUnitCardProps) {
     expandable = true, defaultExpanded = false,
     active = false,
     onMouseEnter, onMouseLeave, onClick, onJump, jumpLabel, jumpTooltip, provenanceJump,
-    bg, border, compact = false,
+    bg, border, compact = false, borderless = false,
   } = props;
 
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -207,12 +209,14 @@ export function EventUnitCard(props: EventUnitCardProps) {
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       style={{
-        background: effectiveBg,
-        border: `1px solid ${effectiveBorder}`,
-        borderRadius: 6,
+        background: borderless ? (active ? "#fff7ed" : "transparent") : effectiveBg,
+        border: borderless ? "none" : `1px solid ${effectiveBorder}`,
+        borderRadius: borderless ? 0 : 6,
+        borderLeft: borderless ? (active ? "3px solid #f59e0b" : `3px solid ${color}`) : undefined,
+        paddingLeft: borderless ? 8 : 0,
         overflow: "hidden",
         opacity: cardOpacity,
-        boxShadow: active ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
+        boxShadow: active ? (borderless ? "0 0 0 2px rgba(245,158,11,0.1)" : "0 0 0 2px rgba(245,158,11,0.14)") : "none",
         transition: "background 0.1s, border-color 0.1s, opacity 0.1s",
       }}
     >
@@ -233,9 +237,11 @@ export function EventUnitCard(props: EventUnitCardProps) {
         }}
       >
         {/* color dot */}
-        <span style={{
-          width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0,
-        }} />
+        {!borderless && (
+          <span style={{
+            width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0,
+          }} />
+        )}
 
         {/* kind label —— kindTooltip 存在时用 Radix Tooltip（复用 App 根的
             TooltipProvider，同 DiffPanel/UserTurnDetailPanel）弹出详尽解读；
@@ -245,7 +251,8 @@ export function EventUnitCard(props: EventUnitCardProps) {
             <TooltipTrigger asChild>
               <span style={{
                 fontSize: 10, fontWeight: 700, color: "#4b5563",
-                textTransform: "uppercase", letterSpacing: "0.04em",
+                fontFamily: "'Outfit', sans-serif",
+                textTransform: "uppercase", letterSpacing: "0.05em",
                 flexShrink: 0, whiteSpace: "nowrap",
                 cursor: "help", textDecoration: "underline dotted", textUnderlineOffset: 2,
               }}>
@@ -259,7 +266,8 @@ export function EventUnitCard(props: EventUnitCardProps) {
         ) : (
           <span style={{
             fontSize: 10, fontWeight: 700, color: "#4b5563",
-            textTransform: "uppercase", letterSpacing: "0.04em",
+            fontFamily: "'Outfit', sans-serif",
+            textTransform: "uppercase", letterSpacing: "0.05em",
             flexShrink: 0, whiteSpace: "nowrap",
           }}>
             {kindLabel}
@@ -285,7 +293,7 @@ export function EventUnitCard(props: EventUnitCardProps) {
         )}
 
         {/* Collapsed preview occupies the stretch slot */}
-        {!showExpanded && preview && (
+        {!showExpanded && preview ? (
           <span style={{
             fontSize: 11, color: "#6b7280",
             flex: 1, minWidth: 0,
@@ -293,8 +301,9 @@ export function EventUnitCard(props: EventUnitCardProps) {
           }}>
             {preview}
           </span>
+        ) : (
+          <div style={{ flex: 1 }} />
         )}
-        {showExpanded && <div style={{ flex: 1 }} />}
 
         {/* size badge */}
         {size && size.bytes > 0 && (
@@ -321,20 +330,21 @@ export function EventUnitCard(props: EventUnitCardProps) {
               ? `${jumpTooltip ?? ""}\n\n⚠ 数据可能不准 — 当前 jump 目标只是 audit 数据里能看到的最早 call。早期一些 call 没有 proxy 数据（unaudited），真正首次消费这条 event 的 call 可能在那段空白里。`.trim()
               : jumpTooltip}
             onClick={(e) => { e.stopPropagation(); effectiveOnJump(); }}
-            className={auditGapped ? "hover:!bg-amber-700 transition-colors" : "hover:!bg-indigo-700 transition-colors"}
+            className={borderless ? "hover:opacity-80 transition-opacity" : (auditGapped ? "hover:!bg-amber-700 transition-colors" : "hover:!bg-indigo-700 transition-colors")}
             style={{
               display: "inline-flex", alignItems: "center", gap: 5,
               border: "none",
-              background: auditGapped ? "#d97706" : BRAND.indigo600,
-              color: "#fff", borderRadius: 4,
+              background: borderless ? "transparent" : (auditGapped ? "#d97706" : BRAND.indigo600),
+              color: borderless ? (auditGapped ? "#d97706" : BRAND.indigo600) : "#fff",
+              borderRadius: borderless ? 0 : 4,
               fontSize: 10, fontWeight: 700,
-              padding: "3px 9px",
+              padding: borderless ? "2px 4px" : "3px 9px",
               cursor: "pointer", lineHeight: 1.3,
               flexShrink: 0, whiteSpace: "nowrap",
-              transition: "background 0.12s",
-              boxShadow: auditGapped
+              transition: "background 0.12s, color 0.12s",
+              boxShadow: borderless ? "none" : (auditGapped
                 ? "0 1px 2px rgba(217,119,6,0.30)"
-                : "0 1px 2px rgba(79,70,229,0.25)",
+                : "0 1px 2px rgba(79,70,229,0.25)"),
               letterSpacing: "0.02em",
             }}
           >
@@ -350,14 +360,20 @@ export function EventUnitCard(props: EventUnitCardProps) {
             type="button"
             title={provenanceJump.tooltip}
             onClick={(e) => { e.stopPropagation(); provenanceJump.onClick(); }}
-            className="hover:!bg-indigo-700 transition-colors"
+            className={borderless ? "hover:opacity-80 transition-opacity" : "hover:!bg-indigo-700 transition-colors"}
             style={{
               display: "inline-flex", alignItems: "center", gap: 5,
-              border: "none", background: BRAND.indigo600, color: "#fff",
-              borderRadius: 4, fontSize: 10, fontWeight: 700,
-              padding: "3px 9px", cursor: "pointer", lineHeight: 1.3,
-              flexShrink: 0, whiteSpace: "nowrap", transition: "background 0.12s",
-              boxShadow: "0 1px 2px rgba(79,70,229,0.25)", letterSpacing: "0.02em",
+              border: "none",
+              background: borderless ? "transparent" : BRAND.indigo600,
+              color: borderless ? BRAND.indigo600 : "#fff",
+              borderRadius: borderless ? 0 : 4,
+              fontSize: 10, fontWeight: 700,
+              padding: borderless ? "2px 4px" : "3px 9px",
+              cursor: "pointer", lineHeight: 1.3,
+              flexShrink: 0, whiteSpace: "nowrap",
+              transition: "background 0.12s, color 0.12s",
+              boxShadow: borderless ? "none" : "0 1px 2px rgba(79,70,229,0.25)",
+              letterSpacing: "0.02em",
               marginLeft: 6,
             }}
           >
@@ -413,13 +429,13 @@ export function EventUnitCard(props: EventUnitCardProps) {
       {/* === META footer === */}
       {showExpanded && (coordinate || confidence || impact) && (
         <div style={{
-          padding: "5px 10px",
-          borderTop: "1px solid #f3f4f6",
-          fontSize: 9, color: "#6b7280",
+          padding: borderless ? "4px 0" : "5px 10px",
+          borderTop: borderless ? "none" : "1px solid #f3f4f6",
+          fontSize: 9, color: borderless ? "#9ca3af" : "#6b7280",
           display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center",
-          background: isPending ? "#fffdf2" : "#fcfcfc",
+          background: borderless ? "transparent" : (isPending ? "#fffdf2" : "#fcfcfc"),
         }}>
-          <span style={{ fontWeight: 700, color: "#9ca3af", letterSpacing: "0.04em" }}>META</span>
+          <span style={{ fontFamily: "'Outfit', sans-serif", fontWeight: 700, color: "#9ca3af", letterSpacing: "0.05em" }}>META</span>
           {coordinate && <CoordinateChips coordinate={coordinate} />}
           {impact && <ImpactChips impact={impact} />}
           {confidence && (

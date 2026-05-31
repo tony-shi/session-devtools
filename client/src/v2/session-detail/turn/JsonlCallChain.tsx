@@ -270,13 +270,21 @@ export function JsonlCallChain({
                     wired and hover-border removed — the chip is the only
                     interactive surface, no need to hint otherwise. */}
                 <div
-                  style={{ flex: 1, border: "1px solid #e5e7eb", borderRadius: 8, background: "#fff", overflow: "hidden" }}
+                  style={{
+                    flex: 1,
+                    background: "#f8fafc",
+                    border: "none",
+                    borderLeft: "3px solid #6366f1",
+                    borderRadius: "6px",
+                    padding: "8px 12px",
+                    overflow: "hidden"
+                  }}
                 >
                   {/* Header row — title / ctx / delta / 查看详情 button.
                       Every chip uses fontSize 10 + lineHeight 1 + matching
                       padding so the row height is governed by the title's
                       font metrics alone, not by any chip's borders. */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", borderBottom: "1px solid #f3f4f6" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 0 6px 0", borderBottom: "1px solid #e2e8f0", marginBottom: 8 }}>
                     <span
                       style={{ fontSize: 12, fontWeight: 700, color: "#111827", lineHeight: 1 }}
                       title={
@@ -304,17 +312,15 @@ export function JsonlCallChain({
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); onSelectCall(call); }}
-                            className="hover:bg-indigo-700 transition-colors"
+                            className="hover:opacity-80 transition-opacity"
                             style={{
                               marginLeft: "auto",
                               display: "inline-flex", alignItems: "center", gap: 5,
-                              border: "none", background: BRAND.indigo600, color: "#fff",
-                              borderRadius: 4,
-                              padding: "3px 9px", fontSize: 10, fontWeight: 700,
+                              border: "none", background: "transparent", color: BRAND.indigo600,
+                              padding: "2px 4px", fontSize: 10, fontWeight: 700,
                               lineHeight: 1.3, letterSpacing: "0.02em",
                               cursor: "pointer",
-                              boxShadow: "0 1px 2px rgba(79,70,229,0.25)",
-                              transition: "background 0.12s",
+                              transition: "color 0.12s, opacity 0.12s",
                             }}
                           >
                             <LinkIcon />
@@ -336,7 +342,7 @@ export function JsonlCallChain({
                       "context growth since previous call" which conflates
                       cache-loaded content with truly new tokens and would
                       mismatch the Call header's value. */}
-                  <div style={{ padding: "8px 12px 9px" }}>
+                  <div style={{ padding: "4px 0 8px 0" }}>
                     <CallLedger
                       size="compact"
                       maxTotal={maxCallTotal}
@@ -348,34 +354,34 @@ export function JsonlCallChain({
                   </div>
 
                   {/* Assistant text */}
-	                  {call.assistantText && !hideAssistantTextAsFinal && (
-	                    <div style={{ padding: "0 12px 7px" }}>
-	                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", marginBottom: 2, letterSpacing: "0.04em" }}>{t("terms.assistantResponseText").toUpperCase()}</div>
-	                      <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, background: "#f9fafb", borderRadius: 6, padding: "5px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
-	                        {call.assistantText}
-	                      </div>
-	                    </div>
-	                  )}
+                  {call.assistantText && !hideAssistantTextAsFinal && (
+                    <div style={{ padding: "0 0 8px 0" }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "#9ca3af", marginBottom: 2, letterSpacing: "0.04em" }}>{t("terms.assistantResponseText").toUpperCase()}</div>
+                      <div style={{ fontSize: 11, color: "#374151", lineHeight: 1.55, background: "#f9fafb", borderRadius: 6, padding: "5px 8px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
+                        {call.assistantText}
+                      </div>
+                    </div>
+                  )}
 
-		                  {/* tool_use blocks are part of this assistant response. Sub-agent
-		                      executions are rendered below as derived JSONL events. */}
-		                  {call.toolCalls.length > 0 && (
-	                    <div style={{ padding: "0 12px 7px" }}>
-	                      <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, letterSpacing: "0.04em", fontWeight: 700 }}>
-	                        {t("terms.toolUseRequests", { count: call.toolCalls.length })}
-	                      </div>
-	                      {call.toolCalls.map((tc, ti) => (
-	                        <ToolCallRow
-	                          key={tc.toolUseId || ti}
-	                          tc={tc}
-	                          callId={call.id}
-	                          active={activeToolUseId === tc.toolUseId}
-	                          onHoverToolUse={setActiveToolUseId}
-	                        />
-	                      ))}
-	                    </div>
-	                  )}
-	                </div>
+                  {/* tool_use blocks are part of this assistant response. Sub-agent
+                      executions are rendered below as derived JSONL events. */}
+                  {call.toolCalls.length > 0 && (
+                    <div style={{ padding: "0 0 4px 0" }}>
+                      <div style={{ fontSize: 9, color: "#9ca3af", marginBottom: 3, letterSpacing: "0.04em", fontWeight: 700 }}>
+                        {t("terms.toolUseRequests", { count: call.toolCalls.length })}
+                      </div>
+                      {call.toolCalls.map((tc, ti) => (
+                        <ToolCallRow
+                          key={tc.toolUseId || ti}
+                          tc={tc}
+                          callId={call.id}
+                          active={activeToolUseId === tc.toolUseId}
+                          onHoverToolUse={setActiveToolUseId}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
 	              </div>
 
 	              {/* ── Sub-agent JSONL events derived from Agent tool_use ───
@@ -414,11 +420,9 @@ export function JsonlCallChain({
                         style={{
                           width: "100%",
                           marginBottom: 4,
-                          border: `1px solid ${branchColor}`,
-                          borderLeftWidth: 3,
-                          borderRadius: 6,
-                          background: active ? "#fff7ed" : "#fafafe",
-                          boxShadow: active ? "0 0 0 2px rgba(245,158,11,0.14)" : "none",
+                          border: "none",
+                          borderLeft: `3px solid ${branchColor}`,
+                          background: active ? "#fff7ed" : "transparent",
                           overflow: "hidden",
                         }}
                       >
@@ -427,8 +431,8 @@ export function JsonlCallChain({
                             content below is always fully shown. */}
                         <div style={{
                           display: "flex", alignItems: "center", gap: 6,
-                          padding: "5px 9px",
-                          borderBottom: (sa.description || sa.resultPreview) ? "1px solid #f3f4f6" : "none",
+                          padding: "5px 4px",
+                          borderBottom: "none",
                         }}>
                           <span style={{ fontSize: 10, fontWeight: 700, color: BRAND.indigo700 }}>{sa.agentType}</span>
                           <span style={{ fontSize: 9, color: BRAND.indigo500 }}>{sa.llmCallCount}c · {sa.toolCallCount}t · {fmtDuration(sa.durationMs)}</span>
@@ -462,16 +466,15 @@ export function JsonlCallChain({
                                 type="button"
                                 onClick={() => onSubAgentClick(sa)}
                                 title={t("sessionOverview.subAgent.viewSubAgentDetailTooltip", { agentType: sa.agentType })}
-                                className="hover:bg-violet-700 transition-colors"
+                                className="hover:opacity-80 transition-opacity"
                                 style={{
                                   display: "inline-flex", alignItems: "center", gap: 5,
-                                  border: "none", background: BRAND.violet600, color: "#fff",
-                                  borderRadius: 4, padding: "3px 9px",
+                                  border: "none", background: "transparent", color: BRAND.violet600,
+                                  padding: "2px 4px",
                                   fontSize: 10, fontWeight: 700, lineHeight: 1.3,
                                   letterSpacing: "0.02em",
                                   cursor: "pointer", whiteSpace: "nowrap",
-                                  boxShadow: "0 1px 2px rgba(124,58,237,0.25)",
-                                  transition: "background 0.12s",
+                                  transition: "color 0.12s, opacity 0.12s",
                                 }}
                               >
                                 <ForwardArrowIcon />
@@ -492,16 +495,15 @@ export function JsonlCallChain({
                                     lineIdx != null ? { lineIdx } : undefined);
                                 }}
                                 title={t("sessionOverview.subAgent.jumpToConsumerTooltip", { callId: consumerCall.id })}
-                                className="hover:bg-blue-700 transition-colors"
+                                className="hover:opacity-80 transition-opacity"
                                 style={{
                                   display: "inline-flex", alignItems: "center", gap: 5,
-                                  border: "none", background: BRAND.blue600, color: "#fff",
-                                  borderRadius: 4, padding: "3px 9px",
+                                  border: "none", background: "transparent", color: BRAND.blue600,
+                                  padding: "2px 4px",
                                   fontSize: 10, fontWeight: 700, lineHeight: 1.3,
                                   letterSpacing: "0.02em",
                                   cursor: "pointer", whiteSpace: "nowrap",
-                                  boxShadow: "0 1px 2px rgba(37,99,235,0.25)",
-                                  transition: "background 0.12s",
+                                  transition: "color 0.12s, opacity 0.12s",
                                 }}
                               >
                                 <LinkIcon />
@@ -515,7 +517,7 @@ export function JsonlCallChain({
                             Collapsed (default): each block is one-line ellipsis.
                             Expanded: full text, no maxHeight cap, no slice. */}
                         {hasBodyContent && (
-                          <div style={{ padding: "5px 9px", display: "flex", flexDirection: "column", gap: 3 }}>
+                          <div style={{ padding: "4px 4px 6px 4px", display: "flex", flexDirection: "column", gap: 3 }}>
                             {sa.description && (
                               <div style={{
                                 fontSize: 10, color: "#6b7280",

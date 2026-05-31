@@ -13,6 +13,14 @@ import { BRAND } from "../../shared/brand";
 import { EventUnitCard, LinkIcon } from "../../shared/EventUnitCard";
 import { useAttributionGraph } from "../../attribution-graph-context";
 
+const CORE_EVENT_KINDS = new Set<string>([
+  "user:tool_result",
+  "user:command",
+  "system:local_command",
+  "user:skill_injection",
+  "user:human",
+]);
+
 export function ChainNarrativeNode({
   kind, label, text, meta, lineIdx,
 }: {
@@ -59,7 +67,13 @@ export function ChainNarrativeNode({
             background: tone.dot, boxShadow: `0 0 0 2px ${tone.border}`,
           }} />
         </div>
-        <div style={{ flex: 1, border: `1px solid ${tone.border}`, borderRadius: 8, background: tone.bg, padding: "8px 12px" }}>
+        <div style={{
+          flex: 1,
+          border: "none",
+          borderLeft: kind === "interrupt" ? `3px dashed ${tone.dot}` : `3px solid ${tone.dot}`,
+          padding: "4px 0 4px 12px",
+          background: "transparent",
+        }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
             <span style={{ fontSize: 10, fontWeight: 800, color: tone.fg, letterSpacing: "0.05em", textTransform: "uppercase" }}>{label}</span>
             {meta && <span style={{ fontSize: 10, color: "#94a3b8" }}>{meta}</span>}
@@ -68,16 +82,15 @@ export function ChainNarrativeNode({
                 type="button"
                 onClick={handleJump}
                 title={`打开 call #${jumpTarget} 的 Request 视图，自动定位这条 user_input 对应的 leaf`}
-                className="hover:bg-indigo-700 transition-colors"
+                className="hover:opacity-80 transition-opacity"
                 style={{
                   marginLeft: "auto",
                   display: "inline-flex", alignItems: "center", gap: 5,
-                  border: "none", background: BRAND.indigo600, color: "#fff",
-                  borderRadius: 4, padding: "3px 9px",
+                  border: "none", background: "transparent", color: BRAND.indigo600,
+                  padding: "2px 4px",
                   fontSize: 10, fontWeight: 700, lineHeight: 1.3,
                   cursor: "pointer",
-                  boxShadow: "0 1px 2px rgba(79,70,229,0.25)",
-                  transition: "background 0.12s",
+                  transition: "color 0.12s, opacity 0.12s",
                   letterSpacing: "0.02em",
                 }}
               >
@@ -147,28 +160,25 @@ export function ToolCallRow({
   // Skill 工具结构化参数：input schema 已被 cli.js 定为 { skill: string, args?: string }
   // （SkillTool.ts:291 zod schema 固定）—— LLM 不能传其他字段，所以解析永远安全。
   // 解析失败时 fallback 到通用 INPUT 渲染（保险，不破坏其他工具）。
-  const skillRequest: { preview: string; segments: { label: string; content: string; monospace: boolean }[] } | undefined = (() => {
+  const skillRequest: { preview: string; segments: { label: string; content: string; monospace: boolean; rawJson?: unknown }[] } | undefined = (() => {
     if (tc.name !== "Skill") return undefined;
     try {
       const obj = JSON.parse(tc.inputPreview) as { skill?: string; args?: string };
       if (typeof obj.skill !== "string") return undefined;
-      const segments: { label: string; content: string; monospace: boolean }[] = [
-        {
-          label: "",
-          content: t("skillInvocation.requestLoad", { skill: obj.skill }),
-          monospace: false,
-        },
-      ];
+      let content = t("skillInvocation.requestLoad", { skill: obj.skill });
       if (typeof obj.args === "string" && obj.args.length > 0) {
-        segments.push({
-          label: "",
-          content: t("skillInvocation.argsLabel", { args: obj.args }),
-          monospace: false,
-        });
+        content += "\n" + t("skillInvocation.argsLabel", { args: obj.args });
       }
       return {
         preview: t("skillInvocation.requestLoad", { skill: obj.skill }),
-        segments,
+        segments: [
+          {
+            label: "INPUT",
+            content,
+            monospace: false,
+            rawJson: obj,
+          },
+        ],
       };
     } catch {
       return undefined;
@@ -180,12 +190,12 @@ export function ToolCallRow({
       data-tool-use-id={tc.toolUseId}
       style={{
         marginBottom: 3,
-        borderRadius: 6,
         boxShadow: isFlashing ? "0 0 0 3px rgba(245,158,11,0.45)" : "none",
         transition: "box-shadow 350ms ease",
       }}
     >
       <EventUnitCard
+        borderless={true}
         // dot color is the *event type* (Tool Use = orange), not the tool's
         // individual chip color — tool identity is conveyed by the `title`
         // chip + tool name text. This keeps the type-color visual anchor
@@ -202,20 +212,40 @@ export function ToolCallRow({
         description={skillRequest?.preview ?? description}
         segments={
           skillRequest
-            // Skill 工具：把 INPUT raw JSON 替换为结构化两行展示
-            //   请求加载 SKILL: {skill}
-            //   args: {args}    （没有 args 时不显示）
-            // 用户的关注点是"请求做什么"，不是 wire JSON 长什么样。
             ? skillRequest.segments
             : tc.inputPreview
               ? [
-                  {
-                    label: "INPUT", content: tc.inputPreview,
-                    monospace: true, truncateAt: 600,
-                    // 不在这里提供"原始 JSON" tab —— 左侧是事件流派生 view（来自 parser
-                    // 加工后的 ToolCallSlot.inputPreview，已被截到 300 字符）。要看真正
-                    // 的原始 wire response，请用 jump chip 跳到右侧 ResponseTreePanel。
-                  },
+                  (() => {
+                    const parsedInput = (() => {
+                      try { return JSON.parse(tc.inputPreview); } catch { return undefined; }
+                    })();
+                    if (parsedInput && typeof parsedInput === "object") {
+                      if (tc.name === "Bash" && typeof parsedInput.command === "string") {
+                        return {
+                          label: "INPUT",
+                          content: parsedInput.command,
+                          monospace: true,
+                          rawJson: parsedInput,
+                        };
+                      }
+                      const strippedInput = { ...parsedInput } as Record<string, unknown>;
+                      delete strippedInput.description;
+                      return {
+                        label: "INPUT",
+                        content: Object.keys(strippedInput).length > 0
+                          ? JSON.stringify(strippedInput, null, 2)
+                          : "",
+                        monospace: true,
+                        rawJson: parsedInput,
+                      };
+                    }
+                    return {
+                      label: "INPUT",
+                      content: tc.inputPreview,
+                      monospace: true,
+                      truncateAt: 600,
+                    };
+                  })()
                 ]
               : []
         }
@@ -465,12 +495,37 @@ export function IntervalEventRow({
   // （provenanceJump，不受 EventUnitCard 的 skipped 门控影响）。
   const linkedProxyId = ev.generatedByProxyRequestId;
 
+  if (!CORE_EVENT_KINDS.has(ev.kind)) {
+    const timestampStr = ev.timestamp ? ev.timestamp.slice(11, 19) : "";
+    const cleanPreview = ev.contentPreview ? ev.contentPreview.replace(/[\r\n\t]+/g, " ").slice(0, 160) : "";
+    return (
+      <div
+        data-jsonl-line={ev.lineIdx}
+        style={{
+          fontSize: 10,
+          color: "#9ca3af",
+          padding: "4px 8px 4px 12px",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          lineHeight: 1.4,
+          boxShadow: isFlashing ? "0 0 0 3px rgba(245,158,11,0.45)" : "none",
+          transition: "box-shadow 350ms ease",
+        }}
+      >
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#cbd5e1" }} />
+        <span style={{ fontWeight: 600, color: "#6b7280" }}>{effectiveKindLabel}</span>
+        {cleanPreview && <span style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", flex: 1 }}>{cleanPreview}</span>}
+        {timestampStr && <span style={{ marginLeft: "auto", flexShrink: 0, fontSize: 9, color: "#cbd5e1" }}>{timestampStr}</span>}
+      </div>
+    );
+  }
+
   return (
     <div
       data-jsonl-line={ev.lineIdx}
       style={{
         marginBottom: 2,
-        borderRadius: 6,
         // Flash outline driven by AttributionGraphContext.flashEvent —
         // lights up for ~2s when a reverse-jump (Call leaf → Turn view)
         // targets this row's jsonl line.
@@ -479,6 +534,7 @@ export function IntervalEventRow({
       }}
     >
       <EventUnitCard
+        borderless={true}
         color={col.fg}
         bg={col.bg}
         border={col.border}

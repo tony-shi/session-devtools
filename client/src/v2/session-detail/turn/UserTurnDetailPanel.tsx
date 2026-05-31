@@ -280,28 +280,17 @@ export function UserTurnDetailPanel({
           Click on any cell or line marker jumps to the corresponding Call
           card via the anchor `turn-${turn.id}-call-${callId}`. */}
       {!noTools && (
-        <div id={minimapAnchorId} style={{ ...cardStyle, scrollMarginTop: 16 }}>
-          <div style={cardTitleStyle}>
-            <span>{t("terms.callMinimap")}</span>
-            <button
-              onClick={() => setMinimapOpen(v => !v)}
-              style={{ fontSize: 10, color: "#9ca3af", background: "none", border: "none", cursor: "pointer", padding: "0 4px", lineHeight: 1, textTransform: "none", fontWeight: 500, letterSpacing: "normal" }}
-            >
-              {minimapOpen ? t("terms.hide") : t("terms.show")}
-            </button>
-          </div>
-          {minimapOpen && (
-            <TurnMinimap
-              turn={enrichedTurn}
-              onSelectCall={id => {
-                // Click on a heatmap cell / context line column → scroll the
-                // corresponding LLM Call card into view. The anchor id is
-                // produced by ChainView when rendering each call row.
-                const anchor = document.getElementById(`turn-${turn.id}-call-${id}`);
-                anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
-            />
-          )}
+        <div id={minimapAnchorId} style={{ scrollMarginTop: 16, marginBottom: 20 }}>
+          <TurnMinimap
+            turn={enrichedTurn}
+            onSelectCall={id => {
+              // Click on a heatmap cell / context line column → scroll the
+              // corresponding LLM Call card into view. The anchor id is
+              // produced by ChainView when rendering each call row.
+              const anchor = document.getElementById(`turn-${turn.id}-call-${id}`);
+              anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          />
         </div>
       )}
 
