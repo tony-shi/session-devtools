@@ -97,6 +97,8 @@ export interface SegmentAttribution {
 export interface SegmentAttributionPayload {
   /** rule = claude-code.messages.skill-listing.v1 命中时填充。 */
   skillListing?: import("../../rules/skill-listing-parser").SkillListingPayload;
+  /** rule = claude-code.messages.user-context.v2 命中时填充。 */
+  userContext?: import("../../rules/user-context-parser").UserContextPayload;
 }
 
 // ── AttributionCoverage：字符级桶统计 ───────────────────────────────────────

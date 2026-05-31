@@ -10,6 +10,7 @@ import type { Confidence, SegmentCategory } from "../../types";
 import type { ContextRule } from "../../rules/context-rule-registry";
 import { parseCcVersion } from "../../version";
 import { parseSkillListingBody } from "../../rules/skill-listing-parser";
+import { parseUserContextBody } from "../../rules/user-context-parser";
 import type { SegmentNode } from "../types";
 import type { RuleEvaluation } from "./rule-evaluator";
 import type { RuleOrigin, DynamicFieldWithEvidence } from "./origin";
@@ -31,22 +32,43 @@ const SKILL_LISTING_RULE_IDS = new Set([
   "claude-code.messages.skill-listing.v2",
 ]);
 
+// user-context (claudeMd/记忆/邮箱/日期) 二次解析 rule 白名单。
+// 命中时 resolver 调 parseUserContextBody，把 5 个命名捕获整理成结构化子段 +
+// 把 projectInstructions 拆成逐个项目指令文件，挂到 SegmentAttribution.payload.userContext。
+const USER_CONTEXT_RULE_IDS = new Set([
+  "claude-code.messages.user-context.v2",
+]);
+
 function buildPayload(
   rule: ContextRule,
   evaluation: RuleEvaluation,
   node: SegmentNode,
 ): SegmentAttributionPayload | undefined {
-  if (!SKILL_LISTING_RULE_IDS.has(rule.ruleId)) return undefined;
+  if (SKILL_LISTING_RULE_IDS.has(rule.ruleId)) {
+    // 取 (?<skillsBlock>...) 的捕获值与 segment 内偏移。
+    // 缺失任何一个都返回 undefined（rule 命中但 group 缺失，理论不会发生；防御性）。
+    const block = evaluation.dynamicFields?.find(f => f.name === "skillsBlock");
+    if (!block) return undefined;
 
-  // 取 (?<skillsBlock>...) 的捕获值与 segment 内偏移。
-  // 缺失任何一个都返回 undefined（rule 命中但 group 缺失，理论不会发生；防御性）。
-  const block = evaluation.dynamicFields?.find(f => f.name === "skillsBlock");
-  if (!block) return undefined;
+    const body = node.rawText.slice(block.charStart, block.charEnd);
+    return {
+      skillListing: parseSkillListingBody(body, block.charStart),
+    };
+  }
 
-  const body = node.rawText.slice(block.charStart, block.charEnd);
-  return {
-    skillListing: parseSkillListingBody(body, block.charStart),
-  };
+  if (USER_CONTEXT_RULE_IDS.has(rule.ruleId)) {
+    // 5 个命名捕获（projectInstructions/memoryPath/memoryContents/userEmail/currentDate）
+    // 各带 segment 内绝对偏移；parser 用 node.rawText slice 取完整正文做结构化。
+    const caps = (evaluation.dynamicFields ?? []).map(f => ({
+      name: f.name,
+      charStart: f.charStart,
+      charEnd: f.charEnd,
+    }));
+    const userContext = parseUserContextBody(node.rawText, caps);
+    return userContext ? { userContext } : undefined;
+  }
+
+  return undefined;
 }
 
 function fullRange(node: SegmentNode): CharRange | undefined {
