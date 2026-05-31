@@ -407,7 +407,7 @@ export function EventUnitCard(props: EventUnitCardProps) {
           carries the human intent string ("List top-level entries") which
           is much more scannable than the raw input JSON. Indented to align
           with the kind label. */}
-      {description && (
+      {showExpanded && description && (
         <div style={{
           padding: compact ? "0 8px 4px 8px" : "0 10px 5px 10px",
           fontSize: 11, color: "#6b7280",

@@ -49,6 +49,14 @@ export interface FisheyeStripProps<T extends FisheyeItem> {
   // ─── 视觉装饰（业务注入） ────────────────────────────
   /** 必传：每个 item 的颜色 */
   getColor: (item: T) => string;
+  /** 可选：每个 item 的边框样式 (例如 "1px solid #ff0000") */
+  getBorderStyle?: (item: T) => string | null;
+  /** 可选：边框或背景之上的局部指示线方向 (top = 顶边细线, left = 左侧边界) */
+  getIndicatorLine?: (item: T) => "top" | "left" | null;
+  /** 可选：指示线的具体颜色。若不指定，指示线将使用 marker 色或 getColor() 进行深色处理 */
+  getIndicatorColor?: (item: T) => string | null;
+  /** 可选：条带底色上的特殊斜纹/点状纹理 */
+  getTextureType?: (item: T) => "stripes" | "dots" | "none" | null;
   /** 可选：bar 内部 label 文本（容得下时显示） */
   getLabel?: (item: T) => string;
   /** 可选：tooltip 文本 */

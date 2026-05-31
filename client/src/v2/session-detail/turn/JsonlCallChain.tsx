@@ -553,8 +553,14 @@ export function JsonlCallChain({
                     <div style={{ fontSize: 9, color: "#c4c9d4", fontWeight: 700, letterSpacing: "0.04em", margin: "0 0 3px 8px" }}>
                       {t("terms.jsonlEventGraph")}
                     </div>
-	                  {visibleIntervals.map((ev, ei) => (
-	                    ev.commandGroup ? (
+	                  {visibleIntervals.map((ev, ei) => {
+	                    const matchedToolCall = (() => {
+	                      if (ev.kind !== "user:tool_result") return undefined;
+	                      const ids = toolUseIdsFromIntervalEvent(ev);
+	                      if (ids.length === 0) return undefined;
+	                      return call.toolCalls.find(tc => ids.includes(tc.toolUseId));
+	                    })();
+	                    return ev.commandGroup ? (
 	                      <CommandGroupCard
 	                        key={`${ev.lineIdx}-${ei}`}
 	                        ev={ev}
@@ -569,9 +575,10 @@ export function JsonlCallChain({
 	                        producingCallId={call.id}
 	                        activeToolUseId={activeToolUseId}
 	                        onHoverToolUse={setActiveToolUseId}
+	                        toolCall={matchedToolCall}
 	                      />
-	                    )
-	                  ))}
+	                    );
+	                  })}
 	                </div>
 	              )}
 

@@ -77,6 +77,10 @@ export interface SectionStyle {
   rowBg: string;
   marker: string;
   textColor: string;
+  // Options for advanced visual encoding (Option C)
+  borderStyle?: string;
+  indicatorLine?: "top" | "left" | null;
+  texture?: "stripes" | "dots" | "none" | null;
 }
 
 export const sectionPalette: Record<"system" | "tools" | "messages" | "other", SectionStyle> = {
@@ -100,10 +104,10 @@ export const rolePalette: Record<RoleId, SectionStyle> = {
   "messages.injection":  { label: "注入·事件", barBg: "#ea580c", barText: "#fff", rowBg: "#fff7ed", marker: "#ea580c", textColor: "#c2410c" },
   "messages.human":      { label: "用户输入", barBg: "#6d28d9", barText: "#fff", rowBg: "#f5f3ff", marker: "#6d28d9", textColor: "#6d28d9" },
   "messages.image":      { label: "图片输入", barBg: "#6d28d9", barText: "#fff", rowBg: "#f5f3ff", marker: "#6d28d9", textColor: "#6d28d9" },
-  "messages.thinking":   { label: "思考",     barBg: "#7c3aed", barText: "#fff", rowBg: "#f5f3ff", marker: "#7c3aed", textColor: "#7c3aed" },
+  "messages.thinking":   { label: "思考",     barBg: "#7c3aed", barText: "#fff", rowBg: "#f5f3ff", marker: "#7c3aed", textColor: "#7c3aed", indicatorLine: "top" },
   "messages.assistant":  { label: "AI 回复",   barBg: "#a78bfa", barText: "#fff", rowBg: "#f5f3ff", marker: "#a78bfa", textColor: "#a78bfa" },
-  "messages.tool-use":   { label: "工具调用", barBg: "#8b5cf6", barText: "#fff", rowBg: "#f5f3ff", marker: "#8b5cf6", textColor: "#7c3aed" },
-  "messages.tool-result":{ label: "工具结果", barBg: "#c4b5fd", barText: "#1f2937", rowBg: "#f5f3ff", marker: "#c4b5fd", textColor: "#7c3aed" },
+  "messages.tool-use":   { label: "工具调用", barBg: "#8b5cf6", barText: "#fff", rowBg: "#f5f3ff", marker: "#8b5cf6", textColor: "#7c3aed", indicatorLine: "left" },
+  "messages.tool-result":{ label: "工具结果", barBg: "#f3e8ff", barText: "#1f2937", rowBg: "#f5f3ff", marker: "#c4b5fd", textColor: "#7c3aed", borderStyle: "1px solid #c4b5fd", texture: "stripes" },
   "messages.misc":       { label: "其他",     barBg: "#6b7280", barText: "#374151", rowBg: "#fafafa", marker: "#6b7280", textColor: "#6b7280" },
   "other.unknown":      { label: "未识别",   barBg: "#9ca3af", barText: "#374151", rowBg: "#fafafa", marker: "#9ca3af", textColor: "#9ca3af" },
 };

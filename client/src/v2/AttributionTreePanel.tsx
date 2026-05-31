@@ -412,6 +412,7 @@ const OVERLOAD_MIN_BAR_PX = 1.5;
 
 export function LeafStrip({
   leaves, selectedId, onSelect, getColor, getUnderlineColor,
+  getBorderStyle, getIndicatorLine, getIndicatorColor, getTextureType,
 }: {
   leaves: LeafLite[];
   selectedId: string | null;
@@ -422,6 +423,10 @@ export function LeafStrip({
   /** Optional — return underline color for the leaf bar (Diff lens uses this:
    *  add 绿 / modify 黄). null = no underline. Bar 本身不变。 */
   getUnderlineColor?: (leaf: LeafLite) => string | null;
+  getBorderStyle?: (leaf: LeafLite) => string | null;
+  getIndicatorLine?: (leaf: LeafLite) => "top" | "left" | null;
+  getIndicatorColor?: (leaf: LeafLite) => string | null;
+  getTextureType?: (leaf: LeafLite) => "stripes" | "dots" | "none" | null;
 }) {
   const { t } = useTranslation();
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("proportional");
@@ -474,6 +479,10 @@ export function LeafStrip({
         items={items}
         getColor={(it) => getColor ? getColor(it.leaf) : leafFill(it.leaf)}
         getUnderlineColor={getUnderlineColor ? (it) => getUnderlineColor(it.leaf) : undefined}
+        getBorderStyle={(it) => getBorderStyle ? getBorderStyle(it.leaf) : (rolePalette[roleOf(it.leaf)]?.borderStyle ?? null)}
+        getIndicatorLine={(it) => getIndicatorLine ? getIndicatorLine(it.leaf) : (rolePalette[roleOf(it.leaf)]?.indicatorLine ?? null)}
+        getIndicatorColor={(it) => getIndicatorColor ? getIndicatorColor(it.leaf) : (rolePalette[roleOf(it.leaf)]?.marker ?? null)}
+        getTextureType={(it) => getTextureType ? getTextureType(it.leaf) : (rolePalette[roleOf(it.leaf)]?.texture ?? null)}
         getLabel={(it) => {
           const sl = it.leaf.origin.kind === "rule" ? it.leaf.origin.payload?.skillListing : undefined;
           return sl ? t("skillListing.title") : leafLabel(it.leaf);

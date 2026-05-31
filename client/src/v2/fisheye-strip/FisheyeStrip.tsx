@@ -76,6 +76,10 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
   const {
     items,
     getColor,
+    getBorderStyle,
+    getIndicatorLine,
+    getIndicatorColor,
+    getTextureType,
     getLabel,
     getTitle,
     getMarker,
@@ -209,6 +213,22 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
           ? getTitle(item)
           : `${label || item.id} · size ${item.size}${isCollapsed ? " · BROKEN (click to expand)" : ""}`;
 
+        const borderStyle = getBorderStyle ? getBorderStyle(item) : null;
+        const indicatorLine = getIndicatorLine ? getIndicatorLine(item) : null;
+        const indicatorColor = getIndicatorColor ? getIndicatorColor(item) : null;
+        const textureType = getTextureType ? getTextureType(item) : null;
+
+        const showTexture = textureType && textureType !== "none" && w >= 8;
+        const showBorder = borderStyle && w >= 6;
+        const showIndicator = indicatorLine && w >= 4;
+
+        const stripeColor = (indicatorColor || color).startsWith("#")
+          ? `${(indicatorColor || color)}1e`
+          : "rgba(0,0,0,0.06)";
+        const backgroundImage = showTexture && textureType === "stripes"
+          ? `repeating-linear-gradient(45deg, transparent, transparent 4px, ${stripeColor} 4px, ${stripeColor} 8px)`
+          : "none";
+
         const innerHeight = barInnerHeight;
         // label 按实时段宽决定显示 — 鱼眼 / 等宽下，宽段都能显示 label
         // dim 状态下不渲染文字（intensity 0），避免视觉噪声
@@ -228,9 +248,11 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
               left, width: w,
               top: 2, height: barInnerHeight,
               backgroundColor: isCollapsed ? "transparent" : color,
+              backgroundImage,
               opacity,
               filter,
-              border: "none",
+              boxSizing: "border-box",
+              border: showBorder && borderStyle ? borderStyle : "none",
               borderRadius: isCollapsed ? 0 : 3,
               outline: isSelected ? "2px solid #4338ca" : "none",
               outlineOffset: -2,
@@ -238,13 +260,23 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
                 const marker = getMarker ? getMarker(item) : null;
                 const hoverShadow = intensity === 2 && !isSelected
                   ? "0 0 0 1px rgba(67,56,202,0.45) inset" : "";
-                if (marker) {
-                  // 右侧 4px 实色 inset（不影响 layout / 鱼眼计算），强调"这个 element
-                  // 是 pin 命中点"。视觉权重明显高于普通 hover 描边。
-                  const markerShadow = `inset -4px 0 0 0 ${marker}`;
-                  return hoverShadow ? `${markerShadow}, ${hoverShadow}` : markerShadow;
+                
+                const shadows: string[] = [];
+                if (showIndicator && indicatorLine === "left") {
+                  shadows.push(`inset 3px 0 0 0 ${indicatorColor || color}`);
+                } else if (showIndicator && indicatorLine === "top") {
+                  shadows.push(`inset 0 2px 0 0 ${indicatorColor || color}`);
                 }
-                return hoverShadow || "none";
+
+                if (marker) {
+                  shadows.push(`inset -4px 0 0 0 ${marker}`);
+                }
+
+                if (hoverShadow) {
+                  shadows.push(hoverShadow);
+                }
+
+                return shadows.length > 0 ? shadows.join(", ") : "none";
               })(),
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 10, color: labelColor, fontWeight,

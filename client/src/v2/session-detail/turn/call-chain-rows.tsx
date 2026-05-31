@@ -365,22 +365,14 @@ function parseCommandEnvelope(ev: IntervalEvent, t: any): {
 }
 // ── IntervalEventRow: non-tool JSONL events between calls ─────────────────────
 export function IntervalEventRow({
-  ev, activeToolUseId, onHoverToolUse, suppressPendingState = false,
+  ev, activeToolUseId, onHoverToolUse, suppressPendingState = false, producingCallId, toolCall,
 }: {
   ev: IntervalEvent;
-  /**
-   * The call this event belongs to in the JSONL stream (i.e. the call whose
-   * `intervalEvents` array contains it). For `user:tool_result` rows this
-   * is the call that *emitted* the tool_use → its response holds the block
-   * we want to back-link to. Undefined for events without a parent call
-   * scope (e.g. inter-turn renders).
-   */
   producingCallId?: number;
   activeToolUseId: string | null;
   onHoverToolUse: (id: string | null) => void;
-  /** 抑制"暂未消费"逐条徽章 —— 调用方（trailing InterTurnBlock）已用块级文案
-   *  说明 session 结束所以无人消费，行内重复反而误导。 */
   suppressPendingState?: boolean;
+  toolCall?: ToolCallSlot;
 }) {
   const { t } = useTranslation();
   const col = KIND_COLOR[ev.kind];
@@ -549,6 +541,39 @@ export function IntervalEventRow({
     );
   }
 
+  const inputSegment = (() => {
+    if (!toolCall || !toolCall.inputPreview) return null;
+    const parsedInput = (() => {
+      try { return JSON.parse(toolCall.inputPreview); } catch { return undefined; }
+    })();
+    if (parsedInput && typeof parsedInput === "object") {
+      if (toolCall.name === "Bash" && typeof parsedInput.command === "string") {
+        return {
+          label: "INPUT",
+          content: parsedInput.command,
+          monospace: true,
+          rawJson: parsedInput,
+        };
+      }
+      const strippedInput = { ...parsedInput } as Record<string, unknown>;
+      delete strippedInput.description;
+      return {
+        label: "INPUT",
+        content: Object.keys(strippedInput).length > 0
+          ? JSON.stringify(strippedInput, null, 2)
+          : "",
+        monospace: true,
+        rawJson: parsedInput,
+      };
+    }
+    return {
+      label: "INPUT",
+      content: toolCall.inputPreview,
+      monospace: true,
+      truncateAt: 600,
+    };
+  })();
+
   return (
     <div
       data-jsonl-line={ev.lineIdx}
@@ -573,6 +598,7 @@ export function IntervalEventRow({
         preview={skillFormat?.preview ?? commandFormat?.preview ?? ev.contentPreview.slice(0, 120)}
         defaultExpanded={skillFormat ? skillFormat.defaultExpanded : undefined}
         segments={[
+          ...(inputSegment ? [inputSegment] : []),
           {
             label: skillFormat
               ? skillFormat.segmentLabel

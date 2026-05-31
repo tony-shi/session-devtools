@@ -30,6 +30,7 @@ import {
   LeafStrip,
   LeafTable,
   SelectedDetail,
+  roleOf,
   type LeafLite,
   type LeafItem,
   type SectionId,
@@ -54,6 +55,7 @@ import {
   type IntentGroupId,
   ROLE_TO_GROUP,
   type RoleId,
+  rolePalette,
 } from "./lens-palette";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -526,6 +528,7 @@ function MainSectionBar({
   selectedSection, onSelectSection,
   selectedLeafId, onSelectLeaf,
   leafColor, leafUnderline, isDimmed,
+  leafBorderStyle, leafIndicatorLine, leafIndicatorColor, leafTextureType,
 }: {
   sections: SectionStat[];
   totalChars: number;
@@ -536,6 +539,10 @@ function MainSectionBar({
   leafColor: (leaf: LeafLite) => string;
   leafUnderline?: (leaf: LeafLite) => string | null;
   isDimmed?: (leaf: LeafLite) => boolean;
+  leafBorderStyle?: (leaf: LeafLite) => string | null;
+  leafIndicatorLine?: (leaf: LeafLite) => "top" | "left" | null;
+  leafIndicatorColor?: (leaf: LeafLite) => string | null;
+  leafTextureType?: (leaf: LeafLite) => "stripes" | "dots" | "none" | null;
 }) {
   const { t } = useTranslation();
   if (totalChars === 0) return null;
@@ -613,6 +620,10 @@ function MainSectionBar({
                   getColor={(it) => leafColor(it.leaf)}
                   getUnderlineColor={leafUnderline ? (it) => leafUnderline(it.leaf) : undefined}
                   getDimmed={isDimmed ? (it) => isDimmed(it.leaf) : undefined}
+                  getBorderStyle={leafBorderStyle ? (it) => leafBorderStyle(it.leaf) : undefined}
+                  getIndicatorLine={leafIndicatorLine ? (it) => leafIndicatorLine(it.leaf) : undefined}
+                  getIndicatorColor={leafIndicatorColor ? (it) => leafIndicatorColor(it.leaf) : undefined}
+                  getTextureType={leafTextureType ? (it) => leafTextureType(it.leaf) : undefined}
                   getLabel={(it) => leafLabel(it.leaf)}
                   getTitle={(it) => `${leafLabel(it.leaf)} · ${fmtK(it.leaf.charCount)} chars`}
                   height={MAIN_BAR_LEAF_HEIGHT}
@@ -1057,6 +1068,34 @@ export function AttributionTreeLensPanel({
     return (leaf: LeafLite) => diffUnderlineFor(leaf.diffKind ?? null);
   }, [activeLenses]);
 
+  const leafBorderStyle = useMemo(() => {
+    return (leaf: LeafLite) => {
+      const role = roleOf(leaf);
+      return rolePalette[role]?.borderStyle ?? null;
+    };
+  }, []);
+
+  const leafIndicatorLine = useMemo(() => {
+    return (leaf: LeafLite) => {
+      const role = roleOf(leaf);
+      return rolePalette[role]?.indicatorLine ?? null;
+    };
+  }, []);
+
+  const leafIndicatorColor = useMemo(() => {
+    return (leaf: LeafLite) => {
+      const role = roleOf(leaf);
+      return rolePalette[role]?.marker ?? null;
+    };
+  }, []);
+
+  const leafTextureType = useMemo(() => {
+    return (leaf: LeafLite) => {
+      const role = roleOf(leaf);
+      return rolePalette[role]?.texture ?? null;
+    };
+  }, []);
+
   // 每个 leaf 行尾的 badge 列：按 active lens（除 provenance 外）逐个输出。
   // 各 lens 自己负责给 leaf 算桶 + 桶颜色，badge 用 lens 的桶元数据。
   const leafBadges = useMemo(() => {
@@ -1276,6 +1315,10 @@ export function AttributionTreeLensPanel({
         leafColor={leafColor}
         leafUnderline={leafUnderline}
         isDimmed={passesAllFilters ? (l) => !passesAllFilters(l) : undefined}
+        leafBorderStyle={leafBorderStyle}
+        leafIndicatorLine={leafIndicatorLine}
+        leafIndicatorColor={leafIndicatorColor}
+        leafTextureType={leafTextureType}
       />
 
       {selectedStat === null ? (
@@ -1294,6 +1337,10 @@ export function AttributionTreeLensPanel({
             onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
             getColor={leafColor}
             getUnderlineColor={leafUnderline}
+            getBorderStyle={leafBorderStyle}
+            getIndicatorLine={leafIndicatorLine}
+            getIndicatorColor={leafIndicatorColor}
+            getTextureType={leafTextureType}
           />
           <LeafTable
             leaves={selectedStat.leaves}
