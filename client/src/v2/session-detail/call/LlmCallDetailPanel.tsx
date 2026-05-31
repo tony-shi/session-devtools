@@ -71,7 +71,6 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
   callDetail: CallDetail | null;
   callDetailLoading: boolean;
 }) {
-  const { t } = useTranslation();
   const [subTab, setSubTab] = useState<"request" | "response" | "meta">("request");
 
   const jsonlObj = useMemo(() => ({
@@ -97,19 +96,19 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
     : null;
   const responseText = callDetail?.rawResponseText;
 
-  const isResponseJson = useMemo(() => {
-    if (!responseText) return false;
-    const trimmed = responseText.trim();
-    return trimmed.startsWith("{") || trimmed.startsWith("[");
-  }, [responseText]);
-
   const parsedResponse = useMemo(() => {
-    if (isResponseJson && responseText) {
+    if (callDetail?.rawResponseJson) return callDetail.rawResponseJson;
+    if (!responseText) return null;
+    const trimmed = responseText.trim();
+    const isJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+    if (isJson) {
       try { return JSON.parse(responseText); }
       catch { return null; }
     }
     return null;
-  }, [isResponseJson, responseText]);
+  }, [callDetail?.rawResponseJson, responseText]);
+
+  const isResponseJson = !!parsedResponse;
 
   if (callDetailLoading) {
     return <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>;

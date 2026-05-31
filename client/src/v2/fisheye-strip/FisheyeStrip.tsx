@@ -194,9 +194,9 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
           intensity = isHovered ? 2 : 1;
         }
         const externalDim = getDimmed ? getDimmed(item) : false;
-        const opacity = externalDim
-          ? 0.18
-          : (intensity === 0 ? 0.18 : 1);
+        const isDimmed = externalDim || (intensity === 0);
+        const opacity = isDimmed ? 0.35 : 1;
+        const filter = isDimmed ? "grayscale(100%)" : "none";
         const fontWeight =
           intensity === 0 ? 400 :
           intensity === 1 ? 500 :
@@ -229,6 +229,7 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
               top: 2, height: barInnerHeight,
               backgroundColor: isCollapsed ? "transparent" : color,
               opacity,
+              filter,
               border: "none",
               borderRadius: isCollapsed ? 0 : 3,
               outline: isSelected ? "2px solid #4338ca" : "none",
@@ -250,8 +251,8 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
               whiteSpace: "nowrap", overflow: "hidden",
               cursor: "pointer",
               transition: focus !== null && fisheyeActive
-                ? "left 40ms linear, width 40ms linear, opacity 120ms ease-out"
-                : "left 220ms ease-out, width 220ms ease-out, opacity 120ms ease-out",
+                ? "left 40ms linear, width 40ms linear, opacity 120ms ease-out, filter 120ms ease-out"
+                : "left 220ms ease-out, width 220ms ease-out, opacity 120ms ease-out, filter 120ms ease-out",
               willChange: "left, width",
             }}
           >
@@ -301,9 +302,9 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
         const isSelected = selectedId === item.id;
         const isHovered = hoveredIdx === i;
         const hasSelection = selectedIdx >= 0;
-        let ulOpacity = 1;
-        if (hasSelection && !isSelected && !isHovered) ulOpacity = 0.25;
-        if (getDimmed && getDimmed(item)) ulOpacity = Math.min(ulOpacity, 0.2);
+        const ulDimmed = (getDimmed && getDimmed(item)) || (hasSelection && !isSelected && !isHovered);
+        const ulOpacity = ulDimmed ? 0.35 : 1;
+        const ulFilter = ulDimmed ? "grayscale(100%)" : "none";
         return (
           <div
             key={`underline-${item.id}`}
@@ -315,11 +316,12 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
               height: UNDERLINE_THICKNESS_PX,
               backgroundColor: ul,
               opacity: ulOpacity,
+              filter: ulFilter,
               borderRadius: 1,
               pointerEvents: "none",
               transition: focus !== null && fisheyeActive
-                ? "left 40ms linear, width 40ms linear, opacity 120ms ease-out"
-                : "left 220ms ease-out, width 220ms ease-out, opacity 120ms ease-out",
+                ? "left 40ms linear, width 40ms linear, opacity 120ms ease-out, filter 120ms ease-out"
+                : "left 220ms ease-out, width 220ms ease-out, opacity 120ms ease-out, filter 120ms ease-out",
             }}
           />
         );

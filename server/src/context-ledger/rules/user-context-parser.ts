@@ -1,27 +1,23 @@
 // rules/user-context-parser.ts
 //
-// 二次解析 messages.user-context.v2（claude-code.messages.user-context.v2）命中的
-// <system-reminder> userContext block，把 named-capture 产出的动态载荷整理成结构化
-// 子段，并把 projectInstructions 进一步切成单个 "Contents of <path> (project
-// instructions…)" 文件（CLAUDE.md / AGENTS.md）。
+// 二次解析 messages.user-context.v2 命中的 <system-reminder> userContext block。
+// v2 规则只把 `# claudeMd\n` 到 `\n# userEmail` 之间整段抓成 contextBody（外加 userEmail /
+// currentDate 两个标量 group）；本模块把 contextBody 拆成结构化子段：
+//   preamble（claudeMd 前言）+ 0..N 个 "Contents of <path> (<desc>):" 文件
+//   （desc 含 "project instructions" → 项目指令文件；含 "auto-memory" → 持久化记忆 MEMORY.md）。
+// 组成可变（CLAUDE.md/AGENTS.md/MEMORY.md 谁缺都行），故按实际 marker 切，有几个算几个。
 //
-// 与 skill-listing-parser 同形：输入 segment 原文 + 规则命中的捕获组（带 segment 内
-// 绝对偏移），输出带绝对 charStart/charEnd 的结构。resolver.buildPayload 调用本函数。
-//
-// 旁路模块：不被现有代码 import 时完全无副作用；接线见文件尾部注释。
+// 与 skill-listing-parser 同形：输入 segment 原文 + 规则命中的捕获组（带 segment 内绝对偏移），
+// 输出带绝对 charStart/charEnd 的结构。resolver.buildPayload 调用本函数。
+// 旁路模块：不被现有代码 import 时完全无副作用。
 
 export type UserContextKind =
-  | "project-instructions" // CLAUDE.md / AGENTS.md 等项目指令文件（壳+正文）
-  | "memory" // 持久化记忆 MEMORY.md 正文
+  | "claudemd-preamble" // # claudeMd 后的固定前言（无项目文件时也在）
+  | "project-instructions" // CLAUDE.md / AGENTS.md 等项目指令文件（壳 + 正文）
+  | "memory" // 持久化记忆 MEMORY.md（壳 + 正文）
+  | "context-file" // 其它 "Contents of …" 文件（desc 既非 project 也非 auto-memory）
   | "user-email"
   | "current-date";
-
-export interface UserContextProjectFile {
-  /** "Contents of <path> (project instructions…)" 里的 path */
-  path: string;
-  charStart: number;
-  charEnd: number;
-}
 
 export interface UserContextField {
   kind: UserContextKind;
@@ -29,10 +25,8 @@ export interface UserContextField {
   charStart: number;
   charEnd: number;
   valuePreview: string;
-  /** memory 的运行时路径（kind=memory 时） */
+  /** "Contents of <path> (...)" 里的 path（kind=project-instructions/memory/context-file 时） */
   path?: string;
-  /** projectInstructions 内逐文件切分（kind=project-instructions 时） */
-  projectFiles?: UserContextProjectFile[];
 }
 
 export interface UserContextPayload {
@@ -51,60 +45,56 @@ function preview(s: string): string {
   return s.length > PREVIEW_MAX ? s.slice(0, PREVIEW_MAX - 1) + "…" : s;
 }
 
-/**
- * 把 projectInstructions 正文切成逐个项目指令文件。
- * @param body   projectInstructions 组的完整文本（已从 rawText slice）
- * @param offset 该组在 segment rawText 内的起点（用于换算绝对偏移）
- */
-function splitProjectFiles(body: string, offset: number): UserContextProjectFile[] {
-  const re = /Contents of (?<path>[^\n]+?) \(project instructions[^)]*\):/g;
-  const starts: Array<{ path: string; at: number }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(body)) !== null) {
-    starts.push({ path: m.groups?.["path"] ?? "", at: m.index });
-  }
-  return starts.map((s, i) => {
-    const end = i + 1 < starts.length ? starts[i + 1]!.at : body.length;
-    return { path: s.path, charStart: offset + s.at, charEnd: offset + end };
-  });
+function classify(desc: string): UserContextKind {
+  if (/auto-memory/.test(desc)) return "memory";
+  if (/project instructions/.test(desc)) return "project-instructions";
+  return "context-file";
 }
 
 /**
  * 从 segment 原文 + 命中的捕获组构造 userContext payload。
  * @param rawText  segment 完整原文（node.rawText）
- * @param captures rule-evaluator 产出的命名捕获（projectInstructions / memoryPath /
- *                 memoryContents / userEmail / currentDate），各带 segment 内绝对偏移
+ * @param captures rule-evaluator 产出的命名捕获（contextBody / userEmail / currentDate），
+ *                 各带 segment 内绝对偏移
  */
 export function parseUserContextBody(
   rawText: string,
   captures: readonly UserContextCapture[],
 ): UserContextPayload | undefined {
   const by = new Map(captures.map((c) => [c.name, c]));
-  const sliceOf = (c: UserContextCapture) => rawText.slice(c.charStart, c.charEnd);
   const fields: UserContextField[] = [];
 
-  const proj = by.get("projectInstructions");
-  if (proj) {
-    const body = sliceOf(proj);
-    fields.push({
-      kind: "project-instructions",
-      charStart: proj.charStart,
-      charEnd: proj.charEnd,
-      valuePreview: preview(body),
-      projectFiles: splitProjectFiles(body, proj.charStart),
-    });
-  }
-
-  const memBody = by.get("memoryContents");
-  if (memBody) {
-    const memPath = by.get("memoryPath");
-    fields.push({
-      kind: "memory",
-      charStart: memBody.charStart,
-      charEnd: memBody.charEnd,
-      valuePreview: preview(sliceOf(memBody)),
-      ...(memPath ? { path: sliceOf(memPath) } : {}),
-    });
+  const cb = by.get("contextBody");
+  if (cb) {
+    const body = rawText.slice(cb.charStart, cb.charEnd);
+    // 定位每个 "Contents of <path> (<desc>):" 文件头
+    const re = /Contents of (?<path>[^\n]+?) \((?<desc>[^)]*)\):/g;
+    const marks: Array<{ at: number; path: string; desc: string }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) {
+      marks.push({ at: m.index, path: m.groups?.["path"] ?? "", desc: m.groups?.["desc"] ?? "" });
+    }
+    // preamble = body 开头到第一个文件头（无文件头时为整段）
+    const preEnd = marks.length ? marks[0]!.at : body.length;
+    if (preEnd > 0) {
+      fields.push({
+        kind: "claudemd-preamble",
+        charStart: cb.charStart,
+        charEnd: cb.charStart + preEnd,
+        valuePreview: preview(body.slice(0, preEnd)),
+      });
+    }
+    for (let i = 0; i < marks.length; i++) {
+      const mk = marks[i]!;
+      const end = i + 1 < marks.length ? marks[i + 1]!.at : body.length;
+      fields.push({
+        kind: classify(mk.desc),
+        charStart: cb.charStart + mk.at,
+        charEnd: cb.charStart + end,
+        valuePreview: preview(body.slice(mk.at, end)),
+        path: mk.path,
+      });
+    }
   }
 
   const email = by.get("userEmail");
@@ -113,7 +103,7 @@ export function parseUserContextBody(
       kind: "user-email",
       charStart: email.charStart,
       charEnd: email.charEnd,
-      valuePreview: sliceOf(email),
+      valuePreview: rawText.slice(email.charStart, email.charEnd),
     });
   }
 
@@ -123,32 +113,15 @@ export function parseUserContextBody(
       kind: "current-date",
       charStart: date.charStart,
       charEnd: date.charEnd,
-      valuePreview: sliceOf(date),
+      valuePreview: rawText.slice(date.charStart, date.charEnd),
     });
   }
 
   return fields.length > 0 ? { fields } : undefined;
 }
 
-// ── 接线说明（需看到原文后在 resolver.ts / types.ts 落地）─────────────────────────
-//
-// 1) parser/attribution/types.ts — 给 SegmentAttributionPayload 增加可选字段：
-//      import type { UserContextPayload } from "../../rules/user-context-parser";
-//      export interface SegmentAttributionPayload {
-//        skillListing?: ...;          // 既有
-//        userContext?: UserContextPayload;   // 新增
-//      }
-//
-// 2) parser/attribution/resolver.ts — 与 skill-listing 同形接入 buildPayload：
-//      import { parseUserContextBody } from "../../rules/user-context-parser";
-//      const USER_CONTEXT_RULE_IDS = new Set(["claude-code.messages.user-context.v2"]);
-//      // buildPayload() 内，skill-listing 分支之后：
-//      if (USER_CONTEXT_RULE_IDS.has(rule.ruleId)) {
-//        const caps = (evaluation.dynamicFields ?? []).map(f => ({
-//          name: f.name, charStart: f.charStart, charEnd: f.charEnd,
-//        }));
-//        const userContext = parseUserContextBody(node.rawText, caps);
-//        return userContext ? { userContext } : undefined;
-//      }
-//
-// 3) 前端按 payload.userContext.fields 渲染子段（展示元数据走后端，不前端硬编码）。
+// ── 接线（已在 resolver.ts / types.ts 落地）──────────────────────────────────────
+// types.ts: SegmentAttributionPayload.userContext?: UserContextPayload
+// resolver.ts: USER_CONTEXT_RULE_IDS = {claude-code.messages.user-context.v2};
+//   buildPayload() 内：caps = evaluation.dynamicFields.map(f=>({name,charStart,charEnd}));
+//   return { userContext: parseUserContextBody(node.rawText, caps) }

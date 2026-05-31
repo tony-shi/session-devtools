@@ -123,13 +123,13 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       "minCcVersion": "2.1.158"
     },
     "sourceUnits": [],
-    "description": "2.1.158 首条 user message 的 <system-reminder> userContext block：项目指令(CLAUDE.md， 可含 AGENTS.md) + 持久化记忆(MEMORY.md) + userEmail + currentDate，包裹于固定前后缀。 相比 v1（captureGroups 空、整块一坨、verifiedFor 2.1.126 → inferred），v2 钉 2.1.158、 priority 10 压过 v1，并用 named group 拆出 5 个动态载荷（→ dynamicFields，definitive）。 仅当 CLAUDE.md+MEMORY.md+email+date 同时存在时命中；缺项回退 v1/catch-all。",
+    "description": "2.1.158 首条 user message 的 <system-reminder> userContext block。鲁棒版：只锚定 恒定外壳（opener + `# userEmail` + `# currentDate` + 收尾 IMPORTANT + </system-reminder>）， 把 `# claudeMd\\n` 到 `\\n# userEmail` 之间整段抓成 contextBody（不假设 CLAUDE.md/AGENTS.md/ MEMORY.md 谁在场——有项目指令则含，无则只有 preamble + memory，缺项也不失配）。userEmail / currentDate 各自捕获。contextBody 的内部拆分（preamble / 各项目指令文件 / MEMORY.md）由 resolver 的 parseUserContextBody 二次解析（payload.userContext）。 实证：9e1ba147 T3C2（有 CLAUDE.md，2220B）与 6291b671 T3C1（无 CLAUDE.md，1200B）均命中。",
     "stability": "dynamic",
-    "sourcemapRef": "proxy:9e1ba147 T3C2 (2.1.158.d60); restored-src/src/context.ts getUserContext + utils/api.ts prependUserContext",
+    "sourcemapRef": "proxy:9e1ba147 T3C2 + 6291b671 T3C1 (2.1.158)；restored-src context.ts getUserContext + utils/api.ts prependUserContext",
     "materialization": "shape",
     "displayName": "用户上下文注入",
-    "summary": "首条注入：项目指令(CLAUDE.md)+持久化记忆(MEMORY.md)+邮箱+日期；静态壳包动态载荷",
-    "dynamicSource": "projectInstructions←CLAUDE.md/AGENTS.md, memoryContents←MEMORY.md, userEmail, currentDate, memoryPath",
+    "summary": "首条注入：项目指令(CLAUDE.md/AGENTS.md, 可缺) + 持久化记忆(MEMORY.md) + 邮箱 + 日期；静态壳包动态载荷",
+    "dynamicSource": "contextBody←CLAUDE.md/AGENTS.md/MEMORY.md 正文(组成可变), userEmail, currentDate",
     "priority": 10,
     "attribution": {
       "patternFromBody": true,
@@ -138,14 +138,36 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       "mechanism": "system_reminder_pattern",
       "category": "harness_injection",
       "captureGroups": {
-        "projectInstructions": "项目指令文件正文（CLAUDE.md，可含 AGENTS.md），含 'Contents of … (project instructions…):' 壳",
-        "memoryPath": "持久化记忆 MEMORY.md 的运行时路径",
-        "memoryContents": "持久化记忆 MEMORY.md 正文（# Memory Index 列表）",
+        "contextBody": "# claudeMd 与 # userEmail 之间的全部上下文载荷（preamble + 各项目指令文件 + MEMORY.md），由 parseUserContextBody 再拆",
         "userEmail": "账号邮箱",
         "currentDate": "当前日期"
       }
     },
-    "pattern": "^<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# claudeMd\\n[\\s\\S]*?\\n\\n(?<projectInstructions>Contents of [\\s\\S]*?)\\n\\nContents of (?<memoryPath>[^\\n]+MEMORY\\.md) \\(user's auto-memory[^)]*\\):\\n\\n(?<memoryContents>[\\s\\S]*?)\\n# userEmail\\nThe user's email address is (?<userEmail>[^\\n]+)\\.\\n# currentDate\\nToday's date is (?<currentDate>[^\\n]+)\\.\\n\\n      IMPORTANT: this context may or may not be relevant to your tasks\\. You should not respond to this context unless it is highly relevant to your task\\.\\n</system-reminder>\\n*$"
+    "pattern": "^<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n# claudeMd\\n(?<contextBody>[\\s\\S]*?)\\n# userEmail\\nThe user's email address is (?<userEmail>[^\\n]+)\\.\\n# currentDate\\nToday's date is (?<currentDate>[^\\n]+)\\.\\n\\n      IMPORTANT: this context may or may not be relevant to your tasks\\. You should not respond to this context unless it is highly relevant to your task\\.\\n</system-reminder>\\n*$"
+  },
+  {
+    "ruleId": "claude-code.system-prompt-session-guidance.v2",
+    "slotId": "system.main-prompt.section.session-guidance",
+    "verifiedFor": "2.1.158",
+    "appliesTo": {
+      "minCcVersion": "2.1.158"
+    },
+    "sourceUnits": [],
+    "description": "2.1.158 `# Session-specific guidance` section（splitByH1Headers 经 template 枚举 \"Session-specific guidance\" → slot ...session-guidance）。v1 的 pattern 是脆的逐字复刻 （含畸形的可选反引号 hack），在真实 6291b671/9e1ba147 上不匹配 → 该节点 RULE_GAP。v2 用 head+tail 锚定（首句 + 末句固定，中段 [\\s\\S]* 容忍 /schedule、ultrareview 等措辞微调）， priority 10 压过坏掉的 v1，吃满整节点。内容跨会话静态（!命令 / /skill / /schedule / ultrareview 守则）。 实证：6291b671 T3C1 session-guidance 节点 1719B，head/tail 见下。",
+    "stability": "static",
+    "sourcemapRef": "proxy:6291b671 T3C1 + 9e1ba147 T3C2 (2.1.158)；restored-src/src/constants/prompts.ts:352",
+    "materialization": "shape",
+    "displayName": "会话守则",
+    "summary": "本会话特定的行为指引(! 命令 / /<skill> / /schedule 提议 / ultrareview 说明)",
+    "priority": 10,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "regex",
+      "mechanism": "system_prompt_pattern",
+      "category": "harness_injection"
+    },
+    "pattern": "^# Session-specific guidance\\n - If you need the user to run a shell command themselves[\\s\\S]*the no-arg form bundles the local branch and does not need a GitHub remote\\.\\n*$"
   },
   {
     "ruleId": "claude-code.tool.Agent.v2",

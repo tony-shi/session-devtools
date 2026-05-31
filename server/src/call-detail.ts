@@ -50,6 +50,7 @@ export interface CallDetail {
 
   // Phase 2: proxy-backed, null if no proxy record
   rawRequestJson: Record<string, unknown> | null;
+  rawResponseJson?: Record<string, unknown> | null;
   rawResponseText?: string | null;
 }
 
@@ -216,11 +217,17 @@ export async function loadCallDetail(
     try { rawReqParsed = JSON.parse(reqBody) as Record<string, unknown>; }
     catch { /* not JSON */ }
   }
+  let rawResParsed: Record<string, unknown> | null = null;
+  if (typeof resBody === "string") {
+    try { rawResParsed = JSON.parse(resBody) as Record<string, unknown>; }
+    catch { /* not JSON */ }
+  }
   return {
     ...base,
     proxyRequestId: proxyRow.id,
     proxyMatchMode: "exact",
     rawRequestJson: rawReqParsed,
+    rawResponseJson: rawResParsed,
     rawResponseText: resBody ?? null
   };
 }
