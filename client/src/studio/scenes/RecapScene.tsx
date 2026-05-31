@@ -1,6 +1,7 @@
 import { AbsoluteFill, useCurrentFrame } from "remotion";
 import { ACTOR_COLOR } from "../../v2/walkthrough/actorPalette";
-import { conversationFixture } from "../fixtures/conversation";
+import { getConversationFixture } from "../fixtures";
+import { useT, useLang } from "../i18n";
 import type { ActClock } from "./storyClock";
 
 // recap 幕 —— 把整套结构收成一个「while 循环」:
@@ -21,14 +22,21 @@ const COND = "#d97706"; // 判定菱形:琥珀(决策色)
 // 未到的元素完全不出现(而不是淡灰);到点了再从 0 出现。
 const op = (on: boolean) => (on ? 1 : 0);
 
+// recap 旁白开头有 N 句"引子"(如「让我们回顾本章的内容」/「Let's review…」),
+// 画面概念从"会话/Session"那句才开始,所以把拍号整体减去引子句数 —— 否则画面快旁白一拍。
+// 注:这与 agent-loop.ts recap step 开头的引子句数对应,改引子句数要同步改这里。
+const RECAP_INTRO_LINES = 1;
+
 export const RecapScene = ({ clock }: { clock: ActClock }) => {
   const frame = useCurrentFrame();
-  const beat = clock.at(frame).beat;
+  // 减去引子偏移:引子那几句只显示标题,画面揭示对齐到"会话/模型调用/工具调用…"等概念句。
+  const beat = clock.at(frame).beat - RECAP_INTRO_LINES;
+  const tr = useT();
 
   return (
     <AbsoluteFill style={{ background: "#fff", fontFamily: FONT, padding: "48px 72px 150px", flexDirection: "column" }}>
       <div style={{ fontSize: 20, fontWeight: 700, color: "#94a3b8", letterSpacing: 1, textTransform: "uppercase", marginBottom: 20 }}>
-        回顾 · 把它串成一个 while 循环
+        {tr.recapTitle}
       </div>
 
       {/* 1) Session 含多个 Turn */}
@@ -48,7 +56,7 @@ export const RecapScene = ({ clock }: { clock: ActClock }) => {
       <div style={{ height: 34, marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center" }}>
         {beat >= 7 && (
           <div style={{ fontSize: 22, color: "#64748b" }}>
-            驱动它的只有两件事:<b style={{ color: LLM }}>模型</b>负责推理,<b style={{ color: AGENT }}>工具</b>负责行动。
+            {tr.twoEngines.pre}<b style={{ color: LLM }}>{tr.twoEngines.model}</b>{tr.twoEngines.mid}<b style={{ color: AGENT }}>{tr.twoEngines.tool}</b>{tr.twoEngines.post}
           </div>
         )}
       </div>
@@ -59,13 +67,15 @@ export const RecapScene = ({ clock }: { clock: ActClock }) => {
 
 // Session 容器 + 多个 Turn 盒子(beat 0 全现,beat 1 高亮 Turn 2 = 被放大的那个)。
 function SessionBand({ beat }: { beat: number }) {
+  const tr = useT();
+  const conversationFixture = getConversationFixture(useLang());
   const expanded = 2;
   const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
   return (
     <div style={{ border: "2px dashed #cbd5e1", borderRadius: 16, padding: "16px 22px", opacity: op(beat >= 0) }}>
       <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
         <span style={{ fontSize: 22, fontWeight: 800, color: "#64748b", fontFamily: "monospace" }}>Session</span>
-        <span style={{ fontSize: 18, color: "#94a3b8" }}>一次完整会话,组织起多个 Turn</span>
+        <span style={{ fontSize: 18, color: "#94a3b8" }}>{tr.sessionSub}</span>
       </div>
       <div style={{ display: "flex", gap: 16, marginTop: 14 }}>
         {conversationFixture.map((tt) => {
@@ -82,10 +92,10 @@ function SessionBand({ beat }: { beat: number }) {
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 19, fontWeight: 700, color: hot ? LLM : "#475569", fontFamily: "monospace" }}>Turn {t}</span>
-                {isExp && <span style={{ fontSize: 13, color: LLM, fontWeight: 700 }}>↓ 放大</span>}
+                {isExp && <span style={{ fontSize: 13, color: LLM, fontWeight: 700 }}>{tr.zoomIn}</span>}
               </div>
               {/* 补上真实的用户问题 —— 更有信服感 */}
-              <div style={{ fontSize: 14, color: "#64748b", marginTop: 6, lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{clip(tt.user, 48)}</div>
+              <div style={{ fontSize: 15, color: "#64748b", marginTop: 6, lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{clip(tt.user, 96)}</div>
             </div>
           );
         })}
@@ -105,6 +115,7 @@ const BOX = {
 const DIA = { cx: 300, cy: 165, r: 58 }; // 菱形(决策):还要 tool_use?
 
 function Flowchart({ beat }: { beat: number }) {
+  const tr = useT();
   const showCall = beat >= 2;
   const showDecide = beat >= 3;   // 菱形 + tool_use(要)
   const showResult = beat >= 4;   // tool_result + 回边
@@ -137,19 +148,19 @@ function Flowchart({ beat }: { beat: number }) {
       </svg>
 
       {/* 边标签 */}
-      <EdgeLabel x={318} y={244} text="要" color="#64748b" shown={showDecide} />
+      <EdgeLabel x={318} y={244} text={tr.edgeYes} color="#64748b" shown={showDecide} />
       {/* tool_use → tool_result 之间强调:由 Agent 去执行拿到 */}
-      <EdgeLabel x={316} y={352} text="Agent 执行" color={AGENT} shown={showResult} />
-      <EdgeLabel x={360} y={124} text="不要 → 退出" color={DONE} shown={showExit} />
+      <EdgeLabel x={316} y={352} text={tr.edgeAgentRun} color={AGENT} shown={showResult} />
+      <EdgeLabel x={360} y={124} text={tr.edgeExit} color={DONE} shown={showExit} />
       {/* 回边说明:竖排在左侧留白里,避开回边线段 */}
-      <EdgeLabel x={64} y={302} text="循环 · 塞回 context" color={LLM} shown={showResult} rot={-90} />
+      <EdgeLabel x={64} y={302} text={tr.edgeLoop} color={LLM} shown={showResult} rot={-90} />
 
       {/* 盒子(不再贴三阶段标签 —— 例子简单,先不强调「收集/行动/验证」) */}
-      <FlowBox b={BOX.call} color={LLM} title="LLM Call" sub="一次带 context 的模型决策" shown={showCall} />
+      <FlowBox b={BOX.call} color={LLM} title="LLM Call" sub={tr.boxCallSub} shown={showCall} />
       <Diamond shown={showDecide} />
-      <FlowBox b={BOX.use} color={LLM} title="tool_use" sub="模型想做什么" shown={showDecide} />
-      <FlowBox b={BOX.result} color={AGENT} title="tool_result" sub="现实返回的证据" shown={showResult} />
-      <FlowBox b={BOX.final} color={DONE} title="final answer" sub="不再 tool_use,Turn 结束" shown={showExit} double />
+      <FlowBox b={BOX.use} color={LLM} title="tool_use" sub={tr.boxUseSub} shown={showDecide} />
+      <FlowBox b={BOX.result} color={AGENT} title="tool_result" sub={tr.boxResultSub} shown={showResult} />
+      <FlowBox b={BOX.final} color={DONE} title="final answer" sub={tr.boxFinalSub} shown={showExit} double />
     </div>
   );
 }
@@ -174,6 +185,7 @@ function FlowBox({ b, color, title, sub, shown, stage, stageColor, double }: {
 }
 
 function Diamond({ shown }: { shown: boolean }) {
+  const tr = useT();
   const { cx, cy, r } = DIA;
   return (
     <div style={{
@@ -181,7 +193,7 @@ function Diamond({ shown }: { shown: boolean }) {
       transform: "rotate(45deg)", border: `2px solid ${COND}`, background: "#fffbeb", borderRadius: 10,
       display: "flex", alignItems: "center", justifyContent: "center", opacity: op(shown),
     }}>
-      <span style={{ transform: "rotate(-45deg)", fontSize: 17, fontWeight: 700, color: COND, textAlign: "center", lineHeight: 1.25 }}>还要<br />tool_use?</span>
+      <span style={{ transform: "rotate(-45deg)", fontSize: 17, fontWeight: 700, color: COND, textAlign: "center", lineHeight: 1.25 }}>{tr.diamond.a}<br />{tr.diamond.b}</span>
     </div>
   );
 }
@@ -192,18 +204,22 @@ function EdgeLabel({ x, y, text, color, shown, rot }: { x: number; y: number; te
 
 // 伪代码 —— 顺序上最后出现(顶部 → 流程图 → 伪代码),整段在流程图画完后一次点亮。
 function PseudoCode({ beat }: { beat: number }) {
+  const tr = useT();
+  // 英文伪代码行比中文长(含较长注释),字号调小避免溢出右侧画面。
+  const codeFontSize = useLang() === "en" ? 18 : 23;
   if (beat < 6) return null;
-  const lines: { code: string; comment?: string; on: boolean; indent: number; kind: "kw" | "body" | "exit" }[] = [
-    { code: "while 模型还要 tool_use:", on: true, indent: 0, kind: "kw" },
-    { code: "tool_use", comment: "模型想做什么", on: true, indent: 1, kind: "body" },
-    { code: "tool_result", comment: "塞回 context,绕回循环", on: true, indent: 1, kind: "body" },
-    { code: "# 信息足够 → 跳出循环", on: true, indent: 0, kind: "exit" },
-    { code: "final answer", comment: "Turn 结束", on: true, indent: 0, kind: "exit" },
+  const meta: { on: boolean; indent: number; kind: "kw" | "body" | "exit" }[] = [
+    { on: true, indent: 0, kind: "kw" },
+    { on: true, indent: 1, kind: "body" },
+    { on: true, indent: 1, kind: "body" },
+    { on: true, indent: 0, kind: "exit" },
+    { on: true, indent: 0, kind: "exit" },
   ];
+  const lines = meta.map((m, i) => ({ ...m, code: tr.pseudoLines[i].code, comment: tr.pseudoLines[i].comment }));
   return (
     <div style={{ width: "100%", maxWidth: 560 }}>
-      <div style={{ fontSize: 15, fontWeight: 700, color: "#94a3b8", letterSpacing: 0.5, marginBottom: 14 }}>同一个东西,写成代码就是:</div>
-      <div style={{ background: "#0f172a", borderRadius: 14, padding: "22px 26px", fontFamily: "monospace", fontSize: 23, lineHeight: 1.85 }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: "#94a3b8", letterSpacing: 0.5, marginBottom: 14 }}>{tr.pseudoIntro}</div>
+      <div style={{ background: "#0f172a", borderRadius: 14, padding: "22px 26px", fontFamily: "monospace", fontSize: codeFontSize, lineHeight: 1.85, overflow: "hidden" }}>
         {lines.map((l, i) => {
           const c = l.kind === "kw" ? "#a5b4fc" : l.kind === "exit" ? "#86efac" : "#e2e8f0";
           return (

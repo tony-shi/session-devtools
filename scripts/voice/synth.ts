@@ -110,6 +110,10 @@ function buildProvider(name: Cli["providerName"], voiceName?: string): TTSProvid
     if (!apiKey || !groupId) {
       throw new Error("MINIMAX_API_KEY 和 MINIMAX_GROUP_ID 需在仓库根 .env 设置。见 providers/minimax.ts 顶部。");
     }
+    // MINIMAX_TIMBER_WEIGHTS:音色混合(逗号分隔的 voice_id:weight)。例:
+    //   presenter_female:40,audiobook_female_1:60
+    // 给了就走混音,voiceId 由权重最高者当基底;留空则用单一 MINIMAX_VOICE。
+    const timberWeights = parseTimberWeights(process.env.MINIMAX_TIMBER_WEIGHTS);
     return new MiniMaxProvider({
       apiKey, groupId,
       host: process.env.MINIMAX_API_HOST,
@@ -117,12 +121,23 @@ function buildProvider(name: Cli["providerName"], voiceName?: string): TTSProvid
       voiceId: voiceName ?? process.env.MINIMAX_VOICE,
       speed: process.env.MINIMAX_SPEED ? parseFloat(process.env.MINIMAX_SPEED) : undefined,
       emotion: process.env.MINIMAX_EMOTION,
+      timberWeights,
     });
   }
   if (name === "elevenlabs") {
     throw new Error("elevenlabs provider stub — see scripts/voice/providers/elevenlabs.ts");
   }
   throw new Error("unknown provider: " + name);
+}
+
+/** 解析 MINIMAX_TIMBER_WEIGHTS="voiceA:40,voiceB:60" → 混音权重数组(空/非法返回 undefined) */
+function parseTimberWeights(raw?: string): Array<{ voiceId: string; weight: number }> | undefined {
+  if (!raw || !raw.trim()) return undefined;
+  const weights = raw.split(",").map((pair) => {
+    const [voiceId, w] = pair.split(":").map((s) => s.trim());
+    return { voiceId, weight: parseInt(w, 10) };
+  }).filter((x) => x.voiceId && !Number.isNaN(x.weight));
+  return weights.length > 0 ? weights : undefined;
 }
 
 function hashKey(text: string, voiceHint: string, lang: Lang): string {
@@ -151,6 +166,17 @@ async function main() {
   if (!story) { console.error(`unknown storyId: ${cli.storyId}`); process.exit(2); }
 
   const provider = buildProvider(cli.providerName, cli.voiceName);
+  // 缓存签名:参与 hash 的"音色身份"。MiniMax 走混音/语速/情绪时,把这些折进来,
+  // 改任一参数 → key 变 → 自动重合成,不会命中旧音。
+  const voiceSig = cli.providerName === "minimax"
+    ? [
+        "minimax",
+        process.env.MINIMAX_MODEL ?? "speech-02-hd",
+        process.env.MINIMAX_TIMBER_WEIGHTS ?? cli.voiceName ?? process.env.MINIMAX_VOICE ?? "default",
+        `sp${process.env.MINIMAX_SPEED ?? "1"}`,
+        `em${process.env.MINIMAX_EMOTION ?? "none"}`,
+      ].join(":")
+    : `${cli.providerName}:${cli.voiceName ?? "default"}`;
   const storyOutDir = join(cli.outDir, story.id);
   const audioOutDir = join(storyOutDir, cli.lang);
   await ensureDir(storyOutDir);
@@ -176,8 +202,8 @@ async function main() {
     for (const [lineIdx, text] of lines.entries()) {
       seq += 1;
       const lineT0 = Date.now();
-      // voice 也参与 hash —— 换 voice 必须重合成,否则放错音
-      const key = hashKey(text, `${cli.providerName}:${cli.voiceName ?? "default"}:${cli.lang}`, cli.lang);
+      // voiceSig 参与 hash —— 换 voice / 调混音/语速/情绪都必须重合成,否则放错音
+      const key = hashKey(text, `${voiceSig}:${cli.lang}`, cli.lang);
 
       let durMs = 0;
       let haveAudio = false;

@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ACTOR_COLOR } from "../../v2/walkthrough/actorPalette";
 import { buildConversationTimeline, type SceneTurn } from "./timeline";
+import { useT } from "../i18n";
 
 // 第一幕「会话」的 frame-driven 版本:
 //   - 整个 session 的 N 个 Turn 都渲染出来(和 recap 的「多个 Turn」一致),垂直居中、偏上,
@@ -34,6 +35,7 @@ export const ConversationScene = ({
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const tr = useT();
   const tl = buildConversationTimeline(turns, fps);
 
   // 聚焦的目标轮 = 下一幕要展开的那一轮(由外部传入);它就是「拿出来的 Turn」(中间那一轮)。
@@ -90,7 +92,7 @@ export const ConversationScene = ({
 
             const bubbles = (
               <>
-                <Bubble side="left" role="用户" text={tt.turn.user.slice(0, floorChars(tt.turn.user.length, userT))} typing={userTyping} caretOn={caretOn} />
+                <Bubble side="left" role={tr.convUser} text={tt.turn.user.slice(0, floorChars(tt.turn.user.length, userT))} typing={userTyping} caretOn={caretOn} />
                 {inThink && <Thinking frame={frame} fps={fps} />}
                 {asstActive && (
                   <Bubble side="right" role="Claude" markdown text={tt.turn.assistant.slice(0, floorChars(tt.turn.assistant.length, asstT))} typing={asstTyping} caretOn={caretOn} />
@@ -108,13 +110,13 @@ export const ConversationScene = ({
                 <div key={tt.turn.id} style={{ position: "relative", border: `2px solid ${borderCol}`, borderRadius: 18, padding: 22, background: focusIn > 0.01 ? "#fff" : "transparent" }}>
                   {focusIn > 0.01 && (
                     <div style={{ position: "absolute", top: -16, left: 22, background: "#6366f1", color: "#fff", fontSize: 16, fontWeight: 700, padding: "3px 14px", borderRadius: 999, opacity: focusIn }}>
-                      Turn {tt.turn.id} · 轮次
+                      {tr.turnBadge(tt.turn.id)}
                     </div>
                   )}
                   <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>{bubbles}</div>
                   {focusIn > 0.01 && (
                     <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 14, marginTop: 18, paddingTop: 14, borderTop: "1px dashed #e5e7eb", fontSize: 18, opacity: focusIn }}>
-                      <span style={{ fontWeight: 700, color: ACTOR_COLOR.llm.main }}>{tt.turn.llmCalls} 次 LLM 调用</span>
+                      <span style={{ fontWeight: 700, color: ACTOR_COLOR.llm.main }}>{tr.llmCalls(tt.turn.llmCalls)}</span>
                       <span style={{ color: "#cbd5e1" }}>|</span>
                       {tt.turn.tools.map((tool) => (
                         <span key={tool.name} style={{ color: ACTOR_COLOR.agent.main, fontWeight: 600 }}>✓ {tool.name} ×{tool.count}</span>
@@ -173,9 +175,10 @@ function Bubble({ side, role, text, typing, caretOn, markdown }: { side: "left" 
 }
 
 function Thinking({ frame, fps }: { frame: number; fps: number }) {
+  const tr = useT();
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, alignSelf: "flex-end", color: ACTOR_COLOR.llm.main, fontSize: 22 }}>
-      <span>Claude is thinking</span>
+      <span>{tr.claudeThinking}</span>
       <span style={{ display: "inline-flex", gap: 5 }}>
         {[0, 1, 2].map((i) => {
           const phase = ((frame / (fps * 1.2)) + i * 0.18) % 1;

@@ -20,19 +20,23 @@ const repoRoot = resolve(here, "../..");
 function parse() {
   const args = process.argv.slice(2);
   const sessionId = args[0];
-  if (!sessionId) { console.error("usage: dump-fixture.ts <sessionId> [--turn N] [--port 5051]"); process.exit(2); }
+  if (!sessionId) { console.error("usage: dump-fixture.ts <sessionId> [--lang en|zh] [--turn N] [--port 5051]"); process.exit(2); }
   const g = (f: string, d: string) => { const i = args.indexOf(f); return i >= 0 && args[i + 1] ? args[i + 1] : d; };
-  return { sessionId, turn: args.indexOf("--turn") >= 0 ? parseInt(g("--turn", "0"), 10) : null, port: g("--port", "5051") };
+  // --lang 决定输出后缀:conversation.<lang>.ts / turn.<lang>.ts。默认 en
+  // (zh 是手工本地化的,别用自动 dump 覆盖)。
+  return { sessionId, lang: g("--lang", "en"), turn: args.indexOf("--turn") >= 0 ? parseInt(g("--turn", "0"), 10) : null, port: g("--port", "5051") };
 }
 
-const clip = (s: unknown, n: number) => { const t = String(s ?? "").trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
+// 去掉用户为强制英文加的元前缀(如 "Answer in English."),它对视频是噪声,不是真实问题。
+const stripMeta = (s: unknown) => String(s ?? "").replace(/^\s*answer in english[.。]?\s*/i, "");
+const clip = (s: unknown, n: number) => { const t = stripMeta(s).trim(); return t.length > n ? t.slice(0, n) + "…" : t; };
 
 interface DTool { name: string; inputPreview: string; outputPreview: string; outputSize: number; isError: boolean }
 interface DCall { contextSize: number; assistantText: string; toolCalls: DTool[] }
 interface DTurn { id: number; userInput: string; finalOutput: string | null; calls: DCall[] }
 
 async function main() {
-  const { sessionId, turn, port } = parse();
+  const { sessionId, lang, turn, port } = parse();
   const url = `http://localhost:${port}/api/v2/sessions/${encodeURIComponent(sessionId)}/drilldown`;
   const r = await fetch(url);
   if (!r.ok) { console.error(`drilldown fetch failed: HTTP ${r.status} — is the server running on :${port} and the session present?`); process.exit(1); }
@@ -86,10 +90,10 @@ export type LoopTurn = { userInput: string; finalOutput: string; calls: LoopCall
 export const turnFixture: LoopTurn = ${JSON.stringify(turnFix, null, 2)};
 `;
 
-  await writeFile(resolve(repoRoot, "client/src/studio/fixtures/conversation.ts"), convFile);
-  await writeFile(resolve(repoRoot, "client/src/studio/fixtures/turn.ts"), turnFile);
+  await writeFile(resolve(repoRoot, `client/src/studio/fixtures/conversation.${lang}.ts`), convFile);
+  await writeFile(resolve(repoRoot, `client/src/studio/fixtures/turn.${lang}.ts`), turnFile);
 
-  console.log(`✓ dumped session ${sessionId}`);
+  console.log(`✓ dumped session ${sessionId} → fixtures/*.${lang}.ts`);
   console.log(`  conversation: ${conv.length} turns`);
   console.log(`  turn (loop):  turn ${loopTurn.id} · ${turnFix.calls.length} calls · ${turnFix.calls.filter((c) => c.toolCalls.length).length} tool iters`);
 }

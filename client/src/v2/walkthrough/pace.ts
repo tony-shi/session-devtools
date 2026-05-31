@@ -21,7 +21,7 @@ export const PACE = {
   /** 900ms —— 长停顿。话题切换 / 关键定义之后,让观众消化 */
   pause: 900,
   /** 1500ms —— 戏剧性停留。punchline 之后 / "想象一下"之类的引导句,留白让观众脑补 */
-  dwell: 1500,
+  dwell: 2000,
 } as const;
 
 export type Pace = (typeof PACE)[keyof typeof PACE];
