@@ -41,4 +41,7 @@ export const PARSERS_V2: Record<string, ParserV2> = {
   claude: parseClaudeSessionV2,
 };
 
-export const PARSER_VERSION = 6;
+// v7: llm_call_count deduplicated by message.id (was raw assistant-frame count,
+//     which inflated the number ~2-3x since Claude Code writes one JSONL frame
+//     per content block) — fixes the false "N calls lack proxy tracking" badge.
+export const PARSER_VERSION = 7;

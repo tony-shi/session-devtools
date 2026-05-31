@@ -104,6 +104,26 @@ function isHumanInput(ev: JUserEvent): boolean {
   return true;
 }
 
+/**
+ * Whether an assistant call is still requesting tools (turn keeps going).
+ *
+ * Turn segmentation keys on the *presence of tool_use blocks*, NOT on
+ * `stop_reason === "tool_use"`. Some upstreams / relays return
+ * `stop_reason: "end_turn"` even while emitting tool_use blocks — verified
+ * against proxy SSE ground truth for session f9067ae5… where every response
+ * (including an 11-parallel-tool call) carried `end_turn`. A stop_reason-only
+ * heuristic therefore collapses every multi-call turn down to its first call.
+ * A call that issues no tool_use is terminal: the agent loop returns to the
+ * user, so the turn ends there.
+ */
+function callRequestsTools(ev: JAssistantEvent): boolean {
+  const content = ev.message?.content;
+  return Array.isArray(content)
+    && content.some(
+      (b) => b != null && typeof b === "object" && (b as { type?: string }).type === "tool_use",
+    );
+}
+
 function extractUserText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -832,8 +852,10 @@ export async function parseSessionDrilldown(
   // ── 5. Build turns ───────────────────────────────────────────────────────
   // Algorithm:
   //   - Scan forward; when we find a human-input user event, start a new turn
-  //   - Accumulate all subsequent (deduplicated) assistant events until one has
-  //     stop_reason !== "tool_use" (i.e. end_turn / max_tokens / stop_sequence)
+  //   - Accumulate all subsequent (deduplicated) assistant events until one
+  //     issues no tool_use (a terminal answer). See callRequestsTools: keying on
+  //     tool_use presence rather than stop_reason survives upstreams that return
+  //     stop_reason "end_turn" even for tool-calling responses.
   //   - If another human-input event appears BEFORE the turn ends (user typed while
   //     LLM was running), we do NOT split the turn; per spec, turns end at LLM stop.
 
@@ -888,8 +910,10 @@ export async function parseSessionDrilldown(
             ? logicalCallByCanonicalLine.get(j) ?? { ev: aev, lineIdx: j, firstLineIdx: j, frameLineIdxs: [j], messageId: msgId, apiRequestId: aev.requestId ?? null }
             : { ev: aev, lineIdx: j, firstLineIdx: j, frameLineIdxs: [j], messageId: null, apiRequestId: aev.requestId ?? null };
           rawCalls.push(logicalCall);
-          const stopReason = logicalCall.ev.message?.stop_reason ?? "";
-          if (stopReason && stopReason !== "tool_use") break; // turn ends
+          // Turn continues while the model keeps requesting tools; it ends at
+          // the first call that returns no tool_use (a terminal answer). See
+          // callRequestsTools — stop_reason is unreliable on some upstreams.
+          if (!callRequestsTools(logicalCall.ev)) break; // terminal answer → turn ends
         }
       }
       j++;
@@ -1222,11 +1246,12 @@ export async function parseSessionDrilldown(
     const lastContext = calls.length ? calls[calls.length - 1].contextSize : 0;
     const netContextDelta = lastContext - firstContext;
 
-    // finalOutput: text from the last end_turn assistant message
-    // The canonical end_turn event is the last entry in rawCalls (stop_reason != tool_use).
+    // finalOutput: text from the turn's terminal answer (the last rawCall, which
+    // issues no tool_use). Keyed on tool_use presence, not stop_reason — see
+    // callRequestsTools.
     const finalCall = rawCalls.length > 0 ? rawCalls[rawCalls.length - 1].ev : null;
     let finalOutput: string | null = null;
-    if (finalCall && finalCall.message?.stop_reason !== "tool_use") {
+    if (finalCall && !callRequestsTools(finalCall)) {
       const textBlocks = (finalCall.message?.content ?? [])
         .filter(b => b.type === "text" && typeof b.text === "string" && b.text.trim().length > 0);
       if (textBlocks.length > 0) {
@@ -1330,10 +1355,7 @@ export async function parseSessionDrilldown(
           const aev = mev as JAssistantEvent;
           const msgId = aev.message?.id;
           const isCanonical = msgId ? lastAssistantByMsgId.get(msgId) === m : true;
-          if (isCanonical) {
-            const sr = aev.message?.stop_reason ?? "";
-            if (sr && sr !== "tool_use") { endLine = m; break; }
-          }
+          if (isCanonical && !callRequestsTools(aev)) { endLine = m; break; }
         }
         m++;
       }

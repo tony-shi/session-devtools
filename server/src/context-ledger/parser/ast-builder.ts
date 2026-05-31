@@ -138,6 +138,13 @@ export function buildParsedQuerySnapshot(params: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function expandChildren(match: SlotMatch, template: RequestTemplate): SlotMatch[] {
+  // 2.1.154+ role:"system" mid-conversation message 常把多个 harness 注入(deferred-tools /
+  // agent-types / skills)拼进同一个 block。按 anchor 句切成独立段,各自命中对应 v2 rule。
+  // 无 template slot,故在 findTemplateSlot 之前处理。
+  if (match.slotType === "messages.system-message") {
+    return splitSystemMessage(match.rawText, match.jsonPath);
+  }
+
   const slot = findTemplateSlot(template, match.slotType);
   if (!slot?.children) return [];
 
@@ -332,6 +339,54 @@ function splitByH1Headers(
     });
   }
 
+  return out;
+}
+
+// role:"system" mid-conversation message 的 anchor 句(每个 = 一个独立 harness 注入)。
+// 顺序无关(按在 text 中的实际位置排序切分)。
+const SYSTEM_MESSAGE_ANCHORS = [
+  "The following deferred tools are now available via ToolSearch.",
+  "Available agent types for the Agent tool:",
+  "The following skills are available for use with the Skill tool:",
+] as const;
+
+/**
+ * 把一个 role:"system" message block 按 anchor 句切成独立段(deferred-tools / agent-types /
+ * skills 常被 CC 拼进同一 block)。各段 slotType 仍是 messages.system-message,由 attribution
+ * 按 prefix first-match 命中各自 v2 rule(deferred-tools.v2 / agent-types.v2 / skill-listing.v2)。
+ * 只含 0 或 1 个 anchor 时不切(return [] 保持单 leaf,行为不变)。
+ */
+function splitSystemMessage(text: string, parentJsonPath: string): SlotMatch[] {
+  const found = SYSTEM_MESSAGE_ANCHORS
+    .map((a) => ({ a, pos: text.indexOf(a) }))
+    .filter((x) => x.pos >= 0)
+    .sort((x, y) => x.pos - y.pos);
+  if (found.length <= 1) return []; // 单注入(或无)→ 不切,保持单 leaf
+
+  const out: SlotMatch[] = [];
+  // 第一个 anchor 之前的残留(通常为空——deferred 一般在最前)
+  if (found[0]!.pos > 0) {
+    out.push({
+      slotType: "messages.system-message",
+      jsonPath: parentJsonPath,
+      charRange: { start: 0, end: found[0]!.pos },
+      rawText: text.slice(0, found[0]!.pos),
+      anchorEvidence: "",
+      children: [],
+    });
+  }
+  for (let i = 0; i < found.length; i++) {
+    const start = found[i]!.pos;
+    const end = i + 1 < found.length ? found[i + 1]!.pos : text.length;
+    out.push({
+      slotType: "messages.system-message",
+      jsonPath: parentJsonPath,
+      charRange: { start, end },
+      rawText: text.slice(start, end),
+      anchorEvidence: found[i]!.a.slice(0, 48),
+      children: [],
+    });
+  }
   return out;
 }
 

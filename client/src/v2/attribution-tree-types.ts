@@ -107,6 +107,7 @@ export interface SerializedNode {
     toolName?: string;
     messageRole?: "user" | "assistant" | "system";
     messageIdx?: number;
+    thinkingSignature?: string;
   };
   cachePolicy?: { ttl: "5m" | "1h"; scope: "org" | "global" };
   unknownMeta?: { originalType?: string; sectionHeader?: string; reason?: string };

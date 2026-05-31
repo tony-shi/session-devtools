@@ -21,7 +21,7 @@ export function SummaryStat({
     <Tooltip>
       <TooltipTrigger asChild>
         <div
-          className="hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors duration-150"
+          className="hover:bg-slate-200/90 dark:hover:bg-slate-700/90 hover:shadow-sm border border-transparent hover:border-slate-200 dark:hover:border-slate-700 transition-all duration-150"
           style={{
             display: "flex",
             flexDirection: "column",

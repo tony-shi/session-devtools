@@ -12,6 +12,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { FisheyeStrip } from "./fisheye-strip";
@@ -32,6 +33,7 @@ import { sectionPalette, rolePalette, UNKNOWN_FILL as PALETTE_UNKNOWN_FILL, type
 import { Check, Copy, Info } from "lucide-react";
 import { BRAND } from "./shared/brand";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import JsonView from "@uiw/react-json-view";
 
 // ─── 类型与配色 ─────────────────────────────────────────────────────────────
 
@@ -210,8 +212,33 @@ export function shortSlot(slotType: string): string {
 // 对外展示用 label：所有 UI 位置（主 bar 块 / 鱼眼 hover / 二级 strip / 表格行）统一走它,
 // 保证同一段在各处显示同一个对外名,不再混用内部 slug。优先 ruleMeta.displayName（对外
 // 中文名,如"会话守则"）;未填 displayName 的段（messages/tools 多数）退回 shortSlot slug。
-export function leafLabel(leaf: { slotType: string; ruleMeta?: { displayName?: string } }): string {
-  return leaf.ruleMeta?.displayName ?? shortSlot(leaf.slotType);
+export function leafLabel(leaf: { slotType: string; ruleMeta?: { displayName?: string }; messageRole?: "user" | "assistant" | "system" }): string {
+  if (leaf.ruleMeta?.displayName) {
+    return leaf.ruleMeta.displayName;
+  }
+  const slotType = leaf.slotType;
+  if (slotType === "messages.tool-use" || slotType === "messages.tool_use") {
+    return "tool use";
+  }
+  if (slotType === "messages.tool-result" || slotType === "messages.tool_result") {
+    return "tool result";
+  }
+  if (slotType === "messages.thinking") {
+    return i18n.t("attribution.slots.messages.thinking", { defaultValue: "AI思考" });
+  }
+  if (slotType === "messages.inline.free-text" || slotType === "messages.text") {
+    if (leaf.messageRole === "user") {
+      return i18n.t("attribution.slots.messages.human", { defaultValue: "用户输入" });
+    }
+    if (leaf.messageRole === "assistant") {
+      return i18n.t("attribution.slots.messages.aiOutput", { defaultValue: "AI输出" });
+    }
+  }
+  const i18nKey = `attribution.slots.${slotType}`;
+  if (i18n.exists(i18nKey)) {
+    return i18n.t(i18nKey);
+  }
+  return shortSlot(slotType);
 }
 
 export function originLabel(origin: SegmentOrigin): string {
@@ -263,6 +290,8 @@ export interface LeafLite {
    * enclosing call card. Absent for non-tool_use leaves.
    */
   toolUseId?: string;
+  toolName?: string;
+  thinkingSignature?: string;
   // Cache 视角需要：节点缓存策略。来自 SerializedNode.cachePolicy（可选）。
   cachePolicy?: { ttl: "5m" | "1h"; scope: "org" | "global" };
   // Diff 视角需要：本 leaf 相对前一次 call 的变化状态。由父组件从 diff-tree
@@ -297,6 +326,8 @@ export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
         jsonPath: node.jsonPath,
         ...(node.wireMeta?.messageRole && { messageRole: node.wireMeta.messageRole }),
         ...(node.wireMeta?.toolUseId && { toolUseId: node.wireMeta.toolUseId }),
+        ...(node.wireMeta?.toolName && { toolName: node.wireMeta.toolName }),
+        ...(node.wireMeta?.thinkingSignature && { thinkingSignature: node.wireMeta.thinkingSignature }),
         ...(node.cachePolicy && { cachePolicy: node.cachePolicy }),
         ...(node.ruleMeta && { ruleMeta: node.ruleMeta }),
       });
@@ -528,10 +559,10 @@ export function LeafTable({
         const rm = l.ruleMeta;
         const rowLabel = skillListing
           ? `${t("skillListing.rowLabel")} · ${t("skillListing.rowSuffix", { count: skillListing.entries.length })}`
-          : (rm?.displayName ?? shortSlot(l.slotType));
+          : leafLabel(l);
         const rowPreview = skillListing ? "" : (rm?.summary ?? l.preview);
         // 动态来源后缀（仅 dynamic 段）："summary ← 变的是 X"
-        const previewSuffix = rm?.stability === "dynamic" && rm.dynamicSource ? ` ← ${rm.dynamicSource}` : "";
+        const previewSuffix = rm?.stability === "dynamic" && rm.dynamicSource ? ` ${rm.dynamicSource}` : "";
         // 恒用全局分母：每行 % = 占整个 context（语义恒定,与汇总条同口径）。
         const pct = denom > 0 ? (l.charCount / denom) * 100 : 0;
         const showTooltip = !!skillListing && hoveredId === l.nodeId;
@@ -777,17 +808,38 @@ function SkillListingDetail({
         size: sizeStr,
       });
 
-  const toggleBtnStyle = (active: boolean): React.CSSProperties => ({
-    border: "1px solid #d1d5db",
-    background: active ? BRAND.indigo700 : "#fff",
-    color: active ? "#fff" : "#374151",
-    padding: "1px 8px",
-    fontSize: 11,
+  const btnBaseStyle: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    height: 24,
+    padding: "0 8px",
+    fontSize: 10,
     fontWeight: 600,
+    borderRadius: 4,
     cursor: "pointer",
-    lineHeight: 1.4,
-    transition: "background 0.12s, color 0.12s",
-  });
+    whiteSpace: "nowrap",
+    boxSizing: "border-box",
+    lineHeight: 1,
+    transition: "all 0.12s ease",
+  };
+
+  const toggleBtnStyle: React.CSSProperties = {
+    ...btnBaseStyle,
+    border: "1px solid #d1d5db",
+    background: mode === "raw" ? "#f3f4f6" : "#fff",
+    color: "#374151",
+  };
+
+  const copyBtnStyle: React.CSSProperties = {
+    ...btnBaseStyle,
+    border: "1px solid",
+    borderColor: copied ? "#16a34a" : "#d1d5db",
+    background: copied ? "#dcfce7" : "#fff",
+    color: copied ? "#15803d" : "#374151",
+    transition: "background 0.12s, border-color 0.12s, color 0.12s",
+  };
 
   return (
     <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -795,48 +847,25 @@ function SkillListingDetail({
           metaText 仍用于 a11y / 调试，不渲染。 */}
       <span style={{ display: "none" }}>{metaText}</span>
 
-      {/* Toggle 行：sub bar 下面，content 右上角；按钮收紧 padding/height */}
+      {/* Toggle 行：sub bar 下面，content 右上角；与 SelectedDetail 的风格完全一致的单按钮切换与复制按钮 */}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
-        <div style={{ display: "inline-flex", borderRadius: 4, overflow: "hidden" }}>
-          <button
-            type="button"
-            onClick={() => setMode("parsed")}
-            style={{
-              ...toggleBtnStyle(mode === "parsed"),
-              borderRadius: "4px 0 0 4px",
-            }}
-          >
-            {t("skillListing.toggleParsed")}
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("raw")}
-            style={{
-              ...toggleBtnStyle(mode === "raw"),
-              borderLeft: "none",
-              borderRadius: "0 4px 4px 0",
-            }}
-          >
-            {t("skillListing.toggleRaw")}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setMode(m => m === "parsed" ? "raw" : "parsed")}
+          style={toggleBtnStyle}
+        >
+          {mode === "raw" ? "← 渲染" : "查看原文"}
+        </button>
         <button
           type="button"
           onClick={handleCopy}
-          style={{
-            border: "1px solid",
-            borderColor: copied ? "#16a34a" : "#d1d5db",
-            background: copied ? "#dcfce7" : "#fff",
-            color: copied ? "#15803d" : "#374151",
-            padding: "1px 8px",
-            fontSize: 11,
-            fontWeight: 600,
-            borderRadius: 4,
-            cursor: "pointer",
-            lineHeight: 1.4,
-          }}
+          style={copyBtnStyle}
         >
-          {copied ? t("skillListing.copied") : t("skillListing.copyRaw")}
+          {copied ? (
+            <><Check size={10} strokeWidth={3} /> 已复制</>
+          ) : (
+            <><Copy size={10} /> 复制原文</>
+          )}
         </button>
       </div>
 
@@ -932,8 +961,6 @@ function SkillListingDetail({
             color: "#1f2937",
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
-            maxHeight: 480,
-            overflow: "auto",
             lineHeight: 1.55,
           }}
         >
@@ -981,6 +1008,203 @@ function renderContentWithDynamicHighlights(
   return out;
 }
 
+function injectDynamicPlaceholders(text: string, fields: DynamicField[]): string {
+  if (!fields || fields.length === 0) return text;
+
+  const validFields = fields
+    .map((f, index) => ({ ...f, originalIndex: index }))
+    .filter((f) => f.charStart >= 0 && f.charEnd <= text.length && f.charStart < f.charEnd)
+    .sort((a, b) => b.charStart - a.charStart);
+
+  let result = text;
+  validFields.forEach((f) => {
+    const before = result.substring(0, f.charStart);
+    const value = result.substring(f.charStart, f.charEnd);
+    const after = result.substring(f.charEnd);
+    result = `${before}DYNSTARTa${f.originalIndex}a${value}DYNEND${after}`;
+  });
+
+  return result;
+}
+
+interface HastNode {
+  type: string;
+  value?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+}
+
+function rehypeHighlightDynamicFields(fields: DynamicField[]) {
+  return () => {
+    return (tree: HastNode) => {
+      function visit(node: HastNode) {
+        if (node.type === "text" && typeof node.value === "string") {
+          const text = node.value;
+          const regex = /DYNSTARTa(\d+)a([\s\S]*?)DYNEND/g;
+          
+          if (regex.test(text)) {
+            regex.lastIndex = 0;
+            const children: HastNode[] = [];
+            let lastIndex = 0;
+            let match;
+            while ((match = regex.exec(text)) !== null) {
+              const matchIndex = match.index;
+              if (matchIndex > lastIndex) {
+                children.push({ type: "text", value: text.substring(lastIndex, matchIndex) });
+              }
+              const fieldIdx = parseInt(match[1], 10);
+              const val = match[2];
+              const field = fields[fieldIdx];
+              
+              children.push({
+                type: "element",
+                tagName: "span",
+                properties: {
+                  style: {
+                    background: "#fef3c7",
+                    color: "#92400e",
+                    borderRadius: 2,
+                    padding: "0 2px",
+                    boxShadow: "inset 0 -1px 0 #fcd34d",
+                  },
+                  title: field ? `${field.name} · ${field.source} · 运行时动态值` : "运行时动态值",
+                },
+                children: [{ type: "text", value: val }]
+              });
+              lastIndex = regex.lastIndex;
+            }
+            if (lastIndex < text.length) {
+              children.push({ type: "text", value: text.substring(lastIndex) });
+            }
+            
+            node.type = "element";
+            node.tagName = "span";
+            node.properties = {};
+            node.children = children;
+          }
+        } else if (node.children) {
+          node.children.forEach(visit);
+        }
+      }
+      visit(tree);
+    };
+  };
+}
+
+function renderMarkdownWithHighlights(
+  text: string,
+  fields: DynamicField[] | undefined,
+): React.ReactNode {
+  if (!fields || fields.length === 0) {
+    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>;
+  }
+
+  const textWithPlaceholders = injectDynamicPlaceholders(text, fields);
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeHighlightDynamicFields(fields)]}
+    >
+      {textWithPlaceholders}
+    </ReactMarkdown>
+  );
+}
+
+function renderThinkingBlock(content: string): React.ReactNode {
+  return (
+    <pre style={{
+      margin: 0, padding: "10px 12px",
+      background: "#fff", border: "1px solid #e5e7eb", borderRadius: 6,
+      fontFamily: "ui-monospace, SFMono-Regular, monospace",
+      fontSize: 11.5, lineHeight: 1.6,
+      whiteSpace: "pre-wrap", wordBreak: "break-word",
+      color: "#374151",
+    }}>
+      {content}
+    </pre>
+  );
+}
+
+function renderBashToolCall(input: any): React.ReactNode {
+  const command = typeof input === "object" && typeof input.command === "string" ? input.command : "";
+  const runInBackground = typeof input === "object" && !!input.run_in_background;
+  
+  return (
+    <div style={{
+      fontFamily: "ui-monospace, SFMono-Regular, monospace",
+      backgroundColor: "#f9fafb", color: "#1f2937",
+      padding: "10px 12px", borderRadius: 6,
+      border: "1px solid #e5e7eb",
+      fontSize: 11.5, lineHeight: 1.5,
+      overflowX: "auto",
+    }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+        <span style={{ color: BRAND.indigo600, userSelect: "none", fontWeight: 700 }}>$</span>
+        <span style={{ color: "#1f2937", whiteSpace: "pre-wrap", wordBreak: "break-all", flex: 1 }}>{command}</span>
+        {runInBackground && (
+          <span style={{ background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a", padding: "1px 4px", borderRadius: 3, fontSize: 8.5, flexShrink: 0 }}>
+            bg
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function renderGenericToolCall(name: string, input: any): React.ReactNode {
+  const params = typeof input === "object" && input !== null ? Object.entries(input) : [];
+  
+  return (
+    <div style={{
+      border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden",
+      backgroundColor: "#fff", boxShadow: "0 1px 3px 0 rgba(0,0,0,0.05)",
+    }}>
+      <div style={{
+        backgroundColor: "#f3f4f6", padding: "8px 12px",
+        borderBottom: "1px solid #e5e7eb", display: "flex", alignItems: "center", gap: 8
+      }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: "#6b7280", letterSpacing: "0.05em", textTransform: "uppercase" }}>Tool Call</span>
+        <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 12, fontWeight: 700, color: "#111827" }}>{name}</span>
+      </div>
+      <div style={{ padding: "12px", display: "flex", flexDirection: "column", gap: 8 }}>
+        {params.length > 0 ? (
+          params.map(([key, value]) => (
+            <div key={key} style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: 12, fontSize: 12, borderBottom: "1px solid #f3f4f6", paddingBottom: 6 }}>
+              <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", color: "#6b7280", fontWeight: 600 }}>{key}</span>
+              <span style={{
+                fontFamily: typeof value === "object" ? "ui-monospace, SFMono-Regular, monospace" : "inherit",
+                color: "#1f2937", whiteSpace: "pre-wrap", wordBreak: "break-word"
+              }}>
+                {typeof value === "object" ? JSON.stringify(value, null, 2) : String(value)}
+              </span>
+            </div>
+          ))
+        ) : (
+          <div style={{ fontSize: 11, color: "#9ca3af", fontStyle: "italic" }}>No parameters</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function getThinkingRawJson(content: string, signature?: string): string {
+  const isRedacted = !content || (signature && content === signature);
+  const block = isRedacted
+    ? { type: "redacted_thinking", data: signature || content }
+    : { type: "thinking", thinking: content, signature: signature || "" };
+  return JSON.stringify(block, null, 2);
+}
+
+function getToolResultRawJson(content: string, toolUseId?: string): string {
+  const block = {
+    type: "tool_result",
+    tool_use_id: toolUseId || "",
+    content: content,
+  };
+  return JSON.stringify(block, null, 2);
+}
+
 // ─── 叶子详情 ───────────────────────────────────────────────────────────────
 
 export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
@@ -990,54 +1214,56 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
    *  缺省时富展示只显示绝对字符数，不显示百分比。 */
   totalContextChars?: number;
 }) {
-  // Hooks 必须无条件调用——放在下面 skill_listing early-return 之前。
-  // 否则 skillListing 分支会跳过这些 hook，违反 rules-of-hooks。
   const { t } = useTranslation();
   const { flashEvent, flashCall, flashToolUse } = useAttributionGraph();
   const [copiedAt, setCopiedAt] = useState<number>(0);
   const [rawMode, setRawMode] = useState(false);
   const isSystemLeaf = sectionOf(leaf.rootSlotType) === "system";
+  const isToolLeaf = sectionOf(leaf.rootSlotType) === "tools";
+  const isThinkingLeaf = leaf.slotType === "messages.thinking";
+  const isToolUseLeaf = leaf.slotType === "messages.tool_use";
+  const isToolResultLeaf = leaf.slotType === "messages.tool_result";
+  const isAssistantTextLeaf = leaf.messageRole === "assistant" && !isThinkingLeaf && !isToolUseLeaf;
+  const isImageLeaf = leaf.slotType === "messages.block.image";
+  const isInjectionLeaf = leaf.slotType === "messages.inline.system-reminder" || leaf.slotType === "messages.system-message";
+  const hasRawToggle = isSystemLeaf || isToolLeaf || isAssistantTextLeaf || isThinkingLeaf || isToolUseLeaf || isToolResultLeaf || isImageLeaf || isInjectionLeaf;
+
+  const rawTextContent = useMemo(() => {
+    if (isAssistantTextLeaf) {
+      return JSON.stringify({
+        type: "text",
+        text: leaf.rawText ?? leaf.preview,
+      }, null, 2);
+    }
+    if (isThinkingLeaf) {
+      return getThinkingRawJson(leaf.rawText || "", leaf.thinkingSignature);
+    }
+    if (isToolUseLeaf) {
+      const parsed = tryParseSegmentJson(leaf.rawText ?? leaf.preview) as any;
+      return JSON.stringify({
+        type: "tool_use",
+        id: parsed?.id || leaf.toolUseId || "",
+        name: parsed?.name || leaf.toolName || "",
+        input: parsed?.input || {},
+      }, null, 2);
+    }
+    if (isToolResultLeaf) {
+      return getToolResultRawJson(leaf.rawText || "", leaf.toolUseId);
+    }
+    return leaf.rawText ?? leaf.preview;
+  }, [leaf, isAssistantTextLeaf, isThinkingLeaf, isToolUseLeaf, isToolResultLeaf]);
 
   // 命中 skill_listing rule 时，走专属富展示，完全替换通用 leaf 详情布局。
   if (leaf.origin.kind === "rule" && leaf.origin.payload?.skillListing) {
     return <SkillListingDetail leaf={leaf} totalContextChars={totalContextChars} />;
   }
 
-  // Back-link target: open the Turn view (onLinkSource), then scroll to a
-  // landing point that depends on the leaf's underlying event kind:
-  //
-  //   • tool_use leaf — the "source" is the Call that *emitted* this
-  //     tool_use. Landing = the Call card anchor (`#turn-N-call-K`), not
-  //     a specific jsonl row. Multiple tool_uses can share the same jsonl
-  //     line (assistant message), so a row-level scroll wouldn't pick
-  //     this one out anyway.
-  //
-  //   • other jsonl leaves (tool_result / user_input / harness) — landing
-  //     = the IntervalEventRow at `data-jsonl-line="${jsonlLineIdx}"`.
-  //
-  // jumpTarget prefers `firstSeenInCall` (the graph's "first-prompt" call)
-  // over `sourceCallId` (the parser's call ownership) — for tool_result
-  // these differ; for tool_use they coincide.
   const isCopied = copiedAt > 0 && Date.now() - copiedAt < 1500;
-  const fullContent = leaf.rawText ?? leaf.preview;
-  const isFullRaw = !!leaf.rawText;
-  const handleCopy = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    navigator.clipboard.writeText(fullContent).then(
-      () => {
-        setCopiedAt(Date.now());
-        setTimeout(() => setCopiedAt(0), 1500);
-      },
-      () => { /* clipboard API 不可用时静默 */ },
-    );
-  };
   const sourceTurnId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceTurnId : undefined;
   const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;
   const firstSeenInCall = leaf.origin.kind === "jsonl" ? leaf.origin.firstSeenInCall : undefined;
   const jsonlLineIdx = leaf.origin.kind === "jsonl" ? leaf.origin.jsonlLineIdx : undefined;
-  // eventKind comes from server as `{ source, contentType }` but older
-  // serializations / tests may carry just a string — handle both.
-  const isToolUseLeaf = leaf.origin.kind === "jsonl" && (() => {
+  const isToolUseLeafType = leaf.origin.kind === "jsonl" && (() => {
     const ek = leaf.origin.eventKind;
     if (typeof ek === "string") return ek === "tool_use";
     return ek?.source === "tool_use";
@@ -1046,13 +1272,7 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
   const handleJumpSource = (jumpTarget !== undefined && onLinkSource)
     ? () => {
         onLinkSource(jumpTarget, sourceTurnId);
-        // Defer past panel mount so the target node exists in the DOM
-        // when we try to scroll to it.
-        if (isToolUseLeaf) {
-          // Prefer landing on the specific `ToolCallRow` keyed by
-          // `data-tool-use-id` (more precise than just the call card).
-          // Fall back to `flashCall` when wireMeta didn't carry a
-          // toolUseId (e.g. older snapshots, structural rendering).
+        if (isToolUseLeafType) {
           if (leaf.toolUseId) {
             requestAnimationFrame(() => flashToolUse(leaf.toolUseId!));
           } else {
@@ -1064,19 +1284,12 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
       }
     : undefined;
 
-  // Flat detail: top one-line metadata row + content + dynamic fields.
-  // Identity bits (color / kindLabel / title / shortId) come from the
-  // shared mapper so this stays in sync with Turn/Response renderings.
-  // 取 title + kindLabel 给 ⓘ 技术信息用;color/shortId 不再在 detail 展示(概览归选中行)。
   const { kindLabel, title } = leafOriginToCardHeader(leaf);
   const requestPath = leaf.jsonPath ? leaf.jsonPath.replace(/^reqBody\./, "") : undefined;
   const confidence =
     leaf.origin.kind === "rule" || leaf.origin.kind === "jsonl"
       ? leaf.origin.confidence
       : undefined;
-  // `originSuffix` collects the secondary facts that follow the primary
-  // identifier (kindLabel + the call/line coordinate, then confidence,
-  // then size). Joined with " · " so the row stays a single inline strip.
   const originSuffixParts: string[] = [kindLabel.toLowerCase()];
   if (leaf.origin.kind === "jsonl") {
     originSuffixParts.push(`L${leaf.origin.jsonlLineIdx + 1}`);
@@ -1085,13 +1298,6 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
   originSuffixParts.push(`${leaf.charCount}b`);
   const originSuffix = originSuffixParts.join(" · ");
 
-  // Always attempt to parse — `tryParseSegmentJson` gates on the first
-  // non-whitespace char being `{` or `[`, so prose leaves return undefined
-  // and stay text-only. This catches both the jsonl wire payloads (where
-  // `origin.kind === "jsonl"`) AND rule-origin leaves whose rawText is a
-  // JSON schema/blob (tools.* especially — its rawText is a serialized
-  // tool definition that previously had no toggle because we only gated
-  // on `origin.kind === "jsonl"`).
   const parsedRawJson = tryParseSegmentJson(leaf.rawText ?? leaf.preview);
   const hasJsonContent = parsedRawJson !== undefined;
 
@@ -1099,35 +1305,85 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
     ? t("terms.viewSourceCall", { callId: jumpTarget })
     : undefined;
   const jumpTooltip = jumpTarget !== undefined
-    ? (isToolUseLeaf
+    ? (isToolUseLeafType
         ? t("terms.jumpToCallCardTooltip", { callId: jumpTarget })
         : t("terms.jumpToCallLineTooltip", { callId: jumpTarget }))
     : undefined;
 
-  // detail 现在是「纯内容面板」：概览（displayName/stability/占比/summary/dynamicSource）
-  // 全在上方选中行,不在此重复。这里只补选中行没有的——渲染好的内容(动态值 inline 高亮)。
-  // 技术信息(jsonPath/ruleId/confidence)收进右上角 ⓘ hover;复制/跳转保留为小按钮。
   const dynamicFields = leaf.origin.kind === "rule" ? leaf.origin.dynamicFields : undefined;
-  // 动态值高亮仅对 prose（非 JSON 树渲染)生效——JSON 走 SegmentView 树视图,不切片。
   const contentText = leaf.rawText ?? leaf.preview;
   const useHighlight = !hasJsonContent && dynamicFields && dynamicFields.length > 0;
 
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const textToCopy = leaf.rawText ?? leaf.preview;
+    navigator.clipboard.writeText(textToCopy).then(
+      () => {
+        setCopiedAt(Date.now());
+        setTimeout(() => setCopiedAt(0), 1500);
+      },
+      () => { /* clipboard API 不可用时静默 */ },
+    );
+  };
+
+  const btnBaseStyle: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    height: 24,
+    padding: "0 8px",
+    fontSize: 10,
+    fontWeight: 600,
+    borderRadius: 4,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    boxSizing: "border-box",
+    lineHeight: 1,
+    transition: "all 0.12s ease",
+  };
+
+  const infoBtnStyle: React.CSSProperties = {
+    ...btnBaseStyle,
+    border: "1px solid #e5e7eb",
+    background: "#fff",
+    color: "#9ca3af",
+    cursor: "help",
+    padding: "0 6px",
+  };
+
+  const toggleBtnStyle: React.CSSProperties = {
+    ...btnBaseStyle,
+    border: "1px solid #d1d5db",
+    background: rawMode ? "#f3f4f6" : "#fff",
+    color: "#374151",
+  };
+
+  const copyBtnStyle: React.CSSProperties = {
+    ...btnBaseStyle,
+    border: "1px solid",
+    borderColor: isCopied ? "#16a34a" : "#d1d5db",
+    background: isCopied ? "#dcfce7" : "#fff",
+    color: isCopied ? "#15803d" : "#374151",
+    transition: "background 0.12s, border-color 0.12s, color 0.12s",
+  };
+
+  const jumpBtnStyle: React.CSSProperties = {
+    ...btnBaseStyle,
+    border: "1px solid #c7d2fe",
+    background: "#e0e7ff",
+    color: BRAND.indigo600,
+  };
+
   return (
     <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* 右上角操作条:ⓘ 技术信息(hover) + 复制原文 + 跳转。不再有常驻 metadata 行——
-          概览在选中行,技术细节按需 hover。 */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
               aria-label={t("attribution.detail.techInfo", { defaultValue: "原始信息" })}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 4,
-                border: "1px solid #e5e7eb", background: "#fff", color: "#9ca3af",
-                borderRadius: 4, padding: "2px 6px", cursor: "help", lineHeight: 1.3,
-                flexShrink: 0,
-              }}
+              style={infoBtnStyle}
             >
               <Info size={11} />
             </button>
@@ -1140,61 +1396,34 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
             </div>
           </TooltipContent>
         </Tooltip>
-        {isSystemLeaf ? (
+        {hasRawToggle && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); setRawMode(v => !v); }}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              border: "1px solid #d1d5db", background: rawMode ? "#f3f4f6" : "#fff",
-              color: "#374151", borderRadius: 4, fontSize: 10, fontWeight: 600,
-              padding: "2px 7px", cursor: "pointer", lineHeight: 1.3,
-              flexShrink: 0, whiteSpace: "nowrap",
-            }}
+            style={toggleBtnStyle}
           >
             {rawMode ? "← 渲染" : "查看原文"}
           </button>
-        ) : (
-          <button
-            type="button"
-            title={isFullRaw
-              ? `复制原文（${fullContent.length.toLocaleString()} 字符）`
-              : `复制（${fullContent.length.toLocaleString()} 字符 · 预览版，原文未提供）`}
-            onClick={handleCopy}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              border: "1px solid",
-              borderColor: isCopied ? "#16a34a" : "#d1d5db",
-              background: isCopied ? "#dcfce7" : "#fff",
-              color: isCopied ? "#15803d" : "#374151",
-              borderRadius: 4, fontSize: 10, fontWeight: 600,
-              padding: "2px 7px", cursor: "pointer", lineHeight: 1.3,
-              flexShrink: 0, whiteSpace: "nowrap",
-              transition: "background 0.12s, border-color 0.12s, color 0.12s",
-            }}
-          >
-            {isCopied ? (
-              <><Check size={10} strokeWidth={3} /> 已复制</>
-            ) : (
-              <><Copy size={10} /> 复制原文</>
-            )}
-          </button>
         )}
+        <button
+          type="button"
+          title={`复制原文（${(leaf.rawText ?? leaf.preview).length.toLocaleString()} 字符）`}
+          onClick={handleCopy}
+          style={copyBtnStyle}
+        >
+          {isCopied ? (
+            <><Check size={10} strokeWidth={3} /> 已复制</>
+          ) : (
+            <><Copy size={10} /> 复制原文</>
+          )}
+        </button>
         {handleJumpSource && (
           <button
             type="button"
             title={jumpTooltip}
             onClick={(e) => { e.stopPropagation(); handleJumpSource(); }}
-            className="hover:bg-indigo-700 transition-colors"
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 5,
-              border: "none", background: BRAND.indigo600, color: "#fff",
-              borderRadius: 4, fontSize: 10, fontWeight: 700,
-              padding: "3px 9px", cursor: "pointer", lineHeight: 1.3,
-              flexShrink: 0, whiteSpace: "nowrap",
-              transition: "background 0.12s",
-              letterSpacing: "0.02em",
-            }}
+            className="hover:bg-indigo-100 transition-colors"
+            style={jumpBtnStyle}
           >
             <LinkIcon />
             {jumpLabel ?? t("terms.jump", { defaultValue: "跳转" })}
@@ -1202,75 +1431,94 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
         )}
       </div>
 
-      {/* 内容主体。system leaf 默认 markdown 渲染，可切换原文 box。*/}
-      {isSystemLeaf ? (
-        rawMode ? (
-          <div style={{ position: "relative", border: "1px solid #e5e7eb", borderRadius: 6, background: "#f9fafb" }}>
-            <div style={{ position: "absolute", top: 6, right: 8, zIndex: 1 }}>
-              <button
-                type="button"
-                onClick={handleCopy}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  border: "1px solid",
-                  borderColor: isCopied ? "#16a34a" : "#d1d5db",
-                  background: isCopied ? "#dcfce7" : "#fff",
-                  color: isCopied ? "#15803d" : "#374151",
-                  borderRadius: 4, fontSize: 10, fontWeight: 700,
-                  padding: "3px 9px", cursor: "pointer", lineHeight: 1.3,
-                  whiteSpace: "nowrap",
-                  transition: "background 0.12s, border-color 0.12s, color 0.12s",
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
-                }}
-              >
-                {isCopied ? (
-                  <><Check size={10} strokeWidth={3} /> 已复制</>
-                ) : (
-                  <><Copy size={10} /> 复制 · {fullContent.length.toLocaleString()} 字符</>
-                )}
-              </button>
-            </div>
-            <pre style={{
-              margin: 0, padding: "8px 10px", paddingTop: 36,
-              fontFamily: "ui-monospace, SFMono-Regular, monospace",
-              fontSize: 11, lineHeight: 1.6,
-              whiteSpace: "pre-wrap", wordBreak: "break-word",
-              color: "#1f2937", maxHeight: 480, overflow: "auto",
+
+
+      {/* 内容主体 */}
+      {rawMode ? (() => {
+        const isRawJson = (() => {
+          const trimmed = rawTextContent.trim();
+          return trimmed.startsWith("{") || trimmed.startsWith("[");
+        })();
+        let parsedRawJsonObj: any = null;
+        if (isRawJson) {
+          try { parsedRawJsonObj = JSON.parse(rawTextContent); }
+          catch { /* ignored */ }
+        }
+        if (isRawJson && parsedRawJsonObj) {
+          return (
+            <div style={{
+              padding: "10px 12px",
+              background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6,
             }}>
-              {fullContent}
-            </pre>
-          </div>
-        ) : useHighlight ? (
+              <JsonView
+                value={parsedRawJsonObj}
+                collapsed={false}
+                displayDataTypes={false}
+                displayObjectSize={false}
+                enableClipboard
+                style={{
+                  backgroundColor: "transparent",
+                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                  fontSize: 11,
+                  lineHeight: 1.5,
+                }}
+              />
+            </div>
+          );
+        }
+        return (
           <pre style={{
-            margin: 0, padding: "8px 10px",
-            background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 6,
+            margin: 0, padding: "10px 12px",
+            background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6,
             fontFamily: "ui-monospace, SFMono-Regular, monospace",
-            fontSize: 12, lineHeight: 1.5,
+            fontSize: 11.5, lineHeight: 1.55,
             whiteSpace: "pre-wrap", wordBreak: "break-word",
             color: "#1f2937",
           }}>
-            {renderContentWithDynamicHighlights(contentText, dynamicFields)}
+            {rawTextContent}
           </pre>
-        ) : (
-          <div className="md-prose" style={{
-            fontSize: 12, color: "#1f2937",
-            border: "1px solid #e5e7eb", borderRadius: 6, background: "#fff",
-            padding: "8px 12px",
-          }}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentText}</ReactMarkdown>
-          </div>
-        )
-      ) : useHighlight ? (
-        <pre style={{
-          margin: 0, padding: "8px 10px",
-          background: "#f9fafb", border: "1px solid #f3f4f6", borderRadius: 6,
-          fontFamily: "ui-monospace, SFMono-Regular, monospace",
-          fontSize: 12, lineHeight: 1.5,
-          whiteSpace: "pre-wrap", wordBreak: "break-word",
-          color: "#1f2937",
+        );
+      })() : isSystemLeaf || isToolLeaf || isInjectionLeaf ? (
+        <div className="md-prose" style={{
+          fontSize: 12, color: "#1f2937",
+          border: "1px solid #e5e7eb", borderRadius: 6, background: "#fff",
+          padding: "8px 12px",
         }}>
-          {renderContentWithDynamicHighlights(contentText, dynamicFields)}
-        </pre>
+          {renderMarkdownWithHighlights(contentText, dynamicFields)}
+        </div>
+      ) : isAssistantTextLeaf ? (
+        <div className="md-prose" style={{
+          fontSize: 12, color: "#1f2937",
+          border: "1px solid #e5e7eb", borderRadius: 6, background: "#fff",
+          padding: "8px 12px",
+        }}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentText}</ReactMarkdown>
+        </div>
+      ) : isThinkingLeaf ? (
+        renderThinkingBlock(contentText)
+      ) : isToolUseLeaf ? (() => {
+        const parsed = tryParseSegmentJson(leaf.rawText ?? leaf.preview) as any;
+        const isBash = leaf.toolName?.toLowerCase() === "bash";
+        if (isBash) {
+          return renderBashToolCall(parsed?.input);
+        }
+        return renderGenericToolCall(leaf.toolName || "Unknown Tool", parsed?.input);
+      })() : isImageLeaf ? (
+        <div style={{
+          padding: "16px",
+          background: "#f9fafb",
+          border: "1px dashed #d1d5db",
+          borderRadius: 6,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 8,
+          color: "#4b5563"
+        }}>
+          <span style={{ fontSize: 24 }}>🖼️</span>
+          <span style={{ fontSize: 12, fontWeight: 600 }}>{t("messages.block.image", { defaultValue: "图片输入" })}</span>
+          <span style={{ fontSize: 11, fontFamily: "ui-monospace, SFMono-Regular, monospace", color: "#6b7280" }}>{leaf.jsonPath}</span>
+        </div>
       ) : (
         <SegmentView
           seg={{

@@ -42,6 +42,7 @@ import {
   getBucket,
   bucketStatsOf,
   type Lens,
+  type LensBucket,
 } from "./lens-framework";
 // DiffPanel 旧入口已废弃，但其中的 SelectedDiffDetail 仍然复用（行级 inline diff）。
 import type { DiffSection, DiffTreeResult, PinInfo } from "./diff-tree-types";
@@ -50,7 +51,6 @@ import {
   diffUnderlineFor,
   sectionFrame,
   intentGroupPalette,
-  INTENT_GROUP_ORDER,
   type IntentGroupId,
   ROLE_TO_GROUP,
   type RoleId,
@@ -75,19 +75,26 @@ function LensSwitcher({
 }) {
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: 8,
-      padding: "2px 0", flexWrap: "wrap",
+      display: "flex", alignItems: "center", gap: 10,
+      padding: "4px 0", flexWrap: "wrap",
     }}>
-      <span style={{ fontWeight: 600, color: "#4b5563", letterSpacing: "0.04em", textTransform: "uppercase", fontSize: 10 }}>
-        视角
+      <span style={{
+        fontWeight: 700,
+        color: "#4b5563",
+        fontSize: 10.5,
+        letterSpacing: "0.04em",
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        userSelect: "none"
+      }}>
+        图层叠加
       </span>
       <div style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 2,
-        background: "#f3f4f6", // 浅灰色容器底色
-        padding: 3,
-        borderRadius: 8,
+        gap: 6,
+        flexWrap: "wrap",
       }}>
         {lenses.map((lens) => {
           const isActive = activeLenses.has(lens.id);
@@ -103,13 +110,13 @@ function LensSwitcher({
               disabled={isBase}
               title={description}
               style={{
-                display: "inline-flex", alignItems: "center", gap: 5,
-                padding: "4px 10px",
-                borderRadius: 6,
-                border: "none",
-                background: isActive ? "#ffffff" : "transparent", // 激活时为白色小卡片
-                boxShadow: isActive ? "0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)" : "none", // 激活时带投影
-                color: isActive ? "#312e81" : "#4b5563", // 激活时字色加深
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "3px 10px",
+                borderRadius: 20, // 胶囊形状
+                border: isActive ? "1px solid #4f46e5" : "1px solid #cbd5e1",
+                background: isActive ? "#4f46e5" : "transparent",
+                boxShadow: isActive ? "0 1px 2px 0 rgba(79, 70, 229, 0.15)" : "none",
+                color: isActive ? "#ffffff" : "#4b5563",
                 fontWeight: isActive ? 700 : 500,
                 fontSize: 11,
                 cursor: isBase ? "default" : "pointer",
@@ -117,11 +124,20 @@ function LensSwitcher({
               }}
             >
               <span style={{
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                width: 6, height: 6, borderRadius: "50%",
-                background: isActive ? "#6366f1" : "#d1d5db", // 圆点替代复选框
-                transition: "background 0.15s",
-              }} />
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 9,
+                width: 12,
+                height: 12,
+                borderRadius: "50%",
+                background: isActive ? "#ffffff" : "#f3f4f6",
+                color: isActive ? "#4f46e5" : "#9ca3af",
+                fontWeight: 700,
+                border: isActive ? "none" : "1px solid #cbd5e1",
+              }}>
+                {isActive ? "✓" : ""}
+              </span>
               {lens.label}
             </button>
           );
@@ -135,7 +151,7 @@ function LensSwitcher({
 function BucketPill({
   bucket, leafCount, totalChars, isActive, onClick, variant = "pill",
 }: {
-  bucket: { id: string; label: string; color: string; description?: string };
+  bucket: LensBucket;
   leafCount: number;
   totalChars: number;
   isActive: boolean;
@@ -143,8 +159,14 @@ function BucketPill({
   variant?: "pill" | "badge";
 }) {
   const isBadge = variant === "badge";
-  const badgeBg = isActive ? `${bucket.color}1e` : "#f3f4f6"; // 激活时彩色微透底色，未激活时灰色底色
-  const badgeTextColor = isActive ? bucket.color : "#4b5563";
+
+  const borderStyle = isActive ? `1px solid ${bucket.color}` : "1px solid #e5e7eb";
+  const bgStyle = isActive ? `${bucket.color}14` : "#fafafa";
+  const textColorStyle = isActive ? bucket.color : "#374151";
+
+  const badgeBorder = isActive ? `1px solid ${bucket.color}` : `1px solid ${bucket.color}40`;
+  const badgeBg = isActive ? bucket.color : `${bucket.color}0c`;
+  const badgeTextColor = isActive ? "#ffffff" : bucket.color;
 
   return (
     <Tooltip>
@@ -155,22 +177,22 @@ function BucketPill({
           style={isBadge ? {
             display: "inline-flex", alignItems: "center", gap: 4,
             padding: "2px 6px", borderRadius: 4,
-            border: "none",
+            border: badgeBorder,
             background: badgeBg,
             color: badgeTextColor,
-            fontSize: 10.5,
-            fontWeight: isActive ? 700 : 500,
+            fontSize: 10,
+            fontWeight: 700,
             cursor: "pointer",
             transition: "all 0.1s ease",
           } : {
             display: "inline-flex", alignItems: "baseline", gap: 5,
             padding: "3px 7px", borderRadius: 4,
-            border: isActive ? `1px solid ${bucket.color}` : "1px solid transparent",
-            background: isActive ? `${bucket.color}1a` : "transparent",
-            color: "#374151",
+            border: borderStyle,
+            background: bgStyle,
+            color: textColorStyle,
             fontSize: 11,
             cursor: "pointer",
-            transition: "background 0.1s, border-color 0.1s",
+            transition: "all 0.15s ease",
           }}
         >
           {!isBadge && (
@@ -181,7 +203,7 @@ function BucketPill({
           )}
           {isBadge ? (
             <>
-              <span style={{ fontWeight: 700, color: isActive ? bucket.color : "#1f2937" }}>
+              <span style={{ fontWeight: 800 }}>
                 {bucket.id === "added" ? "+" : bucket.id === "removed" ? "-" : bucket.id === "modified" ? "*" : ""}
                 {leafCount}
               </span>
@@ -311,27 +333,106 @@ function StructureLensFilter({
 
   if (totalCount === 0) return null;
 
+  const coldGroups: IntentGroupId[] = ["instructions", "environment", "capabilities", "events"];
+  const warmGroups: IntentGroupId[] = ["interaction"];
+
+  const hasCold = coldGroups.some(g => (groupStats.get(g)?.leafCount ?? 0) > 0);
+  const hasWarm = warmGroups.some(g => (groupStats.get(g)?.leafCount ?? 0) > 0);
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "2px 0" }}>
-      {/* Row 1: Major Categories */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-        <span style={{ fontWeight: 600, color: "#4b5563", letterSpacing: "0.04em", textTransform: "uppercase", fontSize: 10, marginRight: 4 }}>
-          分类
-        </span>
-        {INTENT_GROUP_ORDER.map((g) => {
-          const gs = groupStats.get(g);
-          if (!gs || gs.leafCount === 0) return null;
-          return (
-            <MajorCategoryPill
-              key={g}
-              groupId={g}
-              leafCount={gs.leafCount}
-              totalChars={gs.totalChars}
-              isActive={selectedGroupId === g}
-              onClick={() => onSelectGroup(selectedGroupId === g ? null : g)}
-            />
-          );
-        })}
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "4px 0" }}>
+      {/* Horizontal Single Line Layout for Major Categories */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "5px 10px",
+        borderRadius: 6,
+        border: "1px solid #e2e8f0",
+        background: "#f8fafc",
+        flexWrap: "wrap",
+        boxShadow: "0 1px 2px 0 rgba(0, 0, 0, 0.03)",
+      }}>
+        {/* Cold Context Ingestion Track */}
+        {hasCold && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{
+              fontWeight: 700,
+              color: "#475569",
+              fontSize: 10,
+              letterSpacing: "0.04em",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              marginRight: 4,
+              userSelect: "none"
+            }}>
+              上下文
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              {coldGroups.map((g) => {
+                const gs = groupStats.get(g);
+                if (!gs || gs.leafCount === 0) return null;
+                return (
+                  <MajorCategoryPill
+                    key={g}
+                    groupId={g}
+                    leafCount={gs.leafCount}
+                    totalChars={gs.totalChars}
+                    isActive={selectedGroupId === g}
+                    onClick={() => onSelectGroup(selectedGroupId === g ? null : g)}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Separator Line */}
+        {hasCold && hasWarm && (
+          <div style={{
+            width: 1,
+            height: 14,
+            background: "#cbd5e1",
+            margin: "0 4px",
+            alignSelf: "center",
+          }} />
+        )}
+
+        {/* Warm Interaction & Execution Track */}
+        {hasWarm && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{
+              fontWeight: 700,
+              color: "#57534e",
+              fontSize: 10,
+              letterSpacing: "0.04em",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              marginRight: 4,
+              userSelect: "none"
+            }}>
+              交互与执行
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              {warmGroups.map((g) => {
+                const gs = groupStats.get(g);
+                if (!gs || gs.leafCount === 0) return null;
+                return (
+                  <MajorCategoryPill
+                    key={g}
+                    groupId={g}
+                    leafCount={gs.leafCount}
+                    totalChars={gs.totalChars}
+                    isActive={selectedGroupId === g}
+                    onClick={() => onSelectGroup(selectedGroupId === g ? null : g)}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Row 2: Sub-categories (Dynamic) */}
@@ -343,11 +444,11 @@ function StructureLensFilter({
             display: "flex",
             alignItems: "center",
             gap: 6,
-            paddingLeft: 24,
+            paddingLeft: 12,
             marginTop: 2,
             flexWrap: "wrap",
           }}>
-            <span style={{ color: "#d1d5db", fontSize: 11, marginRight: 2, userSelect: "none" }}>└─</span>
+            <span style={{ color: "#cbd5e1", fontSize: 11, marginRight: 2, userSelect: "none" }}>└─</span>
             {subCategories.map(({ bucket, leafCount, totalChars }) => (
               <BucketPill
                 key={bucket.id}
@@ -434,6 +535,7 @@ function MainSectionBar({
   leafUnderline?: (leaf: LeafLite) => string | null;
   isDimmed?: (leaf: LeafLite) => boolean;
 }) {
+  const { t } = useTranslation();
   if (totalChars === 0) return null;
   return (
     <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
@@ -458,7 +560,7 @@ function MainSectionBar({
           <div
             key={s.id}
             onClick={() => onSelectSection(s.id)}
-            title={`${meta.label} · ${fmtK(s.totalChars)} chars · ${s.leafCount} segments — 点击钻入`}
+            title={`${t(`attribution.section.${s.id}`)} · ${fmtK(s.totalChars)} chars · ${s.leafCount} segments — ${t("attribution.clickToDrill")}`}
             style={{
               flex: pct, minWidth: 80,
               position: "relative",
@@ -491,7 +593,7 @@ function MainSectionBar({
                 pointerEvents: "none", // label 本身不接事件，点击由外层 div 统一处理
               }}
             >
-              <span>{meta.label}</span>
+              <span>{t(`attribution.section.${s.id}`)}</span>
               <span style={{
                 fontSize: 9, fontWeight: 600,
                 padding: "0 4px", borderRadius: 2,
@@ -546,6 +648,7 @@ function LensSectionTable({
   filteredStats: SectionStat[] | null;
   bucketColor: string | null;
 }) {
+  const { t } = useTranslation();
   const filterActive = filteredStats !== null && bucketColor !== null;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -572,7 +675,7 @@ function LensSectionTable({
             className={!dimmed ? "hover:bg-gray-50" : ""}
           >
             <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.marker, flexShrink: 0 }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 90 }}>{meta.label}</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 90 }}>{t(`attribution.section.${s.id}`)}</span>
             <span style={{ fontSize: 11, color: "#374151", minWidth: 60 }}>{fmtK(s.totalChars)}</span>
             <span style={{ fontSize: 11, color: "#9ca3af", minWidth: 44 }}>{pct.toFixed(1)}%</span>
             <span style={{ fontSize: 10, color: "#9ca3af", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -1302,6 +1405,7 @@ function CacheTopologyStrip({
    *  在哪些 L 层被缓存（落在 L 行 cum 内）"。 */
   selectedLeafPosition?: { start: number; end: number } | null;
 }) {
+  const { t } = useTranslation();
   const pins: PinInfo[] = diffData.sections
     .flatMap((s) => s.pins ?? [])
     .filter((p) => typeof p?.cumulativePrefixChars === "number")
@@ -1353,7 +1457,7 @@ function CacheTopologyStrip({
                 const meta = SECTION_META[b.id];
                 if (!meta) return null;
                 return (
-                  <div key={i} title={`${meta.label} · ${b.chars} chars`} style={{
+                  <div key={i} title={`${t(`attribution.section.${b.id}`)} · ${b.chars} chars`} style={{
                     flex: b.chars,
                     background: meta.barBg,
                     borderRadius: 2,

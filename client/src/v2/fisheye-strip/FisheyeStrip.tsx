@@ -57,6 +57,19 @@ const UNDERLINE_GAP_PX = 1;        // bar 底部到色条之间的留白
 const UNDERLINE_THICKNESS_PX = 5;  // 色条本身的厚度（加粗以提升 diff 信号识别度）
 const UNDERLINE_RESERVE_PX = UNDERLINE_GAP_PX + UNDERLINE_THICKNESS_PX;
 
+function getContrastColor(hexColor: string): string {
+  let hex = hexColor.replace(/^#/, "");
+  if (hex.length === 3) {
+    hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+  }
+  if (hex.length !== 6) return "#1f2937";
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 128 ? "#1f2937" : "#ffffff";
+}
+
 // ─── 主组件 ───────────────────────────────────────────────────────────────────
 
 export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>) {
@@ -189,12 +202,9 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
           intensity === 1 ? 500 :
           intensity === 2 ? 600 :
           700;
-        const labelColor =
-          intensity === 3 ? "#0b1220" :
-          intensity === 2 ? "#111827" :
-          "#1f2937";
         const label = getLabel ? getLabel(item) : "";
         const color = getColor(item);
+        const labelColor = getContrastColor(color);
         const title = getTitle
           ? getTitle(item)
           : `${label || item.id} · size ${item.size}${isCollapsed ? " · BROKEN (click to expand)" : ""}`;

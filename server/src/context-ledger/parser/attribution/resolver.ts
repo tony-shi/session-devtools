@@ -24,14 +24,19 @@ import type {
 // rule-specific 二次解析的 ruleId 白名单 + 派发逻辑
 // 命中这些 rule 时，resolver 调用对应 parser、把结构化结果挂到 SegmentAttribution.payload。
 // 其他 rule 命中时 payload 缺省，行为不变。
-const SKILL_LISTING_RULE_ID = "claude-code.messages.skill-listing.v1";
+// skill 列表 rule(v1=<system-reminder> 版,v2=2.1.154+ role:system message 版)。
+// 两者 skillsBlock 格式相同,共用 parseSkillListingBody。
+const SKILL_LISTING_RULE_IDS = new Set([
+  "claude-code.messages.skill-listing.v1",
+  "claude-code.messages.skill-listing.v2",
+]);
 
 function buildPayload(
   rule: ContextRule,
   evaluation: RuleEvaluation,
   node: SegmentNode,
 ): SegmentAttributionPayload | undefined {
-  if (rule.ruleId !== SKILL_LISTING_RULE_ID) return undefined;
+  if (!SKILL_LISTING_RULE_IDS.has(rule.ruleId)) return undefined;
 
   // 取 (?<skillsBlock>...) 的捕获值与 segment 内偏移。
   // 缺失任何一个都返回 undefined（rule 命中但 group 缺失，理论不会发生；防御性）。

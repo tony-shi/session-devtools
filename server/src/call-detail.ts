@@ -50,6 +50,7 @@ export interface CallDetail {
 
   // Phase 2: proxy-backed, null if no proxy record
   rawRequestJson: Record<string, unknown> | null;
+  rawResponseText?: string | null;
 }
 
 // ─── JSONL read helpers (copied from proxy-traffic.controller.ts) ─────────────
@@ -209,10 +210,17 @@ export async function loadCallDetail(
   if (!rec) return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: "exact", rawRequestJson: null };
 
   const reqBody = rec.reqBody as string | undefined;
+  const resBody = rec.resBody as string | undefined;
   let rawReqParsed: Record<string, unknown> | null = null;
   if (typeof reqBody === "string") {
     try { rawReqParsed = JSON.parse(reqBody) as Record<string, unknown>; }
     catch { /* not JSON */ }
   }
-  return { ...base, proxyRequestId: proxyRow.id, proxyMatchMode: "exact", rawRequestJson: rawReqParsed };
+  return {
+    ...base,
+    proxyRequestId: proxyRow.id,
+    proxyMatchMode: "exact",
+    rawRequestJson: rawReqParsed,
+    rawResponseText: resBody ?? null
+  };
 }

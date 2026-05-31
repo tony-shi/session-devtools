@@ -11,6 +11,8 @@ description: >-
   messages.inline.system-reminder 变为 messages.system-message。无需 appliesTo——v1/v2 靠
   slot 自然分流(SR 包裹→v1;role:system message→v2),wire 机制决定走哪条。
 stability: dynamic
+displayName: "延迟工具"
+summary: "ToolSearch 按需加载的工具清单(schema 未载,调用前需 ToolSearch 取);内置 + MCP 工具,随 MCP 配置变"
 sourcemapRef: >-
   Claude Code restored-src role:"system" message(CHANGELOG 2.1.154:"Replaces mid-session
   <system-reminder> guidance with beta role:'system' messages for supported models, with

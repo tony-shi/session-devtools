@@ -332,29 +332,32 @@
     },
     "lensGroup": {
       "instructions": {
-        "label": "系统提示词",
-        "description": "静态行为规则与全局设定：核心提示词、工具策略指引等。"
+        "label": "系统预设",
+        "description": "核心提示词、行为准则、工具策略以及行为指令（如思考频次设定）。"
       },
       "environment": {
-        "label": "系统环境与提醒",
-        "description": "模型当前可见的运行上下文与系统框架注入的环境变量、Git 状态、计费状态与运行时通知。"
-      },
-      "agent-loop": {
-        "label": "代理与工具执行",
-        "description": "模型内部思考（Thinking Block）与发起/接收工具调用的执行循环。"
-      },
-      "user-input": {
-        "label": "用户输入与文件",
-        "description": "用户直接发起的聊天对话文本、图片文件或命令执行回显。"
+        "label": "环境与上下文",
+        "description": "运行时的硬性约束事实、会话持久记忆以及注入的环境变量事实。"
       },
       "capabilities": {
         "label": "能力与拓展",
-        "description": "拓展链路上内置工具或自定义 Skills 的静态声明说明。"
+        "description": "内置工具的 Schema 描述、已安装 Skill 声明或子代理类型声明等拓展链路。"
+      },
+      "events": {
+        "label": "运行时事件",
+        "description": "harness 随时间插入 messages 流中的动态事件提醒（Token 预警、文件改动等）。"
+      },
+      "interaction": {
+        "label": "对话与执行",
+        "description": "用户与 AI 的往复聊天、思考过程以及工具/Skill 调用的执行交互流。"
       }
     },
     "stability": {
-      "static": "静态",
-      "dynamic": "动态"
+      "static": "静",
+      "dynamic": "动",
+      "session": "会话",
+      "dynamicNoise": "动·噪声",
+      "dynamicEvent": "动·事件"
     },
     "version": {
       "ccLabel": "CC {{version}}",
@@ -377,6 +380,41 @@
       "subtotal": "合计",
       "ofContext": "占上下文",
       "ofContextTip": "占整个请求上下文的比例（分母恒定 = 全部 context，不随筛选/下钻变化）"
+    },
+    "layoutProportional": "等比宽度",
+    "layoutProportionalTitle": "按 Token/字符数比例分配条形宽度",
+    "layoutEqual": "均分宽度",
+    "layoutEqualTitle": "所有段落平分宽度，方便点击查看小片段",
+    "clickToDrill": "点击钻入",
+    "section": {
+      "system": "系统",
+      "tools": "工具",
+      "messages": "消息",
+      "other": "其他"
+    },
+    "slots": {
+      "messages.thinking": "AI思考",
+      "messages.assistant": "AI 回复",
+      "messages.aiOutput": "AI输出",
+      "messages.human": "用户输入",
+      "messages.tool-use": "工具调用",
+      "messages.tool-result": "工具结果",
+      "messages.inline.system-reminder": "系统提醒",
+      "messages.context": "注入·上下文",
+      "messages.skills": "注入·能力",
+      "messages.directive": "注入·指令",
+      "messages.injection": "注入·事件",
+      "messages.misc": "其他消息",
+      "messages.image": "图片输入",
+      "system.core": "身份·框架",
+      "system.guidance": "行为准则",
+      "system.main-prompt.section.session-guidance": "会话守则",
+      "system.tool-policy": "工具策略",
+      "system.memory": "记忆指令",
+      "system.env": "环境事实",
+      "system.billing": "计费头",
+      "tools.builtin": "内置工具",
+      "other.unknown": "未识别段"
     }
   },
   "callLedger": {

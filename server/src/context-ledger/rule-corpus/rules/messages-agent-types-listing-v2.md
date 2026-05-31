@@ -11,6 +11,8 @@ description: >-
   靠 slot 与 v1 自然分流,无需 appliesTo。注:本 rule 类比 deferred-tools v2 推断(同机制),
   待 role:system 的 agent-types 真实样本进一步确认。
 stability: dynamic
+displayName: "Agent 类型"
+summary: "Agent 工具可调度的子代理类型及其工具权限(- name: 描述 (Tools: …))"
 sourcemapRef: >-
   Claude Code restored-src role:"system" message(CHANGELOG 2.1.154 beta system-message 迁移)。
 materialization: presence

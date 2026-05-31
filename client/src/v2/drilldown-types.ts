@@ -384,4 +384,5 @@ export interface CallDetail {
 
   // null when no proxy data available
   rawRequestJson: Record<string, unknown> | null;
+  rawResponseText?: string | null;
 }

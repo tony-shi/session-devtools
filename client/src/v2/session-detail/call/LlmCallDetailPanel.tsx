@@ -6,7 +6,7 @@
 // panel），各模式的 onClose / onShowTurnContext / onLinkCall / onLinkSource /
 // compactIdx / agentFileId / prevCall 接法不同，是真正的变化点 —— 保留为 props。
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { apiV2 } from "../../api";
 import type { CallDetail } from "../../drilldown-types";
@@ -24,6 +24,8 @@ import { SummaryStat, CacheSummaryStat } from "./CallSummaryStats";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Check, Copy } from "lucide-react";
+import { SegmentedToggle } from "../../shared/SegmentedToggle";
+import JsonView from "@uiw/react-json-view";
 
 function RawCopyButton({ text }: { text: string }) {
   const [copiedAt, setCopiedAt] = useState<number>(0);
@@ -70,17 +72,61 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
   callDetailLoading: boolean;
 }) {
   const { t } = useTranslation();
-  const jsonlText = JSON.stringify(
-    { call_id: call.id, index_in_turn: call.indexInTurn, model: call.model, timestamp: call.timestamp, usage: { context_size: call.contextSize, fresh_in: freshIn, cache_read: call.cacheRead, cache_write: call.cacheWrite, output_tokens: call.outputTokens }, stop_reason: call.stopReason, ...(call.proxy ? { proxy_request_id: call.proxy.requestId, duration_ms: call.proxy.durationMs } : {}) },
-    null, 2,
-  );
+  const [subTab, setSubTab] = useState<"request" | "response" | "meta">("request");
+
+  const jsonlObj = useMemo(() => ({
+    call_id: call.id,
+    index_in_turn: call.indexInTurn,
+    model: call.model,
+    timestamp: call.timestamp,
+    usage: {
+      context_size: call.contextSize,
+      fresh_in: freshIn,
+      cache_read: call.cacheRead,
+      cache_write: call.cacheWrite,
+      output_tokens: call.outputTokens
+    },
+    stop_reason: call.stopReason,
+    ...(call.proxy ? { proxy_request_id: call.proxy.requestId, duration_ms: call.proxy.durationMs } : {})
+  }), [call, freshIn]);
+
+  const jsonlText = useMemo(() => JSON.stringify(jsonlObj, null, 2), [jsonlObj]);
+
   const requestText = callDetail?.rawRequestJson
     ? JSON.stringify(callDetail.rawRequestJson, null, 2)
     : null;
+  const responseText = callDetail?.rawResponseText;
+
+  const isResponseJson = useMemo(() => {
+    if (!responseText) return false;
+    const trimmed = responseText.trim();
+    return trimmed.startsWith("{") || trimmed.startsWith("[");
+  }, [responseText]);
+
+  const parsedResponse = useMemo(() => {
+    if (isResponseJson && responseText) {
+      try { return JSON.parse(responseText); }
+      catch { return null; }
+    }
+    return null;
+  }, [isResponseJson, responseText]);
 
   if (callDetailLoading) {
     return <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>;
   }
+
+  const subOptions = [
+    { id: "request" as const, label: "原始请求" },
+    { id: "response" as const, label: "原始响应" },
+    { id: "meta" as const, label: "请求元信息" },
+  ];
+
+  const jsonViewStyle: React.CSSProperties = {
+    backgroundColor: "transparent",
+    fontFamily: "ui-monospace, SFMono-Regular, monospace",
+    fontSize: 11,
+    lineHeight: 1.5,
+  };
 
   return (
     <>
@@ -88,27 +134,105 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
         Proxy — full request body available.
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-          {t("terms.jsonlMetadata")}
-        </div>
-        <RawCopyButton text={jsonlText} />
+      <div style={{ marginBottom: 14 }}>
+        <SegmentedToggle
+          options={subOptions}
+          value={subTab}
+          onChange={setSubTab}
+          align="start"
+        />
       </div>
-      <CodeBlock variant="json" style={{ marginBottom: 14 }}>
-        {jsonlText}
-      </CodeBlock>
 
-      {requestText && (
+      {subTab === "request" && (
+        <>
+          {callDetail?.rawRequestJson ? (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  原始请求体 (JSON)
+                </div>
+                <RawCopyButton text={requestText || ""} />
+              </div>
+              <div style={{
+                padding: "10px 12px",
+                backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6,
+                maxHeight: 480, overflow: "auto",
+              }}>
+                <JsonView
+                  value={callDetail.rawRequestJson as object}
+                  collapsed={false}
+                  displayDataTypes={false}
+                  displayObjectSize={false}
+                  enableClipboard
+                  style={jsonViewStyle}
+                />
+              </div>
+            </>
+          ) : (
+            <div style={{ fontSize: 11, color: "#9ca3af", padding: "10px 0" }}>无请求体数据</div>
+          )}
+        </>
+      )}
+
+      {subTab === "response" && (
+        <>
+          {responseText ? (
+            <>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  原始响应体 (SSE / JSON)
+                </div>
+                <RawCopyButton text={responseText} />
+              </div>
+              {isResponseJson && parsedResponse ? (
+                <div style={{
+                  padding: "10px 12px",
+                  backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6,
+                  maxHeight: 480, overflow: "auto",
+                }}>
+                  <JsonView
+                    value={parsedResponse as object}
+                    collapsed={false}
+                    displayDataTypes={false}
+                    displayObjectSize={false}
+                    enableClipboard
+                    style={jsonViewStyle}
+                  />
+                </div>
+              ) : (
+                <CodeBlock variant="preview" mono>
+                  {responseText}
+                </CodeBlock>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 11, color: "#9ca3af", padding: "10px 0" }}>无响应体数据</div>
+          )}
+        </>
+      )}
+
+      {subTab === "meta" && (
         <>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-              {t("terms.proxyRequestBody")}
+              JSONL 会话元数据
             </div>
-            <RawCopyButton text={requestText} />
+            <RawCopyButton text={jsonlText} />
           </div>
-          <CodeBlock variant="json">
-            {requestText}
-          </CodeBlock>
+          <div style={{
+            padding: "10px 12px",
+            backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6,
+            maxHeight: 480, overflow: "auto",
+          }}>
+            <JsonView
+              value={jsonlObj}
+              collapsed={false}
+              displayDataTypes={false}
+              displayObjectSize={false}
+              enableClipboard
+              style={jsonViewStyle}
+            />
+          </div>
         </>
       )}
     </>

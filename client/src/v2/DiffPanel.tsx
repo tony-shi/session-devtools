@@ -72,6 +72,15 @@ function shortSlot(s: string): string {
   return s.replace("messages.", "msg.").replace("system.", "sys.").replace("tools.builtin.", "tool.");
 }
 
+function localizedSlot(slotType: string, t?: (key: string) => string): string {
+  if (t) {
+    const key = `attribution.slots.${slotType}`;
+    const val = t(key);
+    if (val !== key) return val;
+  }
+  return shortSlot(slotType);
+}
+
 /** Wire jsonPath → 短显式标签。明确告诉用户 pin 落在哪个具体字段。
  *  reqBody.system[3]                  → sys[3]
  *  reqBody.messages[4].content[1]     → msg[4][1]
@@ -335,7 +344,7 @@ function CacheImpactRow({
         .filter(s => s.counts.added + s.counts.removed + s.counts.modified > 0)
         .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))[0]
     : null;
-  const biggestChangeLabel = biggestChange ? SECTION_META[biggestChange.id].label : null;
+  const biggestChangeLabel = biggestChange ? t(`attribution.section.${biggestChange.id}`) : null;
 
   return (
     <div style={{
@@ -628,6 +637,7 @@ function SectionDiffBar({
   selectedSection: DiffSectionId | null;
   onSelect: (s: DiffSectionId) => void;
 }) {
+  const { t } = useTranslation();
   const [hoveredId, setHoveredId] = useState<DiffSectionId | null>(null);
   if (grandTotal === 0) return null;
   const hasSelection = selectedSection !== null;
@@ -659,7 +669,7 @@ function SectionDiffBar({
             key={s.id}
             onClick={() => onSelect(s.id)}
             onMouseEnter={() => setHoveredId(s.id)}
-            title={`${meta.label} · ${fmtK(s.newTotal)} chars${hasChange ? ` · Δ ${fmtDelta(s.delta)}` : ""}`}
+            title={`${t(`attribution.section.${s.id}`)} · ${fmtK(s.newTotal)} chars${hasChange ? ` · Δ ${fmtDelta(s.delta)}` : ""}`}
             style={{
               flex: Math.max(pct, 0.05), minWidth: 64,
               background: meta.barBg, opacity,
@@ -674,7 +684,7 @@ function SectionDiffBar({
             }}
           >
             <div style={{ fontSize: 13, fontWeight, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
-              {meta.label}
+              {t(`attribution.section.${s.id}`)}
             </div>
             {hasChange && s.delta !== 0 && (
               <span style={{
@@ -728,7 +738,7 @@ function SectionDiffTable({
             className="hover:bg-gray-50"
           >
             <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.marker, flexShrink: 0 }} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 90 }}>{meta.label}</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 90 }}>{t(`attribution.section.${s.id}`)}</span>
             <span style={{ fontSize: 11, color: "#374151", minWidth: 60 }}>{fmtK(s.newTotal)}</span>
             <span style={{ fontSize: 11, color: "#9ca3af", minWidth: 44 }}>{pct.toFixed(1)}%</span>
             {sectionChanged ? (
@@ -802,6 +812,7 @@ function SectionDrillIn({
   selectedLeafId: string | null;
   onSelectLeaf: (id: string | null) => void;
 }) {
+  const { t } = useTranslation();
   // 不再合并 bin —— 每个 leaf 都是独立 item。unchanged 用浅色置灰，方便用户找到
   // 被 pin 命中的 leaf（之前 bin 折叠会把 pin 藏起来）。
   const items: DiffStripItem[] = useMemo(
@@ -830,13 +841,13 @@ function SectionDrillIn({
           getColor={(it) => it.merged.leaf.kind === "kept" ? BIN_COLOR : DIFF_COLOR[it.merged.leaf.kind]}
           getLabel={(it) => {
             const l = it.merged.leaf;
-            const slot = shortSlot(l.slotType);
+            const slot = localizedSlot(l.slotType, t);
             const prefix = DIFF_PREFIX[l.kind];
             return prefix ? `${prefix} ${slot}` : slot;
           }}
           getTitle={(it) => {
             const l = it.merged.leaf;
-            const slot = shortSlot(l.slotType);
+            const slot = localizedSlot(l.slotType, t);
             if (l.kind === "removed")  return `− ${slot} · ${fmtK(l.oldCharCount ?? 0)} chars`;
             if (l.kind === "modified") return `~ ${slot} · ${fmtK(l.oldCharCount ?? 0)} → ${fmtK(l.newCharCount)} (${fmtDelta(l.newCharCount - (l.oldCharCount ?? 0))})`;
             if (l.kind === "added")    return `+ ${slot} · ${fmtK(l.newCharCount)} chars`;
@@ -896,6 +907,7 @@ function DiffLeafRow({
   selected: boolean;
   onClick: () => void;
 }) {
+  const { t } = useTranslation();
   const isKept = leaf.kind === "kept";
   const fill = isKept ? BIN_COLOR : DIFF_COLOR[leaf.kind];
   const txtColor = isKept ? "#9ca3af" : DIFF_TEXT_COLOR[leaf.kind];
@@ -942,7 +954,7 @@ function DiffLeafRow({
           minWidth: 180, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}
       >
-        {shortSlot(leaf.slotType)}
+        {localizedSlot(leaf.slotType, t)}
       </span>
       <span style={{ fontSize: 11, color: isKept ? "#9ca3af" : "#374151", minWidth: 110 }}>{sizeText}</span>
       {delta !== null && (
@@ -978,7 +990,7 @@ export function SelectedDiffDetail({ leaf }: { leaf: DiffLeaf }) {
         fontSize: 11,
       }}>
         <span style={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", fontWeight: 700, color: "#111827" }}>
-          {DIFF_PREFIX[leaf.kind]} {shortSlot(leaf.slotType)}
+          {DIFF_PREFIX[leaf.kind]} {localizedSlot(leaf.slotType, t)}
         </span>
         <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: "0.04em", textTransform: "uppercase" }}>
           {kindLabel}

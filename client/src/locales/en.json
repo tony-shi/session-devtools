@@ -336,29 +336,32 @@
     },
     "lensGroup": {
       "instructions": {
-        "label": "System Prompts",
-        "description": "Static behavioral rules and global setup: core prompts, tool policy directives, etc."
+        "label": "Instructions",
+        "description": "Core prompts, behavioral guidance, tool policies, and directives (e.g. thinking-frequency)."
       },
       "environment": {
-        "label": "System Context & Reminders",
-        "description": "Visible workspace context, git status, environment variables, billing limit, and runtime warnings."
-      },
-      "agent-loop": {
-        "label": "Agent & Tool Execution",
-        "description": "Internal thinking blocks and the tool invocation loop (calls & results)."
-      },
-      "user-input": {
-        "label": "User Input & Files",
-        "description": "Explicit user chat message, image attachments, or command run echoes."
+        "label": "Environment & Facts",
+        "description": "Hard runtime context, memory instructions, and environment variables facts."
       },
       "capabilities": {
         "label": "Capabilities & Extensions",
-        "description": "Static descriptions/definitions of built-in tools or installed agent skills."
+        "description": "Built-in tool schema descriptions, installed skills list, or sub-agent type declarations."
+      },
+      "events": {
+        "label": "Runtime Events",
+        "description": "Harness variables and events dynamically injected into the messages flow (Token warnings, file changes)."
+      },
+      "interaction": {
+        "label": "Interaction & Execution",
+        "description": "The dialogue loop, thinking processes, and tool/skill execution inputs and results."
       }
     },
     "stability": {
       "static": "static",
-      "dynamic": "dynamic"
+      "dynamic": "dynamic",
+      "session": "session",
+      "dynamicNoise": "noise",
+      "dynamicEvent": "event"
     },
     "version": {
       "ccLabel": "CC {{version}}",
@@ -381,6 +384,41 @@
       "subtotal": "subtotal",
       "ofContext": "of context",
       "ofContextTip": "Share of the whole request context (denominator is fixed = total context, does not change with filter/drill-down)"
+    },
+    "layoutProportional": "Proportional",
+    "layoutProportionalTitle": "Distribute bar widths proportional to token/character counts",
+    "layoutEqual": "Equal",
+    "layoutEqualTitle": "Distribute bar widths equally to easily select small segments",
+    "clickToDrill": "Click to drill down",
+    "section": {
+      "system": "System",
+      "tools": "Tools",
+      "messages": "Messages",
+      "other": "Other"
+    },
+    "slots": {
+      "messages.thinking": "AI Thinking",
+      "messages.assistant": "AI Reply",
+      "messages.aiOutput": "AI Output",
+      "messages.human": "User Input",
+      "messages.tool-use": "Tool Call",
+      "messages.tool-result": "Tool Result",
+      "messages.inline.system-reminder": "System Reminder",
+      "messages.context": "Injected Context",
+      "messages.skills": "Injected Capabilities",
+      "messages.directive": "Injected Directive",
+      "messages.injection": "Injected Event",
+      "messages.misc": "Misc Messages",
+      "messages.image": "Image Input",
+      "system.core": "Identity & Framework",
+      "system.guidance": "Behavior Guidance",
+      "system.main-prompt.section.session-guidance": "Session Guidance",
+      "system.tool-policy": "Tool Policy",
+      "system.memory": "Memory Instructions",
+      "system.env": "Environment Facts",
+      "system.billing": "Billing Header",
+      "tools.builtin": "Built-in Tools",
+      "other.unknown": "Unknown"
     }
   },
   "callLedger": {
