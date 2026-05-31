@@ -175,7 +175,7 @@ export function JsonlCallChain({
               <ChainNarrativeNode
                 key={`inj-before-${injIdx}`}
                 kind="interrupt"
-                label="Mid-turn input"
+                label={t("turn.midTurnInput")}
                 text={inj.text}
                 meta={inj.timestamp ? `${anchor} · ${inj.timestamp.slice(11, 19)}` : anchor}
               />
@@ -327,7 +327,7 @@ export function JsonlCallChain({
                             {t("terms.viewDetails")}
                           </button>
                         </TooltipTrigger>
-                        <TooltipContent>查看完整 request / response / 原始结构</TooltipContent>
+                        <TooltipContent>{t("turn.viewRawChainTooltip")}</TooltipContent>
                       </Tooltip>
                     )}
                   </div>
@@ -582,7 +582,7 @@ export function JsonlCallChain({
                 <ChainNarrativeNode
                   key={`inj-${call.id}-${injIdx}`}
                   kind="interrupt"
-                  label="Mid-turn input"
+                  label={t("turn.midTurnInput")}
                   text={inj.text}
                   meta={inj.timestamp ? `after #${call.id} · ${inj.timestamp.slice(11, 19)}` : `after #${call.id}`}
                 />
@@ -592,7 +592,7 @@ export function JsonlCallChain({
         })}
         <ChainNarrativeNode
           kind="final"
-          label="Final AI output"
+          label={t("turn.finalAiOutput")}
           text={finalOutput}
           meta={turn.endedAt ? turn.endedAt.slice(11, 19) : undefined}
         />
@@ -600,4 +600,3 @@ export function JsonlCallChain({
     </div>
   );
 }
-

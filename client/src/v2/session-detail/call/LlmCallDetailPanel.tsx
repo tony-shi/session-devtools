@@ -28,6 +28,7 @@ import { SegmentedToggle } from "../../shared/SegmentedToggle";
 import JsonView from "@uiw/react-json-view";
 
 function RawCopyButton({ text }: { text: string }) {
+  const { t } = useTranslation();
   const [copiedAt, setCopiedAt] = useState<number>(0);
   // Date.now() in render is intentional: copiedAt is a one-shot timestamp set on
   // click + cleared by a 1.5s timeout; the comparison just gates a transient "已复制"
@@ -45,7 +46,7 @@ function RawCopyButton({ text }: { text: string }) {
     <button
       type="button"
       onClick={handleCopy}
-      title={isCopied ? "已复制" : "复制"}
+      title={isCopied ? t("callDetail.copied") : t("callDetail.copy")}
       style={{
         display: "inline-flex", alignItems: "center", gap: 3,
         border: "1px solid",
@@ -60,7 +61,7 @@ function RawCopyButton({ text }: { text: string }) {
       className={!isCopied ? "hover:!border-gray-400 hover:!text-gray-700" : ""}
     >
       {isCopied ? <Check size={8} strokeWidth={3} /> : <Copy size={8} />}
-      {isCopied ? "已复制" : "复制"}
+      {isCopied ? t("callDetail.copied") : t("callDetail.copy")}
     </button>
   );
 }
@@ -71,6 +72,7 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
   callDetail: CallDetail | null;
   callDetailLoading: boolean;
 }) {
+  const { t } = useTranslation();
   const [subTab, setSubTab] = useState<"request" | "response" | "meta">("request");
 
   const jsonlObj = useMemo(() => ({
@@ -111,13 +113,13 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
   const isResponseJson = !!parsedResponse;
 
   if (callDetailLoading) {
-    return <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>;
+    return <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>{t("callDetail.loading")}</div>;
   }
 
   const subOptions = [
-    { id: "request" as const, label: "原始请求" },
-    { id: "response" as const, label: "原始响应" },
-    { id: "meta" as const, label: "请求元信息" },
+    { id: "request" as const, label: t("callDetail.tabRequest") },
+    { id: "response" as const, label: t("callDetail.tabResponse") },
+    { id: "meta" as const, label: t("callDetail.tabMeta") },
   ];
 
   const jsonViewStyle: React.CSSProperties = {
@@ -130,7 +132,7 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
   return (
     <>
       <div style={{ fontSize: 10, background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 6, padding: "5px 10px", marginBottom: 12, color: "#374151" }}>
-        Proxy — full request body available.
+        {t("callDetail.proxyAvailable")}
       </div>
 
       <div style={{ marginBottom: 14 }}>
@@ -148,7 +150,7 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
             <>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                  原始请求体 (JSON)
+                  {t("callDetail.titleRequestJson")}
                 </div>
                 <RawCopyButton text={requestText || ""} />
               </div>
@@ -168,7 +170,7 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
               </div>
             </>
           ) : (
-            <div style={{ fontSize: 11, color: "#9ca3af", padding: "10px 0" }}>无请求体数据</div>
+            <div style={{ fontSize: 11, color: "#9ca3af", padding: "10px 0" }}>{t("callDetail.emptyRequestJson")}</div>
           )}
         </>
       )}
@@ -179,7 +181,7 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
             <>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                  原始响应体 (SSE / JSON)
+                  {t("callDetail.titleResponseSse")}
                 </div>
                 <RawCopyButton text={responseText} />
               </div>
@@ -205,7 +207,7 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
               )}
             </>
           ) : (
-            <div style={{ fontSize: 11, color: "#9ca3af", padding: "10px 0" }}>无响应体数据</div>
+            <div style={{ fontSize: 11, color: "#9ca3af", padding: "10px 0" }}>{t("callDetail.emptyResponseSse")}</div>
           )}
         </>
       )}
@@ -214,7 +216,7 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
         <>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-              JSONL 会话元数据
+              {t("callDetail.titleMetadataJsonl")}
             </div>
             <RawCopyButton text={jsonlText} />
           </div>
@@ -408,9 +410,10 @@ export function LlmCallDetailPanel({
     : call.significantDelta > 2000 ? "#b45309"
     : call.significantDelta < -2000 ? "#15803d"
     : "#334155";
+  const gapText = call.gapSincePrevMs != null ? ` · ${fmtGap(call.gapSincePrevMs)} gap` : "";
   const deltaTitle = call.cacheMiss
-    ? `缓存失效${call.gapSincePrevMs != null ? ` · ${fmtGap(call.gapSincePrevMs)} gap` : ""}。负 Δ 主要是缓存记账修正，内容增删请看 Diff。`
-    : "Prompt size delta vs previous call.";
+    ? t("callDetail.cacheDeltaTooltip", { gapText })
+    : t("callSummary.delta.tooltip");
 
   const TAB_DEFS: Array<{ id: CallTab; label: string }> = [
     { id: "attribution", label: t("callTab.attribution") },     // 请求（含 来源/Diff/Cache/Audit 多 lens）
@@ -509,7 +512,7 @@ export function LlmCallDetailPanel({
                 style={{ border: "1px solid #c7d2fe", background: BRAND.indigo50, color: BRAND.indigo700, borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}
                 title={t("terms.showInTurn")}
               >
-                {t("terms.parentTurn", { defaultValue: "父级轮次 ↗" })}
+                {t("terms.parentTurn")}
               </button>
             )}
             {mode === "panel" && onClose && (
@@ -526,7 +529,7 @@ export function LlmCallDetailPanel({
                     ×
                   </button>
                 </TooltipTrigger>
-                <TooltipContent>关闭</TooltipContent>
+                <TooltipContent>{t("callDetail.close")}</TooltipContent>
               </Tooltip>
             )}
           </div>

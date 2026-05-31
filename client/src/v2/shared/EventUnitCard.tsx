@@ -169,6 +169,7 @@ function shortenId(id: string): string {
 }
 
 export function EventUnitCard(props: EventUnitCardProps) {
+  const { t } = useTranslation();
   const {
     color, kindLabel, kindTooltip, title, shortId, size, timestamp,
     preview, description, segments = [], coordinate, confidence, impact,
@@ -327,7 +328,7 @@ export function EventUnitCard(props: EventUnitCardProps) {
           <button
             type="button"
             title={auditGapped
-              ? `${jumpTooltip ?? ""}\n\n⚠ 数据可能不准 — 当前 jump 目标只是 audit 数据里能看到的最早 call。早期一些 call 没有 proxy 数据（unaudited），真正首次消费这条 event 的 call 可能在那段空白里。`.trim()
+              ? `${jumpTooltip ?? ""}\n\n${t("eventCard.unreliableAuditWarning")}`.trim()
               : jumpTooltip}
             onClick={(e) => { e.stopPropagation(); effectiveOnJump(); }}
             className={borderless ? "hover:opacity-80 transition-opacity" : (auditGapped ? "hover:!bg-amber-700 transition-colors" : "hover:!bg-indigo-700 transition-colors")}
@@ -349,7 +350,7 @@ export function EventUnitCard(props: EventUnitCardProps) {
             }}
           >
             {auditGapped ? <WarningIcon /> : <LinkIcon />}
-            {auditGapped && jumpLabel ? `?${jumpLabel}` : (jumpLabel ?? "跳转")}
+            {auditGapped && jumpLabel ? `?${jumpLabel}` : (jumpLabel ?? t("eventCard.jump"))}
           </button>
         )}
 
@@ -388,7 +389,7 @@ export function EventUnitCard(props: EventUnitCardProps) {
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); setExpanded(v => !v); }}
-            title={expanded ? "折叠" : "展开"}
+            title={expanded ? t("eventCard.collapse") : t("eventCard.expand")}
             style={{
               background: "transparent", border: "none",
               cursor: "pointer", padding: "0 2px",
@@ -452,11 +453,12 @@ export function EventUnitCard(props: EventUnitCardProps) {
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 function ImpactChips({ impact }: { impact: NonNullable<EventUnitCardProps["impact"]> }) {
+  const { t } = useTranslation();
   if (impact.state === "skipped") {
-    return <span style={{ color: "#9ca3af" }}>仅元数据 · 未进入 prompt</span>;
+    return <span style={{ color: "#9ca3af" }}>{t("eventCard.metadataOnly")}</span>;
   }
   if (impact.state === "pending") {
-    return <span style={{ color: "#b45309" }}>暂未消费</span>;
+    return <span style={{ color: "#b45309" }}>{t("eventCard.notConsumedYet")}</span>;
   }
   // indexed
   const fst = impact.firstSeenInCall;
@@ -469,7 +471,7 @@ function ImpactChips({ impact }: { impact: NonNullable<EventUnitCardProps["impac
           first seen → call #{fst}
           {gapQualifier && (
             <span style={{ color: "#b45309", marginLeft: 4 }}>
-              ⚠ 数据可能不准 — 早期 call 未审计
+              {t("eventCard.gappedAuditWarn")}
             </span>
           )}
         </span>
@@ -569,13 +571,13 @@ export function SegmentView({ seg }: { seg: EventSegment }) {
                 active={viewMode === "preview"}
                 onClick={(e) => { e.stopPropagation(); setViewMode("preview"); }}
               >
-                渲染
+                {t("eventCard.render")}
               </SegmentModeButton>
               <SegmentModeButton
                 active={viewMode === "raw"}
                 onClick={(e) => { e.stopPropagation(); setViewMode("raw"); }}
               >
-                原始 JSON
+                {t("eventCard.rawJson")}
               </SegmentModeButton>
             </div>
           )}

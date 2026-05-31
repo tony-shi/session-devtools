@@ -20,27 +20,6 @@ import { InterTurnBlockDetail } from "../compact/CompactEventPanel";
 import { JsonlCallChain } from "./JsonlCallChain";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
-const cardStyle: React.CSSProperties = {
-  backgroundColor: "#ffffff",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--radius)",
-  padding: "16px",
-  marginBottom: "20px",
-  boxShadow: "0 1px 2px rgba(0, 0, 0, 0.02)",
-};
-
-const cardTitleStyle: React.CSSProperties = {
-  fontSize: 10,
-  fontWeight: 700,
-  color: "#6b7280",
-  textTransform: "uppercase",
-  letterSpacing: "0.07em",
-  marginBottom: 12,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-};
-
 export function UserTurnDetailPanel({
   turn, onSelectCall, isMockSession = false, onSubAgentClick, trailingInterTurnBlock = null,
   onClose, onOpenAsMain,
@@ -92,7 +71,7 @@ export function UserTurnDetailPanel({
   // is already in focus; the bird's-eye nav would just steal vertical
   // space). Tool-less turns also collapse since there's nothing to map.
   const noTools = turn.toolCallCount === 0;
-  const [minimapOpen, setMinimapOpen] = useState(!linkedPanelMode && !noTools);
+
   const minimapAnchorId = `turn-${turn.id}-call-minimap`;
 
   const turnSubAgents = callsWithSubAgents.flatMap(c => c.subAgents);
@@ -181,7 +160,7 @@ export function UserTurnDetailPanel({
                     ×
                   </button>
                 </TooltipTrigger>
-                <TooltipContent>关闭</TooltipContent>
+                <TooltipContent>{t("turn.close")}</TooltipContent>
               </Tooltip>
             )}
           </div>
@@ -243,10 +222,10 @@ export function UserTurnDetailPanel({
                         padding: "2px 6px",
                       }}
                     >
-                      折叠 ▴
+                      {t("turn.collapse")}
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent>折叠 turn 概览</TooltipContent>
+                  <TooltipContent>{t("turn.collapseTooltip")}</TooltipContent>
                 </Tooltip>
               )}
               {onClose && (
@@ -264,7 +243,7 @@ export function UserTurnDetailPanel({
                       ×
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent>关闭</TooltipContent>
+                  <TooltipContent>{t("turn.close")}</TooltipContent>
                 </Tooltip>
               )}
             </div>

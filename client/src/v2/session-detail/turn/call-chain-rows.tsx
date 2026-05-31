@@ -81,7 +81,7 @@ export function ChainNarrativeNode({
               <button
                 type="button"
                 onClick={handleJump}
-                title={`打开 call #${jumpTarget} 的 Request 视图，自动定位这条 user_input 对应的 leaf`}
+                title={t("callChain.jumpToRequestTooltip", { callId: jumpTarget })}
                 className="hover:opacity-80 transition-opacity"
                 style={{
                   marginLeft: "auto",
@@ -134,7 +134,7 @@ export function ChainNarrativeNode({
               }}
               className="hover:bg-slate-200 transition-colors"
             >
-              {expanded ? "Show less ↑" : "Show more ↓"}
+              {expanded ? t("terms.showLessShort") : t("terms.showMoreShort")}
             </button>
           )}
         </div>
@@ -306,7 +306,8 @@ export function ToolCallRow({
 //   - segmentContent: 已结构化的可读文本 (XML 标签已剥离)
 //   - direction:     "in" = 用户输入；"out" = 命令执行结果
 //   - kindLabelOverride: 可选，覆盖头部 kindLabel 让输入/输出在折叠态也能区分
-function parseCommandEnvelope(ev: IntervalEvent): {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseCommandEnvelope(ev: IntervalEvent, t: any): {
   segmentLabel: string;
   segmentContent: string;
   direction: "in" | "out";
@@ -327,14 +328,14 @@ function parseCommandEnvelope(ev: IntervalEvent): {
       if (msg && msg !== name)     lines.push(`  description: ${msg}`);
       if (args && args.length > 0) lines.push(`  args: ${args}`);
       return {
-        segmentLabel: "命令输入", segmentContent: lines.join("\n"), direction: "in",
-        kindLabelOverride: "命令", preview: `$ ${name}${msg && msg !== name ? `  (${msg})` : ""}`,
+        segmentLabel: t("callChain.segmentCmdInput"), segmentContent: lines.join("\n"), direction: "in",
+        kindLabelOverride: t("callChain.segmentCmd"), preview: `$ ${name}${msg && msg !== name ? `  (${msg})` : ""}`,
       };
     }
     const bash = match(/<bash-input>([\s\S]*?)<\/bash-input>/)?.trim();
     if (bash != null) {
       return {
-        segmentLabel: "BASH 输入", segmentContent: `$ ${bash}`, direction: "in",
+        segmentLabel: t("callChain.segmentBashInput"), segmentContent: `$ ${bash}`, direction: "in",
         kindLabelOverride: "bash", preview: `$ ${bash}`,
       };
     }
@@ -354,8 +355,8 @@ function parseCommandEnvelope(ev: IntervalEvent): {
       const joined = parts.join("\n\n");
       const first = joined.split("\n")[0] ?? "";
       return {
-        segmentLabel: "命令输出", segmentContent: joined, direction: "out",
-        kindLabelOverride: "命令输出", preview: first.slice(0, 120),
+        segmentLabel: t("callChain.segmentCmdOutput"), segmentContent: joined, direction: "out",
+        kindLabelOverride: t("callChain.segmentCmdOutputOverride"), preview: first.slice(0, 120),
       };
     }
     return null;
@@ -473,7 +474,7 @@ export function IntervalEventRow({
   //                           或 <local-command-stderr>... 等
   // 直接展示原始 XML 既丑又掩盖结构。这里 parse 出来后用对话式排版渲染（输入/输出
   // 区分明显，空 args 自动省略）。解析失败时回退到原 preview，绝不丢内容。
-  const commandFormat = parseCommandEnvelope(ev);
+  const commandFormat = parseCommandEnvelope(ev, t);
   const direction: "in" | "out" | undefined = commandFormat?.direction ?? baseDirection;
   // commandFormat 命中时让头部 kindLabel 直接说明角色（命令 vs 命令输出），与
   // segment 标签保持一致；解析失败仍走 i18n 默认。

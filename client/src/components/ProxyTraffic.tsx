@@ -390,6 +390,7 @@ function DetailSection({ title, children }: { title: string; children: React.Rea
 }
 
 function CopyButton({ text }: { text: string }) {
+  const { t } = useTranslation();
   const [copiedAt, setCopiedAt] = useState<number>(0);
   const isCopied = copiedAt > 0 && Date.now() - copiedAt < 1500;
   const handleCopy = (e: React.MouseEvent) => {
@@ -403,7 +404,7 @@ function CopyButton({ text }: { text: string }) {
     <button
       type="button"
       onClick={handleCopy}
-      title={isCopied ? "已复制" : "复制"}
+      title={isCopied ? t("callDetail.copied") : t("callDetail.copy")}
       style={{
         display: "inline-flex", alignItems: "center", gap: 2,
         border: "1px solid",

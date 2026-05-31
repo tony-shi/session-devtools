@@ -207,7 +207,10 @@
     "nav": {
       "session": "Session",
       "userTurns": "User Turns",
-      "overview": "Overview"
+      "overview": "Overview",
+      "background": "Background Calls",
+      "backgroundAll": "All Background Calls",
+      "backgroundEmpty": "(No background calls / Scanning…)"
     },
     "activity": {
       "userTurns": "User Turns",
@@ -310,6 +313,10 @@
     }
   },
   "attribution": {
+    "layers": "Layers",
+    "baseLensSuffix": " (Base layer, cannot close)",
+    "trackContext": "Context",
+    "trackInteraction": "Interaction",
     "loadFailed": "Attribution load failed",
     "loading": "Loading attribution…",
     "skip": {
@@ -361,7 +368,8 @@
       "dynamic": "dynamic",
       "session": "session",
       "dynamicNoise": "noise",
-      "dynamicEvent": "event"
+      "dynamicEvent": "event",
+      "runtimeDynamicValue": "Runtime dynamic value"
     },
     "version": {
       "ccLabel": "CC {{version}}",
@@ -383,7 +391,12 @@
       "segments": "segs",
       "subtotal": "subtotal",
       "ofContext": "of context",
-      "ofContextTip": "Share of the whole request context (denominator is fixed = total context, does not change with filter/drill-down)"
+      "ofContextTip": "Share of the whole request context (denominator is fixed = total context, does not change with filter/drill-down)",
+      "toggleRender": "← Render",
+      "toggleRaw": "View Raw",
+      "copyRaw": "Copy Raw",
+      "copied": "Copied",
+      "copyRawTitle": "Copy raw content ({{count}} chars)"
     },
     "layoutProportional": "Proportional",
     "layoutProportionalTitle": "Distribute bar widths proportional to token/character counts",
@@ -462,6 +475,7 @@
     "noProxyDotTooltip": "This call has no matching proxy request body"
   },
   "diff": {
+    "removedFooterHeader": "⊖ Removed this round · {{count}} segments (present in previous round, gone in this round)",
     "loading": "Loading diff…",
     "loadFailed": "Failed to load diff: {{error}}",
     "noData": "No diff data available.",
@@ -517,16 +531,14 @@
     "totalChars": "total {{chars}} chars",
     "headerNote": "Prefix caching: each layer contains the previous + delta. Click the Raw row to expand attribution.",
     "rawLabel": "Raw",
-    "prevLayerEnd": "Previous layer's cache_control end position",
     "expand": "click to expand attribution",
     "collapse": "collapse",
-    "first": "first",
-    "contains": "in",
-    "notCovered": "not covered",
-    "uncached": "uncached",
-    "leafListTitle": "Attribution · {{count}} wire nodes",
-    "leafListHint": "Click any row → highlights its position across cache layers",
-    "alsoInN": "· +{{n}} more"
+    "ttl5m": "5 minutes",
+    "ttl1h": "1 hour",
+    "scopeGlobal": "global (reuse across orgs)",
+    "scopeOrg": "org (org only)",
+    "layerTitle": "L{{layer}} Cache Layer",
+    "tooltipDetail": "L{{layer}} Cache Layer\n\nThis is the {{layer}} cache_control breakpoint in the request (prefix order).\nIt marks the first {{cumChars}} characters of the request body as cacheable.\nTTL = {{ttl}} ({{ttlDesc}}), scope = {{scopeDesc}}.\n\nThe bar below shows which sections (tools / system / messages) are covered by this layer.\nAny blank space on the right indicates the uncached portion of the layer ({{uncachedChars}} characters)."
   },
   "callSummary": {
     "model": {
@@ -559,7 +571,7 @@
     },
     "delta": {
       "label": "Δ",
-      "tooltip": "Context-token change versus the previous LLM call."
+      "tooltip": "Prompt size delta vs previous call."
     },
     "output": {
       "label": "out",
@@ -582,6 +594,8 @@
     "toolResultLabel": "Tool Execution Result",
     "showMore": "Show {{n}} more chars ↓",
     "showLess": "Show less ↑",
+    "showMoreShort": "Show more ↓",
+    "showLessShort": "Show less ↑",
     "jsonlMetadata": "JSONL Metadata",
     "proxyRequestBody": "Proxy Request Body",
     "showInTurn": "Show in Turn",
@@ -613,7 +627,7 @@
     "jumpToCallLineTooltip": "Jump to this JSONL event's line in Turn view (first injected into prompt by call #{{callId}})",
     "openAttributionAtLine": "Open attribution for call #{{callId}} and jump to the matching leaf",
     "firstInjectedAtCall": "First injected at Call #{{callId}}",
-    "skillActivated": "Activated SKILL"
+    "jump": "Jump"
   },
   "eventKinds": {
     "user_human": "User input",
@@ -708,5 +722,112 @@
     "activatedSkill": "Activated SKILL: {{skill}} · injected SKILL.md",
     "viewSkillMd": "View SKILL.md",
     "collapseSkillMd": "Collapse"
+  },
+  "messages": {
+    "block": {
+      "image": "[Image]"
+    }
+  },
+  "backgroundCalls": {
+    "title": "Background Calls",
+    "countSuffix": "items",
+    "proxyHint": "Only captured proxy side calls showing. Some calls won't be captured when proxy is disabled.",
+    "loadFailed": "Failed to load background calls.",
+    "empty": "No side calls captured.",
+    "colType": "Type",
+    "colModel": "Model",
+    "colInput": "Input",
+    "colOutput": "Output",
+    "colTime": "Time",
+    "colStatus": "Status",
+    "jumpTooltip": "Jump to Turn {{turnId}} JSONL anchor line",
+    "inConversation": "Active in convo",
+    "uncaptured": "Uncaptured",
+    "uncapturedTooltip": "Proxy uncaptured, body unavailable",
+    "kinds": {
+      "generate_session_title": "Title Generation",
+      "quota": "Quota Detection",
+      "prompt_suggestion": "Prompt Suggestion",
+      "agent_summary": "Agent Summary",
+      "auto_dream": "Auto dream",
+      "extract_memories": "Memory Extraction",
+      "away_summary": "Away Summary"
+    }
+  },
+  "callDetail": {
+    "copy": "Copy",
+    "copied": "Copied",
+    "tabRequest": "Request",
+    "tabResponse": "Response",
+    "tabMeta": "Meta",
+    "titleRequestJson": "Raw Request Body (JSON)",
+    "emptyRequestJson": "No request body available",
+    "titleResponseSse": "Raw Response Body (SSE / JSON)",
+    "emptyResponseSse": "No response body available",
+    "titleMetadataJsonl": "JSONL Session Metadata",
+    "cacheDeltaTooltip": "Cache expired{{gapText}}. Negative delta is due to cache adjustments; see Diff for content changes.",
+    "close": "Close",
+    "loading": "Loading…",
+    "proxyAvailable": "Proxy — full request body available."
+  },
+  "compactEvent": {
+    "userInstructions": "USER INSTRUCTIONS (/compact directives)",
+    "commandsCount": "{{count}} commands",
+    "eventsCount": "{{count}} events",
+    "noEvents": "0 events",
+    "compactionPostTooltip": "This chunk occurred after session end and is not consumed by subsequent LLM calls. Mid-turn events are typically carried into context via next turn's reqBody.",
+    "compactionPostWarning": "Session ended · will not be consumed by any LLM calls"
+  },
+  "sideCall": {
+    "bodyUnavailable": "Request body unavailable (not captured or cropped).",
+    "parseFailed": "Failed to parse request body.",
+    "emptyRequest": "Request body contains no system / messages.",
+    "emptyResponse": "Failed to extract text from response body (possibly non-text response).",
+    "defaultTitle": "Background Call",
+    "close": "Close"
+  },
+  "commandGroup": {
+    "bash": "bash",
+    "command": "command",
+    "countSuffix": "items",
+    "caveat": "caveat (boilerplate)"
+  },
+  "turn": {
+    "close": "Close",
+    "collapse": "Collapse ▴",
+    "collapseTooltip": "Collapse turn overview",
+    "viewRawChainTooltip": "View complete request / response / raw structures",
+    "midTurnInput": "Mid-turn input",
+    "finalAiOutput": "Final AI output"
+  },
+  "callChain": {
+    "jumpToRequestTooltip": "Open Call #{{callId}} Request view, locating the leaf corresponding to this user_input",
+    "segmentCmdInput": "Command Input",
+    "segmentCmd": "Command",
+    "segmentBashInput": "BASH Input",
+    "segmentCmdOutput": "Command Output",
+    "segmentCmdOutputOverride": "Command Output"
+  },
+  "eventCard": {
+    "unreliableAuditWarning": "⚠ Data may be unreliable - current jump target is the earliest visible call in audit data. Earlier calls without proxy data (unaudited) may have consumed this event first.",
+    "jump": "Jump",
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "metadataOnly": "Metadata only · not in prompt",
+    "notConsumedYet": "Not consumed yet",
+    "gappedAuditWarn": "⚠ Data may be unreliable - early calls unaudited",
+    "render": "Render",
+    "rawJson": "Raw JSON"
+  },
+  "responseTree": {
+    "loading": "Loading response…",
+    "missingTitle": "No raw HTTP response captured for this call",
+    "missingBody": "The response view only displays the original wire payload captured by the proxy. This call was not matched in the proxy log (older session, no request-id, or proxy was not running). To view the events from the LLM's perspective, return to the Tool Use row inside the left Turn card.",
+    "streamInterrupted": "SSE stream interrupted",
+    "noBlocks": "No content blocks in this response.",
+    "thinking": "Thinking",
+    "text": "Text",
+    "toolUse": "Tool Use",
+    "response": "Response"
   }
 }

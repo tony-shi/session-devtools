@@ -8,6 +8,7 @@
 // 点击 == 选中 == 钻取，无下拉。
 
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
 import { useAttributionGraph } from "./attribution-graph-context";
 import { FisheyeStrip } from "./fisheye-strip";
@@ -20,6 +21,14 @@ import type {
   ResponseNode,
   ResponseSlotType,
 } from "./response-tree-types";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getBlockLabel(t: any, slot: ResponseSlotType): string {
+  if (slot === "response.thinking") return t("responseTree.thinking");
+  if (slot === "response.text") return t("responseTree.text");
+  if (slot === "response.tool_use") return t("responseTree.toolUse");
+  return t("responseTree.response");
+}
 
 // ─── 配色 ─────────────────────────────────────────────────────────────────────
 
@@ -94,6 +103,7 @@ function ResponseBar({
   selectedId: string | null;
   onSelect: (id: string | null) => void;
 }) {
+  const { t } = useTranslation();
   if (blocks.length === 0) return null;
   const items: ResponseBlockItem[] = blocks.map((n) => ({
     id: n.id,
@@ -104,10 +114,9 @@ function ResponseBar({
     <FisheyeStrip<ResponseBlockItem>
       items={items}
       getColor={(it) => slotMeta(it.node.slotType).barBg}
-      getLabel={(it) => it.node.wireMeta?.toolName ?? slotMeta(it.node.slotType).label}
+      getLabel={(it) => it.node.wireMeta?.toolName ?? getBlockLabel(t, it.node.slotType)}
       getTitle={(it) => {
-        const meta = slotMeta(it.node.slotType);
-        return `${meta.label} · ${fmtK(it.node.charCount)} chars`;
+        return `${getBlockLabel(t, it.node.slotType)} · ${fmtK(it.node.charCount)} chars`;
       }}
       height={BAR_HEIGHT}
       background="transparent"
@@ -127,6 +136,7 @@ function BlockTable({
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {blocks.map((n) => {
@@ -150,7 +160,7 @@ function BlockTable({
           >
             <span style={{ width: 8, height: 8, borderRadius: 2, background: meta.marker, flexShrink: 0 }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: meta.textColor, minWidth: 80 }}>
-              {meta.label}
+              {getBlockLabel(t, n.slotType)}
             </span>
             {n.wireMeta?.toolName && (
               <span style={{ fontSize: 11, color: "#374151", fontWeight: 600, fontFamily: "ui-monospace, monospace", minWidth: 110 }}>
@@ -194,6 +204,7 @@ function NodeDetail({
   node: ResponseNode;
   dataSource: ResponseTreeDataSource;
 }) {
+  const { t } = useTranslation();
   const meta = slotMeta(node.slotType);
   const isToolUse = node.slotType === "response.tool_use";
   // structured path: response.tool_use / response.text / response.thinking
@@ -229,7 +240,7 @@ function NodeDetail({
         color={meta.marker}
         bg={meta.rowBg}
         border="#e5e7eb"
-        kindLabel={meta.label}
+        kindLabel={getBlockLabel(t, node.slotType)}
         title={node.wireMeta?.toolName}
         // 不再传 shortId={node.wireMeta?.toolUseId} —— toolu_xxx 是协议层配对
         // token，不属于"语义产出"。要看 id 切到下方"原始 JSON" tab，它在 wire
@@ -278,6 +289,7 @@ interface Props {
 }
 
 export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, proxyRequestId, callId }: Props) {
+  const { t } = useTranslation();
   const [data, setData] = useState<ResponseTreeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -310,7 +322,7 @@ export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, proxyReq
   }, [pendingFocus, data, clearPendingFocus]);
 
   if (loading) {
-    return <div style={{ fontSize: 11, color: "#9ca3af", padding: "32px 0", textAlign: "center" }}>Loading response…</div>;
+    return <div style={{ fontSize: 11, color: "#9ca3af", padding: "32px 0", textAlign: "center" }}>{t("responseTree.loading")}</div>;
   }
 
   // dataSource="none" 专门占位：proxy 没存这个 call 的 response，不做 jsonl
@@ -322,12 +334,10 @@ export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, proxyReq
         {isMissing ? (
           <>
             <div style={{ fontWeight: 600, color: "#374151", marginBottom: 4 }}>
-              未存储该 call 的 HTTP response 原始数据
+              {t("responseTree.missingTitle")}
             </div>
             <div>
-              Response 视图只展示 proxy 抓取的 wire 原物。该 call 未匹配到 proxy 记录
-              （旧 session / 无 request-id / proxy 未启用）。如需查看 LLM 决策的事件视角，
-              请回到左侧 Turn card 的 Tool Use 行。
+              {t("responseTree.missingBody")}
             </div>
             {data?.error && (
               <div style={{ marginTop: 6, fontSize: 10, color: "#9ca3af" }}>
@@ -336,7 +346,7 @@ export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, proxyReq
             )}
           </>
         ) : (
-          <>{data?.error ?? "No response data available."}</>
+          <>{data?.error ?? t("responseTree.noBlocks")}</>
         )}
       </div>
     );
@@ -366,7 +376,7 @@ export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, proxyReq
           blocks: <strong style={{ color: "#374151" }}>{blocks.length}</strong>
         </span>
         {data.truncated && (
-          <Badge variant="amber" className="text-[10px] px-1.5 py-0 rounded-sm">SSE 流中断</Badge>
+          <Badge variant="amber" className="text-[10px] px-1.5 py-0 rounded-sm">{t("responseTree.streamInterrupted")}</Badge>
         )}
         <span style={{ marginLeft: "auto", fontSize: 9, color: "#d1d5db" }}>
           source: {dataSourceLabel(data.dataSource)}
@@ -384,7 +394,7 @@ export function ResponseTreePanel({ sessionId, agentFileId, compactIdx, proxyReq
           列表 + inline 详情，没有 ← back 按钮，再点同行收起）。 */}
       {blocks.length === 0 ? (
         <div style={{ fontSize: 11, color: "#9ca3af", padding: "16px 0", textAlign: "center" }}>
-          No content blocks in this response.
+          {t("responseTree.noBlocks")}
         </div>
       ) : (
         <>

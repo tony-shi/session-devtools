@@ -124,6 +124,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 // ── Raw tab：原始 proxy req/res body ──────────────────────────────────────────
 // 沿用旧 SideCallDetailPanel 的 proxyBody 路径（按 proxyRequestId 取原始 body）。
 function RawTab({ proxyRequestId, sessionId }: { proxyRequestId: number; sessionId: string }) {
+  const { t } = useTranslation();
   const [body, setBody] = useState<ProxyBodyResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -143,7 +144,7 @@ function RawTab({ proxyRequestId, sessionId }: { proxyRequestId: number; session
   }, [proxyRequestId, sessionId]);
 
   if (loading) {
-    return <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>Loading…</div>;
+    return <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>{t("callDetail.loading")}</div>;
   }
   if (body?.error) {
     return (
@@ -152,7 +153,7 @@ function RawTab({ proxyRequestId, sessionId }: { proxyRequestId: number; session
         background: "#fffbeb", border: "1px solid #fde68a",
         borderRadius: 6, padding: "10px 12px",
       }}>
-        {body.error === "request body unavailable" ? "请求体不可用（proxy 未保留或已被裁剪）。" : body.error}
+        {body.error === "request body unavailable" ? t("sideCall.bodyUnavailable") : body.error}
       </div>
     );
   }
@@ -165,7 +166,7 @@ function RawTab({ proxyRequestId, sessionId }: { proxyRequestId: number; session
       {/* ══ REQUEST ══════════════════════════════ */}
       <SectionLabel>Request</SectionLabel>
       {!parsedReq ? (
-        <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 16 }}>无法解析请求体。</div>
+        <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 16 }}>{t("sideCall.parseFailed")}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 }}>
           {parsedReq.systemBlocks.map((sys, i) => (
@@ -189,7 +190,7 @@ function RawTab({ proxyRequestId, sessionId }: { proxyRequestId: number; session
             />
           ))}
           {parsedReq.systemBlocks.length === 0 && parsedReq.messages.length === 0 && (
-            <div style={{ fontSize: 11, color: "#9ca3af" }}>请求体无 system / messages。</div>
+            <div style={{ fontSize: 11, color: "#9ca3af" }}>{t("sideCall.emptyRequest")}</div>
           )}
         </div>
       )}
@@ -204,7 +205,7 @@ function RawTab({ proxyRequestId, sessionId }: { proxyRequestId: number; session
           <SegmentView seg={{ label: "ASSISTANT", content: responseText, monospace: false, truncateAt: 4000 } as EventSegment} />
         </div>
       ) : (
-        <div style={{ fontSize: 11, color: "#9ca3af" }}>无法从响应体抽出文本（可能为非文本响应）。</div>
+        <div style={{ fontSize: 11, color: "#9ca3af" }}>{t("sideCall.emptyResponse")}</div>
       )}
     </>
   );
@@ -237,7 +238,7 @@ export function SideCallDetailPanel({
       {/* ── Header（kind / model / time / proxy#id；无 cache ledger） ──────── */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, flexWrap: "wrap", paddingBottom: 10, borderBottom: "1px solid #f3f4f6" }}>
         <span style={{ fontSize: 14, fontWeight: 800, color: "#111827" }}>
-          {kind ?? "后台请求"}
+          {kind ?? t("sideCall.defaultTitle")}
         </span>
         <span style={{ fontSize: 10, color: "#9ca3af" }}>proxy#{proxyRequestId}</span>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
@@ -262,7 +263,7 @@ export function SideCallDetailPanel({
                   ×
                 </button>
               </TooltipTrigger>
-              <TooltipContent>关闭</TooltipContent>
+              <TooltipContent>{t("sideCall.close")}</TooltipContent>
             </Tooltip>
           )}
         </div>

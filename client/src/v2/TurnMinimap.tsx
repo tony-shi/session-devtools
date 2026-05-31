@@ -24,7 +24,6 @@ import { CanvasRenderer } from "echarts/renderers";
 import type { LlmCall, UserTurn } from "./drilldown-types";
 import { getToolPalette } from "./shared/toolRegistry";
 import { CHART_COLORS, TOOLTIP_PRESET, brandAreaGradient } from "./shared/chart-theme";
-import { Badge } from "@/components/ui/badge";
 
 echarts.use([
   LineChart,
@@ -668,7 +667,6 @@ export function TurnMinimap({ turn, onSelectCall, onHoverCall }: TurnMinimapProp
 
   if (!turn.calls.length) return null;
 
-  const data = buildData(turn);
 
   return (
     <div style={{ background: "transparent", overflow: "hidden" }}>

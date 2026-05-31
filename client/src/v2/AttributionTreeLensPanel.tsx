@@ -69,10 +69,11 @@ function LensSwitcher({
 }: {
   lenses: Lens[];
   activeLenses: Set<string>;
-  /** 永远 active、不能关闭的基底 lens（一般是 Provenance）。 */
+  /** 永远 active、不能关闭的基底 lens（一般 is Provenance）。 */
   baseLensId: string;
   onToggle: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 10,
@@ -88,7 +89,7 @@ function LensSwitcher({
         gap: 4,
         userSelect: "none"
       }}>
-        图层叠加
+        {t("attribution.layers")}
       </span>
       <div style={{
         display: "inline-flex",
@@ -100,7 +101,7 @@ function LensSwitcher({
           const isActive = activeLenses.has(lens.id);
           const isBase = lens.id === baseLensId;
           const description = isBase
-            ? (lens.description ?? "") + "（基底视角，不能关闭）"
+            ? (lens.description ?? "") + t("attribution.baseLensSuffix")
             : lens.description ?? "";
           return (
             <button
@@ -309,6 +310,7 @@ function StructureLensFilter({
   onSelectBucket: (bucketId: string | null) => void;
   leaves: LeafLite[];
 }) {
+  const { t } = useTranslation();
   const stats = useMemo(() => bucketStatsOf(getLens("structure"), leaves), [leaves]);
 
   // Calculate group stats
@@ -367,7 +369,7 @@ function StructureLensFilter({
               marginRight: 4,
               userSelect: "none"
             }}>
-              上下文
+              {t("attribution.trackContext")}
             </span>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               {coldGroups.map((g) => {
@@ -413,7 +415,7 @@ function StructureLensFilter({
               marginRight: 4,
               userSelect: "none"
             }}>
-              交互与执行
+              {t("attribution.trackInteraction")}
             </span>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               {warmGroups.map((g) => {
@@ -1339,6 +1341,7 @@ export function AttributionTreeLensPanel({
 // ─── RemovedFooterCard — Diff lens 激活时底部"被删除"列表 ───────────────────
 
 function RemovedFooterCard({ diffData }: { diffData: DiffTreeResult }) {
+  const { t } = useTranslation();
   const removed = diffData.sections.flatMap((s) =>
     s.leaves.filter((l) => l.kind === "removed").map((l) => ({ ...l, sectionId: s.id })),
   );
@@ -1356,7 +1359,7 @@ function RemovedFooterCard({ diffData }: { diffData: DiffTreeResult }) {
         letterSpacing: "0.05em", textTransform: "uppercase",
         marginBottom: 6,
       }}>
-        ⊖ 本轮删除 · {removed.length} 段（在上一轮存在、本轮已不在）
+        {t("diff.removedFooterHeader", { count: removed.length })}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
         {removed.map((l) => {
@@ -1515,15 +1518,14 @@ function CacheTopologyStrip({
                 {pin.ttl} · {pin.scope === "global" ? "G" : "org"}
               </span>
               <span
-                title={
-                  `L${idx + 1} 层缓存\n\n` +
-                  `这是请求中第 ${idx + 1} 个 cache_control breakpoint（按 prefix 顺序）。\n` +
-                  `它把请求体的前 ${cumChars.toLocaleString()} 个字符标为可缓存，\n` +
-                  `TTL = ${pin.ttl}（${pin.ttl === "5m" ? "5 分钟" : pin.ttl === "1h" ? "1 小时" : pin.ttl}），` +
-                  `scope = ${pin.scope === "global" ? "global（跨 org 复用）" : "org（仅本 org）"}。\n\n` +
-                  `下方 bar 显示该层覆盖了哪些 section（tools / system / messages）。\n` +
-                  `右端如有空白 = 未被该层缓存的部分（${(grandTotal - cumChars).toLocaleString()} 字符）。`
-                }
+                title={t("cache.tooltipDetail", {
+                  layer: idx + 1,
+                  cumChars: cumChars.toLocaleString(),
+                  ttl: pin.ttl,
+                  ttlDesc: pin.ttl === "5m" ? t("cache.ttl5m") : pin.ttl === "1h" ? t("cache.ttl1h") : pin.ttl,
+                  scopeDesc: pin.scope === "global" ? t("cache.scopeGlobal") : t("cache.scopeOrg"),
+                  uncachedChars: (grandTotal - cumChars).toLocaleString(),
+                })}
                 style={{
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
                   width: 14, height: 14, borderRadius: "50%",

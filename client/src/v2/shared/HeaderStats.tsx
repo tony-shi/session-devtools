@@ -8,8 +8,8 @@
 
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { AggregateLedger, type AggregateLedgerFullProps } from "./AggregateLedger";
-import { CallLedger, type CallLedgerFullProps } from "./CallLedger";
+import type { AggregateLedgerFullProps } from "./AggregateLedger";
+import type { CallLedgerFullProps } from "./CallLedger";
 import { BRAND } from "./brand";
 import { SummaryStat, CacheSummaryStat } from "../session-detail/call/CallSummaryStats";
 import { fmtK } from "../lib/format";

@@ -8,6 +8,7 @@
 // 命令事件全部进 context（user 消息），故用正常（携带 context）色板，不做 muted。
 
 import React, { useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { IntervalEvent } from "../../drilldown-types";
 import { BRAND } from "../../shared/brand";
 import { useAttributionGraph } from "../../attribution-graph-context";
@@ -29,6 +30,7 @@ export function CommandGroupCard({
    *  那里的 pending 是集体宿命，由块级文案说明，不需要逐条重复。 */
   suppressPendingState?: boolean;
 }) {
+  const { t } = useTranslation();
   const group = ev.commandGroup;
   const [showCaveat, setShowCaveat] = useState(false);
   const { getEventAnnotation } = useAttributionGraph();
@@ -82,12 +84,12 @@ export function CommandGroupCard({
           background: BRAND.indigo100, borderRadius: 3, padding: "1px 5px",
           letterSpacing: "0.04em", textTransform: "uppercase",
         }}>
-          {group.commandType === "bash" ? "bash" : "命令"}
+          {group.commandType === "bash" ? t("commandGroup.bash") : t("commandGroup.command")}
         </span>
         <span style={{ fontSize: 11, fontWeight: 700, color: "#111827", fontFamily: "monospace", wordBreak: "break-all", minWidth: 0 }}>
           {ev.contentPreview || "—"}
         </span>
-        <span style={{ fontSize: 9, color: BRAND.indigo400, flexShrink: 0 }}>{members.length} 条</span>
+        <span style={{ fontSize: 9, color: BRAND.indigo400, flexShrink: 0 }}>{members.length} {t("commandGroup.countSuffix")}</span>
         {consolidated && firstSeen != null && (
           <span style={{
             marginLeft: "auto", flexShrink: 0,
@@ -112,7 +114,7 @@ export function CommandGroupCard({
                 cursor: "pointer", padding: "0 0 2px 0", lineHeight: 1.3,
               }}
             >
-              {showCaveat ? "▾" : "▸"} caveat（样板）
+              {showCaveat ? "▾" : "▸"} {t("commandGroup.caveat")}
             </button>
             {showCaveat && caveatMembers.map((m, mi) => (
               <IntervalEventRow

@@ -13,6 +13,7 @@
 // 抽取自 SessionDetailV2.tsx 文件末，未改逻辑。
 
 import React from "react";
+import { useTranslation } from "react-i18next";
 import type { CompactEvent, InterTurnBlock, IntervalEvent, LlmCall, UserTurn } from "../../drilldown-types";
 import { BRAND } from "../../shared/brand";
 import { CommandGroupCard } from "../turn/CommandGroupCard";
@@ -178,6 +179,7 @@ export function synthesizeCompactTurn(ev: CompactEvent): UserTurn {
 // 复用 InterTurnBlockDetail 的"kindLabel + monospace row"行风格，但不直接调用
 // InterTurnBlockDetail —— 后者吃的是 IntervalEvent[]，CompactEvent 不在那个数据通路里。
 export function CompactEventPanel({ ev }: { ev: CompactEvent }) {
+  const { t } = useTranslation();
   const fmtTokens = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n);
   const ratioPct = ev.preTokens > 0
     ? Math.max(0, Math.round((1 - ev.postTokens / ev.preTokens) * 100))
@@ -231,7 +233,7 @@ export function CompactEventPanel({ ev }: { ev: CompactEvent }) {
         {ev.userInstructions && (
           <div style={{ marginTop: 12, padding: "8px 12px", background: "#fef3c7", border: "1px solid #fcd34d", borderRadius: 6 }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: "#92400e", letterSpacing: "0.08em", marginBottom: 4 }}>
-              USER INSTRUCTIONS（/compact 附加指令）
+              {t("compactEvent.userInstructions")}
             </div>
             <div style={{ fontSize: 12, color: "#78350f", fontFamily: "monospace", wordBreak: "break-word" }}>
               {ev.userInstructions}
@@ -360,6 +362,7 @@ function CompactEventRow({
 // ─── InterTurnBlock detail (shared between inline Turn view and full panel) ───
 
 export function InterTurnBlockDetail({ block }: { block: InterTurnBlock }) {
+  const { t } = useTranslation();
   const kindLabel: Record<string, string> = {
     "user:command": "cmd",
     "system:local_command": "sys",
@@ -381,17 +384,17 @@ export function InterTurnBlockDetail({ block }: { block: InterTurnBlock }) {
         <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.violet600 }}>{block.label}</span>
         <span style={{ fontSize: 10, color: BRAND.violet400 }}>·</span>
         <span style={{ fontSize: 10, color: BRAND.violet400 }}>
-          {commandCount > 0 && `${commandCount} 命令`}
+          {commandCount > 0 && t("compactEvent.commandsCount", { count: commandCount })}
           {commandCount > 0 && otherCount > 0 && " · "}
-          {otherCount > 0 && `${otherCount} 事件`}
-          {commandCount === 0 && otherCount === 0 && "0 事件"}
+          {otherCount > 0 && t("compactEvent.eventsCount", { count: otherCount })}
+          {commandCount === 0 && otherCount === 0 && t("compactEvent.noEvents")}
         </span>
         {!block.enteredContext && (
           <span
-            title="本块在 session 结束之后产生，没有后续 LLM 调用消费这些事件。中段同类事件通常会被下一个 turn 的 reqBody 带入 context。"
+            title={t("compactEvent.compactionPostTooltip")}
             style={{ fontSize: 10, color: "#94a3b8", marginLeft: "auto", fontStyle: "italic", cursor: "help" }}
           >
-            session 已结束 · 不会被任何 LLM 调用消费
+            {t("compactEvent.compactionPostWarning")}
           </span>
         )}
         {block.enteredContext && (

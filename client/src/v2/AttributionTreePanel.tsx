@@ -854,7 +854,7 @@ function SkillListingDetail({
           onClick={() => setMode(m => m === "parsed" ? "raw" : "parsed")}
           style={toggleBtnStyle}
         >
-          {mode === "raw" ? "← 渲染" : "查看原文"}
+          {mode === "raw" ? t("attribution.detail.toggleRender") : t("attribution.detail.toggleRaw")}
         </button>
         <button
           type="button"
@@ -862,9 +862,9 @@ function SkillListingDetail({
           style={copyBtnStyle}
         >
           {copied ? (
-            <><Check size={10} strokeWidth={3} /> 已复制</>
+            <><Check size={10} strokeWidth={3} /> {t("attribution.detail.copied")}</>
           ) : (
-            <><Copy size={10} /> 复制原文</>
+            <><Copy size={10} /> {t("attribution.detail.copyRaw")}</>
           )}
         </button>
       </div>
@@ -971,42 +971,6 @@ function SkillListingDetail({
   );
 }
 
-// 把内容文本按 dynamicFields 的 [charStart,charEnd) 区间切片，动态值用琥珀高亮。
-// 让"哪部分是运行时变的"直接标在内容原位（取代另起的 dynamic fields 清单）。
-// 无 dynamicFields / 区间越界 → 原样纯文本返回。
-function renderContentWithDynamicHighlights(
-  text: string,
-  fields: DynamicField[] | undefined,
-): React.ReactNode {
-  if (!fields || fields.length === 0) return text;
-  // 按 charStart 排序 + 过滤越界/重叠，稳妥切片。
-  const valid = fields
-    .filter((f) => f.charStart >= 0 && f.charEnd <= text.length && f.charStart < f.charEnd)
-    .sort((a, b) => a.charStart - b.charStart);
-  if (valid.length === 0) return text;
-  const out: React.ReactNode[] = [];
-  let cursor = 0;
-  valid.forEach((f, i) => {
-    if (f.charStart < cursor) return; // 跳过与前一段重叠的
-    if (f.charStart > cursor) out.push(text.slice(cursor, f.charStart));
-    out.push(
-      <span
-        key={`dyn-${i}`}
-        title={`${f.name} · ${f.source} · 运行时动态值`}
-        style={{
-          background: "#fef3c7", color: "#92400e",
-          borderRadius: 2, padding: "0 2px",
-          boxShadow: "inset 0 -1px 0 #fcd34d",
-        }}
-      >
-        {text.slice(f.charStart, f.charEnd)}
-      </span>,
-    );
-    cursor = f.charEnd;
-  });
-  if (cursor < text.length) out.push(text.slice(cursor));
-  return out;
-}
 
 function injectDynamicPlaceholders(text: string, fields: DynamicField[]): string {
   if (!fields || fields.length === 0) return text;
@@ -1068,7 +1032,7 @@ function rehypeHighlightDynamicFields(fields: DynamicField[]) {
                     padding: "0 2px",
                     boxShadow: "inset 0 -1px 0 #fcd34d",
                   },
-                  title: field ? `${field.name} · ${field.source} · 运行时动态值` : "运行时动态值",
+                  title: field ? `${field.name} · ${field.source} · ${i18n.t("attribution.stability.runtimeDynamicValue")}` : i18n.t("attribution.stability.runtimeDynamicValue"),
                 },
                 children: [{ type: "text", value: val }]
               });
@@ -1126,6 +1090,7 @@ function renderThinkingBlock(content: string): React.ReactNode {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function renderBashToolCall(input: any): React.ReactNode {
   const command = typeof input === "object" && typeof input.command === "string" ? input.command : "";
   const runInBackground = typeof input === "object" && !!input.run_in_background;
@@ -1152,6 +1117,7 @@ function renderBashToolCall(input: any): React.ReactNode {
   );
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function renderGenericToolCall(name: string, input: any): React.ReactNode {
   const params = typeof input === "object" && input !== null ? Object.entries(input) : [];
   
@@ -1239,6 +1205,7 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
       return getThinkingRawJson(leaf.rawText || "", leaf.thinkingSignature);
     }
     if (isToolUseLeaf) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const parsed = tryParseSegmentJson(leaf.rawText ?? leaf.preview) as any;
       return JSON.stringify({
         type: "tool_use",
@@ -1312,7 +1279,7 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
 
   const dynamicFields = leaf.origin.kind === "rule" ? leaf.origin.dynamicFields : undefined;
   const contentText = leaf.rawText ?? leaf.preview;
-  const useHighlight = !hasJsonContent && dynamicFields && dynamicFields.length > 0;
+
 
   const handleCopy = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1402,19 +1369,19 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
             onClick={(e) => { e.stopPropagation(); setRawMode(v => !v); }}
             style={toggleBtnStyle}
           >
-            {rawMode ? "← 渲染" : "查看原文"}
+            {rawMode ? t("attribution.detail.toggleRender") : t("attribution.detail.toggleRaw")}
           </button>
         )}
         <button
           type="button"
-          title={`复制原文（${(leaf.rawText ?? leaf.preview).length.toLocaleString()} 字符）`}
+          title={t("attribution.detail.copyRawTitle", { count: (leaf.rawText ?? leaf.preview).length })}
           onClick={handleCopy}
           style={copyBtnStyle}
         >
           {isCopied ? (
-            <><Check size={10} strokeWidth={3} /> 已复制</>
+            <><Check size={10} strokeWidth={3} /> {t("attribution.detail.copied")}</>
           ) : (
-            <><Copy size={10} /> 复制原文</>
+            <><Copy size={10} /> {t("attribution.detail.copyRaw")}</>
           )}
         </button>
         {handleJumpSource && (
@@ -1426,7 +1393,7 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
             style={jumpBtnStyle}
           >
             <LinkIcon />
-            {jumpLabel ?? t("terms.jump", { defaultValue: "跳转" })}
+            {jumpLabel ?? t("terms.jump")}
           </button>
         )}
       </div>
@@ -1439,6 +1406,7 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
           const trimmed = rawTextContent.trim();
           return trimmed.startsWith("{") || trimmed.startsWith("[");
         })();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         let parsedRawJsonObj: any = null;
         if (isRawJson) {
           try { parsedRawJsonObj = JSON.parse(rawTextContent); }
@@ -1497,6 +1465,7 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
       ) : isThinkingLeaf ? (
         renderThinkingBlock(contentText)
       ) : isToolUseLeaf ? (() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const parsed = tryParseSegmentJson(leaf.rawText ?? leaf.preview) as any;
         const isBash = leaf.toolName?.toLowerCase() === "bash";
         if (isBash) {
