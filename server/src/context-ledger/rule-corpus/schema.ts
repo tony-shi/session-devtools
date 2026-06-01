@@ -37,6 +37,39 @@ export type RuleMaterialization = z.infer<typeof RuleMaterialization>;
 export const RuleStability = z.enum(["static", "dynamic"]);
 export type RuleStability = z.infer<typeof RuleStability>;
 
+// ── 正交分类轴 v2:语义 / 来源 ──────────────────────────────────────────────────
+// 与现有 category(23 声明/13 用)、mechanism(14/9) 增量并存。迁移目标:
+//   semantic 收敛 category → 6 大类(+ 细分);source 统一散在 DynamicFieldSource 的来源。
+// 二者皆 optional:未声明的 rule 由 axes.ts:deriveAxes(slotId+ruleId) 派生兜底,声明值优先。
+export const SemanticKind = z.enum([
+  "identity",   // 身份
+  "directive",  // 行为守则 / 指令
+  "capability", // 能力(工具 / 技能 / agent / mcp)
+  "context",    // 上下文(它知道的事:项目指令 / 记忆 / 环境 / git / 账号)
+  "dialogue",   // 对话(本次发生:输入 / 输出 / 思考 / 工具调用·结果 / 命令回显)
+  "meta",       // 元信息(计费 / 提醒)
+]);
+export type SemanticKind = z.infer<typeof SemanticKind>;
+
+export const SemanticSchema = z.object({
+  kind: SemanticKind,
+  detail: z.string().optional(), // 语义二级(细分),如 builtin-tool / memory / environment
+});
+export type Semantic = z.infer<typeof SemanticSchema>;
+
+// 来源(作者归属)。3 个用户向桶由 axes.ts:sourceBucket() 派生:
+//   cc-* → CC自带 / user-config → 你配置 / 其余 → 会话产生。
+export const SourceValue = z.enum([
+  "cc-static",   // CC 固定模板
+  "cc-runtime",  // CC 按环境算(env / git / date / billing / 清单脚手架)
+  "user-config", // 你的配置(CLAUDE.md / MEMORY / skill / MCP / agent)
+  "user-input",  // 你敲的
+  "model",       // 模型产出(assistant / thinking / tool_use)
+  "tool",        // 工具输出(tool_result)
+  "protocol",    // Anthropic wire 结构
+]);
+export type SourceValue = z.infer<typeof SourceValue>;
+
 // sourceUnit relation —— 该 rule 对应的 Piebald source unit 与运行时字节的关系。
 // 纯文档性标注(Piebald 对照机制已脱钩,不再有 drift 校验)。
 export const SourceRelation = z.enum([
@@ -104,6 +137,12 @@ export const RuleSchema = z.object({
   displayName: z.string().optional(),
   summary: z.string().optional(),
   dynamicSource: z.string().optional(),
+
+  // ── 正交分类轴 v2(增量并存,与 category/mechanism 共存)──
+  // semantic：用户向语义大类(+细分),取代 category 作语义真值的迁移目标。
+  // source：作者归属。两者皆 optional;未声明则 deriveAxes() 由 slotId+ruleId 派生兜底。
+  semantic: SemanticSchema.optional(),
+  source: SourceValue.optional(),
 
   // priority:候选评估时显式优先级。runtime first-match 取按 priority 降序的首条。
   // 约定:

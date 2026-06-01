@@ -133,6 +133,16 @@ export const structureLens: Lens = {
   bucketOf(leaf) {
     if (leaf.origin.kind === "unknown") return "other.unknown";
     if (leaf.classSlot.endsWith(".unknown") || leaf.slotType.endsWith(".unknown")) return "other.unknown";
+    // v2 正交语义轴：修复 messages 注入区（reminder / role:system message）的分组。
+    // roleOf 对这块最易错——deferred/agent 误落 environment、user-context.v2 误落 events。
+    // 用后端 axes.semantic 纠正；其余区域仍走 roleOf（零风险）。
+    const sem = leaf.axes?.semantic;
+    if (sem && (leaf.classSlot === "messages.inline.system-reminder" || leaf.classSlot === "messages.system-message")) {
+      if (sem === "capability") return "messages.skills";   // 三 listing → 能力(capabilities)
+      if (sem === "context") return "messages.context";     // userContext / memory → 上下文(environment)
+      if (sem === "directive") return "messages.directive"; // thinking-frequency → 指令(instructions)
+      if (sem === "meta") return "messages.injection";      // token/file 提醒 → 运行时事件(events)
+    }
     return roleOf(leaf);
   },
 };

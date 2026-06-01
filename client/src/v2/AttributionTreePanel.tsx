@@ -305,6 +305,14 @@ export interface LeafLite {
     stability?: string;
     dynamicSource?: string;
   };
+  // 正交分类轴 v2（来自 SerializedNode.axes）。bucketOf 用 axes.semantic 修复注入区分组;
+  // 详情面板用 source/sourceBucket 作"点开属性"。
+  axes?: {
+    semantic: string;
+    semanticDetail?: string;
+    source: string;
+    sourceBucket: string;
+  };
 }
 
 export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
@@ -330,6 +338,7 @@ export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
         ...(node.wireMeta?.thinkingSignature && { thinkingSignature: node.wireMeta.thinkingSignature }),
         ...(node.cachePolicy && { cachePolicy: node.cachePolicy }),
         ...(node.ruleMeta && { ruleMeta: node.ruleMeta }),
+        ...(node.axes && { axes: node.axes }),
       });
       return;
     }

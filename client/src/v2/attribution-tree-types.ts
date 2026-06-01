@@ -119,6 +119,14 @@ export interface SerializedNode {
     stability?: string;
     dynamicSource?: string;
   };
+  /** 正交分类轴 v2（后端 deriveAxes 派生）。semantic=两层语义(大类→细分,UI 分组主角);
+   *  source/sourceBucket=作者归属(点开属性);动态填充=origin.dynamicFields 非空。每节点都带。 */
+  axes?: {
+    semantic: string;
+    semanticDetail?: string;
+    source: string;
+    sourceBucket: string;
+  };
   children: SerializedNode[];
 }
 
