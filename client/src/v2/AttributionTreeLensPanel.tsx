@@ -569,7 +569,7 @@ function MainSectionBar({
           <div
             key={s.id}
             onClick={() => onSelectSection(s.id)}
-            title={`${t(`attribution.section.${s.id}`)} · ${fmtK(s.totalChars)} chars · ${s.leafCount} segments — ${t("attribution.clickToDrill")}`}
+            title={`${t(`attribution.section.${s.id}`)} · ${fmtK(s.totalChars)} ${t("attribution.charsLabel")} · ${t("attribution.segmentsCount", { count: s.leafCount })} — ${t("attribution.clickToDrill")}`}
             style={{
               flex: pct, minWidth: 80,
               position: "relative",
@@ -634,7 +634,7 @@ function MainSectionBar({
                 />
               ) : (
                 <div style={{ height: MAIN_BAR_LEAF_HEIGHT, fontSize: 10, color: "#9ca3af", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  empty
+                  {t("attribution.empty")}
                 </div>
               )}
             </div>
@@ -692,12 +692,12 @@ function LensSectionTable({
             <span style={{ fontSize: 11, color: "#374151", minWidth: 60 }}>{fmtK(s.totalChars)}</span>
             <span style={{ fontSize: 11, color: "#9ca3af", minWidth: 44 }}>{pct.toFixed(1)}%</span>
             <span style={{ fontSize: 10, color: "#9ca3af", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {s.leafCount} segments
-              {s.toolCount !== undefined && ` · ${s.toolCount} tools`}
+              {t("attribution.segmentsCount", { count: s.leafCount })}
+              {s.toolCount !== undefined && ` · ${t("attribution.toolsCount", { count: s.toolCount })}`}
               {s.byRole && [
-                s.byRole.user > 0 && `${s.byRole.user} user`,
-                s.byRole.assistant > 0 && `${s.byRole.assistant} assistant`,
-                s.byRole.system > 0 && `${s.byRole.system} system`,
+                s.byRole.user > 0 && t("attribution.roleUserCount", { count: s.byRole.user }),
+                s.byRole.assistant > 0 && t("attribution.roleAssistantCount", { count: s.byRole.assistant }),
+                s.byRole.system > 0 && t("attribution.roleSystemCount", { count: s.byRole.system }),
               ].filter(Boolean).map(x => " · " + x).join("")}
             </span>
             {filterActive && bucketColor && hitCount !== null && (

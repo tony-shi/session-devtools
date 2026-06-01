@@ -432,7 +432,19 @@
       "system.billing": "Billing Header",
       "tools.builtin": "Built-in Tools",
       "other.unknown": "Unknown"
-    }
+    },
+    "charsLabel": "chars",
+    "empty": "empty",
+    "segmentsCount_one": "{{count}} segment",
+    "segmentsCount_other": "{{count}} segments",
+    "toolsCount_one": "{{count}} tool",
+    "toolsCount_other": "{{count}} tools",
+    "roleUserCount_one": "{{count}} user",
+    "roleUserCount_other": "{{count}} users",
+    "roleAssistantCount_one": "{{count}} assistant",
+    "roleAssistantCount_other": "{{count}} assistants",
+    "roleSystemCount_one": "{{count}} system",
+    "roleSystemCount_other": "{{count}} systems"
   },
   "callLedger": {
     "historicalReuse": "Historical Reuse",

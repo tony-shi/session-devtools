@@ -428,7 +428,14 @@
       "system.billing": "计费头",
       "tools.builtin": "内置工具",
       "other.unknown": "未识别段"
-    }
+    },
+    "charsLabel": "字符",
+    "empty": "无",
+    "segmentsCount": "{{count}} 段",
+    "toolsCount": "{{count}} 个工具",
+    "roleUserCount": "{{count}} 用户",
+    "roleAssistantCount": "{{count}} AI",
+    "roleSystemCount": "{{count}} 系统"
   },
   "callLedger": {
     "historicalReuse": "历史复用",
