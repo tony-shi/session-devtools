@@ -17,9 +17,10 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import JsonView from "@uiw/react-json-view";
-import { TriangleAlert, Link2, ArrowUpRight } from "lucide-react";
+import { TriangleAlert, Link2, ArrowUpRight, Check, Copy } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { BRAND } from "./brand";
+import { RenderRawCopyActions } from "./RenderRawCopyActions";
 
 export type EventDirection = "in" | "out";
 
@@ -546,43 +547,36 @@ export function SegmentView({ seg }: { seg: EventSegment }) {
   const shown = !tooLong || showFull ? seg.content : seg.content.slice(0, truncateAt);
   const monospace = seg.monospace ?? true;
 
+  const textToCopy = () => {
+    if (effectiveMode === "raw" && hasRaw) {
+      return JSON.stringify(seg.rawJson, null, 2);
+    }
+    return seg.content;
+  };
+
   return (
     <div style={{ marginTop: 6 }}>
-      {(seg.label || showToggle) && (
-        <div style={{
-          display: "flex", alignItems: "center", gap: 6,
-          marginBottom: 3,
-        }}>
-          {seg.label && (
-            <span style={{
-              fontSize: 9, color: "#64748b", fontWeight: 700, letterSpacing: "0.05em",
-            }}>
-              {seg.label}
-            </span>
-          )}
-          {showToggle && (
-            <div style={{
-              marginLeft: "auto",
-              display: "inline-flex",
-              border: "1px solid #e5e7eb", borderRadius: 4,
-              overflow: "hidden",
-            }}>
-              <SegmentModeButton
-                active={viewMode === "preview"}
-                onClick={(e) => { e.stopPropagation(); setViewMode("preview"); }}
-              >
-                {t("eventCard.render")}
-              </SegmentModeButton>
-              <SegmentModeButton
-                active={viewMode === "raw"}
-                onClick={(e) => { e.stopPropagation(); setViewMode("raw"); }}
-              >
-                {t("eventCard.rawJson")}
-              </SegmentModeButton>
-            </div>
-          )}
-        </div>
-      )}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 6,
+        marginBottom: 3,
+      }}>
+        {seg.label ? (
+          <span style={{
+            fontSize: 9, color: "#64748b", fontWeight: 700, letterSpacing: "0.05em",
+          }}>
+            {seg.label}
+          </span>
+        ) : (
+          <span />
+        )}
+        <RenderRawCopyActions
+          rawMode={effectiveMode === "raw"}
+          showToggle={showToggle}
+          onToggleRawMode={() => setViewMode(v => v === "preview" ? "raw" : "preview")}
+          textToCopy={textToCopy}
+          style={{ marginLeft: "auto" }}
+        />
+      </div>
 
       {effectiveMode === "raw" && hasRaw ? (
         <div style={{
@@ -635,30 +629,5 @@ export function SegmentView({ seg }: { seg: EventSegment }) {
         </>
       )}
     </div>
-  );
-}
-
-function SegmentModeButton({
-  active, onClick, children,
-}: {
-  active: boolean;
-  onClick: (e: React.MouseEvent) => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        background: active ? BRAND.indigo50 : "transparent",
-        color: active ? BRAND.indigo700 : "#9ca3af",
-        border: "none",
-        padding: "2px 8px",
-        fontSize: 9, fontWeight: 700, letterSpacing: "0.04em",
-        cursor: "pointer", lineHeight: 1.3,
-      }}
-    >
-      {children}
-    </button>
   );
 }

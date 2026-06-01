@@ -375,7 +375,7 @@ export function IntervalEventRow({
   toolCall?: ToolCallSlot;
 }) {
   const { t } = useTranslation();
-  const col = KIND_COLOR[ev.kind];
+  const col = KIND_COLOR[ev.kind] || { bg: "#f8fafc", border: "#e2e8f0", fg: "#64748b" };
   const linkedToolUseIds = toolUseIdsFromIntervalEvent(ev);
   const linked = activeToolUseId != null && linkedToolUseIds.includes(activeToolUseId);
   const hoverLinkedId = linkedToolUseIds[0] ?? null;
@@ -383,7 +383,7 @@ export function IntervalEventRow({
   // other kinds keep their static KIND_LABEL string.
   const kindLabel = ev.kind === "user:tool_result"
     ? t("terms.toolResultLabel")
-    : t(`eventKinds.${ev.kind.replace(/[:-]/g, "_")}`, { defaultValue: KIND_LABEL[ev.kind] });
+    : t(`eventKinds.${ev.kind.replace(/[:-]/g, "_")}`, { defaultValue: KIND_LABEL[ev.kind] || ev.kind });
   // 详尽解读 hover：非 context 元数据事件（ai-title / permission-mode / …）在 locale
   // 的 eventKindDesc.<kind> 里有详细描述（是什么/何时出现/为何不进上下文）。其它 kind
   // 无描述则 defaultValue "" → 不显示 tooltip。
@@ -515,32 +515,6 @@ export function IntervalEventRow({
   // （provenanceJump，不受 EventUnitCard 的 skipped 门控影响）。
   const linkedProxyId = ev.generatedByProxyRequestId;
 
-  if (!CORE_EVENT_KINDS.has(ev.kind)) {
-    const timestampStr = ev.timestamp ? ev.timestamp.slice(11, 19) : "";
-    const cleanPreview = ev.contentPreview ? ev.contentPreview.replace(/[\r\n\t]+/g, " ").slice(0, 160) : "";
-    return (
-      <div
-        data-jsonl-line={ev.lineIdx}
-        style={{
-          fontSize: 10,
-          color: "#9ca3af",
-          padding: "4px 8px 4px 12px",
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          lineHeight: 1.4,
-          boxShadow: isFlashing ? "0 0 0 3px rgba(245,158,11,0.45)" : "none",
-          transition: "box-shadow 350ms ease",
-        }}
-      >
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#cbd5e1" }} />
-        <span style={{ fontWeight: 600, color: "#6b7280" }}>{effectiveKindLabel}</span>
-        {cleanPreview && <span style={{ textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap", flex: 1 }}>{cleanPreview}</span>}
-        {timestampStr && <span style={{ marginLeft: "auto", flexShrink: 0, fontSize: 9, color: "#cbd5e1" }}>{timestampStr}</span>}
-      </div>
-    );
-  }
-
   const inputSegment = (() => {
     if (!toolCall || !toolCall.inputPreview) return null;
     const parsedInput = (() => {
@@ -595,7 +569,7 @@ export function IntervalEventRow({
         kindTooltip={kindTooltip}
         size={ev.contentSize > 0 ? { bytes: ev.contentSize, direction } : undefined}
         timestamp={ev.timestamp}
-        preview={skillFormat?.preview ?? commandFormat?.preview ?? ev.contentPreview.slice(0, 120)}
+        preview={skillFormat?.preview ?? commandFormat?.preview ?? (ev.contentPreview ? ev.contentPreview.replace(/[\r\n\t]+/g, " ").slice(0, 120) : "")}
         defaultExpanded={skillFormat ? skillFormat.defaultExpanded : undefined}
         segments={[
           ...(inputSegment ? [inputSegment] : []),

@@ -829,7 +829,8 @@
     "notConsumedYet": "Not consumed yet",
     "gappedAuditWarn": "⚠ Data may be unreliable - early calls unaudited",
     "render": "Render",
-    "rawJson": "Raw JSON"
+    "rawJson": "Raw JSON",
+    "rawText": "Raw Text"
   },
   "responseTree": {
     "loading": "Loading response…",

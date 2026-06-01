@@ -836,7 +836,8 @@
     "notConsumedYet": "暂未消费",
     "gappedAuditWarn": "⚠ 数据可能不准 — 早期 call 未审计",
     "render": "渲染",
-    "rawJson": "原始 JSON"
+    "rawJson": "原始 JSON",
+    "rawText": "原始文本"
   },
   "responseTree": {
     "loading": "加载响应中…",
