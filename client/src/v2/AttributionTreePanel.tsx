@@ -108,6 +108,12 @@ const REMINDER_RULE_TO_ROLE: Record<string, RoleId> = {
   // 2.1.154+ role:"system" mid-conversation message 版（slot=messages.system-message，见 roleOf）
   "claude-code.messages.deferred-tools-listing.v2": "messages.context",
   "claude-code.messages.agent-types-listing.v2":    "messages.context",
+  "claude-code.messages.reminder.project-instructions.v1": "messages.context",
+  "claude-code.messages.reminder.memory.v1":        "messages.context",
+  "claude-code.messages.reminder.preamble.v1":      "messages.directive",
+  "claude-code.messages.reminder.account.v1":       "messages.injection",
+  "claude-code.messages.reminder.wrapper-prefix.v1": "messages.directive",
+  "claude-code.messages.reminder.wrapper-suffix.v1": "messages.directive",
   // 注入的行为指令 → messages.directive
   "claude-code.messages.thinking-frequency.v1":     "messages.directive", // thinking 频率指引
 };
@@ -134,7 +140,7 @@ export function roleOf(leaf: {
   // 各 role 经 ROLE_TO_GROUP 静态映射到正确 group（不再有 groupOf override 旁路）。
   if (origin?.kind === "rule" && origin.ruleId === "claude-code.messages.skill-listing.v1")
     return "messages.skills";
-  if (classSlot === "messages.inline.system-reminder") {
+  if (classSlot.startsWith("messages.inline.system-reminder")) {
     if (origin?.kind === "rule") {
       const sub = REMINDER_RULE_TO_ROLE[origin.ruleId];
       if (sub) return sub;
@@ -275,6 +281,8 @@ export interface LeafLite {
   preview: string;
   origin: SegmentOrigin;
   rawText?: string;
+  charRange?: { start: number; end: number };
+  visibility?: "default" | "rawOnly";
   /**
    * Position of this leaf inside the raw LLM request JSON
    * (e.g. `reqBody.system[0]`, `reqBody.messages[0].content[1]`). Carried
@@ -322,6 +330,7 @@ export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
     // 经过 system section 级 slot 时，把它记下来下沉给后代叶子（classSlot）。
     const nextSection = isSystemSectionSlot(node.slotType) ? node.slotType : sectionSlot;
     if (node.children.length === 0) {
+      if (node.visibility === "rawOnly") return;
       out.push({
         nodeId: node.id,
         slotType: node.slotType,
@@ -331,6 +340,8 @@ export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
         preview: node.preview,
         origin: node.origin,
         rawText: node.rawText,
+        charRange: node.charRange,
+        visibility: node.visibility,
         jsonPath: node.jsonPath,
         ...(node.wireMeta?.messageRole && { messageRole: node.wireMeta.messageRole }),
         ...(node.wireMeta?.toolUseId && { toolUseId: node.wireMeta.toolUseId }),
@@ -1587,4 +1598,3 @@ function jsonlSourceToIntervalKind(source: string): IntervalEventKind {
     default:                   return "unknown";
   }
 }
-

@@ -27,9 +27,11 @@ export interface SlotMatch {
   /** slot 类型标签（同一类型可出现多次，如多个 system.main-prompt.section.* 子节点） */
   slotType: string;
   jsonPath: string;
-  /** 相对父节点 rawText 的字节偏移（左闭右开）；顶层节点无父节点故为 undefined */
+  /** 相对父节点 rawText 的字符偏移（左闭右开）；顶层节点无父节点故为 undefined */
   charRange?: { start: number; end: number };
   rawText: string;
+  /** 展示可见性。rawOnly 节点保留在树和审计中，但默认列表不展示。 */
+  visibility?: "default" | "rawOnly";
   /** 触发本次切分的锚字符串，调试用 */
   anchorEvidence: string;
   children: SlotMatch[];
@@ -73,9 +75,11 @@ export interface SegmentNode {
   /** slot 类型标签（如 "system.main-prompt.section.doing-tasks"）或 unknown fallback 名；同一类型可出现多次 */
   slotType: string;
   jsonPath: string;
-  /** 相对父节点 rawText 的字节偏移（左闭右开）；顶层节点无父节点故为 undefined */
+  /** 相对父节点 rawText 的字符偏移（左闭右开）；顶层节点无父节点故为 undefined */
   charRange?: { start: number; end: number };
   rawText: string;
+  /** 展示可见性。rawOnly 节点保留在树和审计中，但默认列表不展示。 */
+  visibility?: "default" | "rawOnly";
   /** sha256 前 16 位，格式 "sha256:xxxxxxxxxxxxxxxx" */
   rawHash: string;
   charCount: number;

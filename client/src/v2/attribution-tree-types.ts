@@ -100,6 +100,10 @@ export interface SerializedNode {
   rawHash: string;
   preview: string;
   rawText?: string;
+  /** 相对父节点 rawText 的字符偏移（左闭右开）；用于 raw 视图高亮。 */
+  charRange?: { start: number; end: number };
+  /** 展示可见性。rawOnly 节点保留在树和审计中，但默认 leaf 列表不展示。 */
+  visibility?: "default" | "rawOnly";
   parentId?: string;
   origin: SegmentOrigin;
   wireMeta?: {

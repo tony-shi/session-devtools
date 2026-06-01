@@ -3,6 +3,8 @@ import { writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { loadAttributionTree, readSessionEventsForLinker } from "./attribution-service.ts";
+import type { SerializedNode } from "./attribution-service.ts";
+import { withBillingHeader } from "./context-ledger/parser/attribution/test-fixtures";
 
 // 不依赖真实 SQLite — controller helpers 由测试注入。
 // 验证 service 层：jsonl 适配、attributeWithJsonl 调用、tree-diff 串联是否完整。
@@ -48,6 +50,49 @@ function makeSessionJsonl(tmpDir: string): string {
   return sourceFile;
 }
 
+const USER_CONTEXT_REMINDER = `<system-reminder>
+As you answer the user's questions, you can use the following context:
+# claudeMd
+Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.
+Contents of /repo/CLAUDE.md (project instructions, checked into the codebase):
+
+Follow project rules.
+Contents of /Users/me/.claude/projects/-repo/memory/MEMORY.md (user's auto-memory, indexed for this project):
+
+# Memory Index
+- Remember the current project.
+# userEmail
+The user's email address is user@example.com.
+# currentDate
+Today's date is June 1, 2026.
+
+      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.
+</system-reminder>
+`;
+
+function makeReqBodyWithUserContextReminder() {
+  return withBillingHeader({
+    system: [
+      { type: "text" as const, text: "You are Claude Code, Anthropic's official CLI for Claude." },
+      { type: "text" as const, text: "Prelude.\n# Doing tasks\nDo stuff.\n" },
+    ],
+    tools: [{ name: "Read", description: "Read a file", input_schema: {} }],
+    messages: [{ role: "user", content: [{ type: "text", text: USER_CONTEXT_REMINDER }] }],
+  }, "2.1.158.000");
+}
+
+function findSerializedNode(
+  nodes: SerializedNode[],
+  pred: (node: SerializedNode) => boolean,
+): SerializedNode | undefined {
+  for (const node of nodes) {
+    if (pred(node)) return node;
+    const child = findSerializedNode(node.children, pred);
+    if (child) return child;
+  }
+  return undefined;
+}
+
 describe("attribution-service — JSONL adapter", () => {
   it("readSessionEventsForLinker 把 user/assistant 事件准确拆分", () => {
     const tmpDir = join(tmpdir(), `attr-test-${Date.now()}`);
@@ -81,6 +126,81 @@ describe("attribution-service — JSONL adapter", () => {
 });
 
 describe("attribution-service — loadAttributionTree 端到端", () => {
+  it("userContext system-reminder 返回 parent raw + child charRange，wrapper 默认 rawOnly", async () => {
+    const reqBody = makeReqBodyWithUserContextReminder();
+
+    const result = await loadAttributionTree(
+      "test-session",
+      1,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      {} as any,
+      {
+        resolveCallMeta: () => ({
+          call: {
+            id: 1,
+            timestamp: "2026-06-01T10:00:00Z",
+            turnId: 1,
+            sourceFile: "unused.jsonl",
+            apiRequestId: null,
+          },
+          prevCall: null,
+        }),
+        fetchProxyReqBodyAt: async () =>
+          ({ reqBody, reqHeaders: {}, proxyRequestId: 1, startedAt: "2026-06-01T10:00:00Z" }),
+        loadJsonlEvents: () => [],
+      },
+    );
+
+    expect(result.error).toBeUndefined();
+    const parent = findSerializedNode(
+      result.snapshot!.roots,
+      (node) => node.slotType === "messages.inline.system-reminder" && node.children.length > 0,
+    );
+    expect(parent).toBeDefined();
+    expect(parent!.rawText).toBe(USER_CONTEXT_REMINDER);
+
+    const slots = parent!.children.map((node) => node.slotType);
+    expect(slots).toEqual([
+      "messages.inline.system-reminder.wrapper.prefix",
+      "messages.inline.system-reminder.preamble",
+      "messages.inline.system-reminder.project-instructions",
+      "messages.inline.system-reminder.memory",
+      "messages.inline.system-reminder.account",
+      "messages.inline.system-reminder.wrapper.suffix",
+    ]);
+
+    expect(parent!.children.map((node) => node.rawText).join("")).toBe(parent!.rawText);
+    for (const child of parent!.children) {
+      expect(child.charRange).toBeDefined();
+      expect(parent!.rawText!.slice(child.charRange!.start, child.charRange!.end)).toBe(child.rawText);
+    }
+
+    const visibleSlots = parent!.children
+      .filter((node) => node.visibility !== "rawOnly")
+      .map((node) => node.slotType);
+    expect(visibleSlots).toEqual([
+      "messages.inline.system-reminder.project-instructions",
+      "messages.inline.system-reminder.memory",
+      "messages.inline.system-reminder.account",
+    ]);
+
+    const rawOnlySlots = parent!.children
+      .filter((node) => node.visibility === "rawOnly")
+      .map((node) => node.slotType);
+    expect(rawOnlySlots).toEqual([
+      "messages.inline.system-reminder.wrapper.prefix",
+      "messages.inline.system-reminder.preamble",
+      "messages.inline.system-reminder.wrapper.suffix",
+    ]);
+
+    const account = parent!.children.find((node) => node.slotType === "messages.inline.system-reminder.account")!;
+    const suffix = parent!.children.find((node) => node.slotType === "messages.inline.system-reminder.wrapper.suffix")!;
+    expect(account.rawText).toContain("# userEmail");
+    expect(account.rawText).not.toContain("IMPORTANT:");
+    expect(suffix.rawText).toContain("IMPORTANT:");
+    expect(suffix.rawText).toContain("</system-reminder>");
+  });
+
   it("命中 tool_use / tool_result + 与 previous 做 tree-diff", async () => {
     const tmpDir = join(tmpdir(), `attr-svc-${Date.now()}`);
     mkdirSync(tmpDir, { recursive: true });

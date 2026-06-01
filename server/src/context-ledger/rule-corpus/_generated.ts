@@ -600,6 +600,147 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
     "pattern": "^<system-reminder>\\n<new-diagnostics>The following new diagnostic issues were detected:\\n\\n(?<diagnostics>[\\s\\S]*?)</new-diagnostics>\\n</system-reminder>$"
   },
   {
+    "ruleId": "claude-code.messages.reminder.account.v1",
+    "slotId": "messages.inline.system-reminder.account",
+    "verifiedFor": "2.1.158",
+    "sourceUnits": [],
+    "description": "userContext reminder 拆分后的「账号」尾段:\"# userEmail … # currentDate …\"。 closing IMPORTANT 与 </system-reminder> 已单独拆成 raw-only envelope。语义=meta、 来源=cc-runtime(CC 注入)。userEmail/currentDate 动态。",
+    "stability": "dynamic",
+    "sourcemapRef": "proxy:9e1ba147 + minimax fixture (2.1.158);splitUserContextReminder",
+    "materialization": "shape",
+    "displayName": "账号(邮箱/日期)",
+    "summary": "账号邮箱 + 当前日期(注入上下文尾部)",
+    "dynamicSource": "userEmail + currentDate",
+    "priority": 0,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "regex",
+      "mechanism": "system_reminder_pattern",
+      "category": "harness_injection",
+      "captureGroups": {
+        "userEmail": "账号邮箱",
+        "currentDate": "当前日期"
+      }
+    },
+    "pattern": "^# userEmail\\nThe user's email address is (?<userEmail>[^\\n]+)\\.\\n# currentDate\\nToday's date is (?<currentDate>[^\\n]+)\\.$"
+  },
+  {
+    "ruleId": "claude-code.messages.reminder.memory.v1",
+    "slotId": "messages.inline.system-reminder.memory",
+    "verifiedFor": "2.1.158",
+    "sourceUnits": [],
+    "description": "userContext reminder 拆分后的「持久化记忆」子段:\"Contents of <path>MEMORY.md (user's auto-memory…)\" —— Claude Code 生成的跨会话记忆(MEMORY.md 索引内容)。语义=context、来源=user-config(你的)。 memoryPath/memoryContents 为动态字段。",
+    "stability": "dynamic",
+    "sourcemapRef": "proxy:9e1ba147 T3C2 + minimax fixture (2.1.158);splitUserContextReminder",
+    "materialization": "shape",
+    "displayName": "记忆(MEMORY.md)",
+    "summary": "Claude Code 持久化记忆 MEMORY.md 的索引内容(跨会话)",
+    "dynamicSource": "memoryPath(运行时路径) + memoryContents(MEMORY.md 正文)",
+    "priority": 0,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "regex",
+      "mechanism": "system_reminder_pattern",
+      "category": "memory_injection",
+      "captureGroups": {
+        "memoryPath": "MEMORY.md 的运行时路径(~/.claude/projects/<项目>/memory/)",
+        "memoryContents": "MEMORY.md 正文(# Memory Index 列表)"
+      }
+    },
+    "pattern": "^Contents of (?<memoryPath>[^\\n]+MEMORY\\.md) \\(user's auto-memory[^)]*\\):\\n\\n(?<memoryContents>[\\s\\S]*?)\\n*$"
+  },
+  {
+    "ruleId": "claude-code.messages.reminder.preamble.v1",
+    "slotId": "messages.inline.system-reminder.preamble",
+    "verifiedFor": "2.1.158",
+    "sourceUnits": [],
+    "description": "userContext <system-reminder> 拆分后的「前言」子段(splitUserContextReminder 产出): \"# claudeMd\" + 固定前言(CC 框架语,静态)。wrapper prefix 已单独拆成 raw-only envelope。 语义=directive、来源=cc-static。",
+    "stability": "static",
+    "sourcemapRef": "proxy:9e1ba147 / minimax fixture (2.1.158);splitUserContextReminder",
+    "materialization": "exact_text",
+    "displayName": "claudeMd 前言",
+    "summary": "注入上下文的固定开场(claudeMd 指令优先级声明)",
+    "priority": 0,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "regex",
+      "mechanism": "system_reminder_pattern",
+      "category": "harness_injection"
+    },
+    "pattern": "^# claudeMd\\nCodebase and user instructions are shown below\\. Be sure to adhere to these instructions\\. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written\\.\\n*$"
+  },
+  {
+    "ruleId": "claude-code.messages.reminder.project-instructions.v1",
+    "slotId": "messages.inline.system-reminder.project-instructions",
+    "verifiedFor": "2.1.158",
+    "sourceUnits": [],
+    "description": "userContext reminder 拆分后的「项目指令」子段:一个 \"Contents of <path> (project instructions…)\" 文件(你的 CLAUDE.md / AGENTS.md 等,checked into the codebase)。可变数量,每文件一段。 语义=context、来源=user-config(你的)。path/content 为动态字段。",
+    "stability": "dynamic",
+    "sourcemapRef": "proxy:9e1ba147 T3C2 (2.1.158);splitUserContextReminder",
+    "materialization": "shape",
+    "displayName": "项目指令(CLAUDE.md)",
+    "summary": "项目级指令文件(CLAUDE.md / AGENTS.md)的注入内容",
+    "dynamicSource": "path(项目指令文件路径) + content(正文)",
+    "priority": 0,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "regex",
+      "mechanism": "system_reminder_pattern",
+      "category": "memory_injection",
+      "captureGroups": {
+        "path": "项目指令文件路径(home=~/.claude 全局 / 项目根=project)",
+        "content": "文件正文"
+      }
+    },
+    "pattern": "^Contents of (?<path>[^\\n]+?) \\(project instructions[^)]*\\):\\n\\n(?<content>[\\s\\S]*?)\\n*$"
+  },
+  {
+    "ruleId": "claude-code.messages.reminder.wrapper-prefix.v1",
+    "slotId": "messages.inline.system-reminder.wrapper.prefix",
+    "verifiedFor": "2.1.158",
+    "sourceUnits": [],
+    "description": "userContext reminder 拆分后的前置 envelope:<system-reminder> + \"As you answer...\" 固定引导语。仅用于 raw/audit 完整性,默认 UI raw-only。",
+    "stability": "static",
+    "sourcemapRef": "proxy:9e1ba147 / minimax fixture (2.1.158);splitUserContextReminder",
+    "materialization": "exact_text",
+    "displayName": "system-reminder 前置封装",
+    "summary": "userContext 注入块的固定前置封装",
+    "priority": 0,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "regex",
+      "mechanism": "system_reminder_pattern",
+      "category": "harness_injection"
+    },
+    "pattern": "^<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n*$"
+  },
+  {
+    "ruleId": "claude-code.messages.reminder.wrapper-suffix.v1",
+    "slotId": "messages.inline.system-reminder.wrapper.suffix",
+    "verifiedFor": "2.1.158",
+    "sourceUnits": [],
+    "description": "userContext reminder 拆分后的后置 envelope:closing IMPORTANT + </system-reminder>。 仅用于 raw/audit 完整性,默认 UI raw-only。",
+    "stability": "static",
+    "sourcemapRef": "proxy:9e1ba147 / minimax fixture (2.1.158);splitUserContextReminder",
+    "materialization": "exact_text",
+    "displayName": "system-reminder 后置封装",
+    "summary": "userContext 注入块的固定后置封装",
+    "priority": 0,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "regex",
+      "mechanism": "system_reminder_pattern",
+      "category": "harness_injection"
+    },
+    "pattern": "^\\n\\n      IMPORTANT: this context may or may not be relevant to your tasks\\. You should not respond to this context unless it is highly relevant to your task\\.\\n</system-reminder>\\n*$"
+  },
+  {
     "ruleId": "claude-code.messages.skill-listing.v1",
     "slotId": "messages.inline.system-reminder",
     "verifiedFor": null,

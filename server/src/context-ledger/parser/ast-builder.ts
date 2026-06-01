@@ -70,6 +70,7 @@ export function buildParsedQuerySnapshot(params: {
       jsonPath: match.jsonPath,
       charRange: match.charRange,
       rawText: match.rawText,
+      ...(match.visibility && { visibility: match.visibility }),
       rawHash: hashOf(match.rawText),
       charCount: match.rawText.length,
       children: [],
@@ -143,6 +144,14 @@ function expandChildren(match: SlotMatch, template: RequestTemplate): SlotMatch[
   // 无 template slot,故在 findTemplateSlot 之前处理。
   if (match.slotType === "messages.system-message") {
     return splitSystemMessage(match.rawText, match.jsonPath);
+  }
+
+  // 首条 user message 的 userContext <system-reminder>:按来源拆成 前言 / 项目指令(0..N 文件) /
+  // 记忆(MEMORY.md) / 账号(email+date)。非 userContext reminder(token-usage / file-* 等)
+  // → splitUserContextReminder 返回 []，保持单 leaf，行为不变(安全)。无 template slot,故在
+  // findTemplateSlot 之前处理(同 messages.system-message)。
+  if (match.slotType === "messages.inline.system-reminder") {
+    return splitUserContextReminder(match.rawText, match.jsonPath);
   }
 
   const slot = findTemplateSlot(template, match.slotType);
@@ -388,6 +397,78 @@ function splitSystemMessage(text: string, parentJsonPath: string): SlotMatch[] {
     });
   }
   return out;
+}
+
+/**
+ * 把首条 user message 的 userContext <system-reminder> 按来源拆成子段:
+ *   .wrapper.prefix          — <system-reminder> 开头 + "As you answer..." 固定外壳
+ *   .preamble                — "# claudeMd" + 固定前言(CC 框架语)
+ *   .project-instructions ×N — 每个 "Contents of <path> (project instructions…)" 文件(你的 CLAUDE.md/AGENTS.md)
+ *   .memory                  — "Contents of <path>MEMORY.md (auto-memory…)"(CC 生成的持久化记忆)
+ *   .account                 — "# userEmail … # currentDate …"
+ *   .wrapper.suffix          — 结尾 IMPORTANT + </system-reminder>
+ * 子段 tile 满 0..length 无空隙。仅当含 "# claudeMd" / "# userEmail" / "# currentDate" 时拆
+ * (= userContext reminder);否则返回 []，保持单 leaf —— 其它 reminder(token-usage / file-attachment /
+ * diagnostics)不受影响。
+ */
+function splitUserContextReminder(text: string, parentJsonPath: string): SlotMatch[] {
+  const claudeMdPos = text.indexOf("# claudeMd");
+  const userEmailPos = text.indexOf("# userEmail");
+  const currentDatePos = text.indexOf("# currentDate", userEmailPos);
+  if (claudeMdPos < 0 || userEmailPos < 0 || currentDatePos < 0 || userEmailPos <= claudeMdPos) return [];
+
+  const out: SlotMatch[] = [];
+  const push = (slot: string, start: number, end: number, ev: string, visibility?: "default" | "rawOnly") => {
+    if (end <= start) return;
+    out.push({
+      slotType: slot,
+      jsonPath: parentJsonPath,
+      charRange: { start, end },
+      rawText: text.slice(start, end),
+      anchorEvidence: ev,
+      ...(visibility && { visibility }),
+      children: [],
+    });
+  };
+
+  // 所有 "Contents of <path> (<desc>):"(只取 # userEmail 之前的)
+  const re = /Contents of ([^\n]+?) \(([^)]*)\):/g;
+  const files: { at: number; path: string; desc: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index >= userEmailPos) break;
+    files.push({ at: m.index, path: m[1]!, desc: m[2]! });
+  }
+
+  const firstFileAt = files.length > 0 ? files[0]!.at : userEmailPos;
+  // 外壳前缀:<system-reminder> + As you answer...。# claudeMd 是载荷 header,不归入 envelope。
+  push("messages.inline.system-reminder.wrapper.prefix", 0, claudeMdPos, "<system-reminder>", "rawOnly");
+  // 固定前言:# claudeMd + CC 优先级说明。不是项目 CLAUDE.md 文件正文,默认 raw-only。
+  push("messages.inline.system-reminder.preamble", claudeMdPos, firstFileAt, "# claudeMd", "rawOnly");
+  // 各 "Contents of" 文件:MEMORY.md(auto-memory)→ .memory;其余(project instructions)→ .project-instructions
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i]!;
+    const end = i + 1 < files.length ? files[i + 1]!.at : userEmailPos;
+    const isMemory = /auto-memory/.test(f.desc) || /MEMORY\.md\s*$/.test(f.path);
+    const slot = isMemory
+      ? "messages.inline.system-reminder.memory"
+      : "messages.inline.system-reminder.project-instructions";
+    push(slot, f.at, end, "Contents of");
+  }
+  // 账号:# userEmail … # currentDate …。只保留事实字段,不吞 closing wrapper。
+  const suffixStart = text.indexOf("\n\n      IMPORTANT:", userEmailPos);
+  const currentDateLineEnd = (() => {
+    const firstNewline = text.indexOf("\n", currentDatePos);
+    if (firstNewline < 0) return text.length;
+    const secondNewline = text.indexOf("\n", firstNewline + 1);
+    return secondNewline < 0 ? text.length : secondNewline;
+  })();
+  const accountEnd = suffixStart >= 0 ? suffixStart : currentDateLineEnd;
+  push("messages.inline.system-reminder.account", userEmailPos, accountEnd, "# userEmail");
+  // 外壳后缀:IMPORTANT + </system-reminder>。文案可能随版本变,作为 raw-only 尾部保留。
+  push("messages.inline.system-reminder.wrapper.suffix", accountEnd, text.length, "</system-reminder>", "rawOnly");
+
+  return out.length >= 2 ? out : [];
 }
 
 /** 从 messages.text 内扫描已知顶层 tag。未知文本保留为 free-text residual，

@@ -138,8 +138,12 @@ export interface SerializedNode {
   rawHash: string;
   /** 文本预览（长内容截断），children 节点也保留以方便单节点单独渲染 */
   preview: string;
-  /** 完整 rawText — 仅对叶子节点提供（container 节点的 rawText 是子节点拼接，不必重复发送） */
+  /** 完整 rawText — 叶子节点提供；少量需要 raw 高亮的 container（如 userContext reminder）也提供。 */
   rawText?: string;
+  /** 相对父节点 rawText 的字符偏移（左闭右开）；用于 raw 视图高亮。 */
+  charRange?: { start: number; end: number };
+  /** 展示可见性。rawOnly 节点保留在树和审计中，但默认 leaf 列表不展示。 */
+  visibility?: "default" | "rawOnly";
   parentId?: string;
   origin: SegmentNode["origin"];
   /**
@@ -681,6 +685,7 @@ function ruleMetaOf(origin: SegmentNode["origin"]): SerializedNode["ruleMeta"] {
 
 function serializeNode(node: SegmentNode): SerializedNode {
   const isLeaf = node.children.length === 0;
+  const includeRawText = isLeaf || (node.slotType === "messages.inline.system-reminder" && node.children.length > 0);
   const redactedThinkingPreview = redactedThinkingPreviewOf(node);
   const previewText = redactedThinkingPreview
     ?? (node.rawText.length > 200
@@ -697,8 +702,10 @@ function serializeNode(node: SegmentNode): SerializedNode {
     charCount: node.charCount,
     rawHash: node.rawHash,
     preview: previewText,
-    // 叶子保留完整 rawText（attribution UI 需要展示）；container 不重复发送（拼接自子节点）
-    ...(isLeaf && { rawText: node.rawText }),
+    // 叶子保留完整 rawText；userContext reminder container 也保留,供后续 raw 高亮用。
+    ...(includeRawText && { rawText: node.rawText }),
+    ...(node.charRange && { charRange: node.charRange }),
+    ...(node.visibility && node.visibility !== "default" && { visibility: node.visibility }),
     ...(node.parentId && { parentId: node.parentId }),
     origin: node.origin,
     // 派生字段：authorship + coverageState 由后端一次性 derive，前端只读。

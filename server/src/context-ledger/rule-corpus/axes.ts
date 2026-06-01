@@ -82,6 +82,17 @@ export function deriveAxes(slotId: string, ruleId: string): Axes {
   if (slotId.startsWith("system.") || slotId.startsWith("side-query.system")) {
     return { kind: "directive", source: "cc-static" };
   }
+  // messages: userContext reminder 的来源子段(splitUserContextReminder 产出)
+  if (slotId === "messages.inline.system-reminder.wrapper.prefix" || slotId === "messages.inline.system-reminder.wrapper.suffix")
+    return { kind: "meta", detail: "system-reminder-wrapper", source: "cc-static" };
+  if (slotId === "messages.inline.system-reminder.preamble")
+    return { kind: "directive", detail: "claudemd-preamble", source: "cc-static" };
+  if (slotId === "messages.inline.system-reminder.project-instructions")
+    return { kind: "context", detail: "project-instructions", source: "user-config" };
+  if (slotId === "messages.inline.system-reminder.memory")
+    return { kind: "context", detail: "memory", source: "user-config" };
+  if (slotId === "messages.inline.system-reminder.account")
+    return { kind: "meta", detail: "account", source: "cc-runtime" };
   // messages
   if (slotId === "messages.inline.system-reminder" || slotId === "messages.system-message") {
     return reminderAxes(ruleId);
