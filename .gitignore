@@ -83,3 +83,4 @@ find_skills_in_call.js
 inspect_msg.js
 read_line.js
 docs/attribution-refinement-9e1ba147-T3C2.md
+*.code-workspace

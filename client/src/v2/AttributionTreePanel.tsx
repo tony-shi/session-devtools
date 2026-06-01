@@ -26,6 +26,7 @@ import type {
 } from "./attribution-tree-types";
 import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { LinkIcon, SegmentView } from "./shared/EventUnitCard";
+import { RenderRawCopyActions } from "./shared/RenderRawCopyActions";
 import { EVENT_PALETTES } from "./shared/eventPalette";
 import type { IntervalEventKind } from "./drilldown-types";
 import { useAttributionGraph } from "./attribution-graph-context";
@@ -803,21 +804,10 @@ function SkillListingDetail({
 }) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<"parsed" | "raw">("parsed");
-  const [copied, setCopied] = useState(false);
 
   if (leaf.origin.kind !== "rule" || !leaf.origin.payload?.skillListing) return null;
   const sl = leaf.origin.payload.skillListing;
   const fullText = leaf.rawText ?? leaf.preview;
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(fullText);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* ignore */
-    }
-  };
 
   const sizeStr = fmtK(leaf.charCount);
   const pct =
@@ -837,39 +827,6 @@ function SkillListingDetail({
         size: sizeStr,
       });
 
-  const btnBaseStyle: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-    height: 24,
-    padding: "0 8px",
-    fontSize: 10,
-    fontWeight: 600,
-    borderRadius: 4,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-    boxSizing: "border-box",
-    lineHeight: 1,
-    transition: "all 0.12s ease",
-  };
-
-  const toggleBtnStyle: React.CSSProperties = {
-    ...btnBaseStyle,
-    border: "1px solid #d1d5db",
-    background: mode === "raw" ? "#f3f4f6" : "#fff",
-    color: "#374151",
-  };
-
-  const copyBtnStyle: React.CSSProperties = {
-    ...btnBaseStyle,
-    border: "1px solid",
-    borderColor: copied ? "#16a34a" : "#d1d5db",
-    background: copied ? "#dcfce7" : "#fff",
-    color: copied ? "#15803d" : "#374151",
-    transition: "background 0.12s, border-color 0.12s, color 0.12s",
-  };
-
   return (
     <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 8 }}>
       {/* 不再新增 meta 条 —— 直接复用上方 LeafTable 行作为标题 + 状态展示。
@@ -878,24 +835,11 @@ function SkillListingDetail({
 
       {/* Toggle 行：sub bar 下面，content 右上角；与 SelectedDetail 的风格完全一致的单按钮切换与复制按钮 */}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
-        <button
-          type="button"
-          onClick={() => setMode(m => m === "parsed" ? "raw" : "parsed")}
-          style={toggleBtnStyle}
-        >
-          {mode === "raw" ? t("attribution.detail.toggleRender") : t("attribution.detail.toggleRaw")}
-        </button>
-        <button
-          type="button"
-          onClick={handleCopy}
-          style={copyBtnStyle}
-        >
-          {copied ? (
-            <><Check size={10} strokeWidth={3} /> {t("attribution.detail.copied")}</>
-          ) : (
-            <><Copy size={10} /> {t("attribution.detail.copyRaw")}</>
-          )}
-        </button>
+        <RenderRawCopyActions
+          rawMode={mode === "raw"}
+          onToggleRawMode={() => setMode(m => m === "parsed" ? "raw" : "parsed")}
+          textToCopy={fullText}
+        />
       </div>
 
       {/* Content */}
@@ -1211,7 +1155,6 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
 }) {
   const { t } = useTranslation();
   const { flashEvent, flashCall, flashToolUse } = useAttributionGraph();
-  const [copiedAt, setCopiedAt] = useState<number>(0);
   const [rawMode, setRawMode] = useState(false);
   const isSystemLeaf = sectionOf(leaf.rootSlotType) === "system";
   const isToolLeaf = sectionOf(leaf.rootSlotType) === "tools";
@@ -1254,7 +1197,6 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
     return <SkillListingDetail leaf={leaf} totalContextChars={totalContextChars} />;
   }
 
-  const isCopied = copiedAt > 0 && Date.now() - copiedAt < 1500;
   const sourceTurnId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceTurnId : undefined;
   const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;
   const firstSeenInCall = leaf.origin.kind === "jsonl" ? leaf.origin.firstSeenInCall : undefined;
@@ -1309,17 +1251,11 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
   const dynamicFields = leaf.origin.kind === "rule" ? leaf.origin.dynamicFields : undefined;
   const contentText = leaf.rawText ?? leaf.preview;
 
-
-  const handleCopy = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const textToCopy = leaf.rawText ?? leaf.preview;
-    navigator.clipboard.writeText(textToCopy).then(
-      () => {
-        setCopiedAt(Date.now());
-        setTimeout(() => setCopiedAt(0), 1500);
-      },
-      () => { /* clipboard API 不可用时静默 */ },
-    );
+  const textToCopy = () => {
+    if (rawMode) {
+      return rawTextContent;
+    }
+    return leaf.rawText ?? leaf.preview;
   };
 
   const btnBaseStyle: React.CSSProperties = {
@@ -1346,22 +1282,6 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
     color: "#9ca3af",
     cursor: "help",
     padding: "0 6px",
-  };
-
-  const toggleBtnStyle: React.CSSProperties = {
-    ...btnBaseStyle,
-    border: "1px solid #d1d5db",
-    background: rawMode ? "#f3f4f6" : "#fff",
-    color: "#374151",
-  };
-
-  const copyBtnStyle: React.CSSProperties = {
-    ...btnBaseStyle,
-    border: "1px solid",
-    borderColor: isCopied ? "#16a34a" : "#d1d5db",
-    background: isCopied ? "#dcfce7" : "#fff",
-    color: isCopied ? "#15803d" : "#374151",
-    transition: "background 0.12s, border-color 0.12s, color 0.12s",
   };
 
   const jumpBtnStyle: React.CSSProperties = {
@@ -1392,27 +1312,12 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
             </div>
           </TooltipContent>
         </Tooltip>
-        {hasRawToggle && (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setRawMode(v => !v); }}
-            style={toggleBtnStyle}
-          >
-            {rawMode ? t("attribution.detail.toggleRender") : t("attribution.detail.toggleRaw")}
-          </button>
-        )}
-        <button
-          type="button"
-          title={t("attribution.detail.copyRawTitle", { count: (leaf.rawText ?? leaf.preview).length })}
-          onClick={handleCopy}
-          style={copyBtnStyle}
-        >
-          {isCopied ? (
-            <><Check size={10} strokeWidth={3} /> {t("attribution.detail.copied")}</>
-          ) : (
-            <><Copy size={10} /> {t("attribution.detail.copyRaw")}</>
-          )}
-        </button>
+        <RenderRawCopyActions
+          rawMode={rawMode}
+          showToggle={hasRawToggle}
+          onToggleRawMode={() => setRawMode(v => !v)}
+          textToCopy={textToCopy}
+        />
         {handleJumpSource && (
           <button
             type="button"

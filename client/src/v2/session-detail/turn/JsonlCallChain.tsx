@@ -3,6 +3,9 @@
 
 import React, { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Check, Copy } from "lucide-react";
 import type { IntervalEvent, IntervalEventKind, SubAgentSummary } from "../../drilldown-types";
 import type { MockUserTurn, MockLlmCall } from "../../lib/mock-data";
 import { fmtK, fmtDuration, formatJsonlLines, shortToolUseId, toolUseIdsFromIntervalEvent } from "../../lib/format";
@@ -11,6 +14,7 @@ import { BRAND } from "../../shared/brand";
 import { CallLedger } from "../../shared/CallLedger";
 import { ForwardArrowIcon, LinkIcon } from "../../shared/EventUnitCard";
 import { useAttributionGraph } from "../../attribution-graph-context";
+import { RenderRawCopyActions } from "../../shared/RenderRawCopyActions";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { ChainNarrativeNode, ToolCallRow, IntervalEventRow } from "./call-chain-rows";
 import { CommandGroupCard } from "./CommandGroupCard";
@@ -355,12 +359,7 @@ export function JsonlCallChain({
 
                   {/* Assistant text */}
                   {call.assistantText && !hideAssistantTextAsFinal && (
-                    <div style={{ padding: "0 0 8px 0" }}>
-                      <div style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", fontFamily: "'Outfit', sans-serif", marginBottom: 2, letterSpacing: "0.05em" }}>{t("terms.assistantResponseText").toUpperCase()}</div>
-                      <div style={{ fontSize: 11, color: "#14532d", lineHeight: 1.55, background: "#f0fdf4", borderLeft: "2px solid #a7f3d0", borderRadius: "0 6px 6px 0", padding: "5px 10px", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 72, overflow: "hidden" }}>
-                        {call.assistantText}
-                      </div>
-                    </div>
+                    <AssistantResponseText text={call.assistantText} />
                   )}
 
                   {/* tool_use blocks are part of this assistant response. Sub-agent
@@ -550,9 +549,6 @@ export function JsonlCallChain({
               {/* ── Interval events (filtered) ────────────────── */}
 	              {visibleIntervals.length > 0 && (
 	                <div style={{ marginLeft: 32, marginTop: 3 }}>
-                    <div style={{ fontSize: 9, color: "#c4c9d4", fontWeight: 700, letterSpacing: "0.04em", margin: "0 0 3px 8px" }}>
-                      {t("terms.jsonlEventGraph")}
-                    </div>
 	                  {visibleIntervals.map((ev, ei) => {
 	                    const matchedToolCall = (() => {
 	                      if (ev.kind !== "user:tool_result") return undefined;
@@ -603,6 +599,53 @@ export function JsonlCallChain({
           text={finalOutput}
           meta={turn.endedAt ? turn.endedAt.slice(11, 19) : undefined}
         />
+      </div>
+    </div>
+  );
+}
+
+function AssistantResponseText({ text }: { text: string }) {
+  const { t } = useTranslation();
+  const [mdMode, setMdMode] = useState(true);
+
+  return (
+    <div style={{ padding: "0 0 8px 0" }}>
+      {/* Header section with toggle and copy buttons */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <div style={{ fontSize: 9, fontWeight: 700, color: "#16a34a", fontFamily: "'Outfit', sans-serif", letterSpacing: "0.05em" }}>
+          {t("terms.assistantResponseText").toUpperCase()}
+        </div>
+        <RenderRawCopyActions
+          rawMode={!mdMode}
+          onToggleRawMode={() => setMdMode(v => !v)}
+          textToCopy={text}
+        />
+      </div>
+
+      {/* Main text box */}
+      <div style={{
+        fontSize: 11,
+        color: "#14532d",
+        lineHeight: 1.6,
+        background: "#f0fdf4",
+        borderLeft: "2px solid #a7f3d0",
+        borderRadius: "0 6px 6px 0",
+        padding: "8px 12px",
+        maxHeight: 240,
+        overflow: "auto",
+      }}>
+        {mdMode ? (
+          <div className="md-prose" style={{ fontSize: 11, lineHeight: 1.6 }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+          </div>
+        ) : (
+          <pre style={{
+            margin: 0,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          }}>{text}</pre>
+        )}
       </div>
     </div>
   );
