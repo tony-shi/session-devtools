@@ -91,17 +91,17 @@ export const sectionPalette: Record<"system" | "tools" | "messages" | "other", S
 };
 
 export const rolePalette: Record<RoleId, SectionStyle> = {
-  "system.core":        { label: "身份·框架", barBg: "#334155", barText: "#fff", rowBg: "#f1f5f9", marker: "#334155", textColor: "#334155" },
-  "system.guidance":    { label: "行为准则", barBg: "#475569", barText: "#fff", rowBg: "#f1f5f9", marker: "#475569", textColor: "#475569" },
-  "system.tool-policy": { label: "工具策略", barBg: "#64748b", barText: "#fff", rowBg: "#f1f5f9", marker: "#64748b", textColor: "#64748b" },
-  "system.memory":      { label: "记忆指令", barBg: "#115e59", barText: "#fff", rowBg: "#f0fdfa", marker: "#115e59", textColor: "#115e59" },
-  "system.env":         { label: "环境事实", barBg: "#0d9488", barText: "#fff", rowBg: "#f0fdfa", marker: "#0d9488", textColor: "#0d9488" },
-  "system.billing":     { label: "计费头",   barBg: "#94a3b8", barText: "#fff", rowBg: "#f8fafc", marker: "#94a3b8", textColor: "#94a3b8" },
-  "tools.builtin":      { label: "内置工具", barBg: "#1d4ed8", barText: "#fff", rowBg: "#eff6ff", marker: "#1d4ed8", textColor: "#1d4ed8" },
-  "messages.context":    { label: "注入·上下文", barBg: "#2dd4bf", barText: "#fff", rowBg: "#f0fdfa", marker: "#0d9488", textColor: "#0f766e" },
-  "messages.skills":     { label: "注入·能力", barBg: "#3b82f6", barText: "#fff", rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1d4ed8" },
-  "messages.directive":  { label: "注入·指令", barBg: "#94a3b8", barText: "#fff", rowBg: "#f8fafc", marker: "#94a3b8", textColor: "#475569" },
-  "messages.injection":  { label: "注入·事件", barBg: "#ea580c", barText: "#fff", rowBg: "#fff7ed", marker: "#ea580c", textColor: "#c2410c" },
+  "system.core":        { label: "系统提示词", barBg: "#475569", barText: "#fff", rowBg: "#f8fafc", marker: "#475569", textColor: "#334155" },
+  "system.guidance":    { label: "系统提示词", barBg: "#475569", barText: "#fff", rowBg: "#f8fafc", marker: "#475569", textColor: "#334155" },
+  "system.tool-policy": { label: "系统提示词", barBg: "#475569", barText: "#fff", rowBg: "#f8fafc", marker: "#475569", textColor: "#334155" },
+  "system.memory":      { label: "自动记忆 (Memory)", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
+  "system.env":         { label: "运行环境", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
+  "system.billing":     { label: "运行环境", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
+  "tools.builtin":      { label: "内置工具", barBg: "#2563eb", barText: "#fff", rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1d4ed8" },
+  "messages.context":    { label: "项目指令 (CLAUDE.md)", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
+  "messages.skills":     { label: "Skill 注册", barBg: "#3b82f6", barText: "#fff", rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1d4ed8" },
+  "messages.directive":  { label: "指令规则", barBg: "#64748b", barText: "#fff", rowBg: "#f8fafc", marker: "#64748b", textColor: "#475569" },
+  "messages.injection":  { label: "系统提醒", barBg: "#f59e0b", barText: "#fff", rowBg: "#fffbeb", marker: "#f59e0b", textColor: "#92400e" },
   "messages.human":      { label: "用户输入", barBg: "#6d28d9", barText: "#fff", rowBg: "#f5f3ff", marker: "#6d28d9", textColor: "#6d28d9" },
   "messages.image":      { label: "图片输入", barBg: "#6d28d9", barText: "#fff", rowBg: "#f5f3ff", marker: "#6d28d9", textColor: "#6d28d9" },
   "messages.thinking":   { label: "思考",     barBg: "#7c3aed", barText: "#fff", rowBg: "#f5f3ff", marker: "#7c3aed", textColor: "#7c3aed", indicatorLine: "top" },
@@ -146,11 +146,11 @@ export type IntentGroupId =
   | "interaction";
 
 export const intentGroupPalette: Record<IntentGroupId, { color: string }> = {
-  instructions:         { color: "#475569" }, // 灰蓝/石板灰
-  environment:          { color: "#0d9488" }, // 松石绿
-  capabilities:         { color: "#2563eb" }, // 皇家蓝
-  events:               { color: "#ea580c" }, // 警告橙
-  interaction:          { color: "#7c3aed" }, // 紫罗兰
+  instructions:         { color: "#475569" }, // 系统提示词
+  environment:          { color: "#d97706" }, // 用户上下文
+  capabilities:         { color: "#2563eb" }, // 工具定义
+  events:               { color: "#f59e0b" }, // 系统提醒（兼容旧映射）
+  interaction:          { color: "#7c3aed" }, // 对话内容
 };
 
 /** i18n key 前缀 —— 配合 useTranslation().t() 取 label / description。
@@ -210,9 +210,9 @@ export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
 
 // group 在 pill 行中的视觉顺序（左 → 右）。冷色轨在前，暖色轨在后。
 export const INTENT_GROUP_ORDER: IntentGroupId[] = [
-  "capabilities",
   "instructions",
   "environment",
+  "capabilities",
   "events",
   "interaction",
 ];

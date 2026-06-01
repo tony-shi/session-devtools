@@ -241,13 +241,14 @@ function BucketPill({
 
 
 function MajorCategoryPill({
-  groupId, leafCount, totalChars, isActive, onClick,
+  groupId, leafCount, totalChars, isActive, onClick, showDropdownIndicator,
 }: {
   groupId: IntentGroupId;
   leafCount: number;
   totalChars: number;
   isActive: boolean;
   onClick: () => void;
+  showDropdownIndicator?: boolean;
 }) {
   const { t } = useTranslation();
   const color = intentGroupPalette[groupId].color;
@@ -278,7 +279,7 @@ function MajorCategoryPill({
           }} />
           <span style={{ fontWeight: 700 }}>{leafCount}</span>
           <span>{label}</span>
-          {isActive && <span style={{ fontSize: 9, opacity: 0.8, marginLeft: 2 }}>▾</span>}
+          {isActive && showDropdownIndicator && <span style={{ fontSize: 9, opacity: 0.8, marginLeft: 2 }}>▾</span>}
         </button>
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={6} className="max-w-xs">
@@ -329,6 +330,17 @@ function StructureLensFilter({
     return map;
   }, [stats]);
 
+  // Check if a group has multiple sub-categories that actually have leaves
+  const groupHasMultiple = useMemo(() => {
+    const map = new Map<IntentGroupId, boolean>();
+    const allGroups: IntentGroupId[] = ["instructions", "environment", "capabilities", "interaction"];
+    for (const g of allGroups) {
+      const subCount = stats.filter((s) => s.bucket.groupId === g && s.leafCount > 0).length;
+      map.set(g, subCount > 1);
+    }
+    return map;
+  }, [stats]);
+
   const totalCount = useMemo(() => {
     let sum = 0;
     for (const v of groupStats.values()) sum += v.leafCount;
@@ -337,7 +349,7 @@ function StructureLensFilter({
 
   if (totalCount === 0) return null;
 
-  const coldGroups: IntentGroupId[] = ["capabilities", "instructions", "environment", "events"];
+  const coldGroups: IntentGroupId[] = ["instructions", "environment", "capabilities", "events"];
   const warmGroups: IntentGroupId[] = ["interaction"];
 
   const hasCold = coldGroups.some(g => (groupStats.get(g)?.leafCount ?? 0) > 0);
@@ -385,6 +397,7 @@ function StructureLensFilter({
                     totalChars={gs.totalChars}
                     isActive={selectedGroupId === g}
                     onClick={() => onSelectGroup(selectedGroupId === g ? null : g)}
+                    showDropdownIndicator={groupHasMultiple.get(g)}
                   />
                 );
               })}
@@ -431,6 +444,7 @@ function StructureLensFilter({
                     totalChars={gs.totalChars}
                     isActive={selectedGroupId === g}
                     onClick={() => onSelectGroup(selectedGroupId === g ? null : g)}
+                    showDropdownIndicator={groupHasMultiple.get(g)}
                   />
                 );
               })}
@@ -440,7 +454,7 @@ function StructureLensFilter({
       </div>
 
       {/* Row 2: Sub-categories (Dynamic) */}
-      {selectedGroupId && (() => {
+      {selectedGroupId && groupHasMultiple.get(selectedGroupId) && (() => {
         const subCategories = stats.filter((s) => s.bucket.groupId === selectedGroupId && s.leafCount > 0);
         if (subCategories.length === 0) return null;
         return (
@@ -1352,7 +1366,7 @@ export function AttributionTreeLensPanel({
           />
           {selectedLeaf && sectionOf(selectedLeaf.rootSlotType) === selectedStat.id && (
             <>
-              <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} totalContextChars={totalChars} />
+              <SelectedDetail leaf={selectedLeaf} onLinkSource={onLinkSource} totalContextChars={totalChars} color={leafColor(selectedLeaf)} />
               {/* Diff lens 激活时，选中 leaf 有 diff 变化的话，叠加行级 diff 详情。
                   modified → before/after 字级 inline diff；
                   added / removed → 单边内容展示。

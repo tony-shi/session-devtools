@@ -315,8 +315,8 @@
   "attribution": {
     "layers": "Layers",
     "baseLensSuffix": " (Base layer, cannot close)",
-    "trackContext": "Context",
-    "trackInteraction": "Interaction",
+    "trackContext": "Request Makeup",
+    "trackInteraction": "Conversation",
     "loadFailed": "Attribution load failed",
     "loading": "Loading attribution…",
     "skip": {
@@ -343,24 +343,24 @@
     },
     "lensGroup": {
       "instructions": {
-        "label": "Instructions",
-        "description": "Core prompts, behavioral guidance, tool policies, and directives (e.g. thinking-frequency)."
+        "label": "System Prompt",
+        "description": "The reqBody.system prompt body; lower-level sections remain available in raw and audit views."
       },
       "environment": {
-        "label": "Environment & Facts",
-        "description": "Hard runtime context, memory instructions, and environment variables facts."
+        "label": "Runtime Context",
+        "description": "Project instructions, automatic memory, and runtime environment facts."
       },
       "capabilities": {
-        "label": "Capabilities & Extensions",
-        "description": "Built-in tool schema descriptions, installed skills list, or sub-agent type declarations."
+        "label": "Tools & Capabilities",
+        "description": "Built-in tool schemas, deferred registered skills, or sub-agent capabilities."
       },
       "events": {
-        "label": "Runtime Events",
-        "description": "Harness variables and events dynamically injected into the messages flow (Token warnings, file changes)."
+        "label": "System Reminders & Injections",
+        "description": "Non-conversational prompts dynamically injected by the harness during runtime."
       },
       "interaction": {
-        "label": "Interaction & Execution",
-        "description": "The dialogue loop, thinking processes, and tool/skill execution inputs and results."
+        "label": "Conversation",
+        "description": "User input, AI replies, thinking blocks, tool calls, and tool results."
       }
     },
     "stability": {
@@ -417,20 +417,20 @@
       "messages.tool-use": "Tool Call",
       "messages.tool-result": "Tool Result",
       "messages.inline.system-reminder": "System Reminder",
-      "messages.context": "Injected Context",
-      "messages.skills": "Injected Capabilities",
-      "messages.directive": "Injected Directive",
-      "messages.injection": "Injected Event",
+      "messages.context": "User Context",
+      "messages.skills": "Deferred Capability",
+      "messages.directive": "System Directive",
+      "messages.injection": "System Reminder",
       "messages.misc": "Misc Messages",
       "messages.image": "Image Input",
-      "system.core": "Identity & Framework",
-      "system.guidance": "Behavior Guidance",
+      "system.core": "System Prompt",
+      "system.guidance": "System Prompt",
       "system.main-prompt.section.session-guidance": "Session Guidance",
-      "system.tool-policy": "Tool Policy",
-      "system.memory": "Memory Instructions",
-      "system.env": "Environment Facts",
-      "system.billing": "Billing Header",
-      "tools.builtin": "Built-in Tools",
+      "system.tool-policy": "System Prompt",
+      "system.memory": "System Prompt",
+      "system.env": "System Prompt",
+      "system.billing": "System Prompt",
+      "tools.builtin": "Tool Definitions",
       "other.unknown": "Unknown"
     },
     "charsLabel": "chars",
@@ -699,6 +699,19 @@
       "outputCall": "Tokens the LLM generated in this call",
       "outputAgg": "Cumulative model-generated tokens"
     }
+  },
+  "toolDef": {
+    "description": "Description",
+    "parameters": "Parameters",
+    "colName": "Name",
+    "colType": "Type",
+    "colRequired": "Required",
+    "colDesc": "Description",
+    "required": "required",
+    "optional": "optional",
+    "otherFields": "Other Fields",
+    "noDescription": "(no description)",
+    "noParams": "No parameters"
   },
   "skillListing": {
     "rowLabel": "Skills Registry",

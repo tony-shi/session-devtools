@@ -93,29 +93,35 @@ function isSystemSectionSlot(slotType: string): boolean {
   );
 }
 
-// system-reminder 子类 ruleId → role 映射。把 messages.inline.system-reminder 这个
-// 大杂烩按内容本质拆开（依据:Claude Code restored-src attachment.type 分类法 +
-// 跨 fixture 实证「会话内逐字稳定 = 能力声明，非每-call 动态」）:
-//   messages.context   → 注入的上下文/能力声明（environment group）
-//   messages.directive → 注入的行为指令（instructions group）
-//   未列出的 reminder（token-usage / diagnostics / file-* / catch-all）→ 默认 messages.injection（runtime）
+// system-reminder 子类 ruleId → 默认展示 role。
+// 默认 UI 使用用户心智模型:
+//   system.*          → 系统提示词
+//   messages.context  → 用户上下文（项目指令 / MEMORY / 用户信息 / 运行时上下文）
+//   messages.skills   → 工具定义 / 延迟能力
+//   messages.* 对话块 → 对话内容
+// raw/audit 仍保留 slotType / axes / ruleId 细节。
 const REMINDER_RULE_TO_ROLE: Record<string, RoleId> = {
-  // 注入的上下文/能力声明 → messages.context
+  // 项目指令 (CLAUDE.md)
   "claude-code.messages.memory-contents.v1":        "messages.context", // CLAUDE.md 内容
   "claude-code.messages.nested-memory-contents.v1": "messages.context", // 嵌套 memory 文件内容
-  "claude-code.messages.user-context.v1":           "messages.context", // userEmail / currentDate 等事实
-  "claude-code.messages.deferred-tools-listing.v1": "messages.context", // ToolSearch 可用工具声明（<system-reminder> 版）
-  "claude-code.messages.agent-types-listing.v1":    "messages.context", // 可用 sub-agent 类型声明（<system-reminder> 版）
-  // 2.1.154+ role:"system" mid-conversation message 版（slot=messages.system-message，见 roleOf）
-  "claude-code.messages.deferred-tools-listing.v2": "messages.context",
-  "claude-code.messages.agent-types-listing.v2":    "messages.context",
   "claude-code.messages.reminder.project-instructions.v1": "messages.context",
-  "claude-code.messages.reminder.memory.v1":        "messages.context",
+  // 自动记忆 (Memory)
+  "claude-code.messages.reminder.memory.v1":        "system.memory",
+  // 运行环境
+  "claude-code.messages.user-context.v1":           "system.env", // userEmail / currentDate 等事实
+  "claude-code.messages.reminder.account.v1":       "system.env",
+  // 工具定义 / 延迟能力
+  "claude-code.messages.deferred-tools-listing.v1": "messages.skills", // ToolSearch 可用工具声明（<system-reminder> 版）
+  "claude-code.messages.agent-types-listing.v1":    "messages.skills", // 可用 sub-agent 类型声明（<system-reminder> 版）
+  // 2.1.154+ role:"system" mid-conversation message 版（slot=messages.system-message，见 roleOf）
+  "claude-code.messages.deferred-tools-listing.v2": "messages.skills",
+  "claude-code.messages.agent-types-listing.v2":    "messages.skills",
+  "claude-code.messages.skill-listing.v2":          "messages.skills",
+  // rawOnly wrapper/preamble 默认不会出现在 leaf 列表；保留映射仅作兜底。
   "claude-code.messages.reminder.preamble.v1":      "messages.directive",
-  "claude-code.messages.reminder.account.v1":       "messages.injection",
   "claude-code.messages.reminder.wrapper-prefix.v1": "messages.directive",
   "claude-code.messages.reminder.wrapper-suffix.v1": "messages.directive",
-  // 注入的行为指令 → messages.directive
+  // 注入的行为指令 → 系统提示词
   "claude-code.messages.thinking-frequency.v1":     "messages.directive", // thinking 频率指引
 };
 
@@ -139,7 +145,11 @@ export function roleOf(leaf: {
   //     或 messages.directive（注入的行为指令）
   //   - 其余 → messages.injection（真·运行时临时通知，默认）
   // 各 role 经 ROLE_TO_GROUP 静态映射到正确 group（不再有 groupOf override 旁路）。
-  if (origin?.kind === "rule" && origin.ruleId === "claude-code.messages.skill-listing.v1")
+  if (
+    origin?.kind === "rule" &&
+    (origin.ruleId === "claude-code.messages.skill-listing.v1" ||
+      origin.ruleId === "claude-code.messages.skill-listing.v2")
+  )
     return "messages.skills";
   if (classSlot.startsWith("messages.inline.system-reminder")) {
     if (origin?.kind === "rule") {
@@ -158,13 +168,8 @@ export function roleOf(leaf: {
     return "messages.context";
   }
   if (classSlot.startsWith("system.") || classSlot === "side-query.system") {
-    if (classSlot === "system.billing") return "system.billing";
-    if (classSlot === "system.main-prompt.section.using-tools") return "system.tool-policy";
-    if (
-      classSlot === "system.main-prompt.section.environment" ||
-      classSlot === "system.main-prompt.section.context"
-    )
-      return "system.env";
+    // 默认展示层不再把 reqBody.system 拆成环境/Git/计费等内部类别；
+    // 这些细节仍在 slotType/ruleMeta/raw/audit 里可见。
     return "system.core";
   }
   if (classSlot.startsWith("tools.") || rootSlotType.startsWith("tools.")) return "tools.builtin";
@@ -219,6 +224,17 @@ export function shortSlot(slotType: string): string {
 // 对外展示用 label：所有 UI 位置（主 bar 块 / 鱼眼 hover / 二级 strip / 表格行）统一走它,
 // 保证同一段在各处显示同一个对外名,不再混用内部 slug。优先 ruleMeta.displayName（对外
 // 中文名,如"会话守则"）;未填 displayName 的段（messages/tools 多数）退回 shortSlot slug。
+// tools 段叶子的 rawText 是完整 tool JSON；列表/标签里要展示其 description（直接展示
+// JSON 不可读）。parse 失败回退 undefined（调用方再退回 preview）。
+function toolDescriptionOf(leaf: LeafLite): string | undefined {
+  const obj = tryParseSegmentJson(leaf.rawText ?? leaf.preview);
+  if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+    const d = (obj as Record<string, unknown>).description;
+    if (typeof d === "string" && d.trim()) return d.trim();
+  }
+  return undefined;
+}
+
 export function leafLabel(leaf: { slotType: string; ruleMeta?: { displayName?: string }; messageRole?: "user" | "assistant" | "system" }): string {
   if (leaf.ruleMeta?.displayName) {
     return leaf.ruleMeta.displayName;
@@ -545,14 +561,17 @@ export function LeafTable({
 }) {
   const { t } = useTranslation();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // 选中态下不再渲染孤立的选中行 bar —— meta 已由 SelectedDetailHeader 统一接管（更简洁，
+  // 顺带去掉了"点选中行反选"的隐藏交互；反选仍可在上方 strip 再点同一段触发）。
+  if (selectedId) return null;
   // 百分比口径恒定为「占整个 context」(全局分母),不随下钻/筛选变。分母优先用
   // totalContextChars(全局),仅在未传时退回 leaves 之和(理论上不发生)。这样任何
   // 视图下的 "X%" 都是"占整个 prompt 多少",消除"占筛选子集"的误读（旧逻辑 33.7%+66.3%=100%）。
   const denom = (totalContextChars && totalContextChars > 0)
     ? totalContextChars
     : leaves.reduce((s, l) => s + l.charCount, 0);
-  // 选中后只显示该 leaf 行，其他兄弟不再列出（避免与 SelectedDetail 重复信息）
-  const visibleLeaves = selectedId ? leaves.filter((l) => l.nodeId === selectedId) : leaves;
+  // 未选中时列出该 section 下所有并列段；选中态已在上方 early-return，不会走到这里。
+  const visibleLeaves = leaves;
   // 汇总条：当前这批 leaves 的合计 + 占上下文比例。回答"我筛/钻的这批一共多大"
   // ——取代会误导的"每行占子集%"。选中单行时不显示（单行自己那行就是答案）。
   const groupChars = leaves.reduce((s, l) => s + l.charCount, 0);
@@ -590,7 +609,14 @@ export function LeafTable({
         const rowLabel = skillListing
           ? `${t("skillListing.rowLabel")} · ${t("skillListing.rowSuffix", { count: skillListing.entries.length })}`
           : leafLabel(l);
-        const rowPreview = skillListing ? "" : (rm?.summary ?? l.preview);
+        const isToolRow = sectionOf(l.rootSlotType) === "tools";
+        // tools 段：列表展示 description（rawText 是完整 JSON，直接展示不可读）；
+        // 选中后下方 SelectedDetail 已有完整 description，行内不再重复。
+        const rowPreview = skillListing
+          ? ""
+          : isToolRow
+            ? (isSel ? "" : (toolDescriptionOf(l) ?? l.preview))
+            : (rm?.summary ?? l.preview);
         // 动态来源后缀（仅 dynamic 段）："summary ← 变的是 X"
         const previewSuffix = rm?.stability === "dynamic" && rm.dynamicSource ? ` ${rm.dynamicSource}` : "";
         // 恒用全局分母：每行 % = 占整个 context（语义恒定,与汇总条同口径）。
@@ -625,23 +651,7 @@ export function LeafTable({
             }}>
               {rowLabel}
             </span>
-            {rm?.stability && (() => {
-              // 明确二元:动态(琥珀,醒目)/ 静态(中性灰)。
-              const sc = rm.stability === "dynamic"
-                ? { c: "#b45309", bg: "#fef3c7", bd: "#fde68a" }
-                : { c: "#475569", bg: "#f1f5f9", bd: "#e2e8f0" };
-              return (
-                <span style={{
-                  display: "inline-flex", alignItems: "center",
-                  padding: "1px 6px", borderRadius: 3,
-                  fontSize: 9, fontWeight: 700, whiteSpace: "nowrap",
-                  color: sc.c, background: sc.bg, border: `1px solid ${sc.bd}`,
-                  flexShrink: 0,
-                }}>
-                  {t(`attribution.stability.${rm.stability}`)}
-                </span>
-              );
-            })()}
+
             <span style={{ fontSize: 11, color: "#374151", minWidth: 50 }}>{fmtK(l.charCount)}</span>
             <span
               title={t("attribution.detail.ofContextTip", { defaultValue: "占整个请求上下文的比例（分母恒定 = 全部 context，不随筛选/下钻变化）" })}
@@ -798,9 +808,11 @@ function SkillListingTooltipCard({
 function SkillListingDetail({
   leaf,
   totalContextChars,
+  color,
 }: {
   leaf: LeafLite;
   totalContextChars?: number;
+  color?: string;
 }) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<"parsed" | "raw">("parsed");
@@ -833,14 +845,16 @@ function SkillListingDetail({
           metaText 仍用于 a11y / 调试，不渲染。 */}
       <span style={{ display: "none" }}>{metaText}</span>
 
-      {/* Toggle 行：sub bar 下面，content 右上角；与 SelectedDetail 的风格完全一致的单按钮切换与复制按钮 */}
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
-        <RenderRawCopyActions
-          rawMode={mode === "raw"}
-          onToggleRawMode={() => setMode(m => m === "parsed" ? "raw" : "parsed")}
-          textToCopy={fullText}
-        />
-      </div>
+      {/* 统一详情头（基建）：色点 + 段名 + 字节 + 占比 + i + 原文切换/复制 */}
+      <SelectedDetailHeader
+        leaf={leaf}
+        color={color}
+        totalContextChars={totalContextChars}
+        rawMode={mode === "raw"}
+        hasRawToggle
+        onToggleRawMode={() => setMode(m => (m === "parsed" ? "raw" : "parsed"))}
+        textToCopy={fullText}
+      />
 
       {/* Content */}
       {mode === "parsed" ? (
@@ -1144,14 +1158,329 @@ function getToolResultRawJson(content: string, toolUseId?: string): string {
   return JSON.stringify(block, null, 2);
 }
 
+// ─── tool 定义富展示 ──────────────────────────────────────────────────────────
+// tools 段叶子的 rawText 现在是完整 tool JSON（见 matcher.ts）。这里做"特别处理"：
+// description 当主角（markdown）、input_schema 拆成参数表 + 原始 schema、其它字段兜底。
+// parse 失败回退原文 <pre>，绝不白屏。与 SkillListingDetail 同范式（完全替换通用 leaf 布局）。
+
+interface ToolParamRow {
+  name: string;
+  type: string;
+  required: boolean;
+  description?: string;
+}
+
+const TOOL_MONO = "ui-monospace, SFMono-Regular, monospace";
+const TOOL_JSON_VIEW_STYLE: React.CSSProperties = {
+  backgroundColor: "transparent",
+  fontFamily: TOOL_MONO,
+  fontSize: 11,
+  lineHeight: 1.5,
+};
+
+// JSON Schema 的 type 描述：处理 array<item> / 联合 type / enum / object。
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function describeSchemaType(schema: any): string {
+  if (!schema || typeof schema !== "object") return "any";
+  if (Array.isArray(schema.enum)) return `enum(${schema.enum.length})`;
+  const ty = schema.type;
+  if (Array.isArray(ty)) return ty.join(" | ");
+  if (ty === "array") {
+    const item = schema.items ? describeSchemaType(schema.items) : "any";
+    return `array<${item}>`;
+  }
+  if (typeof ty === "string") return ty;
+  if (schema.anyOf || schema.oneOf || schema.allOf) return "union";
+  return schema.properties ? "object" : "any";
+}
+
+// 从 input_schema.properties 派生参数行；保留 schema 内的物理顺序（不重排）。
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractToolParams(inputSchema: any): ToolParamRow[] {
+  if (!inputSchema || typeof inputSchema !== "object") return [];
+  const props = inputSchema.properties;
+  if (!props || typeof props !== "object") return [];
+  const required: string[] = Array.isArray(inputSchema.required) ? inputSchema.required : [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return Object.entries(props as Record<string, any>).map(([name, sch]) => ({
+    name,
+    type: describeSchemaType(sch),
+    required: required.includes(name),
+    description: typeof sch?.description === "string" ? sch.description.trim() : undefined,
+  }));
+}
+
+const PARAM_GRID_COLS = "minmax(96px,1.2fr) minmax(72px,0.8fr) 84px 2fr";
+
+function ToolDefinitionDetail({
+  leaf,
+  color,
+  totalContextChars,
+}: {
+  leaf: LeafLite;
+  color?: string;
+  totalContextChars?: number;
+}) {
+  const { t } = useTranslation();
+  const [mode, setMode] = useState<"parsed" | "raw">("parsed");
+  const fullText = leaf.rawText ?? leaf.preview;
+
+  // 单个 useMemo 完成 parse + 派生，避免条件 hook。
+  const parsed = useMemo(() => {
+    const obj = tryParseSegmentJson(fullText);
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tool = obj as Record<string, any>;
+    return {
+      tool,
+      description: typeof tool.description === "string" ? tool.description : undefined,
+      inputSchema: tool.input_schema,
+      params: extractToolParams(tool.input_schema),
+      otherFields: Object.entries(tool).filter(
+        ([k]) => k !== "name" && k !== "description" && k !== "input_schema",
+      ),
+      prettyJson: JSON.stringify(tool, null, 2),
+    };
+  }, [fullText]);
+
+  // parse 失败兜底：原文 <pre>，绝不白屏。
+  if (!parsed) {
+    return (
+      <div style={{ paddingTop: 6 }}>
+        <pre style={{
+          margin: 0, padding: "10px 12px",
+          background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6,
+          fontFamily: TOOL_MONO, fontSize: 11.5, lineHeight: 1.55,
+          whiteSpace: "pre-wrap", wordBreak: "break-word", color: "#1f2937",
+        }}>
+          {fullText}
+        </pre>
+      </div>
+    );
+  }
+
+  const { description, inputSchema, params, otherFields, prettyJson } = parsed;
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 11, fontWeight: 700, color: "#6b7280",
+    textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 5,
+  };
+  const cellBase: React.CSSProperties = {
+    fontSize: 12, padding: "5px 10px", wordBreak: "break-word", minWidth: 0,
+  };
+
+  return (
+    <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* 统一详情头（基建）：色点 + 段名 + 字节 + 占比 + i(归因元信息) + 原文切换/复制 */}
+      <SelectedDetailHeader
+        leaf={leaf}
+        color={color}
+        totalContextChars={totalContextChars}
+        rawMode={mode === "raw"}
+        hasRawToggle
+        onToggleRawMode={() => setMode((m) => (m === "parsed" ? "raw" : "parsed"))}
+        textToCopy={prettyJson}
+      />
+
+      {mode === "raw" ? (
+        <div style={{ padding: "10px 12px", background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6 }}>
+          <JsonView value={parsed.tool} collapsed={2} displayDataTypes={false} displayObjectSize={false} enableClipboard style={TOOL_JSON_VIEW_STYLE} />
+        </div>
+      ) : (
+        <>
+          {/* Description —— 主角，markdown 渲染 */}
+          <div>
+            <div style={labelStyle}>{t("toolDef.description")}</div>
+            {description && description.trim() ? (
+              <div className="md-prose" style={{ fontSize: 12, color: "#1f2937", border: "1px solid #e5e7eb", borderRadius: 6, background: "#fff", padding: "8px 12px" }}>
+                {renderMarkdownWithHighlights(description, undefined)}
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: "#9ca3af", fontStyle: "italic" }}>{t("toolDef.noDescription")}</div>
+            )}
+          </div>
+
+          {/* Parameters —— 来自 input_schema.properties */}
+          {inputSchema != null && (
+            <div>
+              <div style={labelStyle}>
+                {t("toolDef.parameters")}{params.length > 0 ? ` (${params.length})` : ""}
+              </div>
+              {params.length > 0 ? (
+                <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: PARAM_GRID_COLS, background: "#f9fafb", borderBottom: "1px solid #e5e7eb", fontWeight: 700, color: "#6b7280" }}>
+                    <span style={cellBase}>{t("toolDef.colName")}</span>
+                    <span style={cellBase}>{t("toolDef.colType")}</span>
+                    <span style={cellBase}>{t("toolDef.colRequired")}</span>
+                    <span style={cellBase}>{t("toolDef.colDesc")}</span>
+                  </div>
+                  {params.map((p, i) => (
+                    <div key={p.name} style={{ display: "grid", gridTemplateColumns: PARAM_GRID_COLS, borderBottom: i < params.length - 1 ? "1px solid #f3f4f6" : undefined, alignItems: "start" }}>
+                      <span style={{ ...cellBase, fontFamily: TOOL_MONO, color: BRAND.indigo700, fontWeight: 600 }}>{p.name}</span>
+                      <span style={{ ...cellBase, fontFamily: TOOL_MONO, color: "#0f766e" }}>{p.type}</span>
+                      <span style={cellBase}>
+                        {p.required
+                          ? <span style={{ color: "#b45309", fontWeight: 600 }}>● {t("toolDef.required")}</span>
+                          : <span style={{ color: "#9ca3af" }}>{t("toolDef.optional")}</span>}
+                      </span>
+                      <span style={{ ...cellBase, color: p.description ? "#374151" : "#9ca3af" }}>{p.description ?? "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: "#9ca3af", fontStyle: "italic" }}>{t("toolDef.noParams")}</div>
+              )}
+            </div>
+          )}
+
+          {/* Other fields —— type / cache_control / 服务端 tool 配置等 */}
+          {otherFields.length > 0 && (
+            <div>
+              <div style={labelStyle}>{t("toolDef.otherFields")}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "max-content 1fr", columnGap: 16, rowGap: 6, padding: "10px 12px", background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6 }}>
+                {otherFields.map(([k, v]) => (
+                  <Fragment key={k}>
+                    <span style={{ fontFamily: TOOL_MONO, color: "#6b7280", fontWeight: 600, fontSize: 12 }}>{k}</span>
+                    <span style={{ fontSize: 12, color: "#1f2937", fontFamily: v !== null && typeof v === "object" ? TOOL_MONO : "inherit", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                      {v !== null && typeof v === "object" ? JSON.stringify(v) : String(v)}
+                    </span>
+                  </Fragment>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── 叶子详情 ───────────────────────────────────────────────────────────────
 
-export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
+// 通用详情头（基建）：色点 + 段名 + 字节 + 占比 + i(归因元信息 tooltip) + 原文切换/复制 + 跳源。
+// 全局复用：通用 SelectedDetail / SkillListingDetail / ToolDefinitionDetail 顶部都用它，结构
+// 统一一致，下面各自接特化 body。取代了选中态下 LeafTable 那条孤立 meta bar（更紧凑）。
+// 每个 leaf 的差异（是否可切原文、复制什么、能否跳源、色点色）通过 props 注入，组件本身通用。
+function SelectedDetailHeader({
+  leaf, color, totalContextChars,
+  rawMode, hasRawToggle, onToggleRawMode, textToCopy,
+  onJumpSource, jumpLabel, jumpTooltip,
+}: {
+  leaf: LeafLite;
+  color?: string;
+  totalContextChars?: number;
+  rawMode: boolean;
+  hasRawToggle: boolean;
+  onToggleRawMode: () => void;
+  textToCopy: string | (() => string);
+  onJumpSource?: () => void;
+  jumpLabel?: string;
+  jumpTooltip?: string;
+}) {
+  const { t } = useTranslation();
+  const { kindLabel, title } = leafOriginToCardHeader(leaf);
+  const requestPath = leaf.jsonPath ? leaf.jsonPath.replace(/^reqBody\./, "") : undefined;
+  const confidence =
+    leaf.origin.kind === "rule" || leaf.origin.kind === "jsonl"
+      ? leaf.origin.confidence
+      : undefined;
+  const originSuffixParts: string[] = [kindLabel.toLowerCase()];
+  if (leaf.origin.kind === "jsonl") originSuffixParts.push(`L${leaf.origin.jsonlLineIdx + 1}`);
+  if (confidence) originSuffixParts.push(confidence);
+  originSuffixParts.push(`${leaf.charCount}b`);
+  const originSuffix = originSuffixParts.join(" · ");
+
+  const pct = totalContextChars && totalContextChars > 0
+    ? ((leaf.charCount / totalContextChars) * 100).toFixed(1)
+    : null;
+  const hasDisplayName = !!leaf.ruleMeta?.displayName;
+
+  const btnBase: React.CSSProperties = {
+    display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4,
+    height: 24, padding: "0 8px", fontSize: 10, fontWeight: 600, borderRadius: 4,
+    whiteSpace: "nowrap", boxSizing: "border-box", lineHeight: 1, transition: "all 0.12s ease",
+  };
+  const infoBtnStyle: React.CSSProperties = {
+    ...btnBase, padding: "0 6px", border: "1px solid #e5e7eb",
+    background: "#fff", color: "#9ca3af", cursor: "help",
+  };
+  const jumpBtnStyle: React.CSSProperties = {
+    ...btnBase, cursor: "pointer", border: "1px solid #c7d2fe",
+    background: "#e0e7ff", color: BRAND.indigo600,
+  };
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {/* 左：色点 + 段名 + 字节 + 占比 */}
+      <span style={{ width: 8, height: 8, borderRadius: 2, background: color ?? leafFill(leaf), flexShrink: 0 }} />
+      <span style={{
+        fontFamily: hasDisplayName ? undefined : "ui-monospace, SFMono-Regular, monospace",
+        fontSize: 12.5, fontWeight: 600, color: "#111827",
+        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0,
+      }}>
+        {leafLabel(leaf)}
+      </span>
+      <span style={{ fontSize: 11.5, color: "#374151", flexShrink: 0 }}>{fmtK(leaf.charCount)}</span>
+      {pct && (
+        <span
+          title={t("attribution.detail.ofContextTip", { defaultValue: "占整个请求上下文的比例" })}
+          style={{ fontSize: 10.5, color: "#9ca3af", whiteSpace: "nowrap", flexShrink: 0 }}
+        >
+          {t("attribution.detail.ofContext", { defaultValue: "占上下文" })} {pct}%
+        </span>
+      )}
+      {/* 撑开，把操作推到最右 */}
+      <span style={{ flex: 1 }} />
+      {/* 右：i(归因元信息) + 原文切换/复制 + 跳源 */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={t("attribution.detail.techInfo", { defaultValue: "原始信息" })}
+            style={infoBtnStyle}
+          >
+            <Info size={11} />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" sideOffset={6} className="max-w-sm">
+          <div style={{ display: "flex", flexDirection: "column", gap: 3, fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 11 }}>
+            {requestPath && <div>{requestPath}</div>}
+            <div>{title ?? "—"}</div>
+            <div style={{ opacity: 0.7 }}>{originSuffix}</div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+      <RenderRawCopyActions
+        rawMode={rawMode}
+        showToggle={hasRawToggle}
+        onToggleRawMode={onToggleRawMode}
+        textToCopy={textToCopy}
+      />
+      {onJumpSource && (
+        <button
+          type="button"
+          title={jumpTooltip}
+          onClick={(e) => { e.stopPropagation(); onJumpSource(); }}
+          className="hover:bg-indigo-100 transition-colors"
+          style={jumpBtnStyle}
+        >
+          <LinkIcon />
+          {jumpLabel ?? t("terms.jump")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── 叶子详情 ───────────────────────────────────────────────────────────────
+
+export function SelectedDetail({ leaf, onLinkSource, totalContextChars, color }: {
   leaf: LeafLite;
   onLinkSource?: (sourceCallId: number, sourceTurnId?: number) => void;
-  /** 总 context 字节数，用于在 skill_listing 等富展示中显示"占 context X%"。
-   *  缺省时富展示只显示绝对字符数，不显示百分比。 */
+  /** 总 context 字节数，用于在 header / 富展示中显示"占 context X%"。 */
   totalContextChars?: number;
+  /** 选中段色点颜色（lens 模式由上游传 lens 色；缺省回退 section 色 leafFill）。 */
+  color?: string;
 }) {
   const { t } = useTranslation();
   const { flashEvent, flashCall, flashToolUse } = useAttributionGraph();
@@ -1194,7 +1523,13 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
 
   // 命中 skill_listing rule 时，走专属富展示，完全替换通用 leaf 详情布局。
   if (leaf.origin.kind === "rule" && leaf.origin.payload?.skillListing) {
-    return <SkillListingDetail leaf={leaf} totalContextChars={totalContextChars} />;
+    return <SkillListingDetail leaf={leaf} color={color} totalContextChars={totalContextChars} />;
+  }
+
+  // tools 段叶子：rawText 是完整 tool JSON，走 tool 定义专属富展示
+  // （description / 参数表 / input_schema / 其它字段）。parse 失败时组件内部回退原文。
+  if (isToolLeaf) {
+    return <ToolDefinitionDetail leaf={leaf} color={color} totalContextChars={totalContextChars} />;
   }
 
   const sourceTurnId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceTurnId : undefined;
@@ -1222,20 +1557,6 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
       }
     : undefined;
 
-  const { kindLabel, title } = leafOriginToCardHeader(leaf);
-  const requestPath = leaf.jsonPath ? leaf.jsonPath.replace(/^reqBody\./, "") : undefined;
-  const confidence =
-    leaf.origin.kind === "rule" || leaf.origin.kind === "jsonl"
-      ? leaf.origin.confidence
-      : undefined;
-  const originSuffixParts: string[] = [kindLabel.toLowerCase()];
-  if (leaf.origin.kind === "jsonl") {
-    originSuffixParts.push(`L${leaf.origin.jsonlLineIdx + 1}`);
-  }
-  if (confidence) originSuffixParts.push(confidence);
-  originSuffixParts.push(`${leaf.charCount}b`);
-  const originSuffix = originSuffixParts.join(" · ");
-
   const parsedRawJson = tryParseSegmentJson(leaf.rawText ?? leaf.preview);
   const hasJsonContent = parsedRawJson !== undefined;
 
@@ -1258,79 +1579,20 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars }: {
     return leaf.rawText ?? leaf.preview;
   };
 
-  const btnBaseStyle: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 4,
-    height: 24,
-    padding: "0 8px",
-    fontSize: 10,
-    fontWeight: 600,
-    borderRadius: 4,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-    boxSizing: "border-box",
-    lineHeight: 1,
-    transition: "all 0.12s ease",
-  };
-
-  const infoBtnStyle: React.CSSProperties = {
-    ...btnBaseStyle,
-    border: "1px solid #e5e7eb",
-    background: "#fff",
-    color: "#9ca3af",
-    cursor: "help",
-    padding: "0 6px",
-  };
-
-  const jumpBtnStyle: React.CSSProperties = {
-    ...btnBaseStyle,
-    border: "1px solid #c7d2fe",
-    background: "#e0e7ff",
-    color: BRAND.indigo600,
-  };
-
   return (
     <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label={t("attribution.detail.techInfo", { defaultValue: "原始信息" })}
-              style={infoBtnStyle}
-            >
-              <Info size={11} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" sideOffset={6} className="max-w-sm">
-            <div style={{ display: "flex", flexDirection: "column", gap: 3, fontFamily: "ui-monospace, SFMono-Regular, monospace", fontSize: 11 }}>
-              {requestPath && <div>{requestPath}</div>}
-              <div>{title ?? "—"}</div>
-              <div style={{ opacity: 0.7 }}>{originSuffix}</div>
-            </div>
-          </TooltipContent>
-        </Tooltip>
-        <RenderRawCopyActions
-          rawMode={rawMode}
-          showToggle={hasRawToggle}
-          onToggleRawMode={() => setRawMode(v => !v)}
-          textToCopy={textToCopy}
-        />
-        {handleJumpSource && (
-          <button
-            type="button"
-            title={jumpTooltip}
-            onClick={(e) => { e.stopPropagation(); handleJumpSource(); }}
-            className="hover:bg-indigo-100 transition-colors"
-            style={jumpBtnStyle}
-          >
-            <LinkIcon />
-            {jumpLabel ?? t("terms.jump")}
-          </button>
-        )}
-      </div>
+      <SelectedDetailHeader
+        leaf={leaf}
+        color={color}
+        totalContextChars={totalContextChars}
+        rawMode={rawMode}
+        hasRawToggle={hasRawToggle}
+        onToggleRawMode={() => setRawMode(v => !v)}
+        textToCopy={textToCopy}
+        onJumpSource={handleJumpSource}
+        jumpLabel={jumpLabel}
+        jumpTooltip={jumpTooltip}
+      />
 
 
 

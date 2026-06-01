@@ -89,7 +89,12 @@ export function matchSlots(input: MatchSlotsInput): SlotMatch[] {
   const tools = reqBody.tools ?? [];
   for (let i = 0; i < tools.length; i++) {
     const tool = tools[i]!;
-    const rawText = tool.description ?? JSON.stringify(tool);
+    // rawText = 完整 tool JSON（name + description + input_schema + 其它字段），不再只取
+    // description。wire 上整条 tool 定义都会发送并被 prompt cache 命中，charCount/rawHash 必须
+    // 反映真实字节（input_schema 往往比 description 还大）。cache_control 保留在 JSON 内（wire
+    // 真实）；cachePolicy 仍单独解析作便捷层。key 顺序沿用 wire 顺序（V8 保序）→ 同名 tool 跨
+    // 请求 rawHash 稳定。前端 ToolDefinitionDetail 解析此 JSON 做富展示（description/参数表/schema）。
+    const rawText = JSON.stringify(tool);
     out.push({
       // 动态 slotType：tools.builtin.{name}
       slotType: `tools.builtin.${tool.name}`,

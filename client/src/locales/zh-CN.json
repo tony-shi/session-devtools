@@ -311,8 +311,8 @@
   "attribution": {
     "layers": "图层叠加",
     "baseLensSuffix": "（基底视角，不能关闭）",
-    "trackContext": "上下文",
-    "trackInteraction": "交互与执行",
+    "trackContext": "请求组成",
+    "trackInteraction": "对话内容",
     "loadFailed": "归因加载失败",
     "loading": "归因加载中…",
     "skip": {
@@ -339,24 +339,24 @@
     },
     "lensGroup": {
       "instructions": {
-        "label": "系统预设",
-        "description": "核心提示词、行为准则、工具策略以及行为指令（如思考频次设定）。"
+        "label": "系统提示词",
+        "description": "reqBody.system 中的系统提示词主体；内部 section 细节可在原文和审计里查看。"
       },
       "environment": {
-        "label": "环境与上下文",
-        "description": "运行时的硬性约束事实、会话持久记忆以及注入的环境变量事实。"
+        "label": "运行上下文",
+        "description": "项目指令、自动记忆，以及运行时环境相关上下文。"
       },
       "capabilities": {
-        "label": "能力与拓展",
-        "description": "内置工具的 Schema 描述、已安装 Skill 声明或子代理类型声明等拓展链路。"
+        "label": "工具与能力",
+        "description": "内置系统工具定义、延迟注册的技能（Skills）或可用的子 Agent 类型。"
       },
       "events": {
-        "label": "运行时注入/时间",
-        "description": "harness 随时间插入 messages 流中的动态事件提醒（Token 预警、文件改动等）。"
+        "label": "系统提醒与注入",
+        "description": "运行期引擎在消息流中动态塞入的非对话提示。"
       },
       "interaction": {
-        "label": "对话与执行",
-        "description": "用户与 AI 的往复聊天、思考过程以及工具/Skill 调用的执行交互流。"
+        "label": "对话内容",
+        "description": "用户输入、AI 回复、思考过程以及工具调用和工具结果。"
       }
     },
     "stability": {
@@ -413,20 +413,20 @@
       "messages.tool-use": "工具调用",
       "messages.tool-result": "工具结果",
       "messages.inline.system-reminder": "系统提醒",
-      "messages.context": "注入·上下文",
-      "messages.skills": "注入·能力",
-      "messages.directive": "注入·指令",
-      "messages.injection": "注入·事件",
+      "messages.context": "用户上下文",
+      "messages.skills": "延迟能力",
+      "messages.directive": "系统指令",
+      "messages.injection": "系统提醒",
       "messages.misc": "其他消息",
       "messages.image": "图片输入",
-      "system.core": "身份·框架",
-      "system.guidance": "行为准则",
+      "system.core": "系统提示词",
+      "system.guidance": "系统提示词",
       "system.main-prompt.section.session-guidance": "会话守则",
-      "system.tool-policy": "工具策略",
-      "system.memory": "记忆指令",
-      "system.env": "环境事实",
-      "system.billing": "计费头",
-      "tools.builtin": "内置工具",
+      "system.tool-policy": "系统提示词",
+      "system.memory": "系统提示词",
+      "system.env": "系统提示词",
+      "system.billing": "系统提示词",
+      "tools.builtin": "工具定义",
       "other.unknown": "未识别段"
     },
     "charsLabel": "字符",
@@ -706,6 +706,19 @@
       "outputCall": "单次LLM调用生成的 token",
       "outputAgg": "累计模型生成 token"
     }
+  },
+  "toolDef": {
+    "description": "描述",
+    "parameters": "参数",
+    "colName": "名称",
+    "colType": "类型",
+    "colRequired": "必填",
+    "colDesc": "说明",
+    "required": "必填",
+    "optional": "可选",
+    "otherFields": "其它字段",
+    "noDescription": "（无描述）",
+    "noParams": "无参数"
   },
   "skillListing": {
     "rowLabel": "Skills 注册",
