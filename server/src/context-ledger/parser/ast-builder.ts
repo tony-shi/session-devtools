@@ -146,7 +146,7 @@ function expandChildren(match: SlotMatch, template: RequestTemplate): SlotMatch[
     return splitSystemMessage(match.rawText, match.jsonPath);
   }
 
-  // 首条 user message 的 userContext <system-reminder>:按来源拆成 前言 / 项目指令(0..N 文件) /
+  // 首条 user message 的 userContext <system-reminder>:按来源拆成 项目指令(0..N 文件) /
   // 记忆(MEMORY.md) / 账号(email+date)。非 userContext reminder(token-usage / file-* 等)
   // → splitUserContextReminder 返回 []，保持单 leaf，行为不变(安全)。无 template slot,故在
   // findTemplateSlot 之前处理(同 messages.system-message)。
@@ -402,11 +402,11 @@ function splitSystemMessage(text: string, parentJsonPath: string): SlotMatch[] {
 /**
  * 把首条 user message 的 userContext <system-reminder> 按来源拆成子段:
  *   .wrapper.prefix          — <system-reminder> 开头 + "As you answer..." 固定外壳
- *   .preamble                — "# claudeMd" + 固定前言(CC 框架语)
- *   .project-instructions ×N — 每个 "Contents of <path> (project instructions…)" 文件(你的 CLAUDE.md/AGENTS.md)
+ *   .project-instructions ×N — 项目指令文件；第一段包含 "# claudeMd" 固定导言
  *   .memory                  — "Contents of <path>MEMORY.md (auto-memory…)"(CC 生成的持久化记忆)
  *   .account                 — "# userEmail … # currentDate …"
  *   .wrapper.suffix          — 结尾 IMPORTANT + </system-reminder>
+ * 若 "# claudeMd" 后面没有紧邻项目指令文件，则导言并入 wrapper.prefix，保证子段严格按物理顺序 tile。
  * 子段 tile 满 0..length 无空隙。仅当含 "# claudeMd" / "# userEmail" / "# currentDate" 时拆
  * (= userContext reminder);否则返回 []，保持单 leaf —— 其它 reminder(token-usage / file-attachment /
  * diagnostics)不受影响。
@@ -441,10 +441,17 @@ function splitUserContextReminder(text: string, parentJsonPath: string): SlotMat
   }
 
   const firstFileAt = files.length > 0 ? files[0]!.at : userEmailPos;
-  // 外壳前缀:<system-reminder> + As you answer...。# claudeMd 是载荷 header,不归入 envelope。
-  push("messages.inline.system-reminder.wrapper.prefix", 0, claudeMdPos, "<system-reminder>", "rawOnly");
-  // 固定前言:# claudeMd + CC 优先级说明。不是项目 CLAUDE.md 文件正文,默认 raw-only。
-  push("messages.inline.system-reminder.preamble", claudeMdPos, firstFileAt, "# claudeMd", "rawOnly");
+  const firstFile = files[0];
+  const firstFileIsProject = !!firstFile && !(/auto-memory/.test(firstFile.desc) || /MEMORY\.md\s*$/.test(firstFile.path));
+  // 外壳前缀:<system-reminder> + As you answer...。
+  // # claudeMd 固定导言属于后续项目指令的结构头；只有没有紧邻项目指令时才留在 wrapper。
+  push(
+    "messages.inline.system-reminder.wrapper.prefix",
+    0,
+    firstFileIsProject ? claudeMdPos : firstFileAt,
+    "<system-reminder>",
+    "rawOnly",
+  );
   // 各 "Contents of" 文件:MEMORY.md(auto-memory)→ .memory;其余(project instructions)→ .project-instructions
   for (let i = 0; i < files.length; i++) {
     const f = files[i]!;
@@ -453,7 +460,7 @@ function splitUserContextReminder(text: string, parentJsonPath: string): SlotMat
     const slot = isMemory
       ? "messages.inline.system-reminder.memory"
       : "messages.inline.system-reminder.project-instructions";
-    push(slot, f.at, end, "Contents of");
+    push(slot, i === 0 && !isMemory ? claudeMdPos : f.at, end, "Contents of");
   }
   // 账号:# userEmail … # currentDate …。只保留事实字段,不吞 closing wrapper。
   const suffixStart = text.indexOf("\n\n      IMPORTANT:", userEmailPos);

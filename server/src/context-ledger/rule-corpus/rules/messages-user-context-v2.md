@@ -10,8 +10,8 @@ description: >-
   2.1.158 首条 user message 的 <system-reminder> userContext block。鲁棒版：只锚定
   恒定外壳（opener + `# userEmail` + `# currentDate` + 收尾 IMPORTANT + </system-reminder>），
   把 `# claudeMd\n` 到 `\n# userEmail` 之间整段抓成 contextBody（不假设 CLAUDE.md/AGENTS.md/
-  MEMORY.md 谁在场——有项目指令则含，无则只有 preamble + memory，缺项也不失配）。userEmail /
-  currentDate 各自捕获。contextBody 的内部拆分（preamble / 各项目指令文件 / MEMORY.md）由
+  MEMORY.md 谁在场——有项目指令则含，无则只有固定导言 + memory，缺项也不失配）。userEmail /
+  currentDate 各自捕获。contextBody 的内部拆分（固定导言 / 各项目指令文件 / MEMORY.md）由
   resolver 的 parseUserContextBody 二次解析（payload.userContext）。
   实证：9e1ba147 T3C2（有 CLAUDE.md，2220B）与 6291b671 T3C1（无 CLAUDE.md，1200B）均命中。
 stability: dynamic
@@ -27,7 +27,7 @@ attribution:
   mechanism: system_reminder_pattern
   category: harness_injection
   captureGroups:
-    contextBody: "# claudeMd 与 # userEmail 之间的全部上下文载荷（preamble + 各项目指令文件 + MEMORY.md），由 parseUserContextBody 再拆"
+    contextBody: "# claudeMd 与 # userEmail 之间的全部上下文载荷（固定导言 + 各项目指令文件 + MEMORY.md），由 parseUserContextBody 再拆"
     userEmail: "账号邮箱"
     currentDate: "当前日期"
 ---

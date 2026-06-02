@@ -106,10 +106,10 @@ const REMINDER_RULE_TO_ROLE: Record<string, RoleId> = {
   "claude-code.messages.nested-memory-contents.v1": "messages.context", // 嵌套 memory 文件内容
   "claude-code.messages.reminder.project-instructions.v1": "messages.context",
   // 自动记忆 (Memory)
-  "claude-code.messages.reminder.memory.v1":        "system.memory",
+  "claude-code.messages.reminder.memory.v1":        "messages.context",
   // 运行环境
-  "claude-code.messages.user-context.v1":           "system.env", // userEmail / currentDate 等事实
-  "claude-code.messages.reminder.account.v1":       "system.env",
+  "claude-code.messages.user-context.v1":           "messages.context", // userEmail / currentDate 等事实
+  "claude-code.messages.reminder.account.v1":       "messages.context",
   // 工具定义 / 延迟能力
   "claude-code.messages.deferred-tools-listing.v1": "messages.skills", // ToolSearch 可用工具声明（<system-reminder> 版）
   "claude-code.messages.agent-types-listing.v1":    "messages.skills", // 可用 sub-agent 类型声明（<system-reminder> 版）
@@ -117,8 +117,7 @@ const REMINDER_RULE_TO_ROLE: Record<string, RoleId> = {
   "claude-code.messages.deferred-tools-listing.v2": "messages.skills",
   "claude-code.messages.agent-types-listing.v2":    "messages.skills",
   "claude-code.messages.skill-listing.v2":          "messages.skills",
-  // rawOnly wrapper/preamble 默认不会出现在 leaf 列表；保留映射仅作兜底。
-  "claude-code.messages.reminder.preamble.v1":      "messages.directive",
+  // rawOnly wrapper 默认不会出现在 leaf 列表；保留映射仅作兜底。
   "claude-code.messages.reminder.wrapper-prefix.v1": "messages.directive",
   "claude-code.messages.reminder.wrapper-suffix.v1": "messages.directive",
   // 注入的行为指令 → 系统提示词

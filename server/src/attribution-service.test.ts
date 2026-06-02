@@ -162,7 +162,6 @@ describe("attribution-service — loadAttributionTree 端到端", () => {
     const slots = parent!.children.map((node) => node.slotType);
     expect(slots).toEqual([
       "messages.inline.system-reminder.wrapper.prefix",
-      "messages.inline.system-reminder.preamble",
       "messages.inline.system-reminder.project-instructions",
       "messages.inline.system-reminder.memory",
       "messages.inline.system-reminder.account",
@@ -189,9 +188,12 @@ describe("attribution-service — loadAttributionTree 端到端", () => {
       .map((node) => node.slotType);
     expect(rawOnlySlots).toEqual([
       "messages.inline.system-reminder.wrapper.prefix",
-      "messages.inline.system-reminder.preamble",
       "messages.inline.system-reminder.wrapper.suffix",
     ]);
+
+    const project = parent!.children.find((node) => node.slotType === "messages.inline.system-reminder.project-instructions")!;
+    expect(project.rawText).toContain("# claudeMd");
+    expect(project.rawText).toContain("Contents of /repo/CLAUDE.md");
 
     const account = parent!.children.find((node) => node.slotType === "messages.inline.system-reminder.account")!;
     const suffix = parent!.children.find((node) => node.slotType === "messages.inline.system-reminder.wrapper.suffix")!;

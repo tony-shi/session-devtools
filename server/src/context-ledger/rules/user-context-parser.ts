@@ -3,8 +3,9 @@
 // 二次解析 messages.user-context.v2 命中的 <system-reminder> userContext block。
 // v2 规则只把 `# claudeMd\n` 到 `\n# userEmail` 之间整段抓成 contextBody（外加 userEmail /
 // currentDate 两个标量 group）；本模块把 contextBody 拆成结构化子段：
-//   preamble（claudeMd 前言）+ 0..N 个 "Contents of <path> (<desc>):" 文件
+//   0..N 个 "Contents of <path> (<desc>):" 文件
 //   （desc 含 "project instructions" → 项目指令文件；含 "auto-memory" → 持久化记忆 MEMORY.md）。
+// 固定 claudeMd 导言并入第一段项目指令；没有项目指令时不再作为独立 payload 字段暴露。
 // 组成可变（CLAUDE.md/AGENTS.md/MEMORY.md 谁缺都行），故按实际 marker 切，有几个算几个。
 //
 // 与 skill-listing-parser 同形：输入 segment 原文 + 规则命中的捕获组（带 segment 内绝对偏移），
@@ -12,7 +13,6 @@
 // 旁路模块：不被现有代码 import 时完全无副作用。
 
 export type UserContextKind =
-  | "claudemd-preamble" // # claudeMd 后的固定前言（无项目文件时也在）
   | "project-instructions" // CLAUDE.md / AGENTS.md 等项目指令文件（壳 + 正文）
   | "memory" // 持久化记忆 MEMORY.md（壳 + 正文）
   | "context-file" // 其它 "Contents of …" 文件（desc 既非 project 也非 auto-memory）
@@ -74,24 +74,19 @@ export function parseUserContextBody(
     while ((m = re.exec(body)) !== null) {
       marks.push({ at: m.index, path: m.groups?.["path"] ?? "", desc: m.groups?.["desc"] ?? "" });
     }
-    // preamble = body 开头到第一个文件头（无文件头时为整段）
-    const preEnd = marks.length ? marks[0]!.at : body.length;
-    if (preEnd > 0) {
-      fields.push({
-        kind: "claudemd-preamble",
-        charStart: cb.charStart,
-        charEnd: cb.charStart + preEnd,
-        valuePreview: preview(body.slice(0, preEnd)),
-      });
-    }
     for (let i = 0; i < marks.length; i++) {
       const mk = marks[i]!;
       const end = i + 1 < marks.length ? marks[i + 1]!.at : body.length;
+      const kind = classify(mk.desc);
+      const headerStart = i === 0 && kind === "project-instructions"
+        ? rawText.lastIndexOf("# claudeMd", cb.charStart)
+        : -1;
+      const start = headerStart >= 0 ? headerStart : cb.charStart + mk.at;
       fields.push({
-        kind: classify(mk.desc),
-        charStart: cb.charStart + mk.at,
+        kind,
+        charStart: start,
         charEnd: cb.charStart + end,
-        valuePreview: preview(body.slice(mk.at, end)),
+        valuePreview: preview(rawText.slice(start, cb.charStart + end)),
         path: mk.path,
       });
     }

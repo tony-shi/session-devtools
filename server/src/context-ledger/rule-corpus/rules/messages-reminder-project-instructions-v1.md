@@ -5,7 +5,8 @@ verifiedFor: "2.1.158"
 sourceUnits: []
 description: >-
   userContext reminder 拆分后的「项目指令」子段:一个 "Contents of <path> (project instructions…)"
-  文件(你的 CLAUDE.md / AGENTS.md 等,checked into the codebase)。可变数量,每文件一段。
+  文件(你的 CLAUDE.md / AGENTS.md 等,checked into the codebase)。第一段可包含 "# claudeMd"
+  固定导言,使导言归属到项目指令结构,而不是前端拼接。可变数量,每文件一段。
   语义=context、来源=user-config(你的)。path/content 为动态字段。
 stability: dynamic
 displayName: "项目指令(CLAUDE.md)"
@@ -26,5 +27,5 @@ attribution:
 ## pattern
 
 ```regex
-^Contents of (?<path>[^\n]+?) \(project instructions[^)]*\):\n\n(?<content>[\s\S]*?)\n*$
+^(?:# claudeMd\nCodebase and user instructions are shown below\. Be sure to adhere to these instructions\. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written\.\n*)?Contents of (?<path>[^\n]+?) \(project instructions[^)]*\):\n\n(?<content>[\s\S]*?)\n*$
 ```

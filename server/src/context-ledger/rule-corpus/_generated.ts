@@ -123,7 +123,7 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       "minCcVersion": "2.1.158"
     },
     "sourceUnits": [],
-    "description": "2.1.158 首条 user message 的 <system-reminder> userContext block。鲁棒版：只锚定 恒定外壳（opener + `# userEmail` + `# currentDate` + 收尾 IMPORTANT + </system-reminder>）， 把 `# claudeMd\\n` 到 `\\n# userEmail` 之间整段抓成 contextBody（不假设 CLAUDE.md/AGENTS.md/ MEMORY.md 谁在场——有项目指令则含，无则只有 preamble + memory，缺项也不失配）。userEmail / currentDate 各自捕获。contextBody 的内部拆分（preamble / 各项目指令文件 / MEMORY.md）由 resolver 的 parseUserContextBody 二次解析（payload.userContext）。 实证：9e1ba147 T3C2（有 CLAUDE.md，2220B）与 6291b671 T3C1（无 CLAUDE.md，1200B）均命中。",
+    "description": "2.1.158 首条 user message 的 <system-reminder> userContext block。鲁棒版：只锚定 恒定外壳（opener + `# userEmail` + `# currentDate` + 收尾 IMPORTANT + </system-reminder>）， 把 `# claudeMd\\n` 到 `\\n# userEmail` 之间整段抓成 contextBody（不假设 CLAUDE.md/AGENTS.md/ MEMORY.md 谁在场——有项目指令则含，无则只有固定导言 + memory，缺项也不失配）。userEmail / currentDate 各自捕获。contextBody 的内部拆分（固定导言 / 各项目指令文件 / MEMORY.md）由 resolver 的 parseUserContextBody 二次解析（payload.userContext）。 实证：9e1ba147 T3C2（有 CLAUDE.md，2220B）与 6291b671 T3C1（无 CLAUDE.md，1200B）均命中。",
     "stability": "dynamic",
     "sourcemapRef": "proxy:9e1ba147 T3C2 + 6291b671 T3C1 (2.1.158)；restored-src context.ts getUserContext + utils/api.ts prependUserContext",
     "materialization": "shape",
@@ -138,7 +138,7 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       "mechanism": "system_reminder_pattern",
       "category": "harness_injection",
       "captureGroups": {
-        "contextBody": "# claudeMd 与 # userEmail 之间的全部上下文载荷（preamble + 各项目指令文件 + MEMORY.md），由 parseUserContextBody 再拆",
+        "contextBody": "# claudeMd 与 # userEmail 之间的全部上下文载荷（固定导言 + 各项目指令文件 + MEMORY.md），由 parseUserContextBody 再拆",
         "userEmail": "账号邮箱",
         "currentDate": "当前日期"
       }
@@ -652,32 +652,11 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
     "pattern": "^Contents of (?<memoryPath>[^\\n]+MEMORY\\.md) \\(user's auto-memory[^)]*\\):\\n\\n(?<memoryContents>[\\s\\S]*?)\\n*$"
   },
   {
-    "ruleId": "claude-code.messages.reminder.preamble.v1",
-    "slotId": "messages.inline.system-reminder.preamble",
-    "verifiedFor": "2.1.158",
-    "sourceUnits": [],
-    "description": "userContext <system-reminder> 拆分后的「前言」子段(splitUserContextReminder 产出): \"# claudeMd\" + 固定前言(CC 框架语,静态)。wrapper prefix 已单独拆成 raw-only envelope。 语义=directive、来源=cc-static。",
-    "stability": "static",
-    "sourcemapRef": "proxy:9e1ba147 / minimax fixture (2.1.158);splitUserContextReminder",
-    "materialization": "exact_text",
-    "displayName": "claudeMd 前言",
-    "summary": "注入上下文的固定开场(claudeMd 指令优先级声明)",
-    "priority": 0,
-    "attribution": {
-      "patternFromBody": true,
-      "trailingNewlines": 0,
-      "matchMode": "regex",
-      "mechanism": "system_reminder_pattern",
-      "category": "harness_injection"
-    },
-    "pattern": "^# claudeMd\\nCodebase and user instructions are shown below\\. Be sure to adhere to these instructions\\. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written\\.\\n*$"
-  },
-  {
     "ruleId": "claude-code.messages.reminder.project-instructions.v1",
     "slotId": "messages.inline.system-reminder.project-instructions",
     "verifiedFor": "2.1.158",
     "sourceUnits": [],
-    "description": "userContext reminder 拆分后的「项目指令」子段:一个 \"Contents of <path> (project instructions…)\" 文件(你的 CLAUDE.md / AGENTS.md 等,checked into the codebase)。可变数量,每文件一段。 语义=context、来源=user-config(你的)。path/content 为动态字段。",
+    "description": "userContext reminder 拆分后的「项目指令」子段:一个 \"Contents of <path> (project instructions…)\" 文件(你的 CLAUDE.md / AGENTS.md 等,checked into the codebase)。第一段可包含 \"# claudeMd\" 固定导言,使导言归属到项目指令结构,而不是前端拼接。可变数量,每文件一段。 语义=context、来源=user-config(你的)。path/content 为动态字段。",
     "stability": "dynamic",
     "sourcemapRef": "proxy:9e1ba147 T3C2 (2.1.158);splitUserContextReminder",
     "materialization": "shape",
@@ -696,14 +675,14 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
         "content": "文件正文"
       }
     },
-    "pattern": "^Contents of (?<path>[^\\n]+?) \\(project instructions[^)]*\\):\\n\\n(?<content>[\\s\\S]*?)\\n*$"
+    "pattern": "^(?:# claudeMd\\nCodebase and user instructions are shown below\\. Be sure to adhere to these instructions\\. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written\\.\\n*)?Contents of (?<path>[^\\n]+?) \\(project instructions[^)]*\\):\\n\\n(?<content>[\\s\\S]*?)\\n*$"
   },
   {
     "ruleId": "claude-code.messages.reminder.wrapper-prefix.v1",
     "slotId": "messages.inline.system-reminder.wrapper.prefix",
     "verifiedFor": "2.1.158",
     "sourceUnits": [],
-    "description": "userContext reminder 拆分后的前置 envelope:<system-reminder> + \"As you answer...\" 固定引导语。仅用于 raw/audit 完整性,默认 UI raw-only。",
+    "description": "userContext reminder 拆分后的前置 envelope:<system-reminder> + \"As you answer...\" 固定引导语。若后续没有紧邻项目指令文件,也会持有 \"# claudeMd\" 固定导言, 以保证 AST 子段按原文物理顺序 tile。仅用于 raw/audit 完整性,默认 UI raw-only。",
     "stability": "static",
     "sourcemapRef": "proxy:9e1ba147 / minimax fixture (2.1.158);splitUserContextReminder",
     "materialization": "exact_text",
@@ -717,7 +696,7 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       "mechanism": "system_reminder_pattern",
       "category": "harness_injection"
     },
-    "pattern": "^<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n*$"
+    "pattern": "^<system-reminder>\\nAs you answer the user's questions, you can use the following context:\\n(?:# claudeMd\\nCodebase and user instructions are shown below\\. Be sure to adhere to these instructions\\. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written\\.\\n*)?$"
   },
   {
     "ruleId": "claude-code.messages.reminder.wrapper-suffix.v1",

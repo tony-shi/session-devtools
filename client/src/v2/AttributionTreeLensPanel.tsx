@@ -36,6 +36,10 @@ import {
   type SectionId,
   type SectionStat,
 } from "./AttributionTreePanel";
+import {
+  EnvelopeStructureHint,
+  collectEnvelopeContainers,
+} from "./attribution-envelope";
 import { FisheyeStrip } from "./fisheye-strip";
 import {
   LENSES,
@@ -945,7 +949,7 @@ export function AttributionTreeLensPanel({
     return () => { cancelled = true; };
   }, [sessionId, agentFileId, compactIdx, proxyRequestId, callId]);
 
-  const allLeaves = useMemo(() => {
+  const attributedLeaves = useMemo(() => {
     if (!result) return [];
     const base = flattenLeaves(result);
     // 合并 diff-tree 的 diffKind 信息
@@ -962,6 +966,13 @@ export function AttributionTreeLensPanel({
     });
   }, [result, diffData]);
 
+  const envelopeContainers = useMemo(() => {
+    if (!result) return [];
+    return collectEnvelopeContainers(result, attributedLeaves);
+  }, [result, attributedLeaves]);
+
+  const allLeaves = attributedLeaves;
+
   // Pending-focus consumption: when a Turn-view event jump lands here with a
   // `{ lineIdx }` focus, find the leaf whose jsonl origin matches and
   // select it. Also drills into its containing section so the leaf
@@ -969,9 +980,9 @@ export function AttributionTreeLensPanel({
   // leaf detail).
   const { pendingFocus, clearPendingFocus } = useAttributionGraph();
   useEffect(() => {
-    if (!pendingFocus || !("lineIdx" in pendingFocus) || allLeaves.length === 0) return;
+    if (!pendingFocus || !("lineIdx" in pendingFocus) || attributedLeaves.length === 0) return;
     const target = pendingFocus.lineIdx;
-    const match = allLeaves.find(
+    const match = attributedLeaves.find(
       (l) => l.origin.kind === "jsonl" && l.origin.jsonlLineIdx === target,
     );
     if (match) {
@@ -979,7 +990,7 @@ export function AttributionTreeLensPanel({
       setSelectedNodeId(match.nodeId);
     }
     clearPendingFocus();
-  }, [pendingFocus, allLeaves, clearPendingFocus]);
+  }, [pendingFocus, attributedLeaves, clearPendingFocus]);
 
   // 把"任意 active lens 的桶选择"合并成一个谓词，AND 联合过滤。
   // 注意：cache lens 的桶只用于联动 CacheTopologyStrip 高亮，不参与 leaf 过滤
@@ -1048,6 +1059,13 @@ export function AttributionTreeLensPanel({
     return null;
   }, [bucketFilters, activeLenses, selectedGroupId]);
 
+  const selectedEnvelope = useMemo(() => {
+    if (!selectedNodeId) return null;
+    return envelopeContainers.find((envelope) =>
+      envelope.visibleLeaves.some((leaf) => leaf.nodeId === selectedNodeId)
+    ) ?? null;
+  }, [selectedNodeId, envelopeContainers]);
+
   const selectedStat = useMemo(() => {
     if (!selectedSection) return null;
     const stat = stats.find((s) => s.id === selectedSection);
@@ -1057,10 +1075,10 @@ export function AttributionTreeLensPanel({
     return { ...stat, leaves: filteredLeaves };
   }, [selectedSection, stats, passesAllFilters]);
 
-  const selectedLeaf = useMemo(
-    () => selectedNodeId ? leaves.find((l) => l.nodeId === selectedNodeId) ?? null : null,
-    [selectedNodeId, leaves],
-  );
+  const selectedLeaf = useMemo(() => {
+    if (!selectedNodeId) return null;
+    return leaves.find((l) => l.nodeId === selectedNodeId) ?? null;
+  }, [selectedNodeId, leaves]);
 
   // Leaf 着色：永远用基底 lens（LENSES[0] = 结构/语义角色）。其他 lens（来源/
   // 缓存/diff/audit）的信息通过行尾 badge 表达，而不是抢主色。
@@ -1348,7 +1366,9 @@ export function AttributionTreeLensPanel({
           <LeafStrip
             leaves={selectedStat.leaves}
             selectedId={selectedNodeId}
-            onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
+            onSelect={(id) => {
+              setSelectedNodeId((cur) => (cur === id ? null : id));
+            }}
             getColor={leafColor}
             getUnderlineColor={leafUnderline}
             getBorderStyle={leafBorderStyle}
@@ -1356,10 +1376,19 @@ export function AttributionTreeLensPanel({
             getIndicatorColor={leafIndicatorColor}
             getTextureType={leafTextureType}
           />
+          {selectedEnvelope && selectedLeaf && (
+            <EnvelopeStructureHint
+              envelope={selectedEnvelope}
+              selectedLeafId={selectedNodeId}
+              getColor={leafColor}
+            />
+          )}
           <LeafTable
             leaves={selectedStat.leaves}
             selectedId={selectedNodeId}
-            onSelect={(id) => setSelectedNodeId((cur) => (cur === id ? null : id))}
+            onSelect={(id) => {
+              setSelectedNodeId((cur) => (cur === id ? null : id));
+            }}
             getColor={leafColor}
             getBadges={leafBadges}
             totalContextChars={totalChars}

@@ -98,7 +98,7 @@ export const rolePalette: Record<RoleId, SectionStyle> = {
   "system.env":         { label: "运行环境", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
   "system.billing":     { label: "运行环境", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
   "tools.builtin":      { label: "内置工具", barBg: "#2563eb", barText: "#fff", rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1d4ed8" },
-  "messages.context":    { label: "项目指令 (CLAUDE.md)", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
+  "messages.context":    { label: "用户上下文", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
   "messages.skills":     { label: "Skill 注册", barBg: "#3b82f6", barText: "#fff", rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1d4ed8" },
   "messages.directive":  { label: "指令规则", barBg: "#64748b", barText: "#fff", rowBg: "#f8fafc", marker: "#64748b", textColor: "#475569" },
   "messages.injection":  { label: "系统提醒", barBg: "#f59e0b", barText: "#fff", rowBg: "#fffbeb", marker: "#f59e0b", textColor: "#92400e" },
