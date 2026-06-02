@@ -9,7 +9,8 @@
 //   llm-call     —— 某个 turn 的某次 LLM Call(LLM Call)
 export type ActId =
   | "conversation" | "turn-io" | "llm-call" | "recap"  // ep1: agent loop
-  | "cw-stack" | "cw-real"                             // ep2: context window
+  | "rc-real"                                          // ep2(new): 看见真实的 Context — 复用 attribution 面板
+  | "cw-stack" | "cw-real"                             // ep2(old): context window
   | "cd-diff" | "cd-real"                              // ep3: context diff
   | "tools-concept" | "tools-real"                     // ep4: tools(context 的关键部分)
   | "cache-split" | "cache-real"                       // ep5: cache
@@ -23,6 +24,7 @@ export type ActId =
 export type Focus =
   | "overview" | "turn" | "final"
   | "call" | "tool-use" | "tool-result" | "loop"
+  | "sec-tools" | "sec-system" | "sec-messages"  // ep2(new): 高亮 attribution 的某个 section
   | "stack" | "diagram"  // ep2: context-stack 构建 / 收尾结构图
   | "diff"               // ep3: context-diff 构建
   | "tools-cat"          // ep4: tools 五大类构建

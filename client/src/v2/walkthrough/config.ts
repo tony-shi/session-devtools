@@ -20,7 +20,9 @@ export const STAGE_CONFIG: Record<ActId, StageTarget> = {
   "turn-io": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1 },
   "llm-call": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 1 },
   recap: {}, // 回顾幕不依赖会话数据(静态结构图)
-  // ep2:context window —— 复用同一条 demo 会话的某次 call(real 视图取其 attribution)
+  // ep2(new):看见真实的 Context —— 复用真实 attribution 面板。callId 2 归因较丰富。
+  "rc-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 2 },
+  // ep2(old):context window —— 复用同一条 demo 会话的某次 call(real 视图取其 attribution)
   "cw-stack": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 1 },
   "cw-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 1 },
   // ep3:context diff —— 用 callId 2(有上一条 call 1 可 diff;diffTree 自动取 prev)

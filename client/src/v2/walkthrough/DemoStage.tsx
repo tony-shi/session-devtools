@@ -88,6 +88,22 @@ function ActContent({ act, data, focus, beat, beatCount, playing, restartNonce, 
     return <AgentLoopView turn={data.turn} focus={focus} beat={beat} beatCount={beatCount} playing={playing} restartNonce={restartNonce} />;
   }
 
+  // ep2(new):看见真实的 Context —— 复用真实 attribution 面板,按分镜 focus 高亮对应 section。
+  // focusSection 受控:sec-* → 对应 section;overview → null(不选中,显示三段总览)。
+  if (act === "rc-real") {
+    const focusSection =
+      focus === "sec-tools" ? "tools" :
+      focus === "sec-system" ? "system" :
+      focus === "sec-messages" ? "messages" : null;
+    return (
+      <AttributionGraphProvider sessionId={data.sessionId} onJumpToCall={null}>
+        <div style={{ height: "100%", overflowY: "auto", padding: 24, background: "#fff" }}>
+          <AttributionTreeLensPanel sessionId={data.sessionId} callId={data.call?.id ?? 0} hideDiff focusSection={focusSection} />
+        </div>
+      </AttributionGraphProvider>
+    );
+  }
+
   if (act === "cw-stack") {
     return <ContextStackView turn={data.turn} focus={focus} beat={beat} />;
   }
