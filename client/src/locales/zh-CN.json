@@ -312,7 +312,7 @@
     "layers": "图层叠加",
     "baseLensSuffix": "（基底视角，不能关闭）",
     "trackContext": "请求组成",
-    "trackInteraction": "对话内容",
+    "trackInteraction": "会话信息",
     "loadFailed": "归因加载失败",
     "loading": "归因加载中…",
     "skip": {
@@ -343,20 +343,20 @@
         "description": "reqBody.system 中的系统提示词主体；内部 section 细节可在原文和审计里查看。"
       },
       "environment": {
-        "label": "运行上下文",
-        "description": "项目指令、自动记忆，以及运行时环境相关上下文。"
+        "label": "用户上下文",
+        "description": "CLAUDE.md、自动记忆、账号与日期等围绕用户和项目注入的上下文。"
       },
       "capabilities": {
         "label": "工具与能力",
-        "description": "内置系统工具定义、延迟注册的技能（Skills）或可用的子 Agent 类型。"
+        "description": "内置 Tool、运行时工具发现、MCP/Agent 类型和 Skills 等能力声明。"
       },
       "events": {
-        "label": "系统提醒与注入",
-        "description": "运行期引擎在消息流中动态塞入的非对话提示。"
+        "label": "动态注入",
+        "description": "<system-reminder> 包装、运行期提醒等由系统动态塞入的非对话提示。"
       },
       "interaction": {
-        "label": "对话内容",
-        "description": "用户输入、AI 回复、思考过程以及工具调用和工具结果。"
+        "label": "会话信息",
+        "description": "真实会话过程中的用户输入、AI 回复、AI 思考、工具调用和工具结果。"
       }
     },
     "stability": {
@@ -414,9 +414,14 @@
       "messages.tool-result": "工具结果",
       "messages.inline.system-reminder": "系统提醒",
       "messages.context": "用户上下文",
-      "messages.skills": "延迟能力",
-      "messages.directive": "系统指令",
-      "messages.injection": "系统提醒",
+      "messages.context.claude-md": "CLAUDE.md",
+      "messages.context.memory": "记忆",
+      "messages.context.account": "账号与日期",
+      "messages.capability.discovery": "工具发现",
+      "messages.capability.agent": "Agent 类型",
+      "messages.skills": "Skills",
+      "messages.directive": "动态注入",
+      "messages.injection": "动态注入",
       "messages.misc": "其他消息",
       "messages.image": "图片输入",
       "system.core": "系统提示词",

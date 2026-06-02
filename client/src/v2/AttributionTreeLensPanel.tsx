@@ -54,7 +54,6 @@ import { SelectedDiffDetail } from "./DiffPanel";
 import {
   diffUnderlineFor,
   sectionFrame,
-  intentGroupPalette,
   type IntentGroupId,
   ROLE_TO_GROUP,
   type RoleId,
@@ -155,16 +154,21 @@ function LensSwitcher({
 
 // 单个 bucket pill/badge
 function BucketPill({
-  bucket, leafCount, totalChars, isActive, onClick, variant = "pill",
+  bucket, leafCount, totalChars, totalContextChars, isActive, onClick, variant = "pill",
 }: {
   bucket: LensBucket;
   leafCount: number;
   totalChars: number;
+  /** 全请求 context 总字节数；pill 形态下用于在右侧显示该桶占 context 的百分比。 */
+  totalContextChars?: number;
   isActive: boolean;
   onClick: () => void;
   variant?: "pill" | "badge";
 }) {
   const isBadge = variant === "badge";
+  const pct = totalContextChars && totalContextChars > 0
+    ? (totalChars / totalContextChars) * 100
+    : null;
 
   const borderStyle = isActive ? `1px solid ${bucket.color}` : "1px solid #e5e7eb";
   const bgStyle = isActive ? `${bucket.color}14` : "#fafafa";
@@ -219,6 +223,11 @@ function BucketPill({
             <>
               <span style={{ fontWeight: 600, color: "#1f2937" }}>{leafCount}</span>
               <span style={{ color: "#6b7280" }}>{bucket.label}</span>
+              {pct !== null && (
+                <span style={{ marginLeft: 3, fontSize: 10, fontWeight: 600, color: "#9ca3af" }}>
+                  {pct.toFixed(1)}%
+                </span>
+              )}
             </>
           )}
         </button>
@@ -244,19 +253,24 @@ function BucketPill({
 
 
 function MajorCategoryPill({
-  groupId, leafCount, totalChars, isActive, onClick, showDropdownIndicator,
+  groupId, leafCount, totalChars, totalContextChars, isActive, onClick, showDropdownIndicator,
 }: {
   groupId: IntentGroupId;
   leafCount: number;
   totalChars: number;
+  /** 全请求 context 总字节数；用于在 pill 右侧显示该大类占 context 的百分比。 */
+  totalContextChars?: number;
   isActive: boolean;
   onClick: () => void;
   showDropdownIndicator?: boolean;
 }) {
   const { t } = useTranslation();
-  const color = intentGroupPalette[groupId].color;
   const label = t(`attribution.lensGroup.${groupId}.label`);
   const description = t(`attribution.lensGroup.${groupId}.description`);
+  const activeBorder = "#94a3b8";
+  const pct = totalContextChars && totalContextChars > 0
+    ? (totalChars / totalContextChars) * 100
+    : null;
 
   return (
     <Tooltip>
@@ -267,28 +281,33 @@ function MajorCategoryPill({
           style={{
             display: "inline-flex", alignItems: "baseline", gap: 5,
             padding: "3px 8px", borderRadius: 4,
-            border: isActive ? `1px solid ${color}` : "1px solid #e5e7eb",
-            background: isActive ? `${color}14` : "transparent",
-            color: isActive ? color : "#374151",
+            border: isActive ? `1px solid ${activeBorder}` : "1px solid #e5e7eb",
+            background: isActive ? "#f1f5f9" : "transparent",
+            color: isActive ? "#111827" : "#374151",
             fontWeight: isActive ? 700 : 500,
             fontSize: 11,
             cursor: "pointer",
             transition: "all 0.1s ease",
           }}
         >
-          <span style={{
-            width: 6, height: 6, borderRadius: "50%",
-            background: color, alignSelf: "center",
-          }} />
           <span style={{ fontWeight: 700 }}>{leafCount}</span>
           <span>{label}</span>
           {isActive && showDropdownIndicator && <span style={{ fontSize: 9, opacity: 0.8, marginLeft: 2 }}>▾</span>}
+          {pct !== null && (
+            <span style={{
+              marginLeft: 4,
+              fontSize: 10,
+              fontWeight: 600,
+              color: isActive ? "#64748b" : "#9ca3af",
+            }}>
+              {pct.toFixed(1)}%
+            </span>
+          )}
         </button>
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={6} className="max-w-xs">
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
             {label}
           </div>
           {description && (
@@ -309,12 +328,15 @@ function StructureLensFilter({
   selectedBucketId,
   onSelectBucket,
   leaves,
+  totalContextChars,
 }: {
   selectedGroupId: IntentGroupId | null;
   onSelectGroup: (groupId: IntentGroupId | null) => void;
   selectedBucketId: string | null;
   onSelectBucket: (bucketId: string | null) => void;
   leaves: LeafLite[];
+  /** 全请求 context 总字节数；透传给 MajorCategoryPill 算「占 context X%」。 */
+  totalContextChars?: number;
 }) {
   const { t } = useTranslation();
   const stats = useMemo(() => bucketStatsOf(getLens("structure"), leaves), [leaves]);
@@ -336,7 +358,7 @@ function StructureLensFilter({
   // Check if a group has multiple sub-categories that actually have leaves
   const groupHasMultiple = useMemo(() => {
     const map = new Map<IntentGroupId, boolean>();
-    const allGroups: IntentGroupId[] = ["instructions", "environment", "capabilities", "interaction"];
+    const allGroups: IntentGroupId[] = ["capabilities", "instructions", "environment", "interaction"];
     for (const g of allGroups) {
       const subCount = stats.filter((s) => s.bucket.groupId === g && s.leafCount > 0).length;
       map.set(g, subCount > 1);
@@ -352,7 +374,7 @@ function StructureLensFilter({
 
   if (totalCount === 0) return null;
 
-  const coldGroups: IntentGroupId[] = ["instructions", "environment", "capabilities", "events"];
+  const coldGroups: IntentGroupId[] = ["capabilities", "instructions", "environment"];
   const warmGroups: IntentGroupId[] = ["interaction"];
 
   const hasCold = coldGroups.some(g => (groupStats.get(g)?.leafCount ?? 0) > 0);
@@ -398,6 +420,7 @@ function StructureLensFilter({
                     groupId={g}
                     leafCount={gs.leafCount}
                     totalChars={gs.totalChars}
+                    totalContextChars={totalContextChars}
                     isActive={selectedGroupId === g}
                     onClick={() => onSelectGroup(selectedGroupId === g ? null : g)}
                     showDropdownIndicator={groupHasMultiple.get(g)}
@@ -445,6 +468,7 @@ function StructureLensFilter({
                     groupId={g}
                     leafCount={gs.leafCount}
                     totalChars={gs.totalChars}
+                    totalContextChars={totalContextChars}
                     isActive={selectedGroupId === g}
                     onClick={() => onSelectGroup(selectedGroupId === g ? null : g)}
                     showDropdownIndicator={groupHasMultiple.get(g)}
@@ -476,6 +500,7 @@ function StructureLensFilter({
                 bucket={bucket}
                 leafCount={leafCount}
                 totalChars={totalChars}
+                totalContextChars={totalContextChars}
                 isActive={selectedBucketId === bucket.id}
                 onClick={() => onSelectBucket(selectedBucketId === bucket.id ? null : bucket.id)}
               />
@@ -1057,7 +1082,7 @@ export function AttributionTreeLensPanel({
         if (b) return b.color;
       }
       if (selectedGroupId) {
-        return intentGroupPalette[selectedGroupId]?.color ?? null;
+        return "#94a3b8";
       }
     }
     for (const [lid, bid] of Object.entries(bucketFilters)) {
@@ -1288,6 +1313,7 @@ export function AttributionTreeLensPanel({
                 selectedBucketId={bucketFilters["structure"] ?? null}
                 onSelectBucket={(bid) => setBucketFilter("structure", bid)}
                 leaves={leavesForThisLens}
+                totalContextChars={totalChars}
               />
             );
           }

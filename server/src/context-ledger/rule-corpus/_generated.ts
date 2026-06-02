@@ -225,13 +225,13 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       "minCcVersion": "2.1.158"
     },
     "sourceUnits": [],
-    "description": "Claude Code 工具：Bash。2.1.158：desc 主体静态，仅提交署名里的模型名随会话所选模型变；regex head+tail 锚定，(?<model>) 捕获模型名。desc 1304B。",
+    "description": "Claude Code 工具：Bash。规则匹配整个 tool JSON(node.rawText)：锚定 name=Bash + 提交署名 Co-Authored-By，(?<model>) 在模型名真实出现处捕获(完整 家族+版本+可选 1M)，其余含 input_schema 由 [sS]* 全覆盖；仅署名里的模型名随会话所选模型变。对多个子版本真实 fixture 验证 fullyCovered。",
     "stability": "dynamic",
-    "sourcemapRef": "proxy:9e1ba147 T3C2 (2.1.158.d60)",
+    "sourcemapRef": "proxy:9e1ba147 T3C2 (2.1.158.d60); 放宽后对 16 条真实 fixture 验证(Opus 4.7 / 4.7-1M / 4.8-1M)",
     "materialization": "shape",
     "displayName": "Bash",
     "summary": "工具定义：Bash（2.1.158；署名模型名动态，其余固定）",
-    "dynamicSource": "model ← 提交署名 Claude Opus X.Y（随会话所选模型，如 4.8/4.7）",
+    "dynamicSource": "model ← 提交署名里的模型名（随会话所选模型，如 Opus 4.8 (1M context) / Opus 4.7 / Sonnet 4.6）",
     "priority": 10,
     "attribution": {
       "patternFromBody": true,
@@ -240,10 +240,10 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       "mechanism": "tools_schema_pattern",
       "category": "tools_schema",
       "captureGroups": {
-        "model": "提交署名中的活动模型名，如 Opus 4.8"
+        "model": "提交署名中的活动模型名，如 Opus 4.8 (1M context)"
       }
     },
-    "pattern": "^Executes a bash command and returns its output\\.[\\s\\S]*Co-Authored-By: Claude Opus (?<model>[0-9.]+) \\(1M context\\) <noreply@anthropic\\.com>[\\s\\S]*🤖 Generated with \\[Claude Code\\]\\(https://claude\\.com/claude-code\\)\\n*$"
+    "pattern": "^[\\s\\S]*\"name\":\\s*\"Bash\"[\\s\\S]*Co-Authored-By: Claude (?<model>(?:Opus|Sonnet|Haiku) [0-9.]+(?: \\(1M context\\))?) <noreply@anthropic\\.com>[\\s\\S]*$"
   },
   {
     "ruleId": "claude-code.tool.Edit.v2",
@@ -624,6 +624,32 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       }
     },
     "pattern": "^# userEmail\\nThe user's email address is (?<userEmail>[^\\n]+)\\.\\n# currentDate\\nToday's date is (?<currentDate>[^\\n]+)\\.$"
+  },
+  {
+    "ruleId": "claude-code.messages.reminder.global-instructions.v1",
+    "slotId": "messages.inline.system-reminder.project-instructions",
+    "verifiedFor": "2.1.160",
+    "sourceUnits": [],
+    "description": "userContext reminder 拆分后的「全局/用户级指令」子段:一个 \"Contents of <path> (user's private global instructions for all projects)\" 文件(~/.claude/CLAUDE.md,对你所有项目生效)。与项目级 CLAUDE.md 共用 project-instructions slot,靠 desc 区分;作为首文件时可含 \"# claudeMd\" 固定导言。 语义=context、来源=user-config。path/content 为动态字段。desc 跨 2.1.88→2.1.160 稳定, 对真实 session 820f368b(2.1.160) 验证。",
+    "stability": "dynamic",
+    "sourcemapRef": "proxy:820f368b id=131411 (2.1.160);splitUserContextReminder;desc 同 2.1.88 sourcemap",
+    "materialization": "shape",
+    "displayName": "全局指令(~/.claude/CLAUDE.md)",
+    "summary": "用户全局指令文件(~/.claude/CLAUDE.md),对你所有项目生效",
+    "dynamicSource": "path(全局指令文件路径) + content(正文)",
+    "priority": 0,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "regex",
+      "mechanism": "system_reminder_pattern",
+      "category": "memory_injection",
+      "captureGroups": {
+        "path": "全局指令文件路径(~/.claude/CLAUDE.md)",
+        "content": "文件正文"
+      }
+    },
+    "pattern": "^(?:# claudeMd\\nCodebase and user instructions are shown below\\. Be sure to adhere to these instructions\\. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written\\.\\n*)?Contents of (?<path>[^\\n]+?) \\(user's private global instructions[^)]*\\):\\n\\n(?<content>[\\s\\S]*?)\\n*$"
   },
   {
     "ruleId": "claude-code.messages.reminder.memory.v1",

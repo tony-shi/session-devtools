@@ -12,15 +12,15 @@
 
 // ─── Provenance：按内容来源分类的类别色 ───────────────────────────────────────
 export const provenancePalette = {
-  systemPrompt:    "#475569", // 灰蓝/石板灰 — 系统提示词
-  userInput:       "#6d28d9", // 紫色     — 用户输入
-  toolUse:         "#8b5cf6", // 紫色     — 工具调用
-  toolResult:      "#c4b5fd", // 浅紫     — 工具结果
-  claudeThinking:  "#7c3aed", // 紫罗兰   — AI 思考
-  claudeText:      "#a78bfa", // 淡紫     — AI 回复
-  fileAttachment:  "#c026d3", // 洋红     — 文件附件
-  commandOutput:   "#6b7280", // 灰色     — 命令输出
-  harnessInject:   "#ea580c", // 橙色     — Skill / 事件/注入
+  systemPrompt:    "#9a9a95", // 中性灰 — 系统提示词
+  userInput:       "#5fad6b", // 绿     — 用户输入
+  toolUse:         "#2f9db7", // 青蓝   — 工具调用
+  toolResult:      "#d99a2b", // 琥珀   — 工具结果
+  claudeThinking:  "#9a67e8", // 紫     — AI 思考
+  claudeText:      "#e88472", // 珊瑚   — AI 回复
+  fileAttachment:  "#49a7a2", // 青绿   — 文件附件
+  commandOutput:   "#8f98a6", // 灰蓝   — 命令输出
+  harnessInject:   "#c4b18c", // 暖灰   — 动态注入
   unknown:         "#9ca3af", // 灰       — 未识别
 } as const;
 
@@ -84,32 +84,37 @@ export interface SectionStyle {
 }
 
 export const sectionPalette: Record<"system" | "tools" | "messages" | "other", SectionStyle> = {
-  system:   { label: "System",   barBg: "#475569", barText: "#fff",    rowBg: "#f8fafc", marker: "#475569", textColor: "#334155" },
-  tools:    { label: "Tools",    barBg: "#2563eb", barText: "#fff",    rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1e40af" },
-  messages: { label: "Messages", barBg: "#7c3aed", barText: "#fff",    rowBg: "#f5f3ff", marker: "#7c3aed", textColor: "#5b21b6" },
-  other:    { label: "Other",    barBg: "#6b7280", barText: "#374151", rowBg: "#fafafa", marker: "#9ca3af", textColor: "#374151" },
+  system:   { label: "System",   barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
+  tools:    { label: "Tools",    barBg: "#5f84e7", barText: "#1f2937", rowBg: "#eef4ff", marker: "#5f84e7", textColor: "#3158b3" },
+  messages: { label: "Messages", barBg: "#9a67e8", barText: "#1f2937", rowBg: "#f5efff", marker: "#9a67e8", textColor: "#6942b8" },
+  other:    { label: "Other",    barBg: "#c4b18c", barText: "#374151", rowBg: "#fbf7ee", marker: "#c4b18c", textColor: "#76684d" },
 };
 
 export const rolePalette: Record<RoleId, SectionStyle> = {
-  "system.core":        { label: "系统提示词", barBg: "#475569", barText: "#fff", rowBg: "#f8fafc", marker: "#475569", textColor: "#334155" },
-  "system.guidance":    { label: "系统提示词", barBg: "#475569", barText: "#fff", rowBg: "#f8fafc", marker: "#475569", textColor: "#334155" },
-  "system.tool-policy": { label: "系统提示词", barBg: "#475569", barText: "#fff", rowBg: "#f8fafc", marker: "#475569", textColor: "#334155" },
-  "system.memory":      { label: "自动记忆 (Memory)", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
-  "system.env":         { label: "运行环境", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
-  "system.billing":     { label: "运行环境", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
-  "tools.builtin":      { label: "内置工具", barBg: "#2563eb", barText: "#fff", rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1d4ed8" },
-  "messages.context":    { label: "用户上下文", barBg: "#d97706", barText: "#fff", rowBg: "#fffbeb", marker: "#d97706", textColor: "#92400e" },
-  "messages.skills":     { label: "Skill 注册", barBg: "#3b82f6", barText: "#fff", rowBg: "#eff6ff", marker: "#2563eb", textColor: "#1d4ed8" },
-  "messages.directive":  { label: "指令规则", barBg: "#64748b", barText: "#fff", rowBg: "#f8fafc", marker: "#64748b", textColor: "#475569" },
-  "messages.injection":  { label: "系统提醒", barBg: "#f59e0b", barText: "#fff", rowBg: "#fffbeb", marker: "#f59e0b", textColor: "#92400e" },
-  "messages.human":      { label: "用户输入", barBg: "#6d28d9", barText: "#fff", rowBg: "#f5f3ff", marker: "#6d28d9", textColor: "#6d28d9" },
-  "messages.image":      { label: "图片输入", barBg: "#6d28d9", barText: "#fff", rowBg: "#f5f3ff", marker: "#6d28d9", textColor: "#6d28d9" },
-  "messages.thinking":   { label: "思考",     barBg: "#7c3aed", barText: "#fff", rowBg: "#f5f3ff", marker: "#7c3aed", textColor: "#7c3aed", indicatorLine: "top" },
-  "messages.assistant":  { label: "AI 回复",   barBg: "#a78bfa", barText: "#fff", rowBg: "#f5f3ff", marker: "#a78bfa", textColor: "#a78bfa" },
-  "messages.tool-use":   { label: "工具调用", barBg: "#8b5cf6", barText: "#fff", rowBg: "#f5f3ff", marker: "#8b5cf6", textColor: "#7c3aed", indicatorLine: "left" },
-  "messages.tool-result":{ label: "工具结果", barBg: "#f3e8ff", barText: "#1f2937", rowBg: "#f5f3ff", marker: "#c4b5fd", textColor: "#7c3aed", borderStyle: "1px solid #c4b5fd", texture: "stripes" },
-  "messages.misc":       { label: "其他",     barBg: "#6b7280", barText: "#374151", rowBg: "#fafafa", marker: "#6b7280", textColor: "#6b7280" },
-  "other.unknown":      { label: "未识别",   barBg: "#9ca3af", barText: "#374151", rowBg: "#fafafa", marker: "#9ca3af", textColor: "#9ca3af" },
+  "system.core":        { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
+  "system.guidance":    { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
+  "system.tool-policy": { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
+  "system.memory":      { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
+  "system.env":         { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
+  "system.billing":     { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
+  "tools.builtin":      { label: "内置 Tool", barBg: "#5f84e7", barText: "#1f2937", rowBg: "#eef4ff", marker: "#5f84e7", textColor: "#3158b3" },
+  "messages.context":            { label: "用户上下文", barBg: "#dda953", barText: "#1f2937", rowBg: "#fff7e3", marker: "#dda953", textColor: "#835f1f" },
+  "messages.context.claude-md":  { label: "CLAUDE.md", barBg: "#74a8e8", barText: "#1f2937", rowBg: "#eef6ff", marker: "#74a8e8", textColor: "#3d6fae" },
+  "messages.context.memory":     { label: "记忆", barBg: "#f1b45d", barText: "#1f2937", rowBg: "#fff3df", marker: "#f1b45d", textColor: "#9b6220" },
+  "messages.context.account":    { label: "账号与日期", barBg: "#8fa2bf", barText: "#1f2937", rowBg: "#f1f5fb", marker: "#8fa2bf", textColor: "#596f8f" },
+  "messages.capability.discovery": { label: "工具发现", barBg: "#a37bdc", barText: "#1f2937", rowBg: "#f5efff", marker: "#a37bdc", textColor: "#704ab1" },
+  "messages.capability.agent":   { label: "Agent 类型", barBg: "#748ee8", barText: "#1f2937", rowBg: "#f0f3ff", marker: "#748ee8", textColor: "#4b62b0" },
+  "messages.skills":             { label: "Skills", barBg: "#e5c34f", barText: "#1f2937", rowBg: "#fff9dc", marker: "#e5c34f", textColor: "#856d19" },
+  "messages.directive":          { label: "动态注入", barBg: "#c4b18c", barText: "#1f2937", rowBg: "#fbf7ee", marker: "#c4b18c", textColor: "#76684d" },
+  "messages.injection":          { label: "动态注入", barBg: "#c4b18c", barText: "#1f2937", rowBg: "#fbf7ee", marker: "#c4b18c", textColor: "#76684d" },
+  "messages.human":      { label: "用户输入", barBg: "#5fad6b", barText: "#1f2937", rowBg: "#ebf8ee", marker: "#5fad6b", textColor: "#3f7c49" },
+  "messages.image":      { label: "图片输入", barBg: "#49a7a2", barText: "#1f2937", rowBg: "#eaf8f7", marker: "#49a7a2", textColor: "#2f7773" },
+  "messages.thinking":   { label: "AI 思考", barBg: "#9a67e8", barText: "#1f2937", rowBg: "#f5efff", marker: "#9a67e8", textColor: "#6942b8", indicatorLine: "top" },
+  "messages.assistant":  { label: "AI 回复", barBg: "#e88472", barText: "#1f2937", rowBg: "#fff0ec", marker: "#e88472", textColor: "#9f4e3f" },
+  "messages.tool-use":   { label: "工具调用", barBg: "#2f9db7", barText: "#1f2937", rowBg: "#eaf8fb", marker: "#2f9db7", textColor: "#1d7187", indicatorLine: "left" },
+  "messages.tool-result":{ label: "工具结果", barBg: "#d99a2b", barText: "#1f2937", rowBg: "#fff4dd", marker: "#d99a2b", textColor: "#8a5d16", borderStyle: "1px solid #d99a2b", texture: "stripes" },
+  "messages.misc":       { label: "其他消息", barBg: "#c9ad61", barText: "#1f2937", rowBg: "#fbf6e4", marker: "#c9ad61", textColor: "#7a6626" },
+  "other.unknown":       { label: "未识别", barBg: "#b8b8b3", barText: "#374151", rowBg: "#fafafa", marker: "#b8b8b3", textColor: "#6f6f6b" },
 };
 
 /** 未识别 leaf 的 fallback 填充。 */
@@ -125,6 +130,11 @@ export type RoleId =
   | "system.billing"
   | "tools.builtin"
   | "messages.context"
+  | "messages.context.claude-md"
+  | "messages.context.memory"
+  | "messages.context.account"
+  | "messages.capability.discovery"
+  | "messages.capability.agent"
   | "messages.skills"
   | "messages.directive"
   | "messages.injection"
@@ -146,15 +156,15 @@ export type IntentGroupId =
   | "interaction";
 
 export const intentGroupPalette: Record<IntentGroupId, { color: string }> = {
-  instructions:         { color: "#475569" }, // 系统提示词
-  environment:          { color: "#d97706" }, // 用户上下文
-  capabilities:         { color: "#2563eb" }, // 工具定义
-  events:               { color: "#f59e0b" }, // 系统提醒（兼容旧映射）
-  interaction:          { color: "#7c3aed" }, // 对话内容
+  instructions:         { color: "#6b7280" }, // 顶部筛选 chip 只做导航，不承载语义配色
+  environment:          { color: "#6b7280" },
+  capabilities:         { color: "#6b7280" },
+  events:               { color: "#6b7280" },
+  interaction:          { color: "#6b7280" },
 };
 
 /** i18n key 前缀 —— 配合 useTranslation().t() 取 label / description。
- *  例:t(`${intentGroupI18nKey(g)}.label`) → "系统指令" / "System Prompts" */
+ *  例:t(`${intentGroupI18nKey(g)}.label`) → "系统提示词" / "System Prompt" */
 export function intentGroupI18nKey(g: IntentGroupId): string {
   return `attribution.lensGroup.${g}`;
 }
@@ -165,22 +175,25 @@ export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
   "system.core":         "instructions",
   "system.guidance":     "instructions",
   "system.tool-policy":  "instructions",
-  "messages.directive":  "instructions",
+  "system.memory":       "instructions",
+  "system.env":          "instructions",
+  "system.billing":      "instructions",
 
   // ── environment
-  "system.memory":       "environment",
-  "system.env":          "environment",
-  "system.billing":      "environment",
   "messages.context":    "environment",
+  "messages.context.claude-md": "environment",
+  "messages.context.memory":    "environment",
+  "messages.context.account":   "environment",
 
   // ── capabilities
   "tools.builtin":       "capabilities",
+  "messages.capability.discovery": "capabilities",
+  "messages.capability.agent":     "capabilities",
   "messages.skills":     "capabilities",
 
-  // ── events
-  "messages.injection":  "events",
-
   // ── interaction
+  "messages.directive":  "interaction",
+  "messages.injection":  "interaction",
   "messages.human":      "interaction",
   "messages.thinking":   "interaction",
   "messages.assistant":  "interaction",
@@ -196,6 +209,8 @@ export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
   const allRoles: RoleId[] = [
     "system.core", "system.guidance", "system.tool-policy", "system.memory",
     "system.env", "system.billing", "tools.builtin", "messages.context",
+    "messages.context.claude-md", "messages.context.memory", "messages.context.account",
+    "messages.capability.discovery", "messages.capability.agent",
     "messages.skills", "messages.directive", "messages.injection",
     "messages.human", "messages.thinking", "messages.assistant",
     "messages.tool-use", "messages.tool-result", "messages.image",
@@ -208,11 +223,11 @@ export const ROLE_TO_GROUP: Record<RoleId, IntentGroupId> = {
   }
 }
 
-// group 在 pill 行中的视觉顺序（左 → 右）。冷色轨在前，暖色轨在后。
+// group 在 pill 行中的视觉顺序（左 → 右）。大类只承担筛选导航，语义颜色下沉到 role/segment。
 export const INTENT_GROUP_ORDER: IntentGroupId[] = [
+  "capabilities",
   "instructions",
   "environment",
-  "capabilities",
-  "events",
   "interaction",
+  "events",
 ];

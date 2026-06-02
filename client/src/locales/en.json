@@ -316,7 +316,7 @@
     "layers": "Layers",
     "baseLensSuffix": " (Base layer, cannot close)",
     "trackContext": "Request Makeup",
-    "trackInteraction": "Conversation",
+    "trackInteraction": "Session Events",
     "loadFailed": "Attribution load failed",
     "loading": "Loading attribution…",
     "skip": {
@@ -347,20 +347,20 @@
         "description": "The reqBody.system prompt body; lower-level sections remain available in raw and audit views."
       },
       "environment": {
-        "label": "Runtime Context",
-        "description": "Project instructions, automatic memory, and runtime environment facts."
+        "label": "User Context",
+        "description": "CLAUDE.md, automatic memory, account/date facts, and other user/project context."
       },
       "capabilities": {
         "label": "Tools & Capabilities",
-        "description": "Built-in tool schemas, deferred registered skills, or sub-agent capabilities."
+        "description": "Built-in tools, runtime tool discovery, MCP/agent types, and Skills declarations."
       },
       "events": {
-        "label": "System Reminders & Injections",
-        "description": "Non-conversational prompts dynamically injected by the harness during runtime."
+        "label": "Dynamic Injection",
+        "description": "<system-reminder> wrappers, runtime reminders, and other non-conversational injected prompts."
       },
       "interaction": {
-        "label": "Conversation",
-        "description": "User input, AI replies, thinking blocks, tool calls, and tool results."
+        "label": "Session Events",
+        "description": "User input, AI replies, AI thinking, tool calls, and tool results in the live session."
       }
     },
     "stability": {
@@ -418,9 +418,14 @@
       "messages.tool-result": "Tool Result",
       "messages.inline.system-reminder": "System Reminder",
       "messages.context": "User Context",
-      "messages.skills": "Deferred Capability",
-      "messages.directive": "System Directive",
-      "messages.injection": "System Reminder",
+      "messages.context.claude-md": "CLAUDE.md",
+      "messages.context.memory": "Memory",
+      "messages.context.account": "Account & Date",
+      "messages.capability.discovery": "Tool Discovery",
+      "messages.capability.agent": "Agent Types",
+      "messages.skills": "Skills",
+      "messages.directive": "Dynamic Injection",
+      "messages.injection": "Dynamic Injection",
       "messages.misc": "Misc Messages",
       "messages.image": "Image Input",
       "system.core": "System Prompt",

@@ -51,4 +51,10 @@ export const PARSERS_V2: Record<string, ParserV2> = {
 //     前端用一道画在 padding 槽的主题 rail 把整组框在一起(纯样式)。
 // v10: userContext reminder 切分加位置 gate —— 仅 messages[0] 起始整块(charRange.start===0)才切;
 //      会话正文里引用 <system-reminder> 的 prose/代码(offset>0 或 messages[>0])不再被误切成信封。
-export const PARSER_VERSION = 10;
+// v11: Bash tool 规则 pattern 改 JSON 形态(匹整个 tool JSON node.rawText,非 description 主体)——
+//      修复 tool 规则因 pattern 锚 description 而永不命中、全退 wire 的问题;Bash 提交署名模型名
+//      现作为 dynamicField 露出(≥2.1.158),前端自动标动态。其余 tool 规则仍 description 形态(待扫)。
+// v12: 新增 global-instructions 规则 —— 全局/用户级 ~/.claude/CLAUDE.md(desc "user's private global
+//      instructions…") 不再 RULE_GAP 裸 slug,独立命中、显示「全局指令」;同 project-instructions slot、
+//      靠 desc 区分。对真实 2.1.160 session(820f368b) 验证。
+export const PARSER_VERSION = 12;

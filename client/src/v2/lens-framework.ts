@@ -96,25 +96,25 @@ export const cacheLens: Lens = {
 
 const ROLE_BUCKETS: LensBucket[] = [
   // ─── capabilities
-  { id: "tools.builtin", label: "内置工具", color: rolePalette["tools.builtin"].marker, description: "内置系统工具 of Schema 描述，定义模型可用的基础工具", groupId: "capabilities" },
-  { id: "messages.skills", label: "Skill 注册", color: rolePalette["messages.skills"].marker, description: "延迟工具声明、可用 sub-agent 类型声明或已安装 skill 列表", groupId: "capabilities" },
+  { id: "tools.builtin", label: "内置 Tool", color: rolePalette["tools.builtin"].marker, description: "reqBody.tools 中内置系统工具的 JSON Schema，定义模型可直接调用的基础工具。", groupId: "capabilities" },
+  { id: "messages.capability.discovery", label: "工具发现", color: rolePalette["messages.capability.discovery"].marker, description: "运行时延迟注入的工具发现信息，例如可用 deferred tools / MCP 工具摘要。", groupId: "capabilities" },
+  { id: "messages.capability.agent", label: "Agent 类型", color: rolePalette["messages.capability.agent"].marker, description: "运行时可用的 sub-agent 类型声明。", groupId: "capabilities" },
+  { id: "messages.skills", label: "Skills", color: rolePalette["messages.skills"].marker, description: "已安装或可用的 Skill 描述。", groupId: "capabilities" },
 
   // ─── instructions
-  { id: "system.core", label: "系统提示词", color: rolePalette["system.core"].marker, description: "Claude Code 的核心身份与任务指令模板（identity、intro、harness等）", groupId: "instructions" },
-  { id: "system.guidance", label: "系统提示词", color: rolePalette["system.guidance"].marker, description: "会话守则、上下文管理策略等行为指导（session-guidance、context-management）", groupId: "instructions" },
-  { id: "system.tool-policy", label: "系统提示词", color: rolePalette["system.tool-policy"].marker, description: "工具使用规范与策略指引（Using your tools）", groupId: "instructions" },
-  { id: "messages.directive", label: "指令规则", color: rolePalette["messages.directive"].marker, description: "由 harness 动态注入的行为频次指引（如 thinking-frequency）", groupId: "instructions" },
+  { id: "system.core", label: "系统提示词", color: rolePalette["system.core"].marker, description: "reqBody.system 中的系统提示词主体；内部 section 细节保留在 raw/audit 视图。", groupId: "instructions" },
+  { id: "system.guidance", label: "系统提示词", color: rolePalette["system.guidance"].marker, description: "系统提示词内部行为指导；默认展示仍并入系统提示词。", groupId: "instructions" },
+  { id: "system.tool-policy", label: "系统提示词", color: rolePalette["system.tool-policy"].marker, description: "系统提示词内部工具策略；默认展示仍并入系统提示词。", groupId: "instructions" },
 
   // ─── environment
-  { id: "system.memory", label: "自动记忆 (Memory)", color: rolePalette["system.memory"].marker, description: "CLAUDE.md 历史交互的记忆积累文件内容", groupId: "environment" },
-  { id: "system.env", label: "运行环境", color: rolePalette["system.env"].marker, description: "本次会话的基础运行环境、 facts 等事实上下文信息", groupId: "environment" },
-  { id: "system.billing", label: "运行环境", color: rolePalette["system.billing"].marker, description: "Token 计费头与 CC 版本噪音等指示", groupId: "environment" },
-  { id: "messages.context", label: "项目指令 (CLAUDE.md)", color: rolePalette["messages.context"].marker, description: "项目指令（CLAUDE.md）内容。", groupId: "environment" },
-
-  // ─── events
-  { id: "messages.injection", label: "系统提醒", color: rolePalette["messages.injection"].marker, description: "harness 随时间注入的临时运行时提醒（Token 消耗、文件改动等事件）", groupId: "events" },
+  { id: "messages.context", label: "用户上下文", color: rolePalette["messages.context"].marker, description: "旧版或未细分的用户上下文注入。", groupId: "environment" },
+  { id: "messages.context.claude-md", label: "CLAUDE.md", color: rolePalette["messages.context.claude-md"].marker, description: "项目指令和用户维护的 CLAUDE.md / AGENTS.md 类上下文。", groupId: "environment" },
+  { id: "messages.context.memory", label: "记忆", color: rolePalette["messages.context.memory"].marker, description: "Claude Code 自动生成或维护的 memory 内容。", groupId: "environment" },
+  { id: "messages.context.account", label: "账号与日期", color: rolePalette["messages.context.account"].marker, description: "账号邮箱、当前日期等身份和时间上下文。", groupId: "environment" },
 
   // ─── interaction
+  { id: "messages.directive", label: "动态注入", color: rolePalette["messages.directive"].marker, description: "由 harness 动态注入的行为频次指引或包装结构。", groupId: "interaction" },
+  { id: "messages.injection", label: "动态注入", color: rolePalette["messages.injection"].marker, description: "<system-reminder> wrapper、运行时提醒等非对话内容。", groupId: "interaction" },
   { id: "messages.human", label: "用户文本", color: rolePalette["messages.human"].marker, description: "用户在终端中直接输入的聊天文本", groupId: "interaction" },
   { id: "messages.image", label: "图片附件", color: rolePalette["messages.image"].marker, description: "用户上传的多模态图片数据", groupId: "interaction" },
   { id: "messages.thinking", label: "思考过程", color: rolePalette["messages.thinking"].marker, description: "Claude 产生的思考过程 (Thinking Block) 消耗", groupId: "interaction" },
@@ -133,16 +133,9 @@ export const structureLens: Lens = {
   bucketOf(leaf) {
     if (leaf.origin.kind === "unknown") return "other.unknown";
     if (leaf.classSlot.endsWith(".unknown") || leaf.slotType.endsWith(".unknown")) return "other.unknown";
-    // v2 正交语义轴：修复 messages 注入区（reminder / role:system message）的分组。
-    // roleOf 对这块最易错——deferred/agent 误落 environment、user-context.v2 误落 events。
-    // 用后端 axes.semantic 纠正；其余区域仍走 roleOf（零风险）。
-    const sem = leaf.axes?.semantic;
-    if (sem && (leaf.classSlot.startsWith("messages.inline.system-reminder") || leaf.classSlot === "messages.system-message")) {
-      if (sem === "capability") return "messages.skills";   // 三 listing → 能力(capabilities)
-      if (sem === "context") return "messages.context";     // userContext / memory → 上下文(environment)
-      if (sem === "directive") return "messages.directive"; // thinking-frequency → 指令(instructions)
-      if (sem === "meta") return "messages.injection";      // token/file 提醒 → 运行时事件(events)
-    }
+    // 默认 UI 分类由 ruleId/slot 归属决定，后端 axes 继续用于审计/raw 信息。
+    // 这里不再按 axes.semantic 二次压桶，避免把 CLAUDE.md、memory、account、
+    // tool discovery 等有效子类重新混成一个粗分类。
     return roleOf(leaf);
   },
 };
