@@ -18,6 +18,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: CLIENT_PORT,
+      strictPort: true,
       open: true,
       proxy: {
         "/api": `http://localhost:${SERVER_PORT}`,
