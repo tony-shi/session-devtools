@@ -75,6 +75,9 @@ resources/
 # Local-only dev routes / walkthrough studio (intentionally untracked, see App.tsx).
 client/src/v2/walkthrough/
 client/src/local-routes.tsx
+# Voice synth incremental cache (hashed mp3s; regenerable, kept local).
+.cache/
+
 CLAUDE.md
 agent.md
 _tmp_rulelist.txt

@@ -5,6 +5,9 @@ import { STORIES } from "./stories";
 import { STAGE_CONFIG } from "./config";
 import type { ActId, Focus } from "./types";
 import { LangCtx, loadLang, saveLang, pickLines, type Lang } from "./i18n";
+import { readModeFromUrl, hidesChrome, forcesManualBeat, readLockedLang, type Mode } from "./modes";
+import { loadManifest } from "./voice/manifestLoader";
+import type { Manifest } from "./voice/types";
 import { apiV2 } from "../api";
 import type { UserTurn, LlmCall, SessionDrilldown, CompactEvent, SubAgentSummary, ToolCallSlot } from "../drilldown-types";
 import { AttributionGraphProvider } from "../attribution-graph-context";
@@ -284,11 +287,22 @@ export function DemoStage() {
   const [byAct, setByAct] = useState<Partial<Record<ActId, StageData>> | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const cacheRef = useRef<Map<string, SessionDrilldown>>(new Map());
-  const [playing, setPlaying] = useState(true);
+  // 呈现模式 —— ?mode=record 隐藏所有 chrome,节拍必须手动推进;无参数=live(向后兼容)
+  const [mode] = useState<Mode>(() => readModeFromUrl());
+  const lockedLang = readLockedLang();        // ?lang=zh|en → 录屏锁定语言
+  const [playing, setPlaying] = useState(() => !forcesManualBeat(mode));
   const [restartNonce, setRestartNonce] = useState(0);
   // 双语:仅切换 NarrationBox 的字幕来源(以及 view 侧 useT() 的解析结果),数据流不变。
-  const [lang, setLang] = useState<Lang>(() => loadLang());
-  useEffect(() => { saveLang(lang); }, [lang]);
+  const [lang, setLangRaw] = useState<Lang>(() => lockedLang ?? loadLang());
+  const setLang = (l: Lang) => { if (lockedLang) return; setLangRaw(l); };
+  useEffect(() => { if (!lockedLang) saveLang(lang); }, [lang, lockedLang]);
+  // 音轨清单(可选):由 scripts/voice/synth.ts 离线产出;缺失则 fallback 到 BEAT_MS 计时
+  const [manifest, setManifest] = useState<Manifest | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    loadManifest(storyId, lang).then((m) => { if (!cancelled) setManifest(m); });
+    return () => { cancelled = true; };
+  }, [storyId, lang]);
   // beat = 当前字幕行 / 揭示阶段(字幕与画面揭示共用同一个节拍,逐步同步推进)。
   const [beat, setBeat] = useState(0);
   // 已经"看过"的步骤 —— 第一次到一步会从头播放;回到这一步(无论前后导航)直接跳到该步的"终态",
@@ -348,14 +362,39 @@ export function DemoStage() {
     setInstantReveal(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restartNonce]);
-  // 节拍时钟:每 BEAT_MS 前进一行,停在最后一行(由 ← / → 切幕)。
+  // 节拍时钟 —— 三档优先级:
+  //   1) record 模式:完全手动,← / → 触发,这个 effect 不推进
+  //   2) 有 manifest 这一拍的 cue:按 (durMs + gapMs) 推进 + 播 mp3(若有 audio 字段)
+  //   3) 没 manifest:沿用原 BEAT_MS 计时(向后兼容,无音轨也能 demo)
   useEffect(() => {
     if (!playing) return;
+    if (forcesManualBeat(mode)) return;
     const n = STORIES[storyId]?.steps[index]?.lines.length ?? 0;
     if (beat >= n - 1) return;
-    const t = window.setTimeout(() => setBeat((b) => b + 1), BEAT_MS);
-    return () => clearTimeout(t);
-  }, [playing, beat, index, storyId]);
+
+    const cue = manifest?.steps.find((s) => s.stepIdx === index)?.lines[beat] ?? null;
+    const advance = () => setBeat((b) => b + 1);
+
+    // 有音频 → 播 + 等 ended;无音频或加载失败 → 走 cue.durMs;再无 cue → 走 BEAT_MS
+    let audio: HTMLAudioElement | null = null;
+    let timer: number | undefined;
+    if (cue?.audio) {
+      audio = new Audio(`/voice/${manifest!.storyId}/${cue.audio}`);
+      const onEnd = () => { timer = window.setTimeout(advance, cue.gapMs); };
+      const onErr = () => { timer = window.setTimeout(advance, cue.durMs + cue.gapMs); };
+      audio.addEventListener("ended", onEnd, { once: true });
+      audio.addEventListener("error", onErr, { once: true });
+      audio.play().catch(onErr);
+    } else if (cue) {
+      timer = window.setTimeout(advance, cue.durMs + cue.gapMs);
+    } else {
+      timer = window.setTimeout(advance, BEAT_MS);
+    }
+    return () => {
+      if (audio) { audio.pause(); }
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [playing, beat, index, storyId, mode, manifest]);
 
   if (!story) {
     return <div style={{ padding: 40, color: "#6b7280" }}>未找到 walkthrough：<code>{storyId}</code></div>;
@@ -376,17 +415,43 @@ export function DemoStage() {
           {state === "ready" && <ActContent act={step.act} data={data} focus={step.focus} beat={beat} beatCount={subtitle.length} playing={playing} restartNonce={restartNonce} instantReveal={instantReveal} />}
         </div>
 
-        {/* 字幕带:预留的固定区域,字幕只在这里出现,不与内容重叠 */}
-        <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "0 24px 40px" }}>
-          {state === "ready" && <NarrationBox lines={subtitle} beat={beat} />}
-        </div>
+        {/* 字幕带:预留的固定区域,字幕只在这里出现,不与内容重叠。录屏模式隐藏 —— 字幕由后期音轨 + SRT 提供。 */}
+        {!hidesChrome(mode) && (
+          <div style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "0 24px 40px" }}>
+            {state === "ready" && <NarrationBox lines={subtitle} beat={beat} />}
+          </div>
+        )}
 
-        {/* 右上角语言切换;脚手架阶段,view 内部仍以中文为主,字幕跟随这里走。 */}
-        <LangToggle lang={lang} onChange={setLang} />
+        {/* 右上角语言切换 —— 录屏模式 / 已 URL 锁定语言时隐藏 */}
+        {!hidesChrome(mode) && !lockedLang && <LangToggle lang={lang} onChange={setLang} />}
+
+        {/* 录屏模式:左下角微型节拍角标(用于核对,最终成片裁掉)。 */}
+        {hidesChrome(mode) && state === "ready" && (
+          <RecordHud storyId={storyId} stepIdx={index} stepCount={story.steps.length} beat={beat} beatCount={subtitle.length} lang={lang} hasManifest={!!manifest} />
+        )}
 
         <style>{`@keyframes wt-fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}@keyframes wt-blink{50%{opacity:0}}@keyframes wt-rollup{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}`}</style>
       </div>
     </LangCtx.Provider>
+  );
+}
+
+// 录屏角标:左下角,~10px 字号,半透明灰 —— 录屏者看得见,后期裁 24px 即可干净去除。
+// 故意不放进度条 / 大标题:成片不需要,录屏者只要知道"现在第几幕第几拍"防止走丢。
+function RecordHud({ storyId, stepIdx, stepCount, beat, beatCount, lang, hasManifest }: {
+  storyId: string; stepIdx: number; stepCount: number; beat: number; beatCount: number; lang: Lang; hasManifest: boolean;
+}) {
+  return (
+    <div
+      style={{
+        position: "fixed", left: 12, bottom: 10, zIndex: 60,
+        fontFamily: "monospace", fontSize: 10, color: "rgba(100,116,139,0.55)",
+        background: "rgba(255,255,255,0.6)", padding: "2px 6px", borderRadius: 4,
+        userSelect: "none", pointerEvents: "none",
+      }}
+    >
+      {storyId} · {lang} · step {stepIdx + 1}/{stepCount} · beat {beat + 1}/{beatCount} · {hasManifest ? "audio" : "timer"}
+    </div>
   );
 }
 
