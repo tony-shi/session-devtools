@@ -88,3 +88,7 @@ read_line.js
 docs/attribution-refinement-9e1ba147-T3C2.md
 *.code-workspace
 CLAUDE.local.md
+
+# Remotion render output (binaries, regenerable)
+client/out/
+out
