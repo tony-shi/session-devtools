@@ -151,7 +151,18 @@ function expandChildren(match: SlotMatch, template: RequestTemplate): SlotMatch[
   // → splitUserContextReminder 返回 []，保持单 leaf，行为不变(安全)。无 template slot,故在
   // findTemplateSlot 之前处理(同 messages.system-message)。
   if (match.slotType === "messages.inline.system-reminder") {
-    return splitUserContextReminder(match.rawText, match.jsonPath);
+    // 仅切 CC 真正注入的"首条 userContext reminder"：它在第一条 user 消息(messages[0]) 里某个
+    // content block 的【起始整块】(charRange.start===0)。会话正文里引用/讨论 <system-reminder>
+    // 的 prose / 代码（assistant 消息、靠后消息、或嵌在文中 offset>0）不满足 → 保持单 leaf，避免把
+    // 引用误切成 reminder 信封、污染归因（解析本 dashboard 自身会话尤其常见）。内容签名再由
+    // splitUserContextReminder 的 GUIDE startsWith 兜一层。
+    const atBlockStart = match.charRange ? match.charRange.start === 0 : true;
+    const midx = /messages\[(\d+)\]/.exec(match.jsonPath);
+    const inFirstMessage = midx ? midx[1] === "0" : true;
+    if (atBlockStart && inFirstMessage) {
+      return splitUserContextReminder(match.rawText, match.jsonPath);
+    }
+    return [];
   }
 
   const slot = findTemplateSlot(template, match.slotType);
@@ -404,18 +415,35 @@ function splitSystemMessage(text: string, parentJsonPath: string): SlotMatch[] {
  *   .wrapper.prefix          — <system-reminder> 开头 + "As you answer..." 固定外壳
  *   .project-instructions ×N — 项目指令文件；第一段包含 "# claudeMd" 固定导言
  *   .memory                  — "Contents of <path>MEMORY.md (auto-memory…)"(CC 生成的持久化记忆)
- *   .account                 — "# userEmail … # currentDate …"
- *   .wrapper.suffix          — 结尾 IMPORTANT + </system-reminder>
+ *   .account                 — "# userEmail … # currentDate …"(email/date 合并一段,按需)
+ *   .wrapper.suffix          — 结尾 IMPORTANT + </system-reminder>（壳为普通可见 leaf：进桶/可筛/可点）
  * 若 "# claudeMd" 后面没有紧邻项目指令文件，则导言并入 wrapper.prefix，保证子段严格按物理顺序 tile。
- * 子段 tile 满 0..length 无空隙。仅当含 "# claudeMd" / "# userEmail" / "# currentDate" 时拆
- * (= userContext reminder);否则返回 []，保持单 leaf —— 其它 reminder(token-usage / file-attachment /
- * diagnostics)不受影响。
+ * 子段 tile 满 0..length 无空隙。
+ *
+ * 识别按 CC 固定引导语前缀签名(见函数体 GUIDE),而非硬锁三锚点全在——后者会让缺 CLAUDE.md
+ * (无项目/无记忆)或旧版日志(无 # userEmail)整条退化不切。现在有哪段切哪段:claudeMd/memory/account
+ * 各自按存在与否出现、缺则跳过;常见情形仍是 prefix/项目指令/记忆/账号/suffix 五段(与 pinned 规则、
+ * 契约测试逐字节一致)。非 userContext reminder(token-usage / file-attachment / diagnostics)签名不匹配
+ * → 返回 []，保持单 leaf，行为不变(安全)。
  */
 function splitUserContextReminder(text: string, parentJsonPath: string): SlotMatch[] {
+  // 识别:CC prependUserContext 写死的固定引导语前缀,唯一标识 userContext reminder。
+  // 比"# claudeMd/# userEmail/# currentDate 三锚点全在"更准也更鲁棒:其它 reminder
+  // (token-usage / file-attachment / diagnostics)不以这句开头 → 返回 [] 保持单 leaf(安全);
+  // 而缺 CLAUDE.md(无项目/无记忆)或旧版日志(无 # userEmail)也不再被误杀成整条不切。
+  const GUIDE = "<system-reminder>\nAs you answer the user's questions, you can use the following context:";
+  if (!text.startsWith(GUIDE)) return [];
+
+  // 各 header 锚点都可缺,按是否存在切。
   const claudeMdPos = text.indexOf("# claudeMd");
   const userEmailPos = text.indexOf("# userEmail");
-  const currentDatePos = text.indexOf("# currentDate", userEmailPos);
-  if (claudeMdPos < 0 || userEmailPos < 0 || currentDatePos < 0 || userEmailPos <= claudeMdPos) return [];
+  const currentDatePos = text.indexOf("# currentDate");
+  // 账号尾段起点 = userEmail / currentDate 中最早出现者(二者本就相邻在 suffix 前,合并成一段)。
+  const accountStart = [userEmailPos, currentDatePos].filter((p) => p >= 0).sort((a, b) => a - b)[0] ?? -1;
+  // 收尾外壳锚点(固定 closing)。
+  const suffixStart = text.indexOf("\n\n      IMPORTANT:");
+  // body(项目指令/记忆文件区)的右边界:账号起点 → 否则 suffix 起点 → 否则全文末。
+  const bodyEnd = accountStart >= 0 ? accountStart : suffixStart >= 0 ? suffixStart : text.length;
 
   const out: SlotMatch[] = [];
   const push = (slot: string, start: number, end: number, ev: string, visibility?: "default" | "rawOnly") => {
@@ -431,49 +459,53 @@ function splitUserContextReminder(text: string, parentJsonPath: string): SlotMat
     });
   };
 
-  // 所有 "Contents of <path> (<desc>):"(只取 # userEmail 之前的)
+  // 所有 "Contents of <path> (<desc>):"(只取 body 区内,账号/suffix 之前的)
   const re = /Contents of ([^\n]+?) \(([^)]*)\):/g;
   const files: { at: number; path: string; desc: string }[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    if (m.index >= userEmailPos) break;
+    if (m.index >= bodyEnd) break;
     files.push({ at: m.index, path: m[1]!, desc: m[2]! });
   }
 
-  const firstFileAt = files.length > 0 ? files[0]!.at : userEmailPos;
+  const firstFileAt = files.length > 0 ? files[0]!.at : bodyEnd;
   const firstFile = files[0];
   const firstFileIsProject = !!firstFile && !(/auto-memory/.test(firstFile.desc) || /MEMORY\.md\s*$/.test(firstFile.path));
   // 外壳前缀:<system-reminder> + As you answer...。
-  // # claudeMd 固定导言属于后续项目指令的结构头；只有没有紧邻项目指令时才留在 wrapper。
-  push(
-    "messages.inline.system-reminder.wrapper.prefix",
-    0,
-    firstFileIsProject ? claudeMdPos : firstFileAt,
-    "<system-reminder>",
-    "rawOnly",
-  );
+  // # claudeMd 固定导言属于后续项目指令的结构头;只有没有紧邻项目指令时才留在 wrapper
+  // (wrapper-prefix 规则 pattern 用可选组兜住这两种形态)。缺 claudeMd 时 prefixEnd=firstFileAt(=bodyEnd)
+  // → prefix 恰为固定引导语本身,不再 bail。
+  const prefixEnd = firstFileIsProject && claudeMdPos >= 0 ? claudeMdPos : firstFileAt;
+  push("messages.inline.system-reminder.wrapper.prefix", 0, prefixEnd, "<system-reminder>");
   // 各 "Contents of" 文件:MEMORY.md(auto-memory)→ .memory;其余(project instructions)→ .project-instructions
   for (let i = 0; i < files.length; i++) {
     const f = files[i]!;
-    const end = i + 1 < files.length ? files[i + 1]!.at : userEmailPos;
+    const end = i + 1 < files.length ? files[i + 1]!.at : bodyEnd;
     const isMemory = /auto-memory/.test(f.desc) || /MEMORY\.md\s*$/.test(f.path);
     const slot = isMemory
       ? "messages.inline.system-reminder.memory"
       : "messages.inline.system-reminder.project-instructions";
-    push(slot, i === 0 && !isMemory ? claudeMdPos : f.at, end, "Contents of");
+    // 第一段若是项目指令,把 # claudeMd 导言并入(结构头归属项目指令)。
+    push(slot, i === 0 && !isMemory && claudeMdPos >= 0 ? claudeMdPos : f.at, end, "Contents of");
   }
-  // 账号:# userEmail … # currentDate …。只保留事实字段,不吞 closing wrapper。
-  const suffixStart = text.indexOf("\n\n      IMPORTANT:", userEmailPos);
-  const currentDateLineEnd = (() => {
-    const firstNewline = text.indexOf("\n", currentDatePos);
-    if (firstNewline < 0) return text.length;
-    const secondNewline = text.indexOf("\n", firstNewline + 1);
-    return secondNewline < 0 ? text.length : secondNewline;
-  })();
-  const accountEnd = suffixStart >= 0 ? suffixStart : currentDateLineEnd;
-  push("messages.inline.system-reminder.account", userEmailPos, accountEnd, "# userEmail");
-  // 外壳后缀:IMPORTANT + </system-reminder>。文案可能随版本变,作为 raw-only 尾部保留。
-  push("messages.inline.system-reminder.wrapper.suffix", accountEnd, text.length, "</system-reminder>", "rawOnly");
+  // 账号:# userEmail … # currentDate …(email/date 合并一段)。只保留事实字段,不吞 closing wrapper。
+  // 缺 # userEmail 的旧版日志只切出 currentDate 段(命不中 pinned account pattern → best-effort,
+  // 不影响切分与展示)。无账号时 accountEnd 退回 bodyEnd,suffix 直接接在 body 后(游标不漏)。
+  let accountEnd = bodyEnd;
+  if (accountStart >= 0) {
+    const currentDateLineEnd = (() => {
+      if (currentDatePos < 0) return suffixStart >= 0 ? suffixStart : text.length;
+      const firstNewline = text.indexOf("\n", currentDatePos);
+      if (firstNewline < 0) return text.length;
+      const secondNewline = text.indexOf("\n", firstNewline + 1);
+      return secondNewline < 0 ? text.length : secondNewline;
+    })();
+    accountEnd = suffixStart >= 0 ? suffixStart : currentDateLineEnd;
+    const ev = userEmailPos >= 0 && userEmailPos === accountStart ? "# userEmail" : "# currentDate";
+    push("messages.inline.system-reminder.account", accountStart, accountEnd, ev);
+  }
+  // 外壳后缀:IMPORTANT + </system-reminder>。壳现在是普通可见 leaf(进桶/可筛/可点),不再 rawOnly 隐藏。
+  push("messages.inline.system-reminder.wrapper.suffix", accountEnd, text.length, "</system-reminder>");
 
   return out.length >= 2 ? out : [];
 }

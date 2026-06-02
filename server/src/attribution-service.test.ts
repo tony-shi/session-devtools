@@ -126,7 +126,7 @@ describe("attribution-service — JSONL adapter", () => {
 });
 
 describe("attribution-service — loadAttributionTree 端到端", () => {
-  it("userContext system-reminder 返回 parent raw + child charRange，wrapper 默认 rawOnly", async () => {
+  it("userContext system-reminder 返回 parent raw + child charRange，wrapper 也作为普通可见 leaf", async () => {
     const reqBody = makeReqBodyWithUserContextReminder();
 
     const result = await loadAttributionTree(
@@ -174,22 +174,22 @@ describe("attribution-service — loadAttributionTree 端到端", () => {
       expect(parent!.rawText!.slice(child.charRange!.start, child.charRange!.end)).toBe(child.rawText);
     }
 
+    // v9: 壳去掉 rawOnly —— 所有子段（含 wrapper）都是普通可见 leaf，进桶/可筛/可点。
     const visibleSlots = parent!.children
       .filter((node) => node.visibility !== "rawOnly")
       .map((node) => node.slotType);
     expect(visibleSlots).toEqual([
+      "messages.inline.system-reminder.wrapper.prefix",
       "messages.inline.system-reminder.project-instructions",
       "messages.inline.system-reminder.memory",
       "messages.inline.system-reminder.account",
+      "messages.inline.system-reminder.wrapper.suffix",
     ]);
 
     const rawOnlySlots = parent!.children
       .filter((node) => node.visibility === "rawOnly")
       .map((node) => node.slotType);
-    expect(rawOnlySlots).toEqual([
-      "messages.inline.system-reminder.wrapper.prefix",
-      "messages.inline.system-reminder.wrapper.suffix",
-    ]);
+    expect(rawOnlySlots).toEqual([]);
 
     const project = parent!.children.find((node) => node.slotType === "messages.inline.system-reminder.project-instructions")!;
     expect(project.rawText).toContain("# claudeMd");

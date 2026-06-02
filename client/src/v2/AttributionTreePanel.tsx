@@ -543,6 +543,7 @@ export function LeafStrip({
 
 export function LeafTable({
   leaves, selectedId, onSelect, getColor, getBadges, totalContextChars,
+  leafGroupId,
 }: {
   leaves: LeafLite[];
   selectedId: string | null;
@@ -557,9 +558,15 @@ export function LeafTable({
    *  而非 section-相对 %（这样既有的 LeafTable 行就充当了 meta header，
    *  不需要在 SelectedDetail 里再叠一条额外的 bar）。 */
   totalContextChars?: number;
+  /** 把连续叶子归入同一 envelope 分组（system-reminder 包裹）。返回 group id 或 null。
+   *  用于在表内给同属一个 <system-reminder> 的连续行（壳+内容+壳，壳已是普通 leaf）画一道
+   *  画在 padding 槽里的主题 rail——纯样式分组，不影响这些 leaf 进桶/筛选/点击。 */
+  leafGroupId?: (leaf: LeafLite) => string | null;
 }) {
   const { t } = useTranslation();
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // hover envelope 组内任意行 → 点亮该组括号栏；壳默认是全屏最低强度的一根线。
+  const [hoveredGroupId, setHoveredGroupId] = useState<string | null>(null);
   // 选中态下不再渲染孤立的选中行 bar —— meta 已由 SelectedDetailHeader 统一接管（更简洁，
   // 顺带去掉了"点选中行反选"的隐藏交互；反选仍可在上方 strip 再点同一段触发）。
   if (selectedId) return null;
@@ -592,7 +599,8 @@ export function LeafTable({
           <span>{t("attribution.detail.ofContext", { defaultValue: "占上下文" })} {groupPct.toFixed(1)}%</span>
         </div>
       )}
-      {visibleLeaves.map((l) => {
+      {(() => {
+        const renderRow = (l: LeafLite) => {
         const isSel = selectedId === l.nodeId;
         const fill = getColor ? getColor(l) : leafFill(l);
         // 当 leaf 命中 skill_listing rule 时：
@@ -684,7 +692,41 @@ export function LeafTable({
           )}
           </div>
         );
-      })}
+        };
+        // 把连续、同属一个 system-reminder envelope 的叶子合并成 run；run 顺序 = 原物理序，不重排。
+        // 壳（<system-reminder>/</system-reminder>）现在是普通 leaf，跟内容一样在 run 里、由 renderRow
+        // 渲染（进桶/可筛/可点，无特化）。
+        const runs: Array<{ groupId: string | null; rows: LeafLite[] }> = [];
+        for (const l of visibleLeaves) {
+          const gid = leafGroupId ? leafGroupId(l) : null;
+          const last = runs[runs.length - 1];
+          if (last && last.groupId === gid) last.rows.push(l);
+          else runs.push({ groupId: gid, rows: [l] });
+        }
+        return runs.map((run, ri) => {
+          if (run.groupId === null) return run.rows.map(renderRow);
+          const lit = hoveredGroupId === run.groupId;
+          const railColor = lit ? "#cbd5e1" : "#e5e7eb";
+          // 纯样式优化：把整组 <system-reminder>（壳+内容+壳，都是普通 leaf）用一道竖 rail 框在一起。
+          // rail 绝对定位画在行左侧 padding 槽里（dot 之前的留白），不占布局、不推内容——组内行与
+          // 未分组行严格左对齐。pointerEvents:none 不挡点选；hover 组内点亮 rail。
+          return (
+            <div
+              key={`env-${run.groupId}-${ri}`}
+              onMouseEnter={() => setHoveredGroupId(run.groupId)}
+              onMouseLeave={() => setHoveredGroupId((cur) => (cur === run.groupId ? null : cur))}
+              style={{ position: "relative", display: "flex", flexDirection: "column", gap: 1 }}
+            >
+              {run.rows.map(renderRow)}
+              <div aria-hidden style={{
+                position: "absolute", left: 2, top: 3, bottom: 3, width: 2,
+                borderRadius: 2, background: railColor, pointerEvents: "none",
+                transition: "background 0.1s",
+              }} />
+            </div>
+          );
+        });
+      })()}
     </div>
   );
 }

@@ -37,7 +37,6 @@ import {
   type SectionStat,
 } from "./AttributionTreePanel";
 import {
-  EnvelopeStructureHint,
   collectEnvelopeContainers,
 } from "./attribution-envelope";
 import { FisheyeStrip } from "./fisheye-strip";
@@ -971,6 +970,17 @@ export function AttributionTreeLensPanel({
     return collectEnvelopeContainers(result, attributedLeaves);
   }, [result, attributedLeaves]);
 
+  // 主题壳分组：把每个被 <system-reminder> envelope 包裹的可见叶子（含壳本身——壳现在是普通
+  // leaf）映射到它的 group id。LeafTable 据此用一道画在 padding 槽里的主题 rail 把整组框在一起
+  // （纯样式优化；不影响这些 leaf 进桶/筛选/点击）。
+  const leafGroupId = useMemo(() => {
+    const leafToEnv = new Map<string, string>();
+    for (const env of envelopeContainers) {
+      for (const leaf of env.visibleLeaves) leafToEnv.set(leaf.nodeId, env.id);
+    }
+    return (leaf: LeafLite): string | null => leafToEnv.get(leaf.nodeId) ?? null;
+  }, [envelopeContainers]);
+
   const allLeaves = attributedLeaves;
 
   // Pending-focus consumption: when a Turn-view event jump lands here with a
@@ -1058,13 +1068,6 @@ export function AttributionTreeLensPanel({
     }
     return null;
   }, [bucketFilters, activeLenses, selectedGroupId]);
-
-  const selectedEnvelope = useMemo(() => {
-    if (!selectedNodeId) return null;
-    return envelopeContainers.find((envelope) =>
-      envelope.visibleLeaves.some((leaf) => leaf.nodeId === selectedNodeId)
-    ) ?? null;
-  }, [selectedNodeId, envelopeContainers]);
 
   const selectedStat = useMemo(() => {
     if (!selectedSection) return null;
@@ -1376,13 +1379,6 @@ export function AttributionTreeLensPanel({
             getIndicatorColor={leafIndicatorColor}
             getTextureType={leafTextureType}
           />
-          {selectedEnvelope && selectedLeaf && (
-            <EnvelopeStructureHint
-              envelope={selectedEnvelope}
-              selectedLeafId={selectedNodeId}
-              getColor={leafColor}
-            />
-          )}
           <LeafTable
             leaves={selectedStat.leaves}
             selectedId={selectedNodeId}
@@ -1392,6 +1388,7 @@ export function AttributionTreeLensPanel({
             getColor={leafColor}
             getBadges={leafBadges}
             totalContextChars={totalChars}
+            leafGroupId={leafGroupId}
           />
           {selectedLeaf && sectionOf(selectedLeaf.rootSlotType) === selectedStat.id && (
             <>

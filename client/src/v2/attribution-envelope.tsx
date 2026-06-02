@@ -1,10 +1,10 @@
 import type { AttributionTreeResult, SerializedNode } from "./attribution-tree-types";
-import { BRAND } from "./shared/brand";
-import { fmtK, leafFill, shortSlot, type LeafLite } from "./AttributionTreePanel";
+import { shortSlot, type LeafLite } from "./AttributionTreePanel";
 
-// system-reminder 这类 prompt envelope 的展示目标:
+// system-reminder 这类 prompt envelope 的分组数据源（collectEnvelopeContainers）。
 //   1. 默认 leaf/table 只展示有效内容，rawOnly wrapper 不污染分类。
-//   2. 结构壳仍然可见，但只作为位置/大小提示，不作为第三层点击导航。
+//   2. "被同一个 <system-reminder> 包裹在一起"这个事实，由 LeafTable 的低强度括号栏表达
+//      （开标签=ghost 标题、闭标签=栏尾），贴在被包裹的连续行上，不再另画平行示意图。
 //   3. 前端不负责拼接内容，只消费后端给出的 parent raw + child range。
 
 export interface EnvelopeSegment {
@@ -67,10 +67,6 @@ export function envelopeNodeLabel(node: Pick<SerializedNode, "slotType" | "ruleM
   }
 }
 
-function envelopeDisplaySegments(envelope: EnvelopeContainer): EnvelopeSegment[] {
-  return envelope.segments;
-}
-
 export function collectEnvelopeContainers(result: AttributionTreeResult, leaves: LeafLite[]): EnvelopeContainer[] {
   if (!result.snapshot) return [];
   const leafById = new Map(leaves.map((leaf) => [leaf.nodeId, leaf]));
@@ -116,146 +112,4 @@ export function collectEnvelopeContainers(result: AttributionTreeResult, leaves:
   });
 
   return out;
-}
-
-export function EnvelopeMiniBar({
-  envelope,
-  selectedLeafId,
-  getColor,
-}: {
-  envelope: EnvelopeContainer;
-  selectedLeafId: string | null;
-  getColor?: (leaf: LeafLite) => string;
-}) {
-  const displaySegments = envelopeDisplaySegments(envelope);
-  const displayWrapperChars = displaySegments
-    .filter((seg) => seg.rawOnly)
-    .reduce((sum, seg) => sum + seg.size, 0);
-
-  return (
-    <div style={{
-      display: "grid",
-      gridTemplateColumns: "86px minmax(0, 1fr) auto",
-      alignItems: "center",
-      gap: 8,
-      padding: "2px 0",
-      minWidth: 0,
-      maxWidth: "100%",
-    }}>
-      <span style={{
-        fontSize: 10,
-        color: "#64748b",
-        fontWeight: 700,
-        whiteSpace: "nowrap",
-      }}>
-        wrapper
-      </span>
-
-      <div style={{
-        display: "flex",
-        height: 10,
-        gap: 1,
-        minWidth: 0,
-        maxWidth: "100%",
-        overflow: "hidden",
-      }}>
-        {displaySegments.map((seg) => {
-          const fill = seg.rawOnly
-            ? "#e5e7eb"
-            : seg.leaf
-              ? (getColor ? getColor(seg.leaf) : leafFill(seg.leaf))
-              : "#d97706";
-          const selected = !seg.rawOnly && selectedLeafId === seg.leaf?.nodeId;
-          const title = `${seg.label} · ${fmtK(seg.size)} chars${seg.rawOnly ? " · wrapper" : ""}`;
-          return (
-            <div
-              key={seg.id}
-              title={title}
-              style={{
-                flex: `${Math.max(seg.size, 1)} 1 0`,
-                minWidth: 0,
-                height: "100%",
-                borderRadius: 2,
-                border: selected ? `1px solid ${BRAND.indigo500}` : "none",
-                background: fill,
-                opacity: seg.rawOnly ? 0.7 : 1,
-                boxSizing: "border-box",
-              }}
-            />
-          );
-        })}
-      </div>
-
-      <span
-        title={`${envelope.label} · raw ${fmtK(envelope.totalChars)} · 有效 ${fmtK(envelope.effectiveChars)} · wrapper ${fmtK(displayWrapperChars)}`}
-        style={{
-          fontSize: 10,
-          color: "#94a3b8",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          maxWidth: 260,
-        }}
-      >
-        {envelope.label} · raw {fmtK(envelope.totalChars)}
-      </span>
-    </div>
-  );
-}
-
-export function EnvelopeStructureHint({
-  envelope,
-  selectedLeafId,
-  getColor,
-}: {
-  envelope: EnvelopeContainer;
-  selectedLeafId: string | null;
-  getColor?: (leaf: LeafLite) => string;
-}) {
-  const displaySegments = envelopeDisplaySegments(envelope);
-
-  return (
-    <div style={{
-      display: "flex",
-      flexDirection: "column",
-      gap: 4,
-      padding: "4px 0 0",
-      minWidth: 0,
-    }}>
-      <EnvelopeMiniBar envelope={envelope} selectedLeafId={selectedLeafId} getColor={getColor} />
-      <div style={{
-        display: "flex",
-        gap: 4,
-        alignItems: "center",
-        minWidth: 0,
-        overflow: "hidden",
-      }}>
-        {displaySegments.map((seg) => {
-          const selected = !seg.rawOnly && selectedLeafId === seg.leaf?.nodeId;
-          return (
-            <span
-              key={seg.id}
-              title={`${seg.label} · ${fmtK(seg.size)} chars${seg.rawOnly ? " · wrapper" : ""}`}
-              style={{
-                minWidth: 0,
-                maxWidth: seg.rawOnly ? 110 : 160,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                padding: "1px 4px",
-                borderRadius: 3,
-                border: selected ? `1px solid ${BRAND.indigo500}` : "1px solid transparent",
-                background: selected ? BRAND.indigo50 : "transparent",
-                color: seg.rawOnly ? "#94a3b8" : "#475569",
-                fontSize: 9,
-                fontWeight: selected ? 700 : 600,
-              }}
-            >
-              {seg.label}
-            </span>
-          );
-        })}
-      </div>
-    </div>
-  );
 }
