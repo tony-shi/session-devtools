@@ -21,7 +21,6 @@
 import { readFileSync, existsSync } from "fs";
 import { createHash } from "crypto";
 import type { Database } from "better-sqlite3";
-import { deriveAxes, sourceBucket } from "./context-ledger/rule-corpus/axes";
 import { deriveLensFields, isSystemSectionSlot } from "./context-ledger/lens/derive-category";
 
 import {
@@ -171,17 +170,6 @@ export interface SerializedNode {
     summary?: string;
     stability?: string;
     dynamicSource?: string;
-  };
-  /**
-   * 正交分类轴 v2（由 axes.deriveAxes 从 slotType+ruleId 派生；rule 显式声明值优先待
-   * generator 透出后接入）。前端用法:semantic 做两层(大类→细分)lens 分组;source/sourceBucket
-   * 作"点开属性";位置=slotType(树);动态填充=origin.dynamicFields 非空。每个节点都带。
-   */
-  axes?: {
-    semantic: string;        // 6 大类:identity/directive/capability/context/dialogue/meta
-    semanticDetail?: string; // 语义细分(二级)
-    source: string;          // 7 值来源(作者归属)
-    sourceBucket: string;    // 3 桶:harness(CC自带) / user(你配置) / session(会话产生)
   };
   /**
    * 单源展示分类（语义轴；后端单点 derive，前端只读）。category=展示类别（18 值，稳定，
@@ -706,9 +694,6 @@ function serializeNode(node: SegmentNode, rootSlotType: string, sectionSlot: str
       ? node.rawText.replace(/\s+/g, " ").trim().slice(0, 197) + "..."
       : node.rawText);
   const ruleMeta = ruleMetaOf(node.origin);
-  // 正交轴:rule 节点用其 ruleId 多路(system-reminder/system-message);其余靠 slotType。
-  const axRuleId = node.origin && node.origin.kind === "rule" ? node.origin.ruleId : "";
-  const ax = deriveAxes(node.slotType, axRuleId);
   // 单源展示分类：classSlot 把 system section 信息从顶层 root 下沉（同前端 flattenLeaves）。
   const nextSection = isSystemSectionSlot(node.slotType) ? node.slotType : sectionSlot;
   const lens = deriveLensFields(node, rootSlotType, nextSection ?? node.slotType);
@@ -732,12 +717,6 @@ function serializeNode(node: SegmentNode, rootSlotType: string, sectionSlot: str
     ...(node.cachePolicy && { cachePolicy: node.cachePolicy }),
     ...(node.unknownMeta && { unknownMeta: node.unknownMeta }),
     ...(ruleMeta && { ruleMeta }),
-    axes: {
-      semantic: ax.kind,
-      ...(ax.detail && { semanticDetail: ax.detail }),
-      source: ax.source,
-      sourceBucket: sourceBucket(ax.source),
-    },
     category: lens.category,
     group: lens.group,
     ...(lens.labelKey && { labelKey: lens.labelKey }),

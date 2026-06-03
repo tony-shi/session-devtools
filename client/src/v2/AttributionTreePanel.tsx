@@ -71,9 +71,7 @@ const UNKNOWN_FILL = PALETTE_UNKNOWN_FILL;
 
 export function leafFill(leaf: {
   origin: SegmentOrigin;
-  classSlot: string;
-  rootSlotType: string;
-  messageRole?: "user" | "assistant" | "system";
+  category?: string;
 }): string {
   if (leaf.origin.kind === "unknown") return UNKNOWN_FILL;
   return ROLE_META[roleOf(leaf)].barBg;
@@ -100,144 +98,11 @@ function isSystemSectionSlot(slotType: string): boolean {
   );
 }
 
-type RuleOrigin = Extract<SegmentOrigin, { kind: "rule" }>;
-type RuleRoleResolver = RoleId | ((origin: RuleOrigin) => RoleId);
-
-function dynamicFieldValue(origin: RuleOrigin, name: string): string {
-  return origin.dynamicFields?.find((f) => f.name === name)?.valuePreview ?? "";
-}
-
-function legacyMemoryContentsRole(origin: RuleOrigin): RoleId {
-  const hint = `${dynamicFieldValue(origin, "memoryPath")} ${dynamicFieldValue(origin, "path")}`.toLowerCase();
-  if (hint.includes("claude.md") || hint.includes("agents.md")) return "messages.context.claude-md";
-  if (hint.includes("memory.md") || hint.includes("auto-memory") || hint.includes("memory")) return "messages.context.memory";
-  return "messages.context";
-}
-
-function ruleRoleOf(origin: RuleOrigin): RoleId | undefined {
-  const resolver = REMINDER_RULE_TO_ROLE[origin.ruleId];
-  if (!resolver) return undefined;
-  return typeof resolver === "function" ? resolver(origin) : resolver;
-}
-
-function jsonlEventSource(origin?: SegmentOrigin): string | undefined {
-  if (origin?.kind !== "jsonl") return undefined;
-  const eventKind = origin.eventKind;
-  return typeof eventKind === "string" ? eventKind : eventKind.source;
-}
-
-// system-reminder / role:"system" message ruleId → 默认展示 role。
-// 默认 UI 使用用户心智模型:
-//   system.*             → 系统提示词
-//   messages.context.*   → 用户上下文（CLAUDE.md / 记忆 / 账号与日期）
-//   messages.capability* → 工具与能力（工具发现 / Agent 类型 / Skills）
-//   messages.injection   → 动态注入（wrapper / 临时提醒）
-//   messages.* 对话块    → 会话信息
-// raw/audit 仍保留 slotType / axes / ruleId 细节。
-const REMINDER_RULE_TO_ROLE: Record<string, RuleRoleResolver> = {
-  // 项目指令 (CLAUDE.md)
-  "claude-code.messages.memory-contents.v1":        legacyMemoryContentsRole,
-  "claude-code.messages.nested-memory-contents.v1": legacyMemoryContentsRole,
-  "claude-code.messages.reminder.project-instructions.v1": "messages.context.claude-md",
-  "claude-code.messages.reminder.global-instructions.v1":  "messages.context.claude-md", // ~/.claude/CLAUDE.md（全局/用户级，同为 CLAUDE.md）
-  // 自动记忆 (Memory)
-  "claude-code.messages.reminder.memory.v1":        "messages.context.memory",
-  // 账号 / 日期
-  "claude-code.messages.user-context.v1":           "messages.context",
-  "claude-code.messages.reminder.account.v1":       "messages.context.account",
-  // 工具发现 / 延迟能力
-  "claude-code.messages.deferred-tools-listing.v1": "messages.capability.discovery",
-  "claude-code.messages.agent-types-listing.v1":    "messages.capability.agent",
-  // 2.1.154+ role:"system" mid-conversation message 版（slot=messages.system-message，见 roleOf）
-  "claude-code.messages.deferred-tools-listing.v2": "messages.capability.discovery",
-  "claude-code.messages.agent-types-listing.v2":    "messages.capability.agent",
-  "claude-code.messages.skill-listing.v1":          "messages.skills",
-  "claude-code.messages.skill-listing.v2":          "messages.skills",
-  // rawOnly wrapper 默认不会出现在 leaf 列表；保留映射仅作兜底。
-  "claude-code.messages.reminder.wrapper-prefix.v1": "messages.injection",
-  "claude-code.messages.reminder.wrapper-suffix.v1": "messages.injection",
-  // 注入的行为指令 → 动态注入
-  "claude-code.messages.thinking-frequency.v1":     "messages.injection",
-};
-
-/**
- * L2 语义角色判定。输入用 classSlot（system 取 section 级 / messages 取叶子自身）
- * + rootSlotType（区分 tool_result 上下文）+ messageRole + origin（识别 skills）。
- * 注入（messages.inline.system-reminder，含 smoosh 进 tool_result 的 reminder——
- * ast-builder 给它们同一 slotType）优先判定，跨 tool_result / text。
- */
-export function roleOf(leaf: {
-  classSlot: string;
-  rootSlotType: string;
-  messageRole?: "user" | "assistant" | "system";
-  origin?: SegmentOrigin;
-}): RoleId {
-  const { classSlot, rootSlotType, messageRole, origin } = leaf;
-  // system-reminder 通道注入的内容共用同一个 slot（messages.inline.system-reminder），
-  // 只能靠 origin.ruleId 区分语义。分流:
-  //   - skill_listing → messages.skills
-  //   - REMINDER_RULE_TO_ROLE 命中 → CLAUDE.md / 记忆 / 账号 / 工具发现 / 动态注入
-  //   - 其余 → messages.injection
-  // 各 role 经 ROLE_TO_GROUP 静态映射到正确 group（不再有 groupOf override 旁路）。
-  if (
-    origin?.kind === "rule" &&
-    (origin.ruleId === "claude-code.messages.skill-listing.v1" ||
-      origin.ruleId === "claude-code.messages.skill-listing.v2")
-  )
-    return "messages.skills";
-  if (classSlot.startsWith("messages.inline.system-reminder")) {
-    if (origin?.kind === "rule") {
-      const sub = ruleRoleOf(origin);
-      if (sub) return sub;
-    }
-    return "messages.injection";
-  }
-  // 2.1.154+ beta:role:"system" mid-conversation message（slot=messages.system-message）。
-  // 同 system-reminder 按 ruleId 分流；未识别时归动态注入。
-  if (classSlot === "messages.system-message") {
-    if (origin?.kind === "rule") {
-      const sub = ruleRoleOf(origin);
-      if (sub) return sub;
-    }
-    return "messages.injection";
-  }
-  if (classSlot.startsWith("system.") || classSlot === "side-query.system") {
-    // 默认展示层不再把 reqBody.system 拆成环境/Git/计费等内部类别；
-    // 这些细节仍在 slotType/ruleMeta/raw/audit 里可见。
-    return "system.core";
-  }
-  if (classSlot.startsWith("tools.") || rootSlotType.startsWith("tools.")) return "tools.builtin";
-  // 思考块单列（先于 tool/role 判定）——对齐 provenance 的「AI 思考」。
-  if (classSlot === "messages.thinking" || rootSlotType === "messages.thinking")
-    return "messages.thinking";
-  // 工具调用 / 工具结果分列——对齐 provenance 的「工具调用 / 工具结果」。
-  // 注:tool_result 内的 image（截图工具等）在此被归 tool-result，先于下面的 image 判定。
-  if (rootSlotType === "messages.tool_use") return "messages.tool-use";
-  if (rootSlotType === "messages.tool_result") return "messages.tool-result";
-  // image 单列（多模态输入）：走到这里的 image 都不在 tool_result 内 = 用户贴的图，
-  // 本质是用户视觉输入 → messages.image（group=conversation）。image-placeholder 是
-  // 图被替换成的文本占位（[Image #2]），同源同类。
-  if (
-    classSlot === "messages.block.image" ||
-    classSlot === "messages.inline.image-placeholder"
-  )
-    return "messages.image";
-  if (classSlot === "messages.inline.local-command")
-    return "messages.misc";
-  const originSource = jsonlEventSource(origin);
-  if (originSource === "user_input") return "messages.human";
-  if (originSource === "assistant_text") return "messages.assistant";
-  if (originSource === "thinking") return "messages.thinking";
-  if (originSource === "tool_use") return "messages.tool-use";
-  if (originSource === "tool_result") return "messages.tool-result";
-  if (originSource === "attachment") return "messages.image";
-  if (originSource === "system_local_command") return "messages.misc";
-  if (originSource === "harness_injection") return "messages.injection";
-  if (messageRole === "assistant") return "messages.assistant";
-  if (messageRole === "user") return "messages.human";
-  if (rootSlotType.startsWith("messages.") || rootSlotType === "side-query.user")
-    return "messages.misc";
-  return "other.unknown";
+// 展示分类单源：后端 deriveCategory 派生(server context-ledger/lens/derive-category)，前端只读。
+// 旧本地 roleOf 全家(roleOf/ruleRoleOf/REMINDER_RULE_TO_ROLE/jsonlEventSource 等)已下沉后端删除。
+// category 为 18 个有效 RoleId 之一；缺失(旧数据)兜底 other.unknown。
+export function roleOf(leaf: { category?: string }): RoleId {
+  return (leaf.category as RoleId) ?? "other.unknown";
 }
 
 export function fmtK(n: number): string {
@@ -268,9 +133,15 @@ function toolDescriptionOf(leaf: LeafLite): string | undefined {
   return undefined;
 }
 
-export function leafLabel(leaf: { slotType: string; rootSlotType?: string; ruleMeta?: { displayName?: string }; messageRole?: "user" | "assistant" | "system" }): string {
-  if (leaf.ruleMeta?.displayName) {
-    return leaf.ruleMeta.displayName;
+export function leafLabel(leaf: { slotType: string; rootSlotType?: string; ruleMeta?: { displayName?: string }; messageRole?: "user" | "assistant" | "system"; labelKey?: string; labelKeyBase?: string }): string {
+  // 后端单源优先：rule.<labelKey> i18n(带版本，回退去版本 base)；中英切换在此生效。
+  if (leaf.labelKey) {
+    const k = `rule.${leaf.labelKey}.displayName`;
+    if (i18n.exists(k)) return i18n.t(k);
+    if (leaf.labelKeyBase) {
+      const kb = `rule.${leaf.labelKeyBase}.displayName`;
+      if (i18n.exists(kb)) return i18n.t(kb);
+    }
   }
   const slotType = leaf.slotType;
   const rootSlotType = leaf.rootSlotType;
@@ -367,14 +238,11 @@ export interface LeafLite {
     stability?: string;
     dynamicSource?: string;
   };
-  // 正交分类轴 v2（来自 SerializedNode.axes）。bucketOf 用 axes.semantic 修复注入区分组;
-  // 详情面板用 source/sourceBucket 作"点开属性"。
-  axes?: {
-    semantic: string;
-    semanticDetail?: string;
-    source: string;
-    sourceBucket: string;
-  };
+  // 单源展示分类/身份（来自 SerializedNode，后端 derive-category）。category→配色+分组；labelKey→i18n 文案。
+  category?: string;
+  group?: string;
+  labelKey?: string;
+  labelKeyBase?: string;
 }
 
 export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
@@ -403,7 +271,10 @@ export function flattenLeaves(result: AttributionTreeResult): LeafLite[] {
         ...(node.wireMeta?.thinkingSignature && { thinkingSignature: node.wireMeta.thinkingSignature }),
         ...(node.cachePolicy && { cachePolicy: node.cachePolicy }),
         ...(node.ruleMeta && { ruleMeta: node.ruleMeta }),
-        ...(node.axes && { axes: node.axes }),
+        ...(node.category && { category: node.category }),
+        ...(node.group && { group: node.group }),
+        ...(node.labelKey && { labelKey: node.labelKey }),
+        ...(node.labelKeyBase && { labelKeyBase: node.labelKeyBase }),
       });
       return;
     }

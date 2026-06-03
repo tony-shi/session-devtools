@@ -123,14 +123,12 @@ export interface SerializedNode {
     stability?: string;
     dynamicSource?: string;
   };
-  /** 正交分类轴 v2（后端 deriveAxes 派生）。semantic=两层语义(大类→细分,UI 分组主角);
-   *  source/sourceBucket=作者归属(点开属性);动态填充=origin.dynamicFields 非空。每节点都带。 */
-  axes?: {
-    semantic: string;
-    semanticDetail?: string;
-    source: string;
-    sourceBucket: string;
-  };
+  /** 单源展示分类（后端 deriveCategory）。category 驱动配色+分组；group 由 category 派生。 */
+  category?: string;
+  group?: string;
+  /** 单源段身份（后端，命中 corpus rule 才有）。labelKey 带版本(i18n 文案锚)；labelKeyBase 去版本(回退)。 */
+  labelKey?: string;
+  labelKeyBase?: string;
   children: SerializedNode[];
 }
 
