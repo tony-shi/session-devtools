@@ -3,23 +3,30 @@
 // manifest 由 scripts/voice/{synth,reindex}.ts 产出在 public/voice/<story>/<lang>.json,
 // 这里直接 import(打包进 bundle)拿时间数据;音频文件本身走 staticFile 运行时加载。
 //
-// Phase 2:只接 zh。en 之后加一行 import + 进 MANIFESTS 即可(或改 calculateMetadata 异步加载)。
+// 多 story:按 storyId × lang 索引。新增一集 = import 它的 manifest + 进 MANIFESTS。
 
-import zhManifestJson from "../../../public/voice/agent-loop/zh.json";
-import enManifestJson from "../../../public/voice/agent-loop/en.json";
+import agentLoopZh from "../../../public/voice/agent-loop/zh.json";
+import agentLoopEn from "../../../public/voice/agent-loop/en.json";
+import realContextZh from "../../../public/voice/real-context/zh.json";
 import type { Manifest } from "../../v2/walkthrough/voice/types";
 
 // 用规范 Manifest 类型,而不是从 JSON 推断 —— JSON 里 audio 字段有无(mock 无 / 真 TTS 有)
 // 不应影响类型;Manifest.LineCue.audio 本就是可选。
 export type VoiceManifest = Manifest;
 
-const MANIFESTS: Record<string, Manifest> = {
-  zh: zhManifestJson as unknown as Manifest,
-  en: enManifestJson as unknown as Manifest,
+// storyId → lang → manifest。缺某语言就不列(getManifest 返回 null,调用方走兜底)。
+const MANIFESTS: Record<string, Record<string, Manifest>> = {
+  "agent-loop": {
+    zh: agentLoopZh as unknown as Manifest,
+    en: agentLoopEn as unknown as Manifest,
+  },
+  "real-context": {
+    zh: realContextZh as unknown as Manifest,
+  },
 };
 
-export function getManifest(lang: string): VoiceManifest | null {
-  return MANIFESTS[lang] ?? null;
+export function getManifest(storyId: string, lang: string): VoiceManifest | null {
+  return MANIFESTS[storyId]?.[lang] ?? null;
 }
 
 export type NarrationClip = { src: string; fromFrame: number; durFrames: number };
@@ -47,8 +54,8 @@ export function buildNarrationClips(
 }
 
 // 给定全局帧 → 当前旁白行(从 manifest 累加 durMs + gapMs)。字幕图层 / 预览用。
-export function frameToLine(lang: string, frame: number, fps: number): string {
-  const m = getManifest(lang);
+export function frameToLine(storyId: string, lang: string, frame: number, fps: number): string {
+  const m = getManifest(storyId, lang);
   if (!m) return "";
   const f = (ms: number) => Math.round((ms / 1000) * fps);
   let cursor = 0;

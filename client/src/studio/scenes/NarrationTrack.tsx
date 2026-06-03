@@ -3,9 +3,9 @@ import { getManifest, buildNarrationClips } from "./narration";
 
 // 旁白音轨 —— 把某一幕的旁白音频按帧位置铺到时间轴上。视觉场景在它下方并行播放。
 // 每条音频包在 <Sequence from=...> 里,Remotion render 时由 ffmpeg 混进最终 mp4。
-export const NarrationTrack = ({ lang, stepIdxs }: { lang: string; stepIdxs: number[] }) => {
+export const NarrationTrack = ({ storyId, lang, stepIdxs }: { storyId: string; lang: string; stepIdxs: number[] }) => {
   const { fps } = useVideoConfig();
-  const manifest = getManifest(lang);
+  const manifest = getManifest(storyId, lang);
   if (!manifest) return null;
   const { clips } = buildNarrationClips(manifest, stepIdxs, fps);
   return (

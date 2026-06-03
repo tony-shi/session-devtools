@@ -57,14 +57,14 @@ function shotFrames(m: VoiceManifest, shot: Shot, fps: number): number {
 
 /** 整集总帧数(给 Root 注册 composition 用)。 */
 export function episodeDuration(spec: Episode, lang: string, fps: number): number {
-  const m = getManifest(lang);
+  const m = getManifest(spec.storyId, lang);
   if (!m) return fps;
   return Math.max(1, spec.shots.reduce((t, sh) => t + shotFrames(m, sh, fps), 0));
 }
 
 export const Episode = ({ spec, lang, caption = true }: { spec: Episode; lang: string; caption?: boolean }) => {
   const { fps } = useVideoConfig();
-  const m = getManifest(lang);
+  const m = getManifest(spec.storyId, lang);
   if (!m) return <AbsoluteFill style={{ background: "#fff" }} />;
 
   const allSteps = [...new Set(spec.shots.flatMap((s) => s.steps))].sort((a, b) => a - b);
@@ -88,18 +88,18 @@ export const Episode = ({ spec, lang, caption = true }: { spec: Episode; lang: s
             {p.shot.render({ lang, fps, manifest: m, clock: p.clock, frames: p.frames })}
           </Sequence>
         ))}
-        <NarrationTrack lang={lang} stepIdxs={allSteps} />
-        {caption && <NarrationCaption lang={lang} />}
+        <NarrationTrack storyId={spec.storyId} lang={lang} stepIdxs={allSteps} />
+        {caption && <NarrationCaption storyId={spec.storyId} lang={lang} />}
       </AbsoluteFill>
     </LangProvider>
   );
 };
 
 // 字幕图层:读当前帧的旁白行,底部居中显示。覆盖在场景之上(预览/分析用;出片可关)。
-function NarrationCaption({ lang }: { lang: string }) {
+function NarrationCaption({ storyId, lang }: { storyId: string; lang: string }) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const text = frameToLine(lang, frame, fps);
+  const text = frameToLine(storyId, lang, frame, fps);
   if (!text) return null;
   return (
     <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", padding: "0 56px 52px", pointerEvents: "none" }}>

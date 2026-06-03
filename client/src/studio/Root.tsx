@@ -1,8 +1,10 @@
 import { Composition } from "remotion";
 import { HelloProbe } from "./HelloProbe";
+import { RealContextProbe } from "./scenes/RealContextProbe";
 import { ConversationScene } from "./scenes/ConversationScene";
 import { NarrationTrack } from "./scenes/NarrationTrack";
 import { AgentLoopStory, agentLoopStoryDuration } from "./scenes/AgentLoopStory";
+import { RealContextStory, realContextStoryDuration } from "./scenes/RealContextStory";
 import { buildConversationTimeline, type SceneTurn } from "./scenes/timeline";
 import { getManifest, buildNarrationClips } from "./scenes/narration";
 import { getConversationFixture } from "./fixtures";
@@ -23,7 +25,7 @@ const convFixtureZh = getConversationFixture(CONV_LANG);
 // 注:Phase 2 是「最快跑通 + 有声」,旁白(~47s)比对话视觉(~17s)长,视觉播完后定格;
 //     精确音画同步留作下一步(让对话节拍跟旁白走),这里先不调样式。
 const convVisual = buildConversationTimeline(convFixtureZh, FPS).total;
-const convManifest = getManifest(CONV_LANG);
+const convManifest = getManifest("agent-loop", CONV_LANG);
 // 焦点切换点 = 旁白 step 0(overview)结束的帧;此后进入 turn 焦点态(框住 Turn 1)。
 const overviewEndFrame = convManifest ? buildNarrationClips(convManifest, [0], FPS).totalFrames : convVisual;
 const convNarr = convManifest ? buildNarrationClips(convManifest, CONV_STEPS, FPS).totalFrames : 0;
@@ -34,7 +36,7 @@ const Conversation = ({ turns }: { turns: SceneTurn[] }) => {
   return (
     <>
       <ConversationScene turns={turns} overviewEndFrame={overviewEndFrame} />
-      <NarrationTrack lang={CONV_LANG} stepIdxs={CONV_STEPS} />
+      <NarrationTrack storyId="agent-loop" lang={CONV_LANG} stepIdxs={CONV_STEPS} />
     </>
   );
 };
@@ -45,6 +47,15 @@ export const RemotionRoot = () => {
       <Composition
         id="HelloProbe"
         component={HelloProbe}
+        durationInFrames={90}
+        fps={FPS}
+        width={1920}
+        height={1080}
+      />
+      {/* 单轨(Decision C)落地探针:真实 AttributionTreeLensPanel + 静态 fixture,验证无头出片可行性。 */}
+      <Composition
+        id="RealContextProbe"
+        component={RealContextProbe}
         durationInFrames={90}
         fps={FPS}
         width={1920}
@@ -73,6 +84,17 @@ export const RemotionRoot = () => {
           defaultProps={{ lang, caption: true }}
         />
       ))}
+      {/* 第二个 story:看见真实的 Context —— 单轨 Remotion(Decision C),渲染真实 attribution 面板。
+          目前只有中文 manifest;focusSection 跟旁白拍子切换(focus 取自 real-context.ts)。 */}
+      <Composition
+        id="RealContextStory"
+        component={RealContextStory}
+        durationInFrames={Math.max(1, realContextStoryDuration("zh", FPS))}
+        fps={FPS}
+        width={1920}
+        height={1080}
+        defaultProps={{ lang: "zh", caption: true }}
+      />
     </>
   );
 };

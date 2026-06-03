@@ -22,8 +22,10 @@ export const STAGE_CONFIG: Record<ActId, StageTarget> = {
   "turn-io": { sessionId: "5e7476cd-c9cf-4029-9256-416a249c61a4", turnId: 2 },
   "llm-call": { sessionId: "5e7476cd-c9cf-4029-9256-416a249c61a4", turnId: 2, callId: 1 },
   recap: {}, // 回顾幕不依赖会话数据(静态结构图)
-  // ep2(new):看见真实的 Context —— 复用真实 attribution 面板。callId 2 归因较丰富。
-  "rc-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 2 },
+  // ep2(new):看见真实的 Context —— 复用真实 attribution 面板。
+  // 固定到 Story 2 的取材:session 820f368b / turn 1 / call 1
+  //   —— 用户一句"图片能不能渲染"的首个 call;实测 ~64.3k 字符,三段 Tools/Messages/System ≈ 64/24/12%。
+  "rc-real": { sessionId: "820f368b-ec02-4c59-b0b1-4ec76f0a4439", turnId: 1, callId: 1 },
   // ep2(old):context window —— 复用同一条 demo 会话的某次 call(real 视图取其 attribution)
   "cw-stack": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 1 },
   "cw-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 1 },

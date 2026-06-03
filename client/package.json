@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "studio": "remotion studio src/studio/index.ts",
+    "studio": "remotion studio src/studio/index.ts --port=3100",
     "still:probe": "remotion still src/studio/index.ts HelloProbe out/probe.png --frame=45",
     "render:probe": "remotion render src/studio/index.ts HelloProbe out/probe.mp4"
   },
