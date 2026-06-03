@@ -96,6 +96,30 @@ function rehypeHighlightDynamicFields(fields: DynamicField[]) {
   };
 }
 
+/**
+ * 把动态字段重映射到「子串」文本的局部坐标。
+ *
+ * 适用「从大文本里抽出子串单独渲染」的场景（如 tool 定义把 description 从完整 tool JSON 抽出）：
+ * 原 charStart/charEnd 相对大文本（完整 JSON），直接拿来切子串会错位/落空。这里改用 valuePreview
+ * 在子串里做文本定位，命中则生成相对子串的局部坐标；定位不到的字段丢弃（宁可不高亮，不乱高亮）。
+ * valuePreview 可能被 rule-evaluator 截断（>120 字符 → 前 117 + "..."），故末尾 "..." 时退化为前缀匹配。
+ */
+export function remapDynamicFieldsByValue(
+  text: string,
+  fields: DynamicField[] | undefined,
+): DynamicField[] | undefined {
+  if (!fields || fields.length === 0) return undefined;
+  const out: DynamicField[] = [];
+  for (const f of fields) {
+    const needle = f.valuePreview.endsWith("...") ? f.valuePreview.slice(0, -3) : f.valuePreview;
+    if (!needle) continue;
+    const i = text.indexOf(needle);
+    if (i < 0) continue;
+    out.push({ ...f, charStart: i, charEnd: i + needle.length, charCount: needle.length });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** MD 渲染 + 动态字段黄底高亮；无动态字段时退化为纯 MD。 */
 export function renderMarkdownWithHighlights(
   text: string,
