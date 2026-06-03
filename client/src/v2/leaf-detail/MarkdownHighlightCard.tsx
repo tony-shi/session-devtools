@@ -4,32 +4,16 @@
 // 等都复用它（统一头 SelectedDetailHeader 在下方各 detail 组件里接）。从 AttributionTreePanel
 // 抽出独立成基础组件：便于复用，也便于单独改高亮样式而不动 dispatcher。
 //
-// 高亮机制：在动态字段(captureGroups)的字符区间两侧注入占位标记 DYNSTART…DYNEND，
-// 再用 rehype 插件把占位还原成黄底 <span>（在 hover 上给出 字段名·来源·"运行时动态值"）。
+// 高亮机制（position-based）：dynamicField 的 charStart/charEnd 是相对「渲染文本」的字符区间。
+// 渲染后遍历 hast 文本节点，用节点自带的 source position(offset) 与字段区间求交，把相交的
+// 文本片段包成黄底 <span>。不往内容里注入任何标记 —— 信号与数据分离，markdown 解析不被污染，
+// 跨节点的字段(整段 markdown，如 MEMORY.md)也能各节点高亮自己那段，永不泄漏标记乱码。
+// 取代了旧的「注入 DYNSTART 哨兵字符串 + 单节点 regex 配对」机制(哨兵会被 markdown 解析拆散)。
 import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import i18n from "../../i18n";
 import type { DynamicField } from "../attribution-tree-types";
-
-function injectDynamicPlaceholders(text: string, fields: DynamicField[]): string {
-  if (!fields || fields.length === 0) return text;
-
-  const validFields = fields
-    .map((f, index) => ({ ...f, originalIndex: index }))
-    .filter((f) => f.charStart >= 0 && f.charEnd <= text.length && f.charStart < f.charEnd)
-    .sort((a, b) => b.charStart - a.charStart);
-
-  let result = text;
-  validFields.forEach((f) => {
-    const before = result.substring(0, f.charStart);
-    const value = result.substring(f.charStart, f.charEnd);
-    const after = result.substring(f.charEnd);
-    result = `${before}DYNSTARTa${f.originalIndex}a${value}DYNEND${after}`;
-  });
-
-  return result;
-}
 
 interface HastNode {
   type: string;
@@ -37,87 +21,94 @@ interface HastNode {
   tagName?: string;
   properties?: Record<string, unknown>;
   children?: HastNode[];
+  // remark→rehype 管线保留的源字符偏移；纯空白(\n)节点可能无 position，按缺失处理。
+  position?: { start?: { offset?: number }; end?: { offset?: number } };
 }
 
-function rehypeHighlightDynamicFields(fields: DynamicField[]) {
-  return () => {
-    return (tree: HastNode) => {
-      function visit(node: HastNode) {
-        if (node.type === "text" && typeof node.value === "string") {
-          const text = node.value;
-          const regex = /DYNSTARTa(\d+)a([\s\S]*?)DYNEND/g;
+const HIGHLIGHT_STYLE = {
+  background: "#fef3c7",
+  color: "#92400e",
+  borderRadius: 2,
+  padding: "0 2px",
+  boxShadow: "inset 0 -1px 0 #fcd34d",
+};
 
-          if (regex.test(text)) {
-            regex.lastIndex = 0;
-            const children: HastNode[] = [];
-            let lastIndex = 0;
-            let match;
-            while ((match = regex.exec(text)) !== null) {
-              const matchIndex = match.index;
-              if (matchIndex > lastIndex) {
-                children.push({ type: "text", value: text.substring(lastIndex, matchIndex) });
-              }
-              const fieldIdx = parseInt(match[1], 10);
-              const val = match[2];
-              const field = fields[fieldIdx];
+function highlightTitle(field: DynamicField | undefined): string {
+  return field
+    ? `${field.name} · ${field.source} · ${i18n.t("attribution.stability.runtimeDynamicValue")}`
+    : i18n.t("attribution.stability.runtimeDynamicValue");
+}
 
-              children.push({
-                type: "element",
-                tagName: "span",
-                properties: {
-                  style: {
-                    background: "#fef3c7",
-                    color: "#92400e",
-                    borderRadius: 2,
-                    padding: "0 2px",
-                    boxShadow: "inset 0 -1px 0 #fcd34d",
-                  },
-                  title: field ? `${field.name} · ${field.source} · ${i18n.t("attribution.stability.runtimeDynamicValue")}` : i18n.t("attribution.stability.runtimeDynamicValue"),
-                },
-                children: [{ type: "text", value: val }],
-              });
-              lastIndex = regex.lastIndex;
-            }
-            if (lastIndex < text.length) {
-              children.push({ type: "text", value: text.substring(lastIndex) });
-            }
-
-            node.type = "element";
-            node.tagName = "span";
-            node.properties = {};
-            node.children = children;
-          }
-        } else if (node.children) {
-          node.children.forEach(visit);
-        }
-      }
-      visit(tree);
-    };
+function makeHighlightSpan(text: string, field: DynamicField | undefined): HastNode {
+  return {
+    type: "element",
+    tagName: "span",
+    properties: { style: HIGHLIGHT_STYLE, title: highlightTitle(field) },
+    children: [{ type: "text", value: text }],
   };
 }
 
 /**
- * 把动态字段重映射到「子串」文本的局部坐标。
- *
- * 适用「从大文本里抽出子串单独渲染」的场景（如 tool 定义把 description 从完整 tool JSON 抽出）：
- * 原 charStart/charEnd 相对大文本（完整 JSON），直接拿来切子串会错位/落空。这里改用 valuePreview
- * 在子串里做文本定位，命中则生成相对子串的局部坐标；定位不到的字段丢弃（宁可不高亮，不乱高亮）。
- * valuePreview 可能被 rule-evaluator 截断（>120 字符 → 前 117 + "..."），故末尾 "..." 时退化为前缀匹配。
+ * 把单个文本节点按「与各 dynamicField 区间的交集」切成 [文本, 高亮span, 文本…]。
+ * 无交集返回 null（不动该节点）。
+ *  - node.position.offset 给出本节点在源文本里的字符区间 [ns, ne)。
+ *  - 仅当源区间长度 === node.value 长度时，offset 与 value 逐字符对应，按局部坐标精确切片；
+ *    否则(节点含 markdown 语法符号/转义实体，如 inline code 的反引号)整节点高亮降级 ——
+ *    宁可整段标黄，也不按错位 offset 切出错误片段(绝不泄漏、绝不错位到别处)。
  */
-export function remapDynamicFieldsByValue(
-  text: string,
-  fields: DynamicField[] | undefined,
-): DynamicField[] | undefined {
-  if (!fields || fields.length === 0) return undefined;
-  const out: DynamicField[] = [];
-  for (const f of fields) {
-    const needle = f.valuePreview.endsWith("...") ? f.valuePreview.slice(0, -3) : f.valuePreview;
-    if (!needle) continue;
-    const i = text.indexOf(needle);
-    if (i < 0) continue;
-    out.push({ ...f, charStart: i, charEnd: i + needle.length, charCount: needle.length });
+function splitTextNodeByFields(node: HastNode, fields: DynamicField[]): HastNode[] | null {
+  const ns = node.position?.start?.offset;
+  const ne = node.position?.end?.offset;
+  if (typeof ns !== "number" || typeof ne !== "number") return null;
+  const value = node.value ?? "";
+
+  const hits: { idx: number; ls: number; le: number }[] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const s = Math.max(ns, fields[i].charStart);
+    const e = Math.min(ne, fields[i].charEnd);
+    if (s < e) hits.push({ idx: i, ls: s - ns, le: e - ns });
   }
-  return out.length > 0 ? out : undefined;
+  if (hits.length === 0) return null;
+
+  // 含语法符号/实体的节点：offset 与 value 不逐字符对应 → 整节点高亮（降级，不错位）。
+  if (ne - ns !== value.length) {
+    return [makeHighlightSpan(value, fields[hits[0].idx])];
+  }
+
+  hits.sort((a, b) => a.ls - b.ls);
+  const out: HastNode[] = [];
+  let cur = 0;
+  for (const h of hits) {
+    const ls = Math.max(cur, Math.min(value.length, h.ls));
+    const le = Math.max(ls, Math.min(value.length, h.le));
+    if (ls > cur) out.push({ type: "text", value: value.slice(cur, ls) });
+    if (le > ls) out.push(makeHighlightSpan(value.slice(ls, le), fields[h.idx]));
+    cur = le;
+  }
+  if (cur < value.length) out.push({ type: "text", value: value.slice(cur) });
+  return out;
+}
+
+/** rehype 插件：遍历 hast，按 source position 把 dynamicField 区间高亮成黄底 span。 */
+function rehypeHighlightByPosition(fields: DynamicField[]) {
+  return () => {
+    return (tree: HastNode) => {
+      const visit = (node: HastNode) => {
+        if (!node.children) return;
+        // 逆序遍历：把某 text 节点替换成多节点时，splice 不影响前面未访问的 index。
+        for (let i = node.children.length - 1; i >= 0; i--) {
+          const child = node.children[i];
+          if (child.type === "text") {
+            const replacement = splitTextNodeByFields(child, fields);
+            if (replacement) node.children.splice(i, 1, ...replacement);
+          } else {
+            visit(child);
+          }
+        }
+      };
+      visit(tree);
+    };
+  };
 }
 
 /** MD 渲染 + 动态字段黄底高亮；无动态字段时退化为纯 MD。 */
@@ -128,14 +119,12 @@ export function renderMarkdownWithHighlights(
   if (!fields || fields.length === 0) {
     return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>;
   }
-
-  const textWithPlaceholders = injectDynamicPlaceholders(text, fields);
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeHighlightDynamicFields(fields)]}
+      rehypePlugins={[rehypeHighlightByPosition(fields)]}
     >
-      {textWithPlaceholders}
+      {text}
     </ReactMarkdown>
   );
 }

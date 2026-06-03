@@ -1,5 +1,6 @@
 import type { AttributionTreeResult, SerializedNode } from "./attribution-tree-types";
 import { shortSlot, type LeafLite } from "./AttributionTreePanel";
+import i18n from "../i18n";
 
 // system-reminder 这类 prompt envelope 的分组数据源（collectEnvelopeContainers）。
 //   1. 默认 leaf/table 只展示有效内容，rawOnly wrapper 不污染分类。
@@ -47,7 +48,16 @@ function isSystemReminderEnvelope(node: SerializedNode): boolean {
   return node.children.some((c) => c.visibility === "rawOnly" || !!c.charRange);
 }
 
-export function envelopeNodeLabel(node: Pick<SerializedNode, "slotType" | "ruleMeta">): string {
+export function envelopeNodeLabel(node: Pick<SerializedNode, "slotType" | "ruleMeta" | "labelKey" | "labelKeyBase">): string {
+  // 与 leafLabel 同源：rule.<labelKey>.displayName i18n（改 locales 一处即生效）。
+  if (node.labelKey) {
+    const k = `rule.${node.labelKey}.displayName`;
+    if (i18n.exists(k)) return i18n.t(k);
+    if (node.labelKeyBase) {
+      const kb = `rule.${node.labelKeyBase}.displayName`;
+      if (i18n.exists(kb)) return i18n.t(kb);
+    }
+  }
   if (node.ruleMeta?.displayName) return node.ruleMeta.displayName;
   switch (node.slotType) {
     case "messages.inline.system-reminder":

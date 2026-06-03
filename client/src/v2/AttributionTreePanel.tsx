@@ -172,6 +172,21 @@ export function leafLabel(leaf: { slotType: string; rootSlotType?: string; ruleM
   return shortSlot(slotType);
 }
 
+// 段说明(description)，与 leafLabel 同源：rule.<labelKey>.summary i18n(带版本，回退去版本 base)。
+// 标题(leafLabel.displayName) + 说明(leafSummary.summary) 都在 locales rule.<labelKeyBase> 一处，
+// 改一处即双语生效。未命中 i18n 时回退后端 ruleMeta.summary，再回退 preview。
+export function leafSummary(leaf: { labelKey?: string; labelKeyBase?: string; ruleMeta?: { summary?: string }; preview?: string }): string {
+  if (leaf.labelKey) {
+    const k = `rule.${leaf.labelKey}.summary`;
+    if (i18n.exists(k)) return i18n.t(k);
+    if (leaf.labelKeyBase) {
+      const kb = `rule.${leaf.labelKeyBase}.summary`;
+      if (i18n.exists(kb)) return i18n.t(kb);
+    }
+  }
+  return leaf.ruleMeta?.summary ?? leaf.preview ?? "";
+}
+
 export function originLabel(origin: SegmentOrigin): string {
   if (origin.kind === "rule") {
     return origin.ruleId.startsWith("wire.") ? `wire · ${origin.ruleId.slice(5)}` : origin.ruleId;
@@ -532,7 +547,7 @@ export function LeafTable({
           ? ""
           : isToolRow
             ? (isSel ? "" : (toolDescriptionOf(l) ?? l.preview))
-            : (rm?.summary ?? l.preview);
+            : leafSummary(l);
         // 动态来源后缀（仅 dynamic 段）："summary ← 变的是 X"
         const previewSuffix = rm?.stability === "dynamic" && rm.dynamicSource ? ` ${rm.dynamicSource}` : "";
         // 恒用全局分母：每行 % = 占整个 context（语义恒定,与汇总条同口径）。

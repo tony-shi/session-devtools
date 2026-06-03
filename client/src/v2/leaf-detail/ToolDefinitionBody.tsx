@@ -7,9 +7,9 @@ import React, { useMemo, Fragment } from "react";
 import { useTranslation } from "react-i18next";
 import JsonView from "@uiw/react-json-view";
 import { BRAND } from "../shared/brand";
-import { renderMarkdownWithHighlights, remapDynamicFieldsByValue } from "./MarkdownHighlightCard";
+import { renderMarkdownWithHighlights } from "./MarkdownHighlightCard";
 import {
-  tryParseSegmentJson, extractToolParams,
+  tryParseSegmentJson, extractToolParams, relocateFieldsToDescription,
   TOOL_MONO, TOOL_JSON_VIEW_STYLE, PARAM_GRID_COLS,
 } from "./tool-format";
 import type { LeafLite } from "../AttributionTreePanel";
@@ -35,13 +35,13 @@ export function ToolDefinitionBody({ leaf, rawMode }: { leaf: LeafLite; rawMode:
     };
   }, [fullText]);
 
-  // tool 描述里的动态字段（如 Bash 的 Co-Authored-By 模型名）：origin.dynamicFields 的
-  // charStart/charEnd 相对完整 tool JSON（rawText），而这里单独渲染的是 parse 后的 description
-  // 子串，坐标系不同。改用 valuePreview 在 description 内文本定位后再交给高亮（见 remapDynamicFieldsByValue）。
+  // tool 描述里的动态字段（如 Bash 的 Co-Authored-By 模型名）：origin.dynamicFields 的坐标相对
+  // 完整 tool JSON(rawText)，而这里渲染的是 parse 后的 description 子串。relocateFieldsToDescription
+  // 借 JSON.parse 把坐标精确搬到 description，再交给 position 高亮 —— 与其它动态字段一样标黄。
   const dynamicFields = leaf.origin.kind === "rule" ? leaf.origin.dynamicFields : undefined;
-  const descFields = useMemo(
-    () => remapDynamicFieldsByValue(parsed?.description ?? "", dynamicFields),
-    [parsed?.description, dynamicFields],
+  const relocated = useMemo(
+    () => relocateFieldsToDescription(fullText, dynamicFields),
+    [fullText, dynamicFields],
   );
 
   // parse 失败兜底：原文 <pre>，绝不白屏。
@@ -82,7 +82,9 @@ export function ToolDefinitionBody({ leaf, rawMode }: { leaf: LeafLite; rawMode:
         <div style={labelStyle}>{t("toolDef.description")}</div>
         {description && description.trim() ? (
           <div className="md-prose" style={{ fontSize: 12, color: "#1f2937", border: "1px solid #e5e7eb", borderRadius: 6, background: "#fff", padding: "8px 12px" }}>
-            {renderMarkdownWithHighlights(description, descFields)}
+            {relocated
+              ? renderMarkdownWithHighlights(relocated.description, relocated.fields)
+              : renderMarkdownWithHighlights(description, undefined)}
           </div>
         ) : (
           <div style={{ fontSize: 11, color: "#9ca3af", fontStyle: "italic" }}>{t("toolDef.noDescription")}</div>
