@@ -574,10 +574,10 @@ export function LeafTable({
             <span style={{ width: 8, height: 8, borderRadius: 2, background: fill, flexShrink: 0 }} />
             <span style={{
               // displayName（中文导览名）用普通字体;晦涩 slotType slug 保持 mono。
-              fontFamily: (skillListing || rm?.displayName) ? undefined : "ui-monospace, SFMono-Regular, monospace",
+              fontFamily: (skillListing || l.labelKey) ? undefined : "ui-monospace, SFMono-Regular, monospace",
               fontSize: 11,
               color: skillListing ? "#312e81" : "#111827",
-              fontWeight: (skillListing || rm?.displayName) ? 600 : undefined,
+              fontWeight: (skillListing || l.labelKey) ? 600 : undefined,
               minWidth: 150, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
             }}>
               {rowLabel}
@@ -908,7 +908,7 @@ export function SelectedDetailHeader({
   const pct = totalContextChars && totalContextChars > 0
     ? ((leaf.charCount / totalContextChars) * 100).toFixed(1)
     : null;
-  const hasDisplayName = !!leaf.ruleMeta?.displayName;
+  const hasDisplayName = !!leaf.labelKey; // 命中 corpus 段身份=有导览名(走 rule i18n)，与 leafLabel 同源
 
   const btnBase: React.CSSProperties = {
     display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 4,

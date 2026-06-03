@@ -440,7 +440,151 @@
     "toolsCount": "{{count}} 个工具",
     "roleUserCount": "{{count}} 用户",
     "roleAssistantCount": "{{count}} AI",
-    "roleSystemCount": "{{count}} 系统"
+    "roleSystemCount": "{{count}} 系统",
+    "lensName": {
+      "structure": {
+        "label": "结构",
+        "description": "按来源与语义进行二级归因：能力与拓展 / 系统预设 / 环境与上下文 / 运行时注入·时间 / 对话与执行"
+      },
+      "diff": {
+        "label": "Diff",
+        "description": "相对上一次 call 的 leaf 级变化（依赖 diff-tree 数据合并）"
+      },
+      "cache": {
+        "label": "缓存",
+        "description": "按缓存策略分类：5min / 1h / 未缓存"
+      },
+      "audit": {
+        "label": "Audit",
+        "description": "parser 自身的归因覆盖度（诊断用）—— 哪些 leaf 命中了规则、哪些没归上"
+      }
+    },
+    "lensBucket": {
+      "tools.builtin": {
+        "label": "内置 Tool",
+        "description": "reqBody.tools 中内置系统工具的 JSON Schema，定义模型可直接调用的基础工具。"
+      },
+      "messages.capability.discovery": {
+        "label": "工具发现",
+        "description": "运行时延迟注入的工具发现信息，例如可用 deferred tools / MCP 工具摘要。"
+      },
+      "messages.capability.agent": {
+        "label": "Agent 类型",
+        "description": "运行时可用的 sub-agent 类型声明。"
+      },
+      "messages.skills": {
+        "label": "Skills",
+        "description": "已安装或可用的 Skill 描述。"
+      },
+      "system.core": {
+        "label": "系统提示词",
+        "description": "reqBody.system 中的系统提示词主体；内部 section 细节保留在 raw/audit 视图。"
+      },
+      "system.guidance": {
+        "label": "系统提示词",
+        "description": "系统提示词内部行为指导；默认展示仍并入系统提示词。"
+      },
+      "system.tool-policy": {
+        "label": "系统提示词",
+        "description": "系统提示词内部工具策略；默认展示仍并入系统提示词。"
+      },
+      "messages.context": {
+        "label": "用户上下文",
+        "description": "旧版或未细分的用户上下文注入。"
+      },
+      "messages.context.claude-md": {
+        "label": "CLAUDE.md",
+        "description": "项目指令和用户维护的 CLAUDE.md / AGENTS.md 类上下文。"
+      },
+      "messages.context.memory": {
+        "label": "记忆",
+        "description": "Claude Code 自动生成或维护的 memory 内容。"
+      },
+      "messages.context.account": {
+        "label": "账号与日期",
+        "description": "账号邮箱、当前日期等身份和时间上下文。"
+      },
+      "messages.directive": {
+        "label": "动态注入",
+        "description": "由 harness 动态注入的行为频次指引或包装结构。"
+      },
+      "messages.injection": {
+        "label": "动态注入",
+        "description": "<system-reminder> wrapper、运行时提醒等非对话内容。"
+      },
+      "messages.human": {
+        "label": "用户文本",
+        "description": "用户在终端中直接输入的聊天文本"
+      },
+      "messages.image": {
+        "label": "图片附件",
+        "description": "用户上传的多模态图片数据"
+      },
+      "messages.thinking": {
+        "label": "思考过程",
+        "description": "Claude 产生的思考过程 (Thinking Block) 消耗"
+      },
+      "messages.assistant": {
+        "label": "回复文本",
+        "description": "Claude 最终返回给用户的文本回复"
+      },
+      "messages.tool-use": {
+        "label": "工具调用",
+        "description": "Claude 发起的工具执行请求 (tool_use)"
+      },
+      "messages.tool-result": {
+        "label": "工具结果",
+        "description": "工具执行完毕后返回的输出回执 (tool_result)"
+      },
+      "messages.misc": {
+        "label": "命令输出",
+        "description": "其它杂项输入（本地命令回显、截图占位等）"
+      },
+      "other.unknown": {
+        "label": "未识别",
+        "description": "未能成功归因到具体规则的未知内容"
+      },
+      "cached-5m": {
+        "label": "5min 缓存",
+        "description": "短期缓存（5 分钟 TTL）—— 同一会话内快速复用"
+      },
+      "cached-1h": {
+        "label": "1h 缓存",
+        "description": "长期缓存（1 小时 TTL）—— 跨会话稳定复用"
+      },
+      "not-cached": {
+        "label": "未缓存",
+        "description": "未被打缓存的内容（每次请求都重新计费）"
+      },
+      "full": {
+        "label": "Full",
+        "description": "叶子被规则或 jsonl 完整覆盖"
+      },
+      "partial": {
+        "label": "Partial",
+        "description": "rule/jsonl 命中但 fullyCovered=false（动态注入未覆盖、内容近似）"
+      },
+      "none": {
+        "label": "None",
+        "description": "structural（slot 已知但无规则）或 unknown（template 未识别）"
+      },
+      "added": {
+        "label": "新增",
+        "description": "本轮请求新增的 leaf（上一轮没有）"
+      },
+      "modified": {
+        "label": "修改",
+        "description": "上一轮同 slot 存在但内容改了"
+      },
+      "removed": {
+        "label": "删除",
+        "description": "上一轮存在、本轮已删除（在 Prev bar 和底部 footer 列出）"
+      },
+      "kept": {
+        "label": "未变",
+        "description": "未变化的 leaf"
+      }
+    }
   },
   "callLedger": {
     "historicalReuse": "历史复用",

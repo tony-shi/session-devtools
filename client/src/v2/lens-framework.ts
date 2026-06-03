@@ -26,31 +26,21 @@ import {
 // ─── 类型定义 ────────────────────────────────────────────────────────────────
 
 export interface LensBucket {
-  /** 桶的稳定 id。filter state 存的就是这个值。 */
+  /** 桶的稳定 id。filter state 存的就是这个值；UI 文案(label/description)走 i18n：attribution.lensBucket.<id>。 */
   id: string;
-  /** Pill 上显示的短文案（中文优先）。 */
-  label: string;
   /** Pill 上的小色方块 / leaf 着色 / SectionBar 角标用色。 */
   color: string;
-  /** Pill 悬停提示 —— 解释这桶是什么。 */
-  description?: string;
-  /** L0 意图分组（可选）：仅 structure lens 的 buckets 携带。其他 lens（cache/diff/audit）
-   *  不挂分组，pill 行按声明顺序平铺。UI 渲染时若此字段存在则按 group 分块。 */
+  /** L0 意图分组（可选）：仅 structure lens 的 buckets 携带；其他 lens 按声明顺序平铺。 */
   groupId?: IntentGroupId;
   stability?: "static" | "dynamic" | "session" | "dynamic-noise" | "dynamic-event";
 }
 
 export interface Lens {
-  /** Lens 稳定 id（写入 URL / 持久化时用）。 */
+  /** Lens 稳定 id（写入 URL / 持久化）；UI 文案(label/description)走 i18n：attribution.lensName.<id>。 */
   id: string;
-  /** Lens 切换器上的展示名。 */
-  label: string;
-  /** 切换器悬停提示。 */
-  description?: string;
   /** 桶集合 —— 顺序决定 pill 行的左→右顺序。 */
   buckets: LensBucket[];
-  /** 把一个 leaf 映射到桶 id。返回 null 表示"本 Lens 不分类该 leaf"
-   *  （桶过滤时也不会被任何 pill 选中）。一般每个 leaf 都应该能落到桶里。 */
+  /** 把一个 leaf 映射到桶 id。返回 null 表示"本 Lens 不分类该 leaf"。 */
   bucketOf(leaf: LeafLite): string | null;
 }
 
@@ -64,18 +54,13 @@ const CACHE_1H   = "cached-1h";
 const CACHE_NONE = "not-cached";
 
 const CACHE_BUCKETS: LensBucket[] = [
-  { id: CACHE_5M,   label: "5min 缓存", color: cachePalette.ttl5m,
-    description: "短期缓存（5 分钟 TTL）—— 同一会话内快速复用" },
-  { id: CACHE_1H,   label: "1h 缓存",   color: cachePalette.ttl1h,
-    description: "长期缓存（1 小时 TTL）—— 跨会话稳定复用" },
-  { id: CACHE_NONE, label: "未缓存",     color: cachePalette.notCached,
-    description: "未被打缓存的内容（每次请求都重新计费）" },
+  { id: CACHE_5M, color: cachePalette.ttl5m },
+  { id: CACHE_1H, color: cachePalette.ttl1h },
+  { id: CACHE_NONE, color: cachePalette.notCached },
 ];
 
 export const cacheLens: Lens = {
   id: "cache",
-  label: "缓存",
-  description: "按缓存策略分类：5min / 1h / 未缓存",
   buckets: CACHE_BUCKETS,
   bucketOf(leaf) {
     const p = leaf.cachePolicy;
@@ -96,39 +81,37 @@ export const cacheLens: Lens = {
 
 const ROLE_BUCKETS: LensBucket[] = [
   // ─── capabilities
-  { id: "tools.builtin", label: "内置 Tool", color: rolePalette["tools.builtin"].marker, description: "reqBody.tools 中内置系统工具的 JSON Schema，定义模型可直接调用的基础工具。", groupId: "capabilities" },
-  { id: "messages.capability.discovery", label: "工具发现", color: rolePalette["messages.capability.discovery"].marker, description: "运行时延迟注入的工具发现信息，例如可用 deferred tools / MCP 工具摘要。", groupId: "capabilities" },
-  { id: "messages.capability.agent", label: "Agent 类型", color: rolePalette["messages.capability.agent"].marker, description: "运行时可用的 sub-agent 类型声明。", groupId: "capabilities" },
-  { id: "messages.skills", label: "Skills", color: rolePalette["messages.skills"].marker, description: "已安装或可用的 Skill 描述。", groupId: "capabilities" },
+  { id: "tools.builtin", color: rolePalette["tools.builtin"].marker, groupId: "capabilities" },
+  { id: "messages.capability.discovery", color: rolePalette["messages.capability.discovery"].marker, groupId: "capabilities" },
+  { id: "messages.capability.agent", color: rolePalette["messages.capability.agent"].marker, groupId: "capabilities" },
+  { id: "messages.skills", color: rolePalette["messages.skills"].marker, groupId: "capabilities" },
 
   // ─── instructions
-  { id: "system.core", label: "系统提示词", color: rolePalette["system.core"].marker, description: "reqBody.system 中的系统提示词主体；内部 section 细节保留在 raw/audit 视图。", groupId: "instructions" },
-  { id: "system.guidance", label: "系统提示词", color: rolePalette["system.guidance"].marker, description: "系统提示词内部行为指导；默认展示仍并入系统提示词。", groupId: "instructions" },
-  { id: "system.tool-policy", label: "系统提示词", color: rolePalette["system.tool-policy"].marker, description: "系统提示词内部工具策略；默认展示仍并入系统提示词。", groupId: "instructions" },
+  { id: "system.core", color: rolePalette["system.core"].marker, groupId: "instructions" },
+  { id: "system.guidance", color: rolePalette["system.guidance"].marker, groupId: "instructions" },
+  { id: "system.tool-policy", color: rolePalette["system.tool-policy"].marker, groupId: "instructions" },
 
   // ─── environment
-  { id: "messages.context", label: "用户上下文", color: rolePalette["messages.context"].marker, description: "旧版或未细分的用户上下文注入。", groupId: "environment" },
-  { id: "messages.context.claude-md", label: "CLAUDE.md", color: rolePalette["messages.context.claude-md"].marker, description: "项目指令和用户维护的 CLAUDE.md / AGENTS.md 类上下文。", groupId: "environment" },
-  { id: "messages.context.memory", label: "记忆", color: rolePalette["messages.context.memory"].marker, description: "Claude Code 自动生成或维护的 memory 内容。", groupId: "environment" },
-  { id: "messages.context.account", label: "账号与日期", color: rolePalette["messages.context.account"].marker, description: "账号邮箱、当前日期等身份和时间上下文。", groupId: "environment" },
+  { id: "messages.context", color: rolePalette["messages.context"].marker, groupId: "environment" },
+  { id: "messages.context.claude-md", color: rolePalette["messages.context.claude-md"].marker, groupId: "environment" },
+  { id: "messages.context.memory", color: rolePalette["messages.context.memory"].marker, groupId: "environment" },
+  { id: "messages.context.account", color: rolePalette["messages.context.account"].marker, groupId: "environment" },
 
   // ─── interaction
-  { id: "messages.directive", label: "动态注入", color: rolePalette["messages.directive"].marker, description: "由 harness 动态注入的行为频次指引或包装结构。", groupId: "interaction" },
-  { id: "messages.injection", label: "动态注入", color: rolePalette["messages.injection"].marker, description: "<system-reminder> wrapper、运行时提醒等非对话内容。", groupId: "interaction" },
-  { id: "messages.human", label: "用户文本", color: rolePalette["messages.human"].marker, description: "用户在终端中直接输入的聊天文本", groupId: "interaction" },
-  { id: "messages.image", label: "图片附件", color: rolePalette["messages.image"].marker, description: "用户上传的多模态图片数据", groupId: "interaction" },
-  { id: "messages.thinking", label: "思考过程", color: rolePalette["messages.thinking"].marker, description: "Claude 产生的思考过程 (Thinking Block) 消耗", groupId: "interaction" },
-  { id: "messages.assistant", label: "回复文本", color: rolePalette["messages.assistant"].marker, description: "Claude 最终返回给用户的文本回复", groupId: "interaction" },
-  { id: "messages.tool-use", label: "工具调用", color: rolePalette["messages.tool-use"].marker, description: "Claude 发起的工具执行请求 (tool_use)", groupId: "interaction" },
-  { id: "messages.tool-result", label: "工具结果", color: rolePalette["messages.tool-result"].marker, description: "工具执行完毕后返回的输出回执 (tool_result)", groupId: "interaction" },
-  { id: "messages.misc", label: "命令输出", color: rolePalette["messages.misc"].marker, description: "其它杂项输入（本地命令回显、截图占位等）", groupId: "interaction" },
-  { id: "other.unknown", label: "未识别", color: rolePalette["other.unknown"].marker, description: "未能成功归因到具体规则的未知内容", groupId: "interaction" },
+  { id: "messages.directive", color: rolePalette["messages.directive"].marker, groupId: "interaction" },
+  { id: "messages.injection", color: rolePalette["messages.injection"].marker, groupId: "interaction" },
+  { id: "messages.human", color: rolePalette["messages.human"].marker, groupId: "interaction" },
+  { id: "messages.image", color: rolePalette["messages.image"].marker, groupId: "interaction" },
+  { id: "messages.thinking", color: rolePalette["messages.thinking"].marker, groupId: "interaction" },
+  { id: "messages.assistant", color: rolePalette["messages.assistant"].marker, groupId: "interaction" },
+  { id: "messages.tool-use", color: rolePalette["messages.tool-use"].marker, groupId: "interaction" },
+  { id: "messages.tool-result", color: rolePalette["messages.tool-result"].marker, groupId: "interaction" },
+  { id: "messages.misc", color: rolePalette["messages.misc"].marker, groupId: "interaction" },
+  { id: "other.unknown", color: rolePalette["other.unknown"].marker, groupId: "interaction" },
 ];
 
 export const structureLens: Lens = {
   id: "structure",
-  label: "结构",
-  description: "按来源与语义进行二级归因：能力与拓展 / 系统预设 / 环境与上下文 / 运行时注入/时间 / 对话与执行",
   buckets: ROLE_BUCKETS,
   bucketOf(leaf) {
     if (leaf.origin.kind === "unknown") return "other.unknown";
@@ -164,18 +147,13 @@ const AUDIT_PARTIAL = "partial";
 const AUDIT_NONE    = "none";
 
 const AUDIT_BUCKETS: LensBucket[] = [
-  { id: AUDIT_FULL,    label: "Full",    color: auditPalette.full,
-    description: "叶子被规则或 jsonl 完整覆盖" },
-  { id: AUDIT_PARTIAL, label: "Partial", color: auditPalette.partial,
-    description: "rule/jsonl 命中但 fullyCovered=false（动态注入未覆盖、内容近似）" },
-  { id: AUDIT_NONE,    label: "None",    color: auditPalette.none,
-    description: "structural（slot 已知但无规则）或 unknown（template 未识别）" },
+  { id: AUDIT_FULL, color: auditPalette.full },
+  { id: AUDIT_PARTIAL, color: auditPalette.partial },
+  { id: AUDIT_NONE, color: auditPalette.none },
 ];
 
 export const auditLens: Lens = {
   id: "audit",
-  label: "Audit",
-  description: "parser 自身的归因覆盖度（诊断用）—— 哪些 leaf 命中了规则、哪些没归上",
   buckets: AUDIT_BUCKETS,
   bucketOf(leaf) {
     return coverageStateOf(leaf.origin);
@@ -195,20 +173,14 @@ const DIFF_REMOVED  = "removed";
 const DIFF_KEPT     = "kept";
 
 const DIFF_BUCKETS: LensBucket[] = [
-  { id: DIFF_ADDED,    label: "新增", color: diffPalette.added,
-    description: "本轮请求新增的 leaf（上一轮没有）" },
-  { id: DIFF_MODIFIED, label: "修改", color: diffPalette.modified,
-    description: "上一轮同 slot 存在但内容改了" },
-  { id: DIFF_REMOVED,  label: "删除", color: diffPalette.removed,
-    description: "上一轮存在、本轮已删除（在 Prev bar 和底部 footer 列出）" },
-  { id: DIFF_KEPT,     label: "未变", color: diffPalette.kept,
-    description: "未变化的 leaf" },
+  { id: DIFF_ADDED, color: diffPalette.added },
+  { id: DIFF_MODIFIED, color: diffPalette.modified },
+  { id: DIFF_REMOVED, color: diffPalette.removed },
+  { id: DIFF_KEPT, color: diffPalette.kept },
 ];
 
 export const diffLens: Lens = {
   id: "diff",
-  label: "Diff",
-  description: "相对上一次 call 的 leaf 级变化（依赖 diff-tree 数据合并）",
   buckets: DIFF_BUCKETS,
   bucketOf(leaf) {
     return leaf.diffKind ?? DIFF_KEPT;

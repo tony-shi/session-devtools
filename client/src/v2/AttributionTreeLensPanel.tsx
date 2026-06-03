@@ -104,9 +104,10 @@ function LensSwitcher({
         {lenses.map((lens) => {
           const isActive = activeLenses.has(lens.id);
           const isBase = lens.id === baseLensId;
+          const lensDesc = t(`attribution.lensName.${lens.id}.description`, { defaultValue: "" });
           const description = isBase
-            ? (lens.description ?? "") + t("attribution.baseLensSuffix")
-            : lens.description ?? "";
+            ? lensDesc + t("attribution.baseLensSuffix")
+            : lensDesc;
           return (
             <button
               key={lens.id}
@@ -143,7 +144,7 @@ function LensSwitcher({
               }}>
                 {isActive ? "✓" : ""}
               </span>
-              {lens.label}
+              {t(`attribution.lensName.${lens.id}.label`, { defaultValue: lens.id })}
             </button>
           );
         })}
@@ -165,6 +166,7 @@ function BucketPill({
   onClick: () => void;
   variant?: "pill" | "badge";
 }) {
+  const { t } = useTranslation();
   const isBadge = variant === "badge";
   const pct = totalContextChars && totalContextChars > 0
     ? (totalChars / totalContextChars) * 100
@@ -217,12 +219,12 @@ function BucketPill({
                 {bucket.id === "added" ? "+" : bucket.id === "removed" ? "-" : bucket.id === "modified" ? "*" : ""}
                 {leafCount}
               </span>
-              <span>{bucket.label}</span>
+              <span>{t(`attribution.lensBucket.${bucket.id}.label`, { defaultValue: bucket.id })}</span>
             </>
           ) : (
             <>
               <span style={{ fontWeight: 600, color: "#1f2937" }}>{leafCount}</span>
-              <span style={{ color: "#6b7280" }}>{bucket.label}</span>
+              <span style={{ color: "#6b7280" }}>{t(`attribution.lensBucket.${bucket.id}.label`, { defaultValue: bucket.id })}</span>
               {pct !== null && (
                 <span style={{ marginLeft: 3, fontSize: 10, fontWeight: 600, color: "#9ca3af" }}>
                   {pct.toFixed(1)}%
@@ -236,11 +238,12 @@ function BucketPill({
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 700 }}>
             <span style={{ width: 8, height: 8, borderRadius: 1, background: bucket.color }} />
-            {bucket.label}
+            {t(`attribution.lensBucket.${bucket.id}.label`, { defaultValue: bucket.id })}
           </div>
-          {bucket.description && (
-            <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{bucket.description}</div>
-          )}
+          {(() => {
+            const d = t(`attribution.lensBucket.${bucket.id}.description`, { defaultValue: "" });
+            return d ? <div style={{ opacity: 0.85, lineHeight: 1.45 }}>{d}</div> : null;
+          })()}
           <div style={{ opacity: 0.65, fontSize: 10 }}>
             {leafCount} leaf · {fmtK(totalChars)} chars
           </div>
@@ -520,6 +523,7 @@ function BucketPillRow({
   onSelect: (bucketId: string | null) => void;
   leaves: LeafLite[];
 }) {
+  const { t } = useTranslation();
   const stats = useMemo(() => bucketStatsOf(lens, leaves), [lens, leaves]);
   // 过滤掉本 call 没有命中的桶。如果全部为空（罕见 — 一般是 leaves 全跑空），
   // 整个 pill 行不渲染，避免留个空 row。
@@ -534,7 +538,7 @@ function BucketPillRow({
       padding: "2px 0",
     }}>
       <span style={{ fontWeight: 600, color: "#9ca3af", letterSpacing: "0.04em", textTransform: "uppercase", fontSize: 9.5, marginRight: 4 }}>
-        {lens.label}
+        {t(`attribution.lensName.${lens.id}.label`, { defaultValue: lens.id })}
       </span>
       {nonEmptyStats.map(({ bucket, leafCount, totalChars }) => (
         <BucketPill
@@ -1170,13 +1174,16 @@ export function AttributionTreeLensPanel({
           if (!bid) return null;
           const b = ln.buckets.find((x) => x.id === bid);
           if (!b) return null;
+          const bLabel = t(`attribution.lensBucket.${b.id}.label`, { defaultValue: b.id });
+          const bDesc = t(`attribution.lensBucket.${b.id}.description`, { defaultValue: "" });
+          const lName = t(`attribution.lensName.${ln.id}.label`, { defaultValue: ln.id });
           return {
             key: ln.id,
-            label: b.label,
+            label: bLabel,
             color: b.color,
             bg: `${b.color}1a`, // ~10% alpha tint
             border: `${b.color}40`,
-            title: `${ln.label}: ${b.label}${b.description ? "\n" + b.description : ""}`,
+            title: `${lName}: ${bLabel}${bDesc ? "\n" + bDesc : ""}`,
           };
         })
         .filter((x): x is NonNullable<typeof x> => x !== null);

@@ -449,7 +449,151 @@
     "roleAssistantCount_one": "{{count}} assistant",
     "roleAssistantCount_other": "{{count}} assistants",
     "roleSystemCount_one": "{{count}} system",
-    "roleSystemCount_other": "{{count}} systems"
+    "roleSystemCount_other": "{{count}} systems",
+    "lensName": {
+      "structure": {
+        "label": "Structure",
+        "description": "Two-level attribution by source & semantics: capabilities / system presets / environment & context / runtime injection·time / dialogue & execution"
+      },
+      "diff": {
+        "label": "Diff",
+        "description": "Leaf-level changes vs the previous call (relies on diff-tree merge)"
+      },
+      "cache": {
+        "label": "Cache",
+        "description": "Classified by cache policy: 5min / 1h / not cached"
+      },
+      "audit": {
+        "label": "Audit",
+        "description": "Parser's own attribution coverage (diagnostic) — which leaves matched rules, which didn't"
+      }
+    },
+    "lensBucket": {
+      "tools.builtin": {
+        "label": "Built-in Tool",
+        "description": "JSON Schema of built-in system tools in reqBody.tools; the base tools the model can call directly."
+      },
+      "messages.capability.discovery": {
+        "label": "Tool Discovery",
+        "description": "Runtime lazily-injected tool discovery info, e.g. available deferred tools / MCP tool summaries."
+      },
+      "messages.capability.agent": {
+        "label": "Agent Types",
+        "description": "Declaration of sub-agent types available at runtime."
+      },
+      "messages.skills": {
+        "label": "Skills",
+        "description": "Descriptions of installed or available Skills."
+      },
+      "system.core": {
+        "label": "System Prompt",
+        "description": "The system prompt body in reqBody.system; inner section detail stays in raw/audit views."
+      },
+      "system.guidance": {
+        "label": "System Prompt",
+        "description": "System prompt inner behavior guidance; folded into System Prompt by default."
+      },
+      "system.tool-policy": {
+        "label": "System Prompt",
+        "description": "System prompt inner tool policy; folded into System Prompt by default."
+      },
+      "messages.context": {
+        "label": "User Context",
+        "description": "Legacy or uncategorized user context injection."
+      },
+      "messages.context.claude-md": {
+        "label": "CLAUDE.md",
+        "description": "Project instructions and user-maintained CLAUDE.md / AGENTS.md context."
+      },
+      "messages.context.memory": {
+        "label": "Memory",
+        "description": "Memory content auto-generated or maintained by Claude Code."
+      },
+      "messages.context.account": {
+        "label": "Account & Date",
+        "description": "Identity & time context such as account email and current date."
+      },
+      "messages.directive": {
+        "label": "Dynamic Injection",
+        "description": "Behavior-frequency guidance or wrapper structure dynamically injected by the harness."
+      },
+      "messages.injection": {
+        "label": "Dynamic Injection",
+        "description": "<system-reminder> wrappers, runtime reminders and other non-dialogue content."
+      },
+      "messages.human": {
+        "label": "User Text",
+        "description": "Chat text typed directly by the user in the terminal."
+      },
+      "messages.image": {
+        "label": "Image",
+        "description": "Multimodal image data uploaded by the user."
+      },
+      "messages.thinking": {
+        "label": "Thinking",
+        "description": "Thinking Block consumption produced by Claude."
+      },
+      "messages.assistant": {
+        "label": "Reply",
+        "description": "Final text reply Claude returns to the user."
+      },
+      "messages.tool-use": {
+        "label": "Tool Call",
+        "description": "Tool execution request initiated by Claude (tool_use)."
+      },
+      "messages.tool-result": {
+        "label": "Tool Result",
+        "description": "Output receipt returned after tool execution (tool_result)."
+      },
+      "messages.misc": {
+        "label": "Command Output",
+        "description": "Other misc input (local command echo, screenshot placeholder, etc.)."
+      },
+      "other.unknown": {
+        "label": "Unidentified",
+        "description": "Unknown content not successfully attributed to a specific rule."
+      },
+      "cached-5m": {
+        "label": "5min Cache",
+        "description": "Short-term cache (5min TTL) — fast reuse within a session."
+      },
+      "cached-1h": {
+        "label": "1h Cache",
+        "description": "Long-term cache (1h TTL) — stable reuse across sessions."
+      },
+      "not-cached": {
+        "label": "Not Cached",
+        "description": "Not cached (re-billed every request)."
+      },
+      "full": {
+        "label": "Full",
+        "description": "Leaf fully covered by rule or jsonl."
+      },
+      "partial": {
+        "label": "Partial",
+        "description": "rule/jsonl matched but fullyCovered=false (dynamic injection uncovered, content approximated)."
+      },
+      "none": {
+        "label": "None",
+        "description": "structural (slot known but no rule) or unknown (template unrecognized)."
+      },
+      "added": {
+        "label": "Added",
+        "description": "Leaf added this request (absent last round)."
+      },
+      "modified": {
+        "label": "Modified",
+        "description": "Same slot existed last round but content changed."
+      },
+      "removed": {
+        "label": "Removed",
+        "description": "Existed last round, removed this round (listed in Prev bar and footer)."
+      },
+      "kept": {
+        "label": "Kept",
+        "description": "Unchanged leaf."
+      }
+    }
   },
   "callLedger": {
     "historicalReuse": "Historical Reuse",
