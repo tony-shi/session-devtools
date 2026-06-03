@@ -867,5 +867,195 @@
     "text": "文本响应",
     "toolUse": "工具调用",
     "response": "完整响应"
+  },
+  "rule": {
+    "system-prompt-identity": {
+      "displayName": "身份",
+      "summary": "固定身份标识行，标记这是 Claude Code 会话(归因锚点)"
+    },
+    "billing-noise": {
+      "displayName": "计费头",
+      "summary": "Claude Code 发给服务端的版本/计费标记，不是给模型的提示内容"
+    },
+    "system-prompt-intro.standard": {
+      "displayName": "开场白",
+      "summary": "开场引导：用下列指令和可用工具协助用户"
+    },
+    "system-prompt-intro.output-style": {
+      "displayName": "输出风格",
+      "summary": "输出风格约束(旧版)"
+    },
+    "system-prompt-intro.style-guidance": {
+      "displayName": "输出风格",
+      "summary": "输出风格与格式约束(终端 Markdown / 简洁度)"
+    },
+    "system-prompt-system-section": {
+      "displayName": "System 段 *",
+      "summary": "# System 段：核心系统指令"
+    },
+    "system-prompt-doing-tasks": {
+      "displayName": "执行任务 *",
+      "summary": "# Doing tasks 段：任务执行流程指引"
+    },
+    "system-prompt-actions-section": {
+      "displayName": "谨慎执行 *",
+      "summary": "# Executing actions with care 段：对外部/不可逆动作的谨慎要求"
+    },
+    "system-prompt-using-your-tools": {
+      "displayName": "工具使用 *",
+      "summary": "# Using your tools 段：工具使用指引"
+    },
+    "system-prompt-tone-style.external": {
+      "displayName": "语气与风格 *",
+      "summary": "# Tone and style 段：回复语气与格式"
+    },
+    "system-prompt-text-output-section": {
+      "displayName": "文本输出 *",
+      "summary": "# Text output 段：文本输出规则(不含工具调用)"
+    },
+    "system-prompt-environment": {
+      "displayName": "环境",
+      "summary": "运行环境事实：工作目录 / 平台 / 日期 / git 概况"
+    },
+    "system-prompt-gitstatus": {
+      "displayName": "Git 状态",
+      "summary": "当前 git 状态：分支、改动文件、最近提交"
+    },
+    "system-prompt-harness": {
+      "displayName": "运行框架",
+      "summary": "Harness 运行环境说明：终端渲染、工具权限模式、hook 行为"
+    },
+    "system-prompt-context-management": {
+      "displayName": "上下文管理",
+      "summary": "长对话超限时的自动压缩(compaction)说明"
+    },
+    "system-prompt-memory": {
+      "displayName": "记忆",
+      "summary": "持久化记忆(CLAUDE.md / MEMORY.md)的存在与读写规则"
+    },
+    "system-prompt-auto-memory": {
+      "displayName": "记忆",
+      "summary": "持久化记忆(旧版 auto memory 段)"
+    },
+    "system-prompt-session-guidance": {
+      "displayName": "会话守则",
+      "summary": "本会话特定的行为指引(! 命令 / /<skill> / /schedule 提议 / ultrareview 说明)"
+    },
+    "messages.user-context": {
+      "displayName": "用户上下文注入",
+      "summary": "首条注入：项目指令(CLAUDE.md/AGENTS.md, 可缺) + 持久化记忆(MEMORY.md) + 邮箱 + 日期；静态壳包动态载荷"
+    },
+    "messages.reminder.project-instructions": {
+      "displayName": "项目指令(CLAUDE.md)",
+      "summary": "项目级指令文件(CLAUDE.md / AGENTS.md)的注入内容"
+    },
+    "messages.reminder.global-instructions": {
+      "displayName": "全局指令(~/.claude/CLAUDE.md)",
+      "summary": "用户全局指令文件(~/.claude/CLAUDE.md)，对你所有项目生效"
+    },
+    "messages.reminder.memory": {
+      "displayName": "记忆(MEMORY.md)",
+      "summary": "Claude Code 持久化记忆 MEMORY.md 的索引内容(跨会话)"
+    },
+    "messages.reminder.account": {
+      "displayName": "账号(邮箱/日期)",
+      "summary": "账号邮箱 + 当前日期(注入上下文尾部)"
+    },
+    "messages.reminder.wrapper-prefix": {
+      "displayName": "system-reminder 前置封装",
+      "summary": "userContext 注入块的固定前置封装"
+    },
+    "messages.reminder.wrapper-suffix": {
+      "displayName": "system-reminder 后置封装",
+      "summary": "userContext 注入块的固定后置封装"
+    },
+    "messages.deferred-tools-listing": {
+      "displayName": "延迟工具",
+      "summary": "ToolSearch 按需加载的工具清单(schema 未载，调用前需 ToolSearch 取)；内置 + MCP 工具，随 MCP 配置变"
+    },
+    "messages.agent-types-listing": {
+      "displayName": "Agent 类型",
+      "summary": "Agent 工具可调度的子代理类型及其工具权限(- name: 描述 (Tools: …))"
+    },
+    "messages.skill-listing": {
+      "displayName": "Skills",
+      "summary": "Skill 工具可用的技能清单(每项 - name: 描述)；随安装的 skill 变"
+    },
+    "messages.file-attachment": {
+      "displayName": "文件附件 *",
+      "summary": "用户附加的文件内容(注入上下文)"
+    },
+    "messages.file-truncated": {
+      "displayName": "文件截断 *",
+      "summary": "过长文件被截断的提示"
+    },
+    "messages.image": {
+      "displayName": "图片 *",
+      "summary": "用户输入的图片块"
+    },
+    "messages.image-placeholder": {
+      "displayName": "图片占位 *",
+      "summary": "图片被替换的文本占位([Image #N])"
+    },
+    "messages.local-command": {
+      "displayName": "本地命令 *",
+      "summary": "本地 slash 命令的回显(! 命令等)"
+    },
+    "messages.away-summary": {
+      "displayName": "离开摘要 *",
+      "summary": "Away 模式生成的会话摘要"
+    },
+    "messages.system-reminder": {
+      "displayName": "系统提醒 *",
+      "summary": "未细分的 <system-reminder> 注入(兜底)"
+    },
+    "smoosh.file-modified": {
+      "displayName": "文件已修改 *",
+      "summary": "文件被外部修改的 system-reminder"
+    },
+    "smoosh.task-reminder": {
+      "displayName": "任务提醒 *",
+      "summary": "Task 工具的待办提醒(system-reminder)"
+    },
+    "tool.Read": {
+      "displayName": "Read",
+      "summary": "工具定义：Read(2.1.158 版固定描述)"
+    },
+    "tool.Write": {
+      "displayName": "Write",
+      "summary": "工具定义：Write(2.1.158 版固定描述)"
+    },
+    "tool.Edit": {
+      "displayName": "Edit",
+      "summary": "工具定义：Edit(2.1.158 版固定描述)"
+    },
+    "tool.Bash": {
+      "displayName": "Bash",
+      "summary": "工具定义：Bash(2.1.158；署名模型名动态，其余固定)"
+    },
+    "tool.Agent": {
+      "displayName": "Agent",
+      "summary": "工具定义：Agent(2.1.158 版固定描述)"
+    },
+    "tool.Skill": {
+      "displayName": "Skill",
+      "summary": "工具定义：Skill(2.1.158 版固定描述)"
+    },
+    "tool.Workflow": {
+      "displayName": "Workflow",
+      "summary": "工具定义：Workflow(2.1.158 版固定描述)"
+    },
+    "tool.ToolSearch": {
+      "displayName": "ToolSearch",
+      "summary": "工具定义：ToolSearch(2.1.158 版固定描述)"
+    },
+    "tool.AskUserQuestion": {
+      "displayName": "AskUserQuestion",
+      "summary": "工具定义：AskUserQuestion(2.1.158 版固定描述)"
+    },
+    "tool.ScheduleWakeup": {
+      "displayName": "ScheduleWakeup",
+      "summary": "工具定义：ScheduleWakeup(2.1.158 版固定描述)"
+    }
   }
 }

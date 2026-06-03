@@ -860,5 +860,195 @@
     "text": "Text",
     "toolUse": "Tool Use",
     "response": "Response"
+  },
+  "rule": {
+    "system-prompt-identity": {
+      "displayName": "Identity",
+      "summary": "Fixed identity line marking this as a Claude Code session (attribution anchor)"
+    },
+    "billing-noise": {
+      "displayName": "Billing Header",
+      "summary": "Version/billing markers Claude Code sends to the server; not prompt content for the model"
+    },
+    "system-prompt-intro.standard": {
+      "displayName": "Intro",
+      "summary": "Opening guidance: assist the user with the instructions and tools below"
+    },
+    "system-prompt-intro.output-style": {
+      "displayName": "Output Style",
+      "summary": "Output style constraints (legacy)"
+    },
+    "system-prompt-intro.style-guidance": {
+      "displayName": "Output Style",
+      "summary": "Output style and formatting constraints (terminal Markdown / conciseness)"
+    },
+    "system-prompt-system-section": {
+      "displayName": "System *",
+      "summary": "# System section: core system instructions"
+    },
+    "system-prompt-doing-tasks": {
+      "displayName": "Doing Tasks *",
+      "summary": "# Doing tasks section: task execution workflow guidance"
+    },
+    "system-prompt-actions-section": {
+      "displayName": "Acting with Care *",
+      "summary": "# Executing actions with care section: caution for external/irreversible actions"
+    },
+    "system-prompt-using-your-tools": {
+      "displayName": "Using Tools *",
+      "summary": "# Using your tools section: tool usage guidance"
+    },
+    "system-prompt-tone-style.external": {
+      "displayName": "Tone & Style *",
+      "summary": "# Tone and style section: reply tone and formatting"
+    },
+    "system-prompt-text-output-section": {
+      "displayName": "Text Output *",
+      "summary": "# Text output section: text output rules (excluding tool calls)"
+    },
+    "system-prompt-environment": {
+      "displayName": "Environment",
+      "summary": "Runtime environment facts: working dir / platform / date / git overview"
+    },
+    "system-prompt-gitstatus": {
+      "displayName": "Git Status",
+      "summary": "Current git status: branch, changed files, recent commits"
+    },
+    "system-prompt-harness": {
+      "displayName": "Harness",
+      "summary": "Harness runtime notes: terminal rendering, tool permission mode, hook behavior"
+    },
+    "system-prompt-context-management": {
+      "displayName": "Context Management",
+      "summary": "Auto-compaction behavior when long conversations exceed limits"
+    },
+    "system-prompt-memory": {
+      "displayName": "Memory",
+      "summary": "Persistent memory (CLAUDE.md / MEMORY.md): presence and read/write rules"
+    },
+    "system-prompt-auto-memory": {
+      "displayName": "Memory",
+      "summary": "Persistent memory (legacy auto-memory section)"
+    },
+    "system-prompt-session-guidance": {
+      "displayName": "Session Guidance",
+      "summary": "Session-specific behavior guidance (! commands / /<skill> / /schedule offers / ultrareview notes)"
+    },
+    "messages.user-context": {
+      "displayName": "User Context Injection",
+      "summary": "First-message injection: project instructions (CLAUDE.md/AGENTS.md, optional) + persistent memory (MEMORY.md) + email + date; static shell wrapping dynamic payload"
+    },
+    "messages.reminder.project-instructions": {
+      "displayName": "Project Instructions (CLAUDE.md)",
+      "summary": "Injected content of project-level instruction files (CLAUDE.md / AGENTS.md)"
+    },
+    "messages.reminder.global-instructions": {
+      "displayName": "Global Instructions (~/.claude/CLAUDE.md)",
+      "summary": "User global instruction file (~/.claude/CLAUDE.md), applies to all your projects"
+    },
+    "messages.reminder.memory": {
+      "displayName": "Memory (MEMORY.md)",
+      "summary": "Index content of Claude Code persistent memory MEMORY.md (cross-session)"
+    },
+    "messages.reminder.account": {
+      "displayName": "Account (Email/Date)",
+      "summary": "Account email + current date (injected at context tail)"
+    },
+    "messages.reminder.wrapper-prefix": {
+      "displayName": "system-reminder Prefix Wrapper",
+      "summary": "Fixed prefix wrapper of the userContext injection block"
+    },
+    "messages.reminder.wrapper-suffix": {
+      "displayName": "system-reminder Suffix Wrapper",
+      "summary": "Fixed suffix wrapper of the userContext injection block"
+    },
+    "messages.deferred-tools-listing": {
+      "displayName": "Deferred Tools",
+      "summary": "Tool list ToolSearch loads on demand (schema not loaded; fetch via ToolSearch before calling); built-in + MCP tools, varies with MCP config"
+    },
+    "messages.agent-types-listing": {
+      "displayName": "Agent Types",
+      "summary": "Sub-agent types the Agent tool can dispatch and their tool permissions (- name: desc (Tools: …))"
+    },
+    "messages.skill-listing": {
+      "displayName": "Skills",
+      "summary": "Skills available to the Skill tool (each - name: desc); varies with installed skills"
+    },
+    "messages.file-attachment": {
+      "displayName": "File Attachment *",
+      "summary": "User-attached file content (injected into context)"
+    },
+    "messages.file-truncated": {
+      "displayName": "File Truncated *",
+      "summary": "Notice that an overly long file was truncated"
+    },
+    "messages.image": {
+      "displayName": "Image *",
+      "summary": "Image block from user input"
+    },
+    "messages.image-placeholder": {
+      "displayName": "Image Placeholder *",
+      "summary": "Text placeholder an image was replaced with ([Image #N])"
+    },
+    "messages.local-command": {
+      "displayName": "Local Command *",
+      "summary": "Echo of a local slash command (! commands, etc.)"
+    },
+    "messages.away-summary": {
+      "displayName": "Away Summary *",
+      "summary": "Session summary generated in Away mode"
+    },
+    "messages.system-reminder": {
+      "displayName": "System Reminder *",
+      "summary": "Uncategorized <system-reminder> injection (fallback)"
+    },
+    "smoosh.file-modified": {
+      "displayName": "File Modified *",
+      "summary": "system-reminder that a file was modified externally"
+    },
+    "smoosh.task-reminder": {
+      "displayName": "Task Reminder *",
+      "summary": "Task tool todo reminder (system-reminder)"
+    },
+    "tool.Read": {
+      "displayName": "Read",
+      "summary": "Tool definition: Read (fixed description, 2.1.158)"
+    },
+    "tool.Write": {
+      "displayName": "Write",
+      "summary": "Tool definition: Write (fixed description, 2.1.158)"
+    },
+    "tool.Edit": {
+      "displayName": "Edit",
+      "summary": "Tool definition: Edit (fixed description, 2.1.158)"
+    },
+    "tool.Bash": {
+      "displayName": "Bash",
+      "summary": "Tool definition: Bash (2.1.158; signature model name dynamic, rest fixed)"
+    },
+    "tool.Agent": {
+      "displayName": "Agent",
+      "summary": "Tool definition: Agent (fixed description, 2.1.158)"
+    },
+    "tool.Skill": {
+      "displayName": "Skill",
+      "summary": "Tool definition: Skill (fixed description, 2.1.158)"
+    },
+    "tool.Workflow": {
+      "displayName": "Workflow",
+      "summary": "Tool definition: Workflow (fixed description, 2.1.158)"
+    },
+    "tool.ToolSearch": {
+      "displayName": "ToolSearch",
+      "summary": "Tool definition: ToolSearch (fixed description, 2.1.158)"
+    },
+    "tool.AskUserQuestion": {
+      "displayName": "AskUserQuestion",
+      "summary": "Tool definition: AskUserQuestion (fixed description, 2.1.158)"
+    },
+    "tool.ScheduleWakeup": {
+      "displayName": "ScheduleWakeup",
+      "summary": "Tool definition: ScheduleWakeup (fixed description, 2.1.158)"
+    }
   }
 }

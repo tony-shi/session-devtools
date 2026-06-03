@@ -90,31 +90,43 @@ export const sectionPalette: Record<"system" | "tools" | "messages" | "other", S
   other:    { label: "Other",    barBg: "#c4b18c", barText: "#374151", rowBg: "#fbf7ee", marker: "#c4b18c", textColor: "#76684d" },
 };
 
+// rolePalette：三层显著度（图底分离）。色相=类别，饱和/明度="该不该扫"：
+//   前景·会话流（饱和抢眼）：AI思考/工具调用/工具结果/AI回复/用户输入/图片 —— 随会话增长、你真正在扫的。
+//   中景·上下文内容（柔和）：系统提示词/CLAUDE.md/记忆/账号 —— 一次性但是"内容"。
+//   背景·脚手架（柔和有色，不洗成灰）：内置Tool/工具发现/Agent/Skills/动态注入·system-reminder壳 ——
+//   都比会话弱，但保持有色有辨识度，绝不压到像未选中/dimmed 的灰（marker 略深以便淡条下仍见圆点）。
 export const rolePalette: Record<RoleId, SectionStyle> = {
-  "system.core":        { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
-  "system.guidance":    { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
-  "system.tool-policy": { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
-  "system.memory":      { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
-  "system.env":         { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
-  "system.billing":     { label: "系统提示词", barBg: "#9a9a95", barText: "#1f2937", rowBg: "#f8f8f5", marker: "#9a9a95", textColor: "#5f5f5a" },
-  "tools.builtin":      { label: "内置 Tool", barBg: "#5f84e7", barText: "#1f2937", rowBg: "#eef4ff", marker: "#5f84e7", textColor: "#3158b3" },
-  "messages.context":            { label: "用户上下文", barBg: "#dda953", barText: "#1f2937", rowBg: "#fff7e3", marker: "#dda953", textColor: "#835f1f" },
-  "messages.context.claude-md":  { label: "CLAUDE.md", barBg: "#74a8e8", barText: "#1f2937", rowBg: "#eef6ff", marker: "#74a8e8", textColor: "#3d6fae" },
-  "messages.context.memory":     { label: "记忆", barBg: "#f1b45d", barText: "#1f2937", rowBg: "#fff3df", marker: "#f1b45d", textColor: "#9b6220" },
-  "messages.context.account":    { label: "账号与日期", barBg: "#8fa2bf", barText: "#1f2937", rowBg: "#f1f5fb", marker: "#8fa2bf", textColor: "#596f8f" },
-  "messages.capability.discovery": { label: "工具发现", barBg: "#a37bdc", barText: "#1f2937", rowBg: "#f5efff", marker: "#a37bdc", textColor: "#704ab1" },
-  "messages.capability.agent":   { label: "Agent 类型", barBg: "#748ee8", barText: "#1f2937", rowBg: "#f0f3ff", marker: "#748ee8", textColor: "#4b62b0" },
-  "messages.skills":             { label: "Skills", barBg: "#e5c34f", barText: "#1f2937", rowBg: "#fff9dc", marker: "#e5c34f", textColor: "#856d19" },
-  "messages.directive":          { label: "动态注入", barBg: "#c4b18c", barText: "#1f2937", rowBg: "#fbf7ee", marker: "#c4b18c", textColor: "#76684d" },
-  "messages.injection":          { label: "动态注入", barBg: "#c4b18c", barText: "#1f2937", rowBg: "#fbf7ee", marker: "#c4b18c", textColor: "#76684d" },
-  "messages.human":      { label: "用户输入", barBg: "#5fad6b", barText: "#1f2937", rowBg: "#ebf8ee", marker: "#5fad6b", textColor: "#3f7c49" },
-  "messages.image":      { label: "图片输入", barBg: "#49a7a2", barText: "#1f2937", rowBg: "#eaf8f7", marker: "#49a7a2", textColor: "#2f7773" },
-  "messages.thinking":   { label: "AI 思考", barBg: "#9a67e8", barText: "#1f2937", rowBg: "#f5efff", marker: "#9a67e8", textColor: "#6942b8", indicatorLine: "top" },
-  "messages.assistant":  { label: "AI 回复", barBg: "#e88472", barText: "#1f2937", rowBg: "#fff0ec", marker: "#e88472", textColor: "#9f4e3f" },
-  "messages.tool-use":   { label: "工具调用", barBg: "#2f9db7", barText: "#1f2937", rowBg: "#eaf8fb", marker: "#2f9db7", textColor: "#1d7187", indicatorLine: "left" },
-  "messages.tool-result":{ label: "工具结果", barBg: "#d99a2b", barText: "#1f2937", rowBg: "#fff4dd", marker: "#d99a2b", textColor: "#8a5d16", borderStyle: "1px solid #d99a2b", texture: "stripes" },
-  "messages.misc":       { label: "其他消息", barBg: "#c9ad61", barText: "#1f2937", rowBg: "#fbf6e4", marker: "#c9ad61", textColor: "#7a6626" },
-  "other.unknown":       { label: "未识别", barBg: "#b8b8b3", barText: "#374151", rowBg: "#fafafa", marker: "#b8b8b3", textColor: "#6f6f6b" },
+  // ── 中景·柔和：系统提示词
+  "system.core":        { label: "系统提示词", barBg: "#8b94a3", barText: "#1f2937", rowBg: "#f1f3f6", marker: "#8b94a3", textColor: "#515a68" },
+  "system.guidance":    { label: "系统提示词", barBg: "#8b94a3", barText: "#1f2937", rowBg: "#f1f3f6", marker: "#8b94a3", textColor: "#515a68" },
+  "system.tool-policy": { label: "系统提示词", barBg: "#8b94a3", barText: "#1f2937", rowBg: "#f1f3f6", marker: "#8b94a3", textColor: "#515a68" },
+  "system.memory":      { label: "系统提示词", barBg: "#8b94a3", barText: "#1f2937", rowBg: "#f1f3f6", marker: "#8b94a3", textColor: "#515a68" },
+  "system.env":         { label: "系统提示词", barBg: "#8b94a3", barText: "#1f2937", rowBg: "#f1f3f6", marker: "#8b94a3", textColor: "#515a68" },
+  "system.billing":     { label: "系统提示词", barBg: "#8b94a3", barText: "#1f2937", rowBg: "#f1f3f6", marker: "#8b94a3", textColor: "#515a68" },
+  // ── 背景·脚手架：内置 Tool 定义
+  "tools.builtin":      { label: "内置 Tool", barBg: "#a6bfe4", barText: "#1f2937", rowBg: "#eef3fc", marker: "#a6bfe4", textColor: "#3d5a8a" },
+  // ── 中景·柔和：上下文内容（CLAUDE.md / 记忆 / 账号）
+  "messages.context":            { label: "用户上下文", barBg: "#cda867", barText: "#1f2937", rowBg: "#fbf4e6", marker: "#cda867", textColor: "#856326" },
+  "messages.context.claude-md":  { label: "CLAUDE.md", barBg: "#8fb3da", barText: "#1f2937", rowBg: "#eff4fb", marker: "#8fb3da", textColor: "#3f6ea3" },
+  "messages.context.memory":     { label: "记忆", barBg: "#d3ab63", barText: "#1f2937", rowBg: "#fbf4e4", marker: "#d3ab63", textColor: "#8a6526" },
+  "messages.context.account":    { label: "账号与日期", barBg: "#a9b0bd", barText: "#1f2937", rowBg: "#f2f3f6", marker: "#a9b0bd", textColor: "#5f6573" },
+  // ── 背景·脚手架：工具发现 / Agent 类型 / Skills（不再亮黄）
+  "messages.capability.discovery": { label: "工具发现", barBg: "#bcb0dd", barText: "#1f2937", rowBg: "#f3effa", marker: "#bcb0dd", textColor: "#5d4f86" },
+  "messages.capability.agent":   { label: "Agent 类型", barBg: "#aebce8", barText: "#1f2937", rowBg: "#eff2fc", marker: "#aebce8", textColor: "#45578f" },
+  "messages.skills":             { label: "Skills", barBg: "#d4c189", barText: "#1f2937", rowBg: "#fbf5e6", marker: "#d4c189", textColor: "#8a6e2a" },
+  // ── 背景·脚手架：动态注入 / system-reminder 壳（弱化但仍有辨识度，不能淡到像未选中/dimmed 的灰）
+  "messages.directive":          { label: "动态注入", barBg: "#d3c197", barText: "#1f2937", rowBg: "#faf6ec", marker: "#c0ad7f", textColor: "#7c6e4a" },
+  "messages.injection":          { label: "动态注入", barBg: "#d3c197", barText: "#1f2937", rowBg: "#faf6ec", marker: "#c0ad7f", textColor: "#7c6e4a" },
+  // ── 前景·会话流（饱和、抢眼；白字）
+  "messages.human":      { label: "用户输入", barBg: "#16a34a", barText: "#ffffff", rowBg: "#e9f7ee", marker: "#16a34a", textColor: "#15803d" },
+  "messages.image":      { label: "图片输入", barBg: "#db2777", barText: "#ffffff", rowBg: "#fceef4", marker: "#db2777", textColor: "#a21555" },
+  "messages.thinking":   { label: "AI 思考", barBg: "#7c3aed", barText: "#ffffff", rowBg: "#f3effe", marker: "#7c3aed", textColor: "#5b21b6", indicatorLine: "top" },
+  "messages.assistant":  { label: "AI 回复", barBg: "#e85d4a", barText: "#ffffff", rowBg: "#fdeeeb", marker: "#e85d4a", textColor: "#b93d2c" },
+  "messages.tool-use":   { label: "工具调用", barBg: "#2563eb", barText: "#ffffff", rowBg: "#eef2fe", marker: "#2563eb", textColor: "#1d4ed8", indicatorLine: "left" },
+  "messages.tool-result":{ label: "工具结果", barBg: "#0d9488", barText: "#ffffff", rowBg: "#e7f7f4", marker: "#0d9488", textColor: "#0f766e", borderStyle: "1px solid #0d9488", texture: "stripes" },
+  // ── 背景·脚手架：其他 / 未识别
+  "messages.misc":       { label: "其他消息", barBg: "#cfc9ba", barText: "#374151", rowBg: "#f8f6f1", marker: "#b3ac9b", textColor: "#6f6a59" },
+  "other.unknown":       { label: "未识别", barBg: "#d6d6d2", barText: "#6b7280", rowBg: "#fafafa", marker: "#bdbdb8", textColor: "#6f6f6b" },
 };
 
 /** 未识别 leaf 的 fallback 填充。 */

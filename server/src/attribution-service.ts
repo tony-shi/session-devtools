@@ -22,6 +22,7 @@ import { readFileSync, existsSync } from "fs";
 import { createHash } from "crypto";
 import type { Database } from "better-sqlite3";
 import { deriveAxes, sourceBucket } from "./context-ledger/rule-corpus/axes";
+import { deriveLensFields, isSystemSectionSlot } from "./context-ledger/lens/derive-category";
 
 import {
   attributeWithJsonl,
@@ -182,6 +183,19 @@ export interface SerializedNode {
     source: string;          // 7 值来源(作者归属)
     sourceBucket: string;    // 3 桶:harness(CC自带) / user(你配置) / session(会话产生)
   };
+  /**
+   * 单源展示分类（语义轴；后端单点 derive，前端只读）。category=展示类别（18 值，稳定，
+   * 驱动配色+分组）；group=category 聚合的意图大类（驱动分组导航）。每个节点都带。
+   * 取代前端 roleOf/ROLE_TO_GROUP 自推（见 context-ledger/lens/derive-category.ts）。
+   */
+  category: string;
+  group: string;
+  /**
+   * 单源段身份（身份轴；仅命中 corpus rule 的节点有）。labelKey=ruleId 去前缀（带版本，
+   * i18n 文案锚）；labelKeyBase=去版本（回退锚）。前端 t(`rule.${labelKey}`) 回退 base。
+   */
+  labelKey?: string;
+  labelKeyBase?: string;
   children: SerializedNode[];
 }
 
@@ -683,7 +697,7 @@ function ruleMetaOf(origin: SegmentNode["origin"]): SerializedNode["ruleMeta"] {
   return meta;
 }
 
-function serializeNode(node: SegmentNode): SerializedNode {
+function serializeNode(node: SegmentNode, rootSlotType: string, sectionSlot: string | undefined): SerializedNode {
   const isLeaf = node.children.length === 0;
   const includeRawText = isLeaf || (node.slotType === "messages.inline.system-reminder" && node.children.length > 0);
   const redactedThinkingPreview = redactedThinkingPreviewOf(node);
@@ -695,6 +709,9 @@ function serializeNode(node: SegmentNode): SerializedNode {
   // 正交轴:rule 节点用其 ruleId 多路(system-reminder/system-message);其余靠 slotType。
   const axRuleId = node.origin && node.origin.kind === "rule" ? node.origin.ruleId : "";
   const ax = deriveAxes(node.slotType, axRuleId);
+  // 单源展示分类：classSlot 把 system section 信息从顶层 root 下沉（同前端 flattenLeaves）。
+  const nextSection = isSystemSectionSlot(node.slotType) ? node.slotType : sectionSlot;
+  const lens = deriveLensFields(node, rootSlotType, nextSection ?? node.slotType);
   return {
     id: node.id,
     slotType: node.slotType,
@@ -721,7 +738,11 @@ function serializeNode(node: SegmentNode): SerializedNode {
       source: ax.source,
       sourceBucket: sourceBucket(ax.source),
     },
-    children: node.children.map(serializeNode),
+    category: lens.category,
+    group: lens.group,
+    ...(lens.labelKey && { labelKey: lens.labelKey }),
+    ...(lens.labelKeyBase && { labelKeyBase: lens.labelKeyBase }),
+    children: node.children.map((c) => serializeNode(c, rootSlotType, nextSection)),
   };
 }
 
@@ -754,7 +775,7 @@ function redactedThinkingPreviewOf(node: SegmentNode): string | null {
   return `<redacted thinking · ${sig.length} bytes>`;
 }
 
-function serializeSnapshot(snapshot: ParsedQuerySnapshot): SerializedSnapshot {
+export function serializeSnapshot(snapshot: ParsedQuerySnapshot): SerializedSnapshot {
   const nodeSummaries: Record<string, SerializedNodeSummary> = {};
   for (const node of Object.values(snapshot.index)) {
     nodeSummaries[node.id] = serializeSummary(node);
@@ -773,7 +794,7 @@ function serializeSnapshot(snapshot: ParsedQuerySnapshot): SerializedSnapshot {
       matchLevel: report.matchLevel,
       message: report.message,
     },
-    roots: snapshot.roots.map(serializeNode),
+    roots: snapshot.roots.map((r) => serializeNode(r, r.slotType, undefined)),
     nodeSummaries,
   };
 }

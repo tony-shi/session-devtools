@@ -10,7 +10,7 @@
 //   - 点击 leaf bar / leaf 行 → 高亮该 leaf，并显示叶子详情。
 //   - 「← back」回到上一级。
 
-import { Fragment, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import ReactMarkdown from "react-markdown";
@@ -28,6 +28,12 @@ import { SegmentedToggle } from "./shared/SegmentedToggle";
 import { LinkIcon, SegmentView } from "./shared/EventUnitCard";
 import { RenderRawCopyActions } from "./shared/RenderRawCopyActions";
 import { ImageLeafContent } from "./ImageLeafContent";
+import { renderMarkdownWithHighlights } from "./leaf-detail/MarkdownHighlightCard";
+import { DeferredToolsBody } from "./leaf-detail/DeferredToolsBody";
+import { AgentTypesBody } from "./leaf-detail/AgentTypesBody";
+import { SkillListingBody } from "./leaf-detail/SkillListingBody";
+import { ToolDefinitionBody } from "./leaf-detail/ToolDefinitionBody";
+import { tryParseSegmentJson } from "./leaf-detail/tool-format";
 import { EVENT_PALETTES } from "./shared/eventPalette";
 import type { IntervalEventKind } from "./drilldown-types";
 import { useAttributionGraph } from "./attribution-graph-context";
@@ -238,16 +244,6 @@ export function fmtK(n: number): string {
   if (n < 1000) return String(n);
   if (n < 10000) return (n / 1000).toFixed(1) + "k";
   return Math.round(n / 1000) + "k";
-}
-
-// Best-effort JSON parse for the "原始 JSON" segment toggle. Returns
-// `undefined` when the content isn't valid JSON so the toggle stays
-// hidden instead of showing an error.
-function tryParseSegmentJson(s: string): unknown {
-  if (!s) return undefined;
-  const trimmed = s.trim();
-  if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) return undefined;
-  try { return JSON.parse(trimmed); } catch { return undefined; }
 }
 
 export function shortSlot(slotType: string): string {
@@ -888,262 +884,9 @@ function SkillListingTooltipCard({
   );
 }
 
-function SkillListingDetail({
-  leaf,
-  totalContextChars,
-  color,
-}: {
-  leaf: LeafLite;
-  totalContextChars?: number;
-  color?: string;
-}) {
-  const { t } = useTranslation();
-  const [mode, setMode] = useState<"parsed" | "raw">("parsed");
 
-  if (leaf.origin.kind !== "rule" || !leaf.origin.payload?.skillListing) return null;
-  const sl = leaf.origin.payload.skillListing;
-  const fullText = leaf.rawText ?? leaf.preview;
-
-  const sizeStr = fmtK(leaf.charCount);
-  const pct =
-    totalContextChars && totalContextChars > 0
-      ? ((leaf.charCount / totalContextChars) * 100).toFixed(1)
-      : null;
-  const metaText = pct
-    ? t("skillListing.detailMeta", {
-        title: t("skillListing.title"),
-        count: sl.entries.length,
-        size: sizeStr,
-        pct,
-      })
-    : t("skillListing.detailMetaNoCtx", {
-        title: t("skillListing.title"),
-        count: sl.entries.length,
-        size: sizeStr,
-      });
-
-  return (
-    <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* 不再新增 meta 条 —— 直接复用上方 LeafTable 行作为标题 + 状态展示。
-          metaText 仍用于 a11y / 调试，不渲染。 */}
-      <span style={{ display: "none" }}>{metaText}</span>
-
-      {/* 统一详情头（基建）：色点 + 段名 + 字节 + 占比 + i + 原文切换/复制 */}
-      <SelectedDetailHeader
-        leaf={leaf}
-        color={color}
-        totalContextChars={totalContextChars}
-        rawMode={mode === "raw"}
-        hasRawToggle
-        onToggleRawMode={() => setMode(m => (m === "parsed" ? "raw" : "parsed"))}
-        textToCopy={fullText}
-      />
-
-      {/* Content */}
-      {mode === "parsed" ? (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "max-content 1fr",
-            columnGap: 16,
-            rowGap: 6,
-            padding: "10px 12px",
-            background: "#fafafa",
-            border: "1px solid #e5e7eb",
-            borderRadius: 4,
-          }}
-        >
-          {sl.entries.map((e, i) => (
-            <Fragment key={i}>
-              {e.parseError ? (
-                <>
-                  <span
-                    style={{
-                      fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                      fontSize: 12,
-                      color: "#9ca3af",
-                      fontStyle: "italic",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    ⚠ unparsed
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 12,
-                      color: "#9ca3af",
-                      fontStyle: "italic",
-                      lineHeight: 1.5,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical",
-                    }}
-                    title={e.rawLine}
-                  >
-                    {e.rawLine}
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span
-                    style={{
-                      fontFamily: "ui-monospace, SFMono-Regular, monospace",
-                      fontSize: 12.5,
-                      color: BRAND.indigo700,
-                      fontWeight: 500,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {e.name}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 12.5,
-                      color: e.description ? "#374151" : "#9ca3af",
-                      lineHeight: 1.5,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical",
-                    }}
-                    title={e.description ?? "(no description)"}
-                  >
-                    {e.description ?? "—"}
-                  </span>
-                </>
-              )}
-            </Fragment>
-          ))}
-        </div>
-      ) : (
-        <pre
-          style={{
-            margin: 0,
-            padding: "10px 12px",
-            background: "#fafafa",
-            border: "1px solid #e5e7eb",
-            borderRadius: 4,
-            fontSize: 11.5,
-            fontFamily: "ui-monospace, SFMono-Regular, monospace",
-            color: "#1f2937",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-            lineHeight: 1.55,
-          }}
-        >
-          {fullText}
-        </pre>
-      )}
-    </div>
-  );
-}
-
-
-function injectDynamicPlaceholders(text: string, fields: DynamicField[]): string {
-  if (!fields || fields.length === 0) return text;
-
-  const validFields = fields
-    .map((f, index) => ({ ...f, originalIndex: index }))
-    .filter((f) => f.charStart >= 0 && f.charEnd <= text.length && f.charStart < f.charEnd)
-    .sort((a, b) => b.charStart - a.charStart);
-
-  let result = text;
-  validFields.forEach((f) => {
-    const before = result.substring(0, f.charStart);
-    const value = result.substring(f.charStart, f.charEnd);
-    const after = result.substring(f.charEnd);
-    result = `${before}DYNSTARTa${f.originalIndex}a${value}DYNEND${after}`;
-  });
-
-  return result;
-}
-
-interface HastNode {
-  type: string;
-  value?: string;
-  tagName?: string;
-  properties?: Record<string, unknown>;
-  children?: HastNode[];
-}
-
-function rehypeHighlightDynamicFields(fields: DynamicField[]) {
-  return () => {
-    return (tree: HastNode) => {
-      function visit(node: HastNode) {
-        if (node.type === "text" && typeof node.value === "string") {
-          const text = node.value;
-          const regex = /DYNSTARTa(\d+)a([\s\S]*?)DYNEND/g;
-          
-          if (regex.test(text)) {
-            regex.lastIndex = 0;
-            const children: HastNode[] = [];
-            let lastIndex = 0;
-            let match;
-            while ((match = regex.exec(text)) !== null) {
-              const matchIndex = match.index;
-              if (matchIndex > lastIndex) {
-                children.push({ type: "text", value: text.substring(lastIndex, matchIndex) });
-              }
-              const fieldIdx = parseInt(match[1], 10);
-              const val = match[2];
-              const field = fields[fieldIdx];
-              
-              children.push({
-                type: "element",
-                tagName: "span",
-                properties: {
-                  style: {
-                    background: "#fef3c7",
-                    color: "#92400e",
-                    borderRadius: 2,
-                    padding: "0 2px",
-                    boxShadow: "inset 0 -1px 0 #fcd34d",
-                  },
-                  title: field ? `${field.name} · ${field.source} · ${i18n.t("attribution.stability.runtimeDynamicValue")}` : i18n.t("attribution.stability.runtimeDynamicValue"),
-                },
-                children: [{ type: "text", value: val }]
-              });
-              lastIndex = regex.lastIndex;
-            }
-            if (lastIndex < text.length) {
-              children.push({ type: "text", value: text.substring(lastIndex) });
-            }
-            
-            node.type = "element";
-            node.tagName = "span";
-            node.properties = {};
-            node.children = children;
-          }
-        } else if (node.children) {
-          node.children.forEach(visit);
-        }
-      }
-      visit(tree);
-    };
-  };
-}
-
-function renderMarkdownWithHighlights(
-  text: string,
-  fields: DynamicField[] | undefined,
-): React.ReactNode {
-  if (!fields || fields.length === 0) {
-    return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>;
-  }
-
-  const textWithPlaceholders = injectDynamicPlaceholders(text, fields);
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={[rehypeHighlightDynamicFields(fields)]}
-    >
-      {textWithPlaceholders}
-    </ReactMarkdown>
-  );
-}
+// MD 渲染 + 动态字段高亮已抽离为基础组件：./leaf-detail/MarkdownHighlightCard.tsx
+// （renderMarkdownWithHighlights 函数 + MarkdownHighlightCard 组件，供内容型 leaf 复用）。
 
 function renderThinkingBlock(content: string): React.ReactNode {
   return (
@@ -1241,210 +984,13 @@ function getToolResultRawJson(content: string, toolUseId?: string): string {
   return JSON.stringify(block, null, 2);
 }
 
-// ─── tool 定义富展示 ──────────────────────────────────────────────────────────
-// tools 段叶子的 rawText 现在是完整 tool JSON（见 matcher.ts）。这里做"特别处理"：
-// description 当主角（markdown）、input_schema 拆成参数表 + 原始 schema、其它字段兜底。
-// parse 失败回退原文 <pre>，绝不白屏。与 SkillListingDetail 同范式（完全替换通用 leaf 布局）。
-
-interface ToolParamRow {
-  name: string;
-  type: string;
-  required: boolean;
-  description?: string;
-}
-
-const TOOL_MONO = "ui-monospace, SFMono-Regular, monospace";
-const TOOL_JSON_VIEW_STYLE: React.CSSProperties = {
-  backgroundColor: "transparent",
-  fontFamily: TOOL_MONO,
-  fontSize: 11,
-  lineHeight: 1.5,
-};
-
-// JSON Schema 的 type 描述：处理 array<item> / 联合 type / enum / object。
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function describeSchemaType(schema: any): string {
-  if (!schema || typeof schema !== "object") return "any";
-  if (Array.isArray(schema.enum)) return `enum(${schema.enum.length})`;
-  const ty = schema.type;
-  if (Array.isArray(ty)) return ty.join(" | ");
-  if (ty === "array") {
-    const item = schema.items ? describeSchemaType(schema.items) : "any";
-    return `array<${item}>`;
-  }
-  if (typeof ty === "string") return ty;
-  if (schema.anyOf || schema.oneOf || schema.allOf) return "union";
-  return schema.properties ? "object" : "any";
-}
-
-// 从 input_schema.properties 派生参数行；保留 schema 内的物理顺序（不重排）。
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function extractToolParams(inputSchema: any): ToolParamRow[] {
-  if (!inputSchema || typeof inputSchema !== "object") return [];
-  const props = inputSchema.properties;
-  if (!props || typeof props !== "object") return [];
-  const required: string[] = Array.isArray(inputSchema.required) ? inputSchema.required : [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return Object.entries(props as Record<string, any>).map(([name, sch]) => ({
-    name,
-    type: describeSchemaType(sch),
-    required: required.includes(name),
-    description: typeof sch?.description === "string" ? sch.description.trim() : undefined,
-  }));
-}
-
-const PARAM_GRID_COLS = "minmax(96px,1.2fr) minmax(72px,0.8fr) 84px 2fr";
-
-function ToolDefinitionDetail({
-  leaf,
-  color,
-  totalContextChars,
-}: {
-  leaf: LeafLite;
-  color?: string;
-  totalContextChars?: number;
-}) {
-  const { t } = useTranslation();
-  const [mode, setMode] = useState<"parsed" | "raw">("parsed");
-  const fullText = leaf.rawText ?? leaf.preview;
-
-  // 单个 useMemo 完成 parse + 派生，避免条件 hook。
-  const parsed = useMemo(() => {
-    const obj = tryParseSegmentJson(fullText);
-    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const tool = obj as Record<string, any>;
-    return {
-      tool,
-      description: typeof tool.description === "string" ? tool.description : undefined,
-      inputSchema: tool.input_schema,
-      params: extractToolParams(tool.input_schema),
-      otherFields: Object.entries(tool).filter(
-        ([k]) => k !== "name" && k !== "description" && k !== "input_schema",
-      ),
-      prettyJson: JSON.stringify(tool, null, 2),
-    };
-  }, [fullText]);
-
-  // parse 失败兜底：原文 <pre>，绝不白屏。
-  if (!parsed) {
-    return (
-      <div style={{ paddingTop: 6 }}>
-        <pre style={{
-          margin: 0, padding: "10px 12px",
-          background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6,
-          fontFamily: TOOL_MONO, fontSize: 11.5, lineHeight: 1.55,
-          whiteSpace: "pre-wrap", wordBreak: "break-word", color: "#1f2937",
-        }}>
-          {fullText}
-        </pre>
-      </div>
-    );
-  }
-
-  const { description, inputSchema, params, otherFields, prettyJson } = parsed;
-
-  const labelStyle: React.CSSProperties = {
-    fontSize: 11, fontWeight: 700, color: "#6b7280",
-    textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 5,
-  };
-  const cellBase: React.CSSProperties = {
-    fontSize: 12, padding: "5px 10px", wordBreak: "break-word", minWidth: 0,
-  };
-
-  return (
-    <div style={{ paddingTop: 6, display: "flex", flexDirection: "column", gap: 12 }}>
-      {/* 统一详情头（基建）：色点 + 段名 + 字节 + 占比 + i(归因元信息) + 原文切换/复制 */}
-      <SelectedDetailHeader
-        leaf={leaf}
-        color={color}
-        totalContextChars={totalContextChars}
-        rawMode={mode === "raw"}
-        hasRawToggle
-        onToggleRawMode={() => setMode((m) => (m === "parsed" ? "raw" : "parsed"))}
-        textToCopy={prettyJson}
-      />
-
-      {mode === "raw" ? (
-        <div style={{ padding: "10px 12px", background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6 }}>
-          <JsonView value={parsed.tool} collapsed={2} displayDataTypes={false} displayObjectSize={false} enableClipboard style={TOOL_JSON_VIEW_STYLE} />
-        </div>
-      ) : (
-        <>
-          {/* Description —— 主角，markdown 渲染 */}
-          <div>
-            <div style={labelStyle}>{t("toolDef.description")}</div>
-            {description && description.trim() ? (
-              <div className="md-prose" style={{ fontSize: 12, color: "#1f2937", border: "1px solid #e5e7eb", borderRadius: 6, background: "#fff", padding: "8px 12px" }}>
-                {renderMarkdownWithHighlights(description, undefined)}
-              </div>
-            ) : (
-              <div style={{ fontSize: 11, color: "#9ca3af", fontStyle: "italic" }}>{t("toolDef.noDescription")}</div>
-            )}
-          </div>
-
-          {/* Parameters —— 来自 input_schema.properties */}
-          {inputSchema != null && (
-            <div>
-              <div style={labelStyle}>
-                {t("toolDef.parameters")}{params.length > 0 ? ` (${params.length})` : ""}
-              </div>
-              {params.length > 0 ? (
-                <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: PARAM_GRID_COLS, background: "#f9fafb", borderBottom: "1px solid #e5e7eb", fontWeight: 700, color: "#6b7280" }}>
-                    <span style={cellBase}>{t("toolDef.colName")}</span>
-                    <span style={cellBase}>{t("toolDef.colType")}</span>
-                    <span style={cellBase}>{t("toolDef.colRequired")}</span>
-                    <span style={cellBase}>{t("toolDef.colDesc")}</span>
-                  </div>
-                  {params.map((p, i) => (
-                    <div key={p.name} style={{ display: "grid", gridTemplateColumns: PARAM_GRID_COLS, borderBottom: i < params.length - 1 ? "1px solid #f3f4f6" : undefined, alignItems: "start" }}>
-                      <span style={{ ...cellBase, fontFamily: TOOL_MONO, color: BRAND.indigo700, fontWeight: 600 }}>{p.name}</span>
-                      <span style={{ ...cellBase, fontFamily: TOOL_MONO, color: "#0f766e" }}>{p.type}</span>
-                      <span style={cellBase}>
-                        {p.required
-                          ? <span style={{ color: "#b45309", fontWeight: 600 }}>● {t("toolDef.required")}</span>
-                          : <span style={{ color: "#9ca3af" }}>{t("toolDef.optional")}</span>}
-                      </span>
-                      <span style={{ ...cellBase, color: p.description ? "#374151" : "#9ca3af" }}>{p.description ?? "—"}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ fontSize: 11, color: "#9ca3af", fontStyle: "italic" }}>{t("toolDef.noParams")}</div>
-              )}
-            </div>
-          )}
-
-          {/* Other fields —— type / cache_control / 服务端 tool 配置等 */}
-          {otherFields.length > 0 && (
-            <div>
-              <div style={labelStyle}>{t("toolDef.otherFields")}</div>
-              <div style={{ display: "grid", gridTemplateColumns: "max-content 1fr", columnGap: 16, rowGap: 6, padding: "10px 12px", background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6 }}>
-                {otherFields.map(([k, v]) => (
-                  <Fragment key={k}>
-                    <span style={{ fontFamily: TOOL_MONO, color: "#6b7280", fontWeight: 600, fontSize: 12 }}>{k}</span>
-                    <span style={{ fontSize: 12, color: "#1f2937", fontFamily: v !== null && typeof v === "object" ? TOOL_MONO : "inherit", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                      {v !== null && typeof v === "object" ? JSON.stringify(v) : String(v)}
-                    </span>
-                  </Fragment>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
 // ─── 叶子详情 ───────────────────────────────────────────────────────────────
 
 // 通用详情头（基建）：色点 + 段名 + 字节 + 占比 + i(归因元信息 tooltip) + 原文切换/复制 + 跳源。
-// 全局复用：通用 SelectedDetail / SkillListingDetail / ToolDefinitionDetail 顶部都用它，结构
-// 统一一致，下面各自接特化 body。取代了选中态下 LeafTable 那条孤立 meta bar（更紧凑）。
+// 全局复用：SelectedDetail dispatcher 对所有 leaf（含 leaf-detail/*Body 特化体）统一在顶部渲染它，
+// 结构一致，下面各自接特化 body。取代了选中态下 LeafTable 那条孤立 meta bar（更紧凑）。
 // 每个 leaf 的差异（是否可切原文、复制什么、能否跳源、色点色）通过 props 注入，组件本身通用。
-function SelectedDetailHeader({
+export function SelectedDetailHeader({
   leaf, color, totalContextChars,
   rawMode, hasRawToggle, onToggleRawMode, textToCopy,
   onJumpSource, jumpLabel, jumpTooltip,
@@ -1575,8 +1121,15 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars, color }:
   const isToolResultLeaf = leaf.slotType === "messages.tool_result";
   const isAssistantTextLeaf = leaf.messageRole === "assistant" && !isThinkingLeaf && !isToolUseLeaf;
   const isImageLeaf = leaf.slotType === "messages.block.image";
-  const isInjectionLeaf = leaf.slotType === "messages.inline.system-reminder" || leaf.slotType === "messages.system-message";
-  const hasRawToggle = isSystemLeaf || isToolLeaf || isAssistantTextLeaf || isThinkingLeaf || isToolUseLeaf || isToolResultLeaf || isImageLeaf || isInjectionLeaf;
+  // 特化富展示判定（skill listing / 延迟工具 / agent 类型 / tool 定义）：命中则走"统一头 + 各自 body"。
+  const skillListing = leaf.origin.kind === "rule" ? leaf.origin.payload?.skillListing : undefined;
+  const isDeferredListing = leaf.origin.kind === "rule" && /deferred-tools-listing\.v[12]$/.test(leaf.origin.ruleId);
+  const isAgentListing = leaf.origin.kind === "rule" && /agent-types-listing\.v[12]$/.test(leaf.origin.ruleId);
+  // 注意 startsWith：覆盖 userContext reminder 拆出的所有子段（.wrapper.prefix/.suffix /
+  // .project-instructions / .global-instructions / .memory / .account），让它们统一走
+  // SelectedDetailHeader + 高亮 MD 卡，而不是落到 <SegmentView> fallback（那条自带重复复制按钮）。
+  const isInjectionLeaf = leaf.slotType.startsWith("messages.inline.system-reminder") || leaf.slotType === "messages.system-message";
+  const hasRawToggle = isSystemLeaf || isToolLeaf || isAssistantTextLeaf || isThinkingLeaf || isToolUseLeaf || isToolResultLeaf || isImageLeaf || isInjectionLeaf || !!skillListing || isDeferredListing || isAgentListing;
 
   const rawTextContent = useMemo(() => {
     if (isAssistantTextLeaf) {
@@ -1604,16 +1157,19 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars, color }:
     return leaf.rawText ?? leaf.preview;
   }, [leaf, isAssistantTextLeaf, isThinkingLeaf, isToolUseLeaf, isToolResultLeaf]);
 
-  // 命中 skill_listing rule 时，走专属富展示，完全替换通用 leaf 详情布局。
-  if (leaf.origin.kind === "rule" && leaf.origin.payload?.skillListing) {
-    return <SkillListingDetail leaf={leaf} color={color} totalContextChars={totalContextChars} />;
-  }
-
-  // tools 段叶子：rawText 是完整 tool JSON，走 tool 定义专属富展示
-  // （description / 参数表 / input_schema / 其它字段）。parse 失败时组件内部回退原文。
-  if (isToolLeaf) {
-    return <ToolDefinitionDetail leaf={leaf} color={color} totalContextChars={totalContextChars} />;
-  }
+  // 特化富展示：统一头（下方 SelectedDetailHeader）+ 各自 body。body 只渲染内容、接 rawMode
+  // 决定 parsed/raw，不渲染头（避免 body 反向 import SelectedDetailHeader 成循环依赖）。
+  //   skillListing → 技能名/描述网格；延迟工具 → CC defer / MCP(按 server) 分组；
+  //   agent 类型 → 表格（类型/用途/工具）；tools 段（rawText=完整 tool JSON）→ tool 定义。
+  const specialBody = skillListing
+    ? <SkillListingBody leaf={leaf} rawMode={rawMode} />
+    : isDeferredListing
+    ? <DeferredToolsBody leaf={leaf} rawMode={rawMode} />
+    : isAgentListing
+    ? <AgentTypesBody leaf={leaf} rawMode={rawMode} />
+    : isToolLeaf
+    ? <ToolDefinitionBody leaf={leaf} rawMode={rawMode} />
+    : null;
 
   const sourceTurnId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceTurnId : undefined;
   const sourceCallId = leaf.origin.kind === "jsonl" ? leaf.origin.sourceCallId : undefined;
@@ -1656,6 +1212,12 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars, color }:
   const contentText = leaf.rawText ?? leaf.preview;
 
   const textToCopy = () => {
+    // tool 叶子（ToolDefinitionBody）：始终复制美化后的 tool JSON，与抽离前一致。
+    if (isToolLeaf) {
+      const obj = tryParseSegmentJson(leaf.rawText ?? leaf.preview);
+      if (obj && typeof obj === "object") return JSON.stringify(obj, null, 2);
+      return leaf.rawText ?? leaf.preview;
+    }
     if (rawMode) {
       return rawTextContent;
     }
@@ -1679,8 +1241,8 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars, color }:
 
 
 
-      {/* 内容主体 */}
-      {rawMode ? (() => {
+      {/* 内容主体：特化类型走 specialBody（自带 parsed/raw 切换）；否则按 rawMode / leaf 类型渲染 */}
+      {specialBody ? specialBody : rawMode ? (() => {
         const isRawJson = (() => {
           const trimmed = rawTextContent.trim();
           return trimmed.startsWith("{") || trimmed.startsWith("[");
@@ -1725,7 +1287,7 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars, color }:
             {rawTextContent}
           </pre>
         );
-      })() : isSystemLeaf || isToolLeaf || isInjectionLeaf ? (
+      })() : isSystemLeaf || isInjectionLeaf ? (
         <div className="md-prose" style={{
           fontSize: 12, color: "#1f2937",
           border: "1px solid #e5e7eb", borderRadius: 6, background: "#fff",

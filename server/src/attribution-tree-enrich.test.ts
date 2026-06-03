@@ -24,6 +24,8 @@ function mkJsonlLeaf(id: string, jsonlLineIdx: number, extra?: Partial<Serialize
     } as SerializedNode["origin"],
     authorship: "human",
     coverageState: "full",
+    category: "messages.human",
+    group: "interaction",
     children: [],
   };
 }
