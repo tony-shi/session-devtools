@@ -7,15 +7,24 @@ import { TooltipProvider } from "@/components/ui/tooltip"; // 真实面板用 Ra
 import type { AttributionTreeResult } from "../../v2/attribution-tree-types";
 import type { Focus } from "../../v2/walkthrough/types";
 import type { ActClock } from "./storyClock";
+import { RealContextJsonScene } from "./RealContextJsonScene";
 import fixture from "../fixtures/attribution-real-context.json";
 
-// 故事二「看见真实的 Context」的 storyboard —— 单轨 Remotion(Decision C):
-// 复用真实产品组件 AttributionTreeLensPanel + 静态 fixture(无后端),focusSection 跟旁白拍子切换。
-// 旁白文案 / 时间轴单一来源 = walkthrough/stories/real-context.ts → synth.ts 产出的 manifest;
-// 每拍高亮哪一段(focus)也取自 real-context.ts(storyClock 读它),所以这里零硬编。
-
+// 故事二「看见真实的 Context」storyboard —— 单轨 Remotion(Decision C)。
+//
+// 重要约束:对真实产品组件(AttributionTreeLensPanel)的适配**只在本 studio 包装层做样式**,
+//   不改组件源码 —— 这样以后还能从主干 fork 复用。放大、提饱和都靠外层 CSS。
+//
+// 字号放大逻辑(纯样式):产品面板是给 web 调试的密集排版,最小字 ~11px;
+//   1080p 视频可读目标 ~24-28px → 放大系数 ≈ 2.2。把面板渲进固定基准宽度的盒子(PANEL_BASE_W),
+//   再 transform: scale(PANEL_ZOOM):字号 + 色条同比放大,组件零改动。
+//   宽度预算:1920 − 边距 ≈ 1820;PANEL_BASE_W × PANEL_ZOOM ≈ 800 × 2.2 = 1760 ≤ 1820 ✓。
 const STORY_ID = "real-context";
 const RC = fixture as unknown as AttributionTreeResult;
+
+const PANEL_BASE_W = 800;   // 面板先按这个窄宽度排版(段自适应回流)
+const PANEL_ZOOM = 2.2;     // 再整体放大 ——「合理字号」的来源
+const CHROME_CLIP = -152;   // 放大后像素:上移面板,把顶部 "图层叠加 / 请求组成" chrome 推出顶边裁掉(纯样式,不改组件)
 
 // walkthrough 的 focus → 面板 focusSection(与 DemoStage 同一套映射)。
 function focusToSection(focus: Focus): "tools" | "system" | "messages" | null {
@@ -25,8 +34,7 @@ function focusToSection(focus: Focus): "tools" | "system" | "messages" | null {
     : null;
 }
 
-// 常驻的真实归因面板:focusSection = 当前拍子的 focus(clock.at(帧).focus)。
-// 面板常驻不重挂 —— injected 引用稳定,不会逐帧 refetch;只有 focusSection 随拍子变。
+// 常驻真实面板:focusSection 跟旁白拍子切换;放大 + 提饱和全在外层(组件不动)。
 function RealContextPanelShot({ clock }: { clock: ActClock }) {
   const frame = useCurrentFrame();
   const focusSection = focusToSection(clock.at(frame).focus);
@@ -34,10 +42,23 @@ function RealContextPanelShot({ clock }: { clock: ActClock }) {
     <AbsoluteFill
       style={{
         background: "#fff",
+        overflow: "hidden",
         fontFamily: "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, -apple-system, sans-serif",
       }}
     >
-      <div style={{ height: "100%", overflow: "hidden", padding: 40 }}>
+      {/* 纯样式层(不改组件):放大 + 提饱和 + 上移裁掉顶部 chrome("图层叠加 / 请求组成")。
+          顶部 chrome 被推到画面顶边之上,由 overflow:hidden 裁掉;只留三段 section 条 + 图例。 */}
+      <div
+        style={{
+          position: "absolute",
+          top: CHROME_CLIP,
+          left: "50%",
+          width: PANEL_BASE_W,
+          transform: `translateX(-50%) scale(${PANEL_ZOOM})`,
+          transformOrigin: "top center",
+          filter: "saturate(1.45) contrast(1.04)",
+        }}
+      >
         <TooltipProvider>
           <AttributionGraphProvider sessionId={RC.sessionId} onJumpToCall={null}>
             <AttributionTreeLensPanel
@@ -54,15 +75,12 @@ function RealContextPanelShot({ clock }: { clock: ActClock }) {
   );
 }
 
-// 单镜头贯穿全 10 拍:面板常驻,只切 focusSection(不重挂、无闪烁)。
+// 时间轴:开场 json 幕(吃旁白 step 0-1)→ 面板幕(step 2-9,focusSection 跟拍子)。
 export const realContextEpisode: EpisodeSpec = {
   storyId: STORY_ID,
   shots: [
-    {
-      id: "rc-panel",
-      steps: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-      render: ({ clock }) => <RealContextPanelShot clock={clock} />,
-    },
+    { id: "rc-json", steps: [0, 1], render: () => <RealContextJsonScene /> },
+    { id: "rc-panel", steps: [2, 3, 4, 5, 6, 7, 8, 9], render: ({ clock }) => <RealContextPanelShot clock={clock} /> },
   ],
 };
 
