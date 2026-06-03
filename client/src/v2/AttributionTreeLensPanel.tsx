@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { apiV2 } from "./api";
+import { useAttributionApi } from "./attribution-api-context";
 import { useAttributionGraph } from "./attribution-graph-context";
 import type { AttributionTreeResult, VersionDiag } from "./attribution-tree-types";
 import {
@@ -863,6 +863,7 @@ export function AttributionTreeLensPanel({
   onVersionDiagLoaded?: (diag: VersionDiag | null) => void;
 }) {
   const { t } = useTranslation();
+  const api = useAttributionApi();
   const [result, setResult] = useState<AttributionTreeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -917,12 +918,12 @@ export function AttributionTreeLensPanel({
     setSelectedSection(null); setSelectedNodeId(null); setBucketFilters({});
     setSelectedGroupId(null);
     const fetcher = proxyRequestId != null
-      ? apiV2.sideCallAttributionTree(sessionId, proxyRequestId)
+      ? api.sideCallAttributionTree(sessionId, proxyRequestId)
       : compactIdx != null
-        ? apiV2.compactAttributionTree(sessionId, compactIdx)
+        ? api.compactAttributionTree(sessionId, compactIdx)
         : agentFileId
-          ? apiV2.subAgentAttributionTree(sessionId, agentFileId, callId)
-          : apiV2.attributionTree(sessionId, callId);
+          ? api.subAgentAttributionTree(sessionId, agentFileId, callId)
+          : api.attributionTree(sessionId, callId);
     fetcher
       .then((r) => {
         if (!cancelled) {
@@ -938,7 +939,9 @@ export function AttributionTreeLensPanel({
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sessionId, agentFileId, compactIdx, proxyRequestId, callId]);
+    // api 来自 context：默认是稳定的模块级常量(DEFAULT_API)，包 Provider 时走 useMemo —— 引用稳定，
+    // 不会无故重跑此 effect，故零回归；列入依赖仅为满足 exhaustive-deps。
+  }, [sessionId, agentFileId, compactIdx, proxyRequestId, callId, api]);
 
   // 并行拉 diff-tree，用 leafId 把 diffKind 合并到 attribution leaves 上。
   // Diff lens / Diff 视角的双层 bar / Removed footer 都依赖这份数据。
@@ -965,13 +968,13 @@ export function AttributionTreeLensPanel({
     }
     let cancelled = false;
     const fetcher = agentFileId
-      ? apiV2.subAgentDiffTree(sessionId, agentFileId, callId)
-      : apiV2.diffTree(sessionId, callId);
+      ? api.subAgentDiffTree(sessionId, agentFileId, callId)
+      : api.diffTree(sessionId, callId);
     fetcher
       .then((r) => { if (!cancelled) setDiffData(r); })
       .catch(() => { if (!cancelled) setDiffData(null); }); // diff 失败不阻塞 attribution
     return () => { cancelled = true; };
-  }, [sessionId, agentFileId, compactIdx, proxyRequestId, callId]);
+  }, [sessionId, agentFileId, compactIdx, proxyRequestId, callId, api]);
 
   const attributedLeaves = useMemo(() => {
     if (!result) return [];

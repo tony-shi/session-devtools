@@ -10,7 +10,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { apiV2 } from "./api";
+import { useAttributionApi } from "./attribution-api-context";
 import type { JsonlEventAnnotation, SessionAttributionGraph, UnauditedCall, UnauditedKind } from "./attribution-graph-types";
 import { NoProxyDot } from "./shared/NoProxyDot";
 import { BRAND } from "./shared/brand";
@@ -143,6 +143,7 @@ export function AttributionGraphProvider({
   onOpenSideCall?: ((proxyRequestId: number) => void) | null;
   children: React.ReactNode;
 }) {
+  const api = useAttributionApi();
   const [graph, setGraph] = useState<SessionAttributionGraph | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -159,12 +160,14 @@ export function AttributionGraphProvider({
     let cancelled = false;
     setLoading(true);
     setError(null);
-    apiV2.attributionGraph(sessionId)
+    api.attributionGraph(sessionId)
       .then(g => { if (!cancelled) setGraph(g); })
       .catch(err => { if (!cancelled) setError(String(err)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [sessionId]);
+    // api 来自 context：默认稳定的模块级常量(DEFAULT_API)，引用稳定不会无故重跑，零回归；
+    // 列入依赖仅为满足 exhaustive-deps。
+  }, [sessionId, api]);
 
   // Map index for O(1) lookup by lineIdx.
   const byLine = useMemo(() => {
