@@ -57,4 +57,11 @@ export const PARSERS_V2: Record<string, ParserV2> = {
 // v12: 新增 global-instructions 规则 —— 全局/用户级 ~/.claude/CLAUDE.md(desc "user's private global
 //      instructions…") 不再 RULE_GAP 裸 slug,独立命中、显示「全局指令」;同 project-instructions slot、
 //      靠 desc 区分。对真实 2.1.160 session(820f368b) 验证。
-export const PARSER_VERSION = 12;
+// v13: system 区静态段坍缩 —— ast-builder.collapseStaticSections 把相邻纯静态 H1 section(开场/
+//      Harness/会话守则/上下文管理/语气/工具/...)合并成单一 prompt-body 壳(新壳 rule),动态段
+//      (环境/记忆/Git)仍独立结构化。判据=corpus stability:dynamic 保留。退役式简化,跨版本免维护。
+// v14: 新增 local-instructions 规则 —— 项目本地 CLAUDE.local.md(desc "user's private project
+//      instructions, not checked in") 不再 STRUCTURAL 裸 slug,独立命中、显示「本地指令」;同
+//      project-instructions slot、靠 desc 区分(与 global/project 三者 pattern 互斥)。
+//      对真实 2.1.158 session(31b1334b T1C1) 验证。
+export const PARSER_VERSION = 14;

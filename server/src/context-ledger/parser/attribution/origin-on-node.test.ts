@@ -177,11 +177,13 @@ describe("PR 2 — attributeSnapshot 原地写 origin", () => {
   });
 });
 
-// Tone-style 两套 byte-exact rule + appliesTo 版本范围。
-//   v0 适用 2.1.140-2.1.141：leaf 含尾 `\n\n` = 557B
-//   v1 适用 2.1.142+：leaf 严格止于 `period.` = 555B
-// 同一份 NM3 输出文本，按 cc_version 路由到正确版本的 rule。
-describe("tone-style rule — cc_version 版本化分发 (v0 / v1)", () => {
+// tone-style 段（连同其它纯静态 H1 section）现由 ast-builder.collapseStaticSections 坍缩进
+// prompt-body 壳，不再独立成 slot、不再做 v0/v1 byte-exact 版本化归因。
+//   历史：v0 适用 2.1.140-2.1.141(leaf 含尾 \n\n = 557B)、v1 适用 2.1.142+(555B)，按 cc_version
+//   路由。A1 简化判据(corpus stability:static → 坍缩)退役了这套精细但脆弱(为 2 字节差维护两版)的
+//   归因。版本化分发机制本身仍由 version.test.ts(satisfiesCcVersion) + Bash v2/global-instructions
+//   等 dynamic rule 覆盖；此处只验证坍缩行为。
+describe("tone-style 段坍缩进 prompt-body 壳（退役 v0/v1 版本化归因）", () => {
   const TONE_LITERAL =
     "# Tone and style\n" +
     " - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.\n" +
@@ -203,77 +205,34 @@ describe("tone-style rule — cc_version 版本化分发 (v0 / v1)", () => {
     }, ccVersion);
   }
 
-  it("2.1.140.453 wire 形态（557B，尾 \\n\\n）→ 命中 v0 rule", () => {
-    const snap = parseQuery({ reqBody: reqWith("\n\n", "2.1.140.453"), proxyFile: "t.json" });
-    attributeSnapshot(snap);
-    const tone = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt.section.tone-style");
-    expect(tone).toBeDefined();
-    expect(tone!.charCount).toBe(557);
-    expect(tone!.origin.kind).toBe("rule");
-    if (tone!.origin.kind === "rule") {
-      expect(tone!.origin.ruleId).toBe("claude-code.system-prompt-tone-style.external.v0");
-      expect(tone!.origin.fullyCovered).toBe(true);
-    }
-  });
-
-  it("2.1.139.6c9 也是老形态（557B）→ 同样命中 v0 rule", () => {
-    const snap = parseQuery({ reqBody: reqWith("\n\n", "2.1.139.6c9"), proxyFile: "t.json" });
-    attributeSnapshot(snap);
-    const tone = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt.section.tone-style");
-    expect(tone).toBeDefined();
-    expect(tone!.charCount).toBe(557);
-    expect(tone!.origin.kind).toBe("rule");
-    if (tone!.origin.kind === "rule") {
-      expect(tone!.origin.ruleId).toBe("claude-code.system-prompt-tone-style.external.v0");
-      expect(tone!.origin.fullyCovered).toBe(true);
-    }
-  });
-
-  it("2.1.141.7ed 已经是新形态（555B）→ 命中 v1 rule", () => {
-    // 注意：边界在 2.1.140 → 2.1.141 之间（不是 2.1.141 → 2.1.142）；
-    // 真实 dump: 59339097 #15 cc=2.1.141.7ed leaf=555B 同 2.1.142 形态。
-    const snap = parseQuery({ reqBody: reqWith("", "2.1.141.7ed"), proxyFile: "t.json" });
-    attributeSnapshot(snap);
-    const tone = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt.section.tone-style");
-    expect(tone).toBeDefined();
-    expect(tone!.charCount).toBe(555);
-    expect(tone!.origin.kind).toBe("rule");
-    if (tone!.origin.kind === "rule") {
-      expect(tone!.origin.ruleId).toBe("claude-code.system-prompt-tone-style.external.v1");
-      expect(tone!.origin.fullyCovered).toBe(true);
-    }
-  });
-
-  it("2.1.142.6c2 wire 形态（555B）→ 命中 v1 rule", () => {
+  it("tone-style 不再独立成 slot —— 与 prelude 一起坍缩进 prompt-body 壳", () => {
     const snap = parseQuery({ reqBody: reqWith("", "2.1.142.6c2"), proxyFile: "t.json" });
     attributeSnapshot(snap);
+    // tone-style slot 已消失（坍缩进壳）。
     const tone = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt.section.tone-style");
-    expect(tone).toBeDefined();
-    expect(tone!.charCount).toBe(555);
-    expect(tone!.origin.kind).toBe("rule");
-    if (tone!.origin.kind === "rule") {
-      expect(tone!.origin.ruleId).toBe("claude-code.system-prompt-tone-style.external.v1");
-      expect(tone!.origin.fullyCovered).toBe(true);
+    expect(tone).toBeUndefined();
+    // 壳存在、命中 prompt-body 壳 rule、含 prelude + tone 两段内容（物理拼接）。
+    const shell = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt.section.prompt-body");
+    expect(shell).toBeDefined();
+    expect(shell!.rawText).toContain("Prelude line.");
+    expect(shell!.rawText).toContain("# Tone and style");
+    expect(shell!.origin.kind).toBe("rule");
+    if (shell!.origin.kind === "rule") {
+      expect(shell!.origin.ruleId).toBe("claude-code.system-prompt-prompt-body.v1");
+      expect(shell!.origin.fullyCovered).toBe(true);
     }
   });
 
-  it("版本 / 形态错配：2.1.140 leaf 是 555B（无尾 \\n\\n）→ 不命中 v0 也不命中 v1", () => {
-    // v0 的 pattern 含尾 \n\n（要求 557B），exact 不命中 555B leaf。
-    // v1 的 appliesTo minCcVersion=2.1.141，cc=2.1.140 也不进入候选。
-    // 结果：tone leaf 保持 structural / no_rule_matched —— 这是严格版本化要的诚实行为。
-    const snap = parseQuery({ reqBody: reqWith("", "2.1.140.453"), proxyFile: "t.json" });
-    attributeSnapshot(snap);
-    const tone = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt.section.tone-style");
-    expect(tone).toBeDefined();
-    expect(tone!.origin.kind).toBe("structural");
-  });
-
-  it("版本 / 形态错配：2.1.141 leaf 是 557B（含尾 \\n\\n）→ 不命中 v1（v0 也因版本被滤掉）", () => {
-    const snap = parseQuery({ reqBody: reqWith("\n\n", "2.1.141.7ed"), proxyFile: "t.json" });
-    attributeSnapshot(snap);
-    const tone = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt.section.tone-style");
-    expect(tone).toBeDefined();
-    expect(tone!.origin.kind).toBe("structural");
+  it("坍缩对 cc_version / 字节形态不敏感（壳 rule 无版本约束，新旧形态统一坍缩）", () => {
+    // 旧形态(557B 含尾 \n\n, cc 2.1.140) 与 新形态(555B, cc 2.1.142) 均坍缩进同一壳。
+    for (const [suffix, ver] of [["\n\n", "2.1.140.453"], ["", "2.1.142.6c2"]] as const) {
+      const snap = parseQuery({ reqBody: reqWith(suffix, ver), proxyFile: "t.json" });
+      attributeSnapshot(snap);
+      const shell = Object.values(snap.index).find((n) => n.slotType === "system.main-prompt.section.prompt-body");
+      expect(shell, `cc=${ver}`).toBeDefined();
+      expect(shell!.rawText).toContain("# Tone and style");
+      expect(shell!.origin.kind).toBe("rule");
+    }
   });
 });
 

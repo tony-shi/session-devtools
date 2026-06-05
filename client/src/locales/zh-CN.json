@@ -867,7 +867,11 @@
     "optional": "可选",
     "otherFields": "其它字段",
     "noDescription": "（无描述）",
-    "noParams": "无参数"
+    "noParams": "无参数",
+    "fieldHelp": {
+      "defer_loading": "延迟加载工具：初始请求里只露工具名、不含 schema；模型经 ToolSearch 发现后，schema 由 API 服务端在该工具的 tool_reference 位置展开。对前缀缓存透明——增删这类工具只追加内容，不破坏已缓存的前缀。",
+      "eager_input_streaming": "细粒度工具流式（FGTS）：该工具的入参 JSON 即时逐块流出，不等整段缓冲/校验，降低大入参（Write/Edit/Bash）的延迟。由会话级开关 tengu_fgts 控制、逐会话固定一次，以免改动序列化后的 tool 字节而炸缓存——功能与缓存无关，其稳定性为缓存服务。"
+    }
   },
   "skillListing": {
     "rowLabel": "Skills 注册",
@@ -1018,8 +1022,8 @@
       "summary": "固定身份标识行，标记这是 Claude Code 会话(归因锚点)"
     },
     "billing-noise": {
-      "displayName": "计费头",
-      "summary": "Claude Code 发给服务端的版本/计费标记，不是给模型的提示内容"
+      "displayName": "归因信息",
+      "summary": "Claude Code 发给服务端的版本/入口/计费标记，不是给模型的提示内容"
     },
     "system-prompt-intro.standard": {
       "displayName": "开场白",
@@ -1096,6 +1100,10 @@
     "messages.reminder.global-instructions": {
       "displayName": "全局指令(~/.claude/CLAUDE.md)",
       "summary": "用户全局指令文件(~/.claude/CLAUDE.md)，对你所有项目生效"
+    },
+    "messages.reminder.local-instructions": {
+      "displayName": "本地指令(CLAUDE.local.md)",
+      "summary": "项目本地私有指令文件(CLAUDE.local.md)，机器本地、不入库"
     },
     "messages.reminder.memory": {
       "displayName": "记忆(MEMORY.md)",

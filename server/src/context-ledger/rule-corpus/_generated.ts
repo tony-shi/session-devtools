@@ -652,6 +652,32 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
     "pattern": "^(?:# claudeMd\\nCodebase and user instructions are shown below\\. Be sure to adhere to these instructions\\. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written\\.\\n*)?Contents of (?<path>[^\\n]+?) \\(user's private global instructions[^)]*\\):\\n\\n(?<content>[\\s\\S]*?)\\n*$"
   },
   {
+    "ruleId": "claude-code.messages.reminder.local-instructions.v1",
+    "slotId": "messages.inline.system-reminder.project-instructions",
+    "verifiedFor": "2.1.158",
+    "sourceUnits": [],
+    "description": "userContext reminder 拆分后的「项目本地指令」子段:一个 \"Contents of <path> (user's private project instructions, not checked in)\" 文件(项目根 CLAUDE.local.md,机器本地私有、不入库)。 与全局(~/.claude/CLAUDE.md)、入库项目(CLAUDE.md)共用 project-instructions slot,靠 desc 区分: 左括号后紧跟 \"user's private project instructions\",区别于全局的 \"...global...\" 与入库项目的 \"project instructions\"(无 \"user's private\" 前缀),三者 pattern 互斥、各命中一条。 语义=context、来源=user-config(你的本地)。path/content 为动态字段。 对真实 session 31b1334b(2.1.158) 验证:此前无规则命中,落 STRUCTURAL。",
+    "stability": "dynamic",
+    "sourcemapRef": "proxy:31b1334b T1C1 (2.1.158);splitUserContextReminder;desc 区别于 global/project",
+    "materialization": "shape",
+    "displayName": "本地指令(CLAUDE.local.md)",
+    "summary": "项目本地私有指令文件(CLAUDE.local.md),机器本地、不入库",
+    "dynamicSource": "path(本地指令文件路径) + content(正文)",
+    "priority": 0,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "regex",
+      "mechanism": "system_reminder_pattern",
+      "category": "memory_injection",
+      "captureGroups": {
+        "path": "本地指令文件路径(项目根 CLAUDE.local.md)",
+        "content": "文件正文"
+      }
+    },
+    "pattern": "^(?:# claudeMd\\nCodebase and user instructions are shown below\\. Be sure to adhere to these instructions\\. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written\\.\\n*)?Contents of (?<path>[^\\n]+?) \\(user's private project instructions[^)]*\\):\\n\\n(?<content>[\\s\\S]*?)\\n*$"
+  },
+  {
     "ruleId": "claude-code.messages.reminder.memory.v1",
     "slotId": "messages.inline.system-reminder.memory",
     "verifiedFor": "2.1.158",
@@ -1385,6 +1411,27 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       "category": "system_prompt"
     },
     "pattern": "^# Output efficiency\\n"
+  },
+  {
+    "ruleId": "claude-code.system-prompt-prompt-body.v1",
+    "slotId": "system.main-prompt.section.prompt-body",
+    "verifiedFor": "2.1.161",
+    "sourceUnits": [],
+    "description": "坍缩壳：ast-builder 的 collapseStaticSections 把相邻的纯静态 system H1 section(开场/Harness/ 会话守则/上下文管理/语气/工具/文本输出/...)合并成单一 prompt-body slot。这些段归因上同质(都是 \"CC 内置·静态·不可控\")且逐字匹配脆弱、CC 每版重写,故不再逐段细分 rule,由本条宽松壳兜底,免维护。 动态段(环境/记忆/Git 状态)不进本壳,仍各自独立 rule 做结构化提取。壳被动态段按物理序隔开时可 出现多段(各自命中本 rule),显示同名「系统提示词」,符合\"物理序不重排\"。",
+    "stability": "static",
+    "sourcemapRef": "collapsed shell — see ast-builder.collapseStaticSections",
+    "materialization": "shape",
+    "displayName": "系统提示词",
+    "summary": "CC 内置静态指令(开场/运行框架/会话守则/上下文管理/语气与输出等);跨版本重写,按整段归因不细分",
+    "priority": 0,
+    "attribution": {
+      "patternFromBody": true,
+      "trailingNewlines": 0,
+      "matchMode": "regex",
+      "mechanism": "system_prompt_pattern",
+      "category": "system_prompt"
+    },
+    "pattern": "^[\\s\\S]*$"
   },
   {
     "ruleId": "claude-code.system-prompt-session-guidance.v1",

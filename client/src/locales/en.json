@@ -860,7 +860,11 @@
     "optional": "optional",
     "otherFields": "Other Fields",
     "noDescription": "(no description)",
-    "noParams": "No parameters"
+    "noParams": "No parameters",
+    "fieldHelp": {
+      "defer_loading": "Deferred tool: only its name appears in the initial request, not its schema. The model discovers it via ToolSearch, then the API expands the schema at this tool's tool_reference position. Cache-transparent — adding or removing such tools only appends content and does not disturb the already-cached prefix.",
+      "eager_input_streaming": "Fine-grained tool streaming (FGTS): this tool's input JSON streams incrementally without buffering or validating the full payload first, lowering latency for large inputs (Write/Edit/Bash). Gated by the session-level flag tengu_fgts and frozen once per session so it doesn't change the serialized tool bytes and break the cache — its function is cache-independent; its stability serves the cache."
+    }
   },
   "skillListing": {
     "rowLabel": "Skills Registry",
@@ -1011,7 +1015,7 @@
       "summary": "Fixed identity line marking this as a Claude Code session (attribution anchor)"
     },
     "billing-noise": {
-      "displayName": "Billing Header",
+      "displayName": "attribution header",
       "summary": "Version/billing markers Claude Code sends to the server; not prompt content for the model"
     },
     "system-prompt-intro.standard": {
@@ -1089,6 +1093,10 @@
     "messages.reminder.global-instructions": {
       "displayName": "Global Instructions (~/.claude/CLAUDE.md)",
       "summary": "User global instruction file (~/.claude/CLAUDE.md), applies to all your projects"
+    },
+    "messages.reminder.local-instructions": {
+      "displayName": "Local Instructions (CLAUDE.local.md)",
+      "summary": "Project-local private instruction file (CLAUDE.local.md), machine-local, not checked in"
     },
     "messages.reminder.memory": {
       "displayName": "Memory (MEMORY.md)",

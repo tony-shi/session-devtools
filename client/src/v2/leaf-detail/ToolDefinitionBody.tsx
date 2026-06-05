@@ -13,6 +13,11 @@ import {
   TOOL_MONO, TOOL_JSON_VIEW_STYLE, PARAM_GRID_COLS,
 } from "./tool-format";
 import type { LeafLite } from "../AttributionTreePanel";
+import { HoverTip } from "../shared/HoverTip";
+
+// otherFields 里这两个服务端配置字段加"特别标记"：物理位置不动（仍按 JSON 序），仅在 key 后挂一个
+// 轻量 "i" 信息点（与其它 info 点同款浅灰样式，不加重），hover 出 i18n 说明（toolDef.fieldHelp.*）。
+const ANNOTATED_FIELDS = new Set(["defer_loading", "eager_input_streaming"]);
 
 export function ToolDefinitionBody({ leaf, rawMode }: { leaf: LeafLite; rawMode: boolean }) {
   const { t } = useTranslation();
@@ -129,14 +134,40 @@ export function ToolDefinitionBody({ leaf, rawMode }: { leaf: LeafLite; rawMode:
         <div>
           <div style={labelStyle}>{t("toolDef.otherFields")}</div>
           <div style={{ display: "grid", gridTemplateColumns: "max-content 1fr", columnGap: 16, rowGap: 6, padding: "10px 12px", background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6 }}>
-            {otherFields.map(([k, v]) => (
-              <Fragment key={k}>
-                <span style={{ fontFamily: TOOL_MONO, color: "#6b7280", fontWeight: 600, fontSize: 12 }}>{k}</span>
+            {otherFields.map(([k, v]) => {
+              const valueCell = (
                 <span style={{ fontSize: 12, color: "#1f2937", fontFamily: v !== null && typeof v === "object" ? TOOL_MONO : "inherit", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
                   {v !== null && typeof v === "object" ? JSON.stringify(v) : String(v)}
                 </span>
-              </Fragment>
-            ))}
+              );
+              if (!ANNOTATED_FIELDS.has(k)) {
+                return (
+                  <Fragment key={k}>
+                    <span style={{ fontFamily: TOOL_MONO, color: "#6b7280", fontWeight: 600, fontSize: 12 }}>{k}</span>
+                    {valueCell}
+                  </Fragment>
+                );
+              }
+              return (
+                <Fragment key={k}>
+                  <HoverTip align="left" content={<div>{t(`toolDef.fieldHelp.${k}`)}</div>}>
+                    <span style={{
+                      fontFamily: TOOL_MONO, color: "#6b7280", fontWeight: 600, fontSize: 12,
+                      display: "inline-flex", alignItems: "center", gap: 5, cursor: "help",
+                    }}>
+                      {k}
+                      <span aria-hidden style={{
+                        display: "inline-flex", alignItems: "center", justifyContent: "center",
+                        width: 13, height: 13, borderRadius: "50%",
+                        fontSize: 9, fontWeight: 700,
+                        background: "#f3f4f6", color: "#6b7280", border: "1px solid #d1d5db",
+                      }}>i</span>
+                    </span>
+                  </HoverTip>
+                  {valueCell}
+                </Fragment>
+              );
+            })}
           </div>
         </div>
       )}

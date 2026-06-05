@@ -13,6 +13,7 @@ import { useTranslation } from "react-i18next";
 import { apiV2 } from "./api";
 import { FisheyeStrip } from "./fisheye-strip";
 import { CodeBlock } from "./shared/CodeBlock";
+import { HoverTip } from "./shared/HoverTip";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import type {
   DiffKind, DiffLeaf, DiffSection, DiffSectionId, DiffTreeResult,
@@ -396,62 +397,7 @@ function CacheImpactRow({
   );
 }
 
-// ─── HoverTip — 自定义浮层 tooltip（ledger 白卡风格） ─────────────────────────
-// 对齐 LedgerExplainer 的视觉语言：白底 + 灰边 + 软阴影 + 深灰文字。
-//   - 触发：onMouseEnter / onMouseLeave 切换 show 状态
-//   - 定位：紧贴 trigger 下方，左/中/右对齐三档
-//   - 不依赖任何外部 portal / 库
-function HoverTip({
-  content,
-  children,
-  align = "center",
-}: {
-  content: React.ReactNode;
-  children: React.ReactNode;
-  /** 默认 center；right 时把 tooltip 锚到右下避免溢出 */
-  align?: "left" | "center" | "right";
-}) {
-  const [show, setShow] = useState(false);
-  const transform =
-    align === "center" ? "translateX(-50%)" :
-    align === "right"  ? "translateX(-100%)" : "none";
-  const left = align === "left" ? "0" : align === "right" ? "100%" : "50%";
-  return (
-    <span
-      style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
-      onMouseEnter={() => setShow(true)}
-      onMouseLeave={() => setShow(false)}
-    >
-      {children}
-      {show && (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 8px)",
-            left,
-            transform,
-            zIndex: 100,
-            background: "#fff",
-            color: "#374151",
-            border: "1px solid #e5e7eb",
-            borderRadius: 8,
-            padding: "12px 14px",
-            fontSize: 11,
-            lineHeight: 1.5,
-            maxWidth: 420,
-            minWidth: 280,
-            boxShadow: "0 8px 24px rgba(15,23,42,0.12), 0 2px 6px rgba(15,23,42,0.06)",
-            whiteSpace: "normal",
-            textAlign: "left",
-            pointerEvents: "none",
-          }}
-        >
-          {content}
-        </div>
-      )}
-    </span>
-  );
-}
+// HoverTip 已抽到 ./shared/HoverTip 复用（DiffPanel / ToolDefinitionBody 共用）。
 
 // ─── CacheImpactExplain — drift 算法说明（i18n，ledger 白卡风格） ──────────────
 function CacheImpactExplain() {

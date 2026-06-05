@@ -197,4 +197,45 @@ Today's date is June 1, 2026.
     expect(inMsg1.length).toBeGreaterThan(0);
     expect(inMsg1.every((n) => n.children.length === 0)).toBe(true);
   });
+
+  it("global / project / local 三类 CLAUDE.md 同现：各命中对应规则（local 不再落 STRUCTURAL）", () => {
+    // 回归：CLAUDE.local.md 的 desc 含子串 "project instructions"，但前缀 "user's private"
+    // 使其与入库项目指令(\(project instructions)、全局指令(\(user's private global instructions)
+    // pattern 互斥。修复前 local 无规则命中 → STRUCTURAL → 前端标题 fallback 成 slot 名
+    // "project-instructions"。真值见 proxy 31b1334b T1C1 (2.1.158)。
+    const text = `<system-reminder>
+As you answer the user's questions, you can use the following context:
+# claudeMd
+Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.
+Contents of /Users/me/.claude/CLAUDE.md (user's private global instructions for all projects):
+
+global rules.
+Contents of /repo/CLAUDE.md (project instructions, checked into the codebase):
+
+project rules.
+Contents of /repo/CLAUDE.local.md (user's private project instructions, not checked in):
+
+local rules.
+# userEmail
+The user's email address is user@example.com.
+# currentDate
+Today's date is June 1, 2026.
+
+      IMPORTANT: this context may or may not be relevant to your tasks. You should not respond to this context unless it is highly relevant to your task.
+</system-reminder>
+`;
+    const parent = splitReminder(text);
+    expect(parent).toBeDefined();
+    // 三个文件都落同一个 project-instructions slot（与 CC 物理真值一致：同一 claudeMd 注入）。
+    const instr = parent!.children.filter((c) => c.slotType === `${SR}.project-instructions`);
+    expect(instr.length).toBe(3);
+    // 靠 desc pattern 区分子类型，各命中各自规则，无一落 STRUCTURAL。
+    expect(instr.map(ruleIdOf)).toEqual([
+      "claude-code.messages.reminder.global-instructions.v1",
+      "claude-code.messages.reminder.project-instructions.v1",
+      "claude-code.messages.reminder.local-instructions.v1",
+    ]);
+    // 完整 tiling 不破。
+    expect(parent!.children.map((c) => c.rawText).join("")).toBe(parent!.rawText);
+  });
 });

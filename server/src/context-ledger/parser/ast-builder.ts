@@ -359,6 +359,63 @@ function splitByH1Headers(
     });
   }
 
+  return collapseStaticSections(out, parentJsonPath);
+}
+
+// 携带动态/异类信号(corpus 各 rule 的 stability:dynamic)的 system H1 section slug —— 单独保留供
+// 归因与结构化展示(环境/记忆/Git 状态)。其余纯静态 CC 指令段(开场/Harness/会话守则/上下文管理/
+// 语气/工具/...)归因上同质(都是"CC 内置·静态·不可控"),且逐字匹配脆弱、CC 每版重写 → 坍缩成单一
+// 「系统提示词」壳 slot(system.main-prompt.section.prompt-body),由一条宽松壳 rule 兜底,免维护。
+const DYNAMIC_SECTION_SLUGS = new Set([
+  "environment",   // # Environment：cwd / platform / model / cutoff 等运行时事实
+  "memory",        // # Memory：记忆目录路径(随用户/项目变)
+  "context",       // gitStatus literal 从 # Context management 尾部剥离出的动态 git 段
+  "auto-memory",   // 旧版动态记忆段(兜底)
+]);
+const COLLAPSED_SHELL_SLOT = "system.main-prompt.section.prompt-body";
+
+function systemSectionSlug(slotType: string): string | null {
+  const m = /^system\.main-prompt\.section\.(.+)$/.exec(slotType);
+  return m ? m[1]! : null;
+}
+
+/**
+ * 坍缩静态 system section：把相邻的纯静态段(非 DYNAMIC_SECTION_SLUGS 的 section.*)合并成单一
+ * prompt-body 壳；dynamic 段(环境/记忆/Git)与非 section slot 原样保留。物理序不变(按 charRange
+ * 排序后只合并相邻；被动态段隔开的静态区各自成一段壳)。判据单源 = corpus 各 rule 的 stability。
+ * 非 system 调用(所有 slot 都不是 section.*)等价原样返回，安全。
+ */
+function collapseStaticSections(matches: SlotMatch[], parentJsonPath: string): SlotMatch[] {
+  const sorted = [...matches].sort(
+    (a, b) => (a.charRange?.start ?? 0) - (b.charRange?.start ?? 0),
+  );
+  const out: SlotMatch[] = [];
+  let run: SlotMatch[] = [];
+  const flush = () => {
+    if (run.length === 0) return;
+    const first = run[0]!;
+    const last = run[run.length - 1]!;
+    out.push({
+      slotType: COLLAPSED_SHELL_SLOT,
+      jsonPath: parentJsonPath,
+      charRange: { start: first.charRange!.start, end: last.charRange!.end },
+      rawText: run.map((m) => m.rawText).join(""),
+      anchorEvidence: "",
+      children: [],
+    });
+    run = [];
+  };
+  for (const m of sorted) {
+    const slug = systemSectionSlug(m.slotType);
+    const collapsible = slug !== null && !DYNAMIC_SECTION_SLUGS.has(slug);
+    if (collapsible) {
+      run.push(m);
+    } else {
+      flush();
+      out.push(m);
+    }
+  }
+  flush();
   return out;
 }
 
