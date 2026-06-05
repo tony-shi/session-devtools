@@ -1090,11 +1090,11 @@
       "summary": "Harness 运行环境说明：终端渲染、工具权限模式、hook 行为"
     },
     "system-prompt-context-management": {
-      "displayName": "上下文管理",
+      "displayName": "压缩管理",
       "summary": "长对话超限时的自动压缩(compaction)说明"
     },
     "system-prompt-memory": {
-      "displayName": "记忆",
+      "displayName": "记忆管理",
       "summary": "持久化记忆(CLAUDE.md / MEMORY.md)的存在与读写规则"
     },
     "system-prompt-auto-memory": {

@@ -1124,11 +1124,11 @@
     },
     "messages.reminder.wrapper-prefix": {
       "displayName": "system-reminder prefix",
-      "summary": "Fixed prefix wrapper of the userContext injection block"
+      "summary": "Fixed prefix wrapper"
     },
     "messages.reminder.wrapper-suffix": {
       "displayName": "system-reminder suffix",
-      "summary": "Fixed suffix wrapper of the userContext injection block"
+      "summary": "Fixed suffix wrapper"
     },
     "messages.deferred-tools-listing": {
       "displayName": "Deferred Tools",
