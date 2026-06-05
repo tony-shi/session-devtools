@@ -133,6 +133,16 @@ function toolDescriptionOf(leaf: LeafLite): string | undefined {
   return undefined;
 }
 
+// tools 段导览：行内用我们写的中文一句话(toolGuide.<ToolName>)替代晦涩英文原文,
+// 与 rule 的 displayName/summary 同思路——导览层，不动真值。原文(wire description)一字
+// 不动,仍在选中详情 + 行内 hover title。en 等未配该 key 的语言 fallbackLng:false → 回退原文。
+export function toolGuideOf(leaf: { slotType?: string }): string | undefined {
+  const slot = leaf.slotType ?? "";
+  if (!slot.startsWith("tools.builtin.")) return undefined;
+  const k = `toolGuide.${slot.slice("tools.builtin.".length)}`;
+  return i18n.exists(k, { fallbackLng: false }) ? i18n.t(k) : undefined;
+}
+
 export function leafLabel(leaf: { slotType: string; rootSlotType?: string; ruleMeta?: { displayName?: string }; messageRole?: "user" | "assistant" | "system"; labelKey?: string; labelKeyBase?: string }): string {
   // 后端单源优先：rule.<labelKey> i18n(带版本，回退去版本 base)；中英切换在此生效。
   if (leaf.labelKey) {
@@ -541,15 +551,15 @@ export function LeafTable({
           ? `${t("skillListing.rowLabel")} · ${t("skillListing.rowSuffix", { count: skillListing.entries.length })}`
           : leafLabel(l);
         const isToolRow = sectionOf(l.rootSlotType) === "tools";
-        // tools 段：列表展示 description（rawText 是完整 JSON，直接展示不可读）；
-        // 选中后下方 SelectedDetail 已有完整 description，行内不再重复。
+        // tools 段：行内一句话导览（toolGuideOf：我们写的中文解读;缺则回退英文原文 description）。
+        // rawText 完整 JSON 不可读;完整原文保留在 hover title + 选中后下方 SelectedDetail。
+        const toolDesc = isToolRow ? toolDescriptionOf(l) : undefined;
         const rowPreview = skillListing
           ? ""
           : isToolRow
-            ? (isSel ? "" : (toolDescriptionOf(l) ?? l.preview))
+            ? (isSel ? "" : (toolGuideOf(l) ?? toolDesc ?? l.preview))
             : leafSummary(l);
-        // 动态来源后缀（仅 dynamic 段）："summary ← 变的是 X"
-        const previewSuffix = rm?.stability === "dynamic" && rm.dynamicSource ? ` ${rm.dynamicSource}` : "";
+        // 动态段不再用文本后缀表征，改为整行浅黄高亮（见下方 background）一种表征即可。
         // 恒用全局分母：每行 % = 占整个 context（语义恒定,与汇总条同口径）。
         const pct = denom > 0 ? (l.charCount / denom) * 100 : 0;
         const showTooltip = !!skillListing && hoveredId === l.nodeId;
@@ -590,9 +600,8 @@ export function LeafTable({
             >
               {t("attribution.detail.ofContext", { defaultValue: "占上下文" })} {pct.toFixed(1)}%
             </span>
-            <span style={{ fontSize: 10, color: "#6b7280", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <span title={toolDesc} style={{ fontSize: 10, color: "#6b7280", flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {rowPreview}
-              {previewSuffix && <span style={{ color: "#b45309" }}>{previewSuffix}</span>}
             </span>
             {getBadges && getBadges(l).map((b) => (
               <span

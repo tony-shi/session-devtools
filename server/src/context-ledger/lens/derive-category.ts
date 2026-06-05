@@ -76,6 +76,7 @@ const REMINDER_RULE_TO_ROLE: Record<string, RuleRoleResolver> = {
   "messages.nested-memory-contents": legacyMemoryContentsRole,
   "messages.reminder.project-instructions": "messages.context.claude-md",
   "messages.reminder.global-instructions": "messages.context.claude-md",
+  "messages.reminder.local-instructions": "messages.context.claude-md",
   "messages.reminder.memory": "messages.context.memory",
   "messages.user-context": "messages.context", // v1+v2 共享（修复 v2 此前落 injection）
   "messages.reminder.account": "messages.context.account",

@@ -1016,10 +1016,26 @@
     "toolUse": "工具调用",
     "response": "完整响应"
   },
+  "toolGuide": {
+    "Agent": "启动子代理处理复杂的多步任务,可指定 agent 类型并行执行,只回传结论",
+    "AskUserQuestion": "仅在遇到只能由用户拍板的决策时提问,给出选项供用户选择",
+    "Bash": "执行 bash 命令并返回输出,工作目录在多次调用间保持",
+    "Edit": "对文件做精确字符串替换;编辑前必须先 Read 该文件",
+    "Read": "按绝对路径读取本地文件,支持图片 / PDF / Jupyter notebook",
+    "ScheduleWakeup": "在 /loop 动态模式下安排下次唤醒,继续自定节奏的任务",
+    "Skill": "在主对话中执行一个 skill(斜杠命令)",
+    "ToolSearch": "按需拉取 deferred 工具的完整 schema 定义,拉到后才能调用",
+    "Workflow": "执行编排多个子代理的工作流脚本,后台运行",
+    "Write": "向本地文件系统写文件,已存在则覆盖;覆盖未 Read 过的文件会失败"
+  },
   "rule": {
+    "system-prompt-prompt-body": {
+      "displayName": "系统提示词",
+      "summary": "内置静态指令(开场/运行框架/会话守则/上下文管理/语气与输出等);跨版本可能有细微差异"
+    },
     "system-prompt-identity": {
       "displayName": "身份",
-      "summary": "固定身份标识行，标记这是 Claude Code 会话(归因锚点)"
+      "summary": "固定身份标识行（我是 Claude Code，Claude 的智能助手）"
     },
     "billing-noise": {
       "displayName": "归因信息",
@@ -1094,15 +1110,15 @@
       "summary": "首条注入：项目指令(CLAUDE.md/AGENTS.md, 可缺) + 持久化记忆(MEMORY.md) + 邮箱 + 日期；静态壳包动态载荷"
     },
     "messages.reminder.project-instructions": {
-      "displayName": "项目指令(CLAUDE.md)",
+      "displayName": "项目CLAUDE.md",
       "summary": "项目级指令文件(CLAUDE.md / AGENTS.md)的注入内容"
     },
     "messages.reminder.global-instructions": {
-      "displayName": "全局指令(~/.claude/CLAUDE.md)",
+      "displayName": "全局CLAUDE.md",
       "summary": "用户全局指令文件(~/.claude/CLAUDE.md)，对你所有项目生效"
     },
     "messages.reminder.local-instructions": {
-      "displayName": "本地指令(CLAUDE.local.md)",
+      "displayName": "本地CLAUDE.local.md",
       "summary": "项目本地私有指令文件(CLAUDE.local.md)，机器本地、不入库"
     },
     "messages.reminder.memory": {
@@ -1114,11 +1130,11 @@
       "summary": "账号邮箱 + 当前日期(注入上下文尾部)"
     },
     "messages.reminder.wrapper-prefix": {
-      "displayName": "system-reminder 前置封装",
+      "displayName": "系统提示前缀",
       "summary": "userContext 注入块的固定前置封装"
     },
     "messages.reminder.wrapper-suffix": {
-      "displayName": "system-reminder 后置封装",
+      "displayName": "系统提示后缀",
       "summary": "userContext 注入块的固定后置封装"
     },
     "messages.deferred-tools-listing": {
@@ -1168,46 +1184,6 @@
     "smoosh.task-reminder": {
       "displayName": "任务提醒 *",
       "summary": "Task 工具的待办提醒(system-reminder)"
-    },
-    "tool.Read": {
-      "displayName": "Read",
-      "summary": "工具定义：Read(2.1.158 版固定描述)"
-    },
-    "tool.Write": {
-      "displayName": "Write",
-      "summary": "工具定义：Write(2.1.158 版固定描述)"
-    },
-    "tool.Edit": {
-      "displayName": "Edit",
-      "summary": "工具定义：Edit(2.1.158 版固定描述)"
-    },
-    "tool.Bash": {
-      "displayName": "Bash",
-      "summary": "工具定义：Bash(2.1.158；署名模型名动态，其余固定)"
-    },
-    "tool.Agent": {
-      "displayName": "Agent",
-      "summary": "工具定义：Agent(2.1.158 版固定描述)"
-    },
-    "tool.Skill": {
-      "displayName": "Skill",
-      "summary": "工具定义：Skill(2.1.158 版固定描述)"
-    },
-    "tool.Workflow": {
-      "displayName": "Workflow",
-      "summary": "工具定义：Workflow(2.1.158 版固定描述)"
-    },
-    "tool.ToolSearch": {
-      "displayName": "ToolSearch",
-      "summary": "工具定义：ToolSearch(2.1.158 版固定描述)"
-    },
-    "tool.AskUserQuestion": {
-      "displayName": "AskUserQuestion",
-      "summary": "工具定义：AskUserQuestion(2.1.158 版固定描述)"
-    },
-    "tool.ScheduleWakeup": {
-      "displayName": "ScheduleWakeup",
-      "summary": "工具定义：ScheduleWakeup(2.1.158 版固定描述)"
     }
   }
 }

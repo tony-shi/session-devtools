@@ -1009,7 +1009,23 @@
     "toolUse": "Tool Use",
     "response": "Response"
   },
+  "toolGuide": {
+    "Agent": "Launch a subagent to handle a complex, multi-step task; runs in parallel and returns only the conclusion",
+    "AskUserQuestion": "Ask the user to decide only when it's genuinely their call; offer options to pick from",
+    "Bash": "Run a bash command and return its output; working directory persists across calls",
+    "Edit": "Exact string replacement in a file; you must Read the file first",
+    "Read": "Read a local file by absolute path; supports images / PDF / Jupyter notebooks",
+    "ScheduleWakeup": "Schedule the next wake-up in /loop dynamic mode to continue a self-paced task",
+    "Skill": "Execute a skill (slash command) within the main conversation",
+    "ToolSearch": "Fetch full schemas for deferred tools; required before they can be called",
+    "Workflow": "Run a multi-subagent orchestration script in the background",
+    "Write": "Write a file to the local filesystem; overwrites if it exists, fails if not yet Read"
+  },
   "rule": {
+    "system-prompt-prompt-body": {
+      "displayName": "System Prompt",
+      "summary": "built-in static instructions (intro / harness / session guidance / context management / tone & output…); rewritten across versions"
+    },
     "system-prompt-identity": {
       "displayName": "Identity",
       "summary": "Fixed identity line marking this as a Claude Code session (attribution anchor)"
@@ -1087,15 +1103,15 @@
       "summary": "First-message injection: project instructions (CLAUDE.md/AGENTS.md, optional) + persistent memory (MEMORY.md) + email + date; static shell wrapping dynamic payload"
     },
     "messages.reminder.project-instructions": {
-      "displayName": "Project Instructions (CLAUDE.md)",
+      "displayName": "Project CLAUDE.md",
       "summary": "Injected content of project-level instruction files (CLAUDE.md / AGENTS.md)"
     },
     "messages.reminder.global-instructions": {
-      "displayName": "Global Instructions (~/.claude/CLAUDE.md)",
+      "displayName": "Global CLAUDE.md",
       "summary": "User global instruction file (~/.claude/CLAUDE.md), applies to all your projects"
     },
     "messages.reminder.local-instructions": {
-      "displayName": "Local Instructions (CLAUDE.local.md)",
+      "displayName": "CLAUDE.local.md",
       "summary": "Project-local private instruction file (CLAUDE.local.md), machine-local, not checked in"
     },
     "messages.reminder.memory": {
@@ -1107,11 +1123,11 @@
       "summary": "Account email + current date (injected at context tail)"
     },
     "messages.reminder.wrapper-prefix": {
-      "displayName": "system-reminder Prefix Wrapper",
+      "displayName": "system-reminder prefix",
       "summary": "Fixed prefix wrapper of the userContext injection block"
     },
     "messages.reminder.wrapper-suffix": {
-      "displayName": "system-reminder Suffix Wrapper",
+      "displayName": "system-reminder suffix",
       "summary": "Fixed suffix wrapper of the userContext injection block"
     },
     "messages.deferred-tools-listing": {
@@ -1161,46 +1177,6 @@
     "smoosh.task-reminder": {
       "displayName": "Task Reminder *",
       "summary": "Task tool todo reminder (system-reminder)"
-    },
-    "tool.Read": {
-      "displayName": "Read",
-      "summary": "Tool definition: Read (fixed description, 2.1.158)"
-    },
-    "tool.Write": {
-      "displayName": "Write",
-      "summary": "Tool definition: Write (fixed description, 2.1.158)"
-    },
-    "tool.Edit": {
-      "displayName": "Edit",
-      "summary": "Tool definition: Edit (fixed description, 2.1.158)"
-    },
-    "tool.Bash": {
-      "displayName": "Bash",
-      "summary": "Tool definition: Bash (2.1.158; signature model name dynamic, rest fixed)"
-    },
-    "tool.Agent": {
-      "displayName": "Agent",
-      "summary": "Tool definition: Agent (fixed description, 2.1.158)"
-    },
-    "tool.Skill": {
-      "displayName": "Skill",
-      "summary": "Tool definition: Skill (fixed description, 2.1.158)"
-    },
-    "tool.Workflow": {
-      "displayName": "Workflow",
-      "summary": "Tool definition: Workflow (fixed description, 2.1.158)"
-    },
-    "tool.ToolSearch": {
-      "displayName": "ToolSearch",
-      "summary": "Tool definition: ToolSearch (fixed description, 2.1.158)"
-    },
-    "tool.AskUserQuestion": {
-      "displayName": "AskUserQuestion",
-      "summary": "Tool definition: AskUserQuestion (fixed description, 2.1.158)"
-    },
-    "tool.ScheduleWakeup": {
-      "displayName": "ScheduleWakeup",
-      "summary": "Tool definition: ScheduleWakeup (fixed description, 2.1.158)"
     }
   }
 }

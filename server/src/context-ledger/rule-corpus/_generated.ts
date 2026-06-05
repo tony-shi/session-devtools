@@ -1560,7 +1560,7 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
     "slotId": "system.billing",
     "verifiedFor": "2.1.150",
     "sourceUnits": [],
-    "description": "Claude Code 每次请求在 system[0] 主动注入的 attribution header。含动态字段 cc_version(fingerprint)和 cch(attestation),内容不可复现。只匹配 system section——messages 里相同文本是集成逻辑携带,不命中此 rule。",
+    "description": "Claude Code 每次请求在 system[0] 主动注入的 attribution header(CC 源码称 attribution header,字面前缀伪装成 x-anthropic-billing-header)。含动态字段 cc_version(fingerprint)和 cch(attestation),内容不可复现;cc_entrypoint 标识运行入口/宿主环境(cli、IDE 扩展、mcp、github-action 等)。只匹配 system section——messages 里相同文本是集成逻辑携带,不命中此 rule。",
     "stability": "dynamic",
     "sourcemapRef": "restored-src/src/constants/system.ts",
     "materialization": "presence",
@@ -1576,7 +1576,7 @@ export const GENERATED_RULES: ReadonlyArray<Omit<Rule, "filePath">> = [
       "category": "billing_noise",
       "captureGroups": {
         "version": "cc_version 完整值(semver.hex_fingerprint),fingerprint 每次不同",
-        "entrypoint": "cc_entrypoint 值,如 'cli'(进程级固定)",
+        "entrypoint": "运行入口/宿主环境标签,标识谁拉起了 CLI 进程。由启动方经 CLAUDE_CODE_ENTRYPOINT 注入,进程级固定。源码可核实值:mcp、claude-code-github-action,缺省 unknown;常见外部值如 cli(交互终端)、IDE 扩展(vscode/jetbrains 等)、sdk-*、cron",
         "cch": "attestation token(hex),NATIVE_CLIENT_ATTESTATION 开启时才出现",
         "workload": "cc_workload tag,cron 等特殊场景才出现"
       },
