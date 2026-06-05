@@ -12,6 +12,7 @@ import {
   tryParseSegmentJson, extractToolParams, relocateFieldsToDescription,
   TOOL_MONO, TOOL_JSON_VIEW_STYLE, PARAM_GRID_COLS,
 } from "./tool-format";
+import { listingSectionLabel, listingPre } from "./listing-style";
 import type { LeafLite } from "../AttributionTreePanel";
 import { HoverTip } from "../shared/HoverTip";
 
@@ -51,16 +52,7 @@ export function ToolDefinitionBody({ leaf, rawMode }: { leaf: LeafLite; rawMode:
 
   // parse 失败兜底：原文 <pre>，绝不白屏。
   if (!parsed) {
-    return (
-      <pre style={{
-        margin: 0, padding: "10px 12px",
-        background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6,
-        fontFamily: TOOL_MONO, fontSize: 11.5, lineHeight: 1.55,
-        whiteSpace: "pre-wrap", wordBreak: "break-word", color: "#1f2937",
-      }}>
-        {fullText}
-      </pre>
-    );
+    return <pre style={listingPre}>{fullText}</pre>;
   }
 
   if (rawMode) {
@@ -72,10 +64,7 @@ export function ToolDefinitionBody({ leaf, rawMode }: { leaf: LeafLite; rawMode:
   }
 
   const { description, inputSchema, params, otherFields } = parsed;
-  const labelStyle: React.CSSProperties = {
-    fontSize: 11, fontWeight: 700, color: "#6b7280",
-    textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 5,
-  };
+  const labelStyle: React.CSSProperties = listingSectionLabel;
   const cellBase: React.CSSProperties = {
     fontSize: 12, padding: "5px 10px", wordBreak: "break-word", minWidth: 0,
   };

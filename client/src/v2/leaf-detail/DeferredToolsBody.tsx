@@ -9,6 +9,7 @@
 // 渲染，本组件接 rawMode 决定 parsed/raw，不 import SelectedDetailHeader（避免循环依赖）。
 import React, { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import { listingSurface, listingPre, listingChip, listingChipMcp } from "./listing-style";
 import type { LeafLite } from "../AttributionTreePanel";
 
 function parseDeferredTools(raw: string): { cc: string[]; mcp: Map<string, string[]> } {
@@ -30,22 +31,11 @@ function parseDeferredTools(raw: string): { cc: string[]; mcp: Map<string, strin
   return { cc, mcp };
 }
 
-const wrap: React.CSSProperties = {
-  display: "flex", flexDirection: "column", gap: 12,
-  padding: "10px 12px", background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 6,
-};
-const preStyle: React.CSSProperties = {
-  margin: 0, padding: "10px 12px", background: "#fafafa", border: "1px solid #e5e7eb",
-  borderRadius: 6, fontSize: 11.5, fontFamily: "ui-monospace, SFMono-Regular, monospace",
-  color: "#1f2937", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55,
-};
+const wrap: React.CSSProperties = { ...listingSurface, display: "flex", flexDirection: "column", gap: 12 };
+const preStyle: React.CSSProperties = listingPre;
 const sectionTitle: React.CSSProperties = { fontSize: 11, fontWeight: 700, color: "#6b7280", marginBottom: 4 };
-const ccChip: React.CSSProperties = {
-  display: "inline-block", padding: "2px 7px", margin: "2px 4px 2px 0",
-  fontSize: 11.5, fontFamily: "ui-monospace, SFMono-Regular, monospace",
-  background: "#eef2ff", color: "#4338ca", border: "1px solid #e0e7ff", borderRadius: 4,
-};
-const mcpChip: React.CSSProperties = { ...ccChip, background: "#f5f3ff", color: "#6d28d9", borderColor: "#ede9fe" };
+const ccChip: React.CSSProperties = listingChip;
+const mcpChip: React.CSSProperties = listingChipMcp;
 const serverBtn: React.CSSProperties = {
   display: "inline-flex", alignItems: "center", gap: 4, padding: "1px 4px",
   background: "transparent", border: "none", cursor: "pointer", fontSize: 12,

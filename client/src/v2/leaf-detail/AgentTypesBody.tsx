@@ -9,6 +9,11 @@
 // body-only：parsed = 表格；raw（或解析为空）= 原文 pre。统一详情头由 dispatcher 渲染，
 // 本组件接 rawMode 决定 parsed/raw，不 import SelectedDetailHeader（避免循环依赖）。
 import React from "react";
+import {
+  LISTING_MONO, listingChip, listingChipMuted, listingChipAll,
+  listingPre, listingCell, listingHeadCell, listingTableWrap,
+} from "./listing-style";
+import { BRAND } from "../shared/brand";
 import type { LeafLite } from "../AttributionTreePanel";
 
 interface AgentRow { name: string; desc: string; tools: string }
@@ -31,17 +36,13 @@ function parseAgentTypes(raw: string): AgentRow[] {
   return out;
 }
 
-const toolChip: React.CSSProperties = {
-  display: "inline-block", padding: "1px 6px", margin: "1px 3px 1px 0",
-  fontSize: 11, fontFamily: "ui-monospace, SFMono-Regular, monospace",
-  background: "#eef2ff", color: "#4338ca", border: "1px solid #e0e7ff", borderRadius: 3,
-};
-const exclChip: React.CSSProperties = { ...toolChip, background: "#f3f4f6", color: "#6b7280", borderColor: "#e5e7eb" };
+const toolChip: React.CSSProperties = listingChip;
+const exclChip: React.CSSProperties = listingChipMuted;
 
 /** 工具列：展示具体工具（不计数），区分 全部 / 排除 / 列举 三形态。 */
 function ToolsCell({ tools }: { tools: string }) {
   if (!tools) return <span style={{ color: "#9ca3af" }}>—</span>;
-  if (tools === "*") return <span style={{ ...toolChip, background: "#ecfdf5", color: "#047857", borderColor: "#d1fae5" }}>全部 *</span>;
+  if (tools === "*") return <span style={listingChipAll}>全部 *</span>;
   const excl = tools.match(/^All tools except\s+(.+)$/i);
   if (excl) {
     const names = excl[1]!.split(/,\s*/).filter(Boolean);
@@ -56,13 +57,9 @@ function ToolsCell({ tools }: { tools: string }) {
   return <>{names.map((n) => <span key={n} style={toolChip}>{n}</span>)}</>;
 }
 
-const preStyle: React.CSSProperties = {
-  margin: 0, padding: "10px 12px", background: "#fafafa", border: "1px solid #e5e7eb",
-  borderRadius: 6, fontSize: 11.5, fontFamily: "ui-monospace, SFMono-Regular, monospace",
-  color: "#1f2937", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55,
-};
-const cell: React.CSSProperties = { padding: "6px 10px", borderTop: "1px solid #eef0f3", verticalAlign: "top" };
-const headCell: React.CSSProperties = { padding: "6px 10px", fontSize: 11, fontWeight: 700, color: "#6b7280", textAlign: "left", background: "#f9fafb" };
+const preStyle: React.CSSProperties = listingPre;
+const cell: React.CSSProperties = listingCell;
+const headCell: React.CSSProperties = listingHeadCell;
 
 export function AgentTypesBody({ leaf, rawMode }: { leaf: LeafLite; rawMode: boolean }) {
   const raw = leaf.rawText ?? leaf.preview;
@@ -71,7 +68,7 @@ export function AgentTypesBody({ leaf, rawMode }: { leaf: LeafLite; rawMode: boo
   if (rawMode || rows.length === 0) return <pre style={preStyle}>{raw}</pre>;
 
   return (
-    <div style={{ border: "1px solid #e5e7eb", borderRadius: 6, overflow: "hidden" }}>
+    <div style={listingTableWrap}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
         <thead>
           <tr>
@@ -83,7 +80,7 @@ export function AgentTypesBody({ leaf, rawMode }: { leaf: LeafLite; rawMode: boo
         <tbody>
           {rows.map((r) => (
             <tr key={r.name}>
-              <td style={{ ...cell, whiteSpace: "nowrap", fontFamily: "ui-monospace, SFMono-Regular, monospace", color: "#312e81", fontWeight: 600 }}>
+              <td style={{ ...cell, whiteSpace: "nowrap", fontFamily: LISTING_MONO, color: BRAND.indigo700, fontWeight: 600 }}>
                 {r.name}
               </td>
               <td style={{ ...cell, color: r.desc ? "#374151" : "#9ca3af", lineHeight: 1.5 }}>

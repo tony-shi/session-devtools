@@ -2,11 +2,13 @@
 //
 // body-only：parsed = 技能名/描述网格（含 parseError 行）；raw = 原文 pre。
 // 统一详情头由 dispatcher(SelectedDetail) 渲染，本组件接 rawMode 决定 parsed/raw。
+// 视觉统一走 listing-style 共享 token（圆角 / 标识符配色 / 字号与 agent·tools 对齐）。
 import { Fragment } from "react";
-import { BRAND } from "../shared/brand";
+import {
+  LISTING_MONO, LISTING_DESC, LISTING_MUTED,
+  listingSurface, listingPre, listingEntityName,
+} from "./listing-style";
 import type { LeafLite } from "../AttributionTreePanel";
-
-const MONO = "ui-monospace, SFMono-Regular, monospace";
 
 export function SkillListingBody({ leaf, rawMode }: { leaf: LeafLite; rawMode: boolean }) {
   if (leaf.origin.kind !== "rule" || !leaf.origin.payload?.skillListing) return null;
@@ -14,33 +16,20 @@ export function SkillListingBody({ leaf, rawMode }: { leaf: LeafLite; rawMode: b
   const fullText = leaf.rawText ?? leaf.preview;
 
   if (rawMode) {
-    return (
-      <pre style={{
-        margin: 0, padding: "10px 12px",
-        background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 4,
-        fontSize: 11.5, fontFamily: MONO, color: "#1f2937",
-        whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.55,
-      }}>
-        {fullText}
-      </pre>
-    );
+    return <pre style={listingPre}>{fullText}</pre>;
   }
 
   return (
-    <div style={{
-      display: "grid", gridTemplateColumns: "max-content 1fr",
-      columnGap: 16, rowGap: 6, padding: "10px 12px",
-      background: "#fafafa", border: "1px solid #e5e7eb", borderRadius: 4,
-    }}>
+    <div style={{ ...listingSurface, display: "grid", gridTemplateColumns: "max-content 1fr", columnGap: 16, rowGap: 6 }}>
       {sl.entries.map((e, i) => (
         <Fragment key={i}>
           {e.parseError ? (
             <>
-              <span style={{ fontFamily: MONO, fontSize: 12, color: "#9ca3af", fontStyle: "italic", whiteSpace: "nowrap" }}>
+              <span style={{ fontFamily: LISTING_MONO, fontSize: 12, color: LISTING_MUTED, fontStyle: "italic", whiteSpace: "nowrap" }}>
                 ⚠ unparsed
               </span>
               <span
-                style={{ fontSize: 12, color: "#9ca3af", fontStyle: "italic", lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
+                style={{ fontSize: 12, color: LISTING_MUTED, fontStyle: "italic", lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
                 title={e.rawLine}
               >
                 {e.rawLine}
@@ -48,11 +37,11 @@ export function SkillListingBody({ leaf, rawMode }: { leaf: LeafLite; rawMode: b
             </>
           ) : (
             <>
-              <span style={{ fontFamily: MONO, fontSize: 12.5, color: BRAND.indigo700, fontWeight: 500, whiteSpace: "nowrap" }}>
+              <span style={listingEntityName}>
                 {e.name}
               </span>
               <span
-                style={{ fontSize: 12.5, color: e.description ? "#374151" : "#9ca3af", lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
+                style={{ fontSize: 12, color: e.description ? LISTING_DESC : LISTING_MUTED, lineHeight: 1.5, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
                 title={e.description ?? "(no description)"}
               >
                 {e.description ?? "—"}
