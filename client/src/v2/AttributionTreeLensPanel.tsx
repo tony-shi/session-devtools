@@ -838,7 +838,7 @@ function DiffUnavailableBanner({
 
 export function AttributionTreeLensPanel({
   sessionId, agentFileId, compactIdx, proxyRequestId, callId, prevCallId, hideDiff, onLinkSource, onLeafSelect, prelude,
-  onVersionDiagLoaded, focusSection, focusSlotType,
+  onVersionDiagLoaded, focusSection, focusSlotType, focusBucket,
 }: {
   sessionId: string;
   /** Present iff rendering a sub-agent call — routes to sub-agent endpoint. */
@@ -870,6 +870,9 @@ export function AttributionTreeLensPanel({
   /** 受控：外部按 slotType 精确聚焦某个 leaf —— 自动切到它所在 section 并选中（渲染其 detail）。
    *  undefined=不受控；null=取消 leaf 选中；string=聚焦首个 slotType 匹配的 leaf（含 rule-origin）。 */
   focusSlotType?: string | null;
+  /** 受控：外部按 bucket id 驱动 structure lens 的桶筛选 —— 等价用户点开对应大类
+   *  pill 并选中子桶。undefined=不受控（沿用内部点击状态）；null=清除筛选。 */
+  focusBucket?: string | null;
 }) {
   const { t } = useTranslation();
   const api = useAttributionApi();
@@ -1056,6 +1059,20 @@ export function AttributionTreeLensPanel({
       setSelectedNodeId(match.nodeId);
     }
   }, [focusSlotType, attributedLeaves]);
+
+  // 桶级受控：focusBucket 变化 → 同步 structure lens 的桶筛选 + 所属大类 pill。
+  // undefined=不受控；null=清除筛选（同时收起大类）。
+  useEffect(() => {
+    if (focusBucket === undefined) return;
+    if (focusBucket === null) {
+      setSelectedGroupId(null);
+      setBucketFilters((f) => ({ ...f, structure: null }));
+      return;
+    }
+    const bucket = getLens("structure").buckets.find((b) => b.id === focusBucket);
+    setSelectedGroupId(bucket?.groupId ?? null);
+    setBucketFilters((f) => ({ ...f, structure: focusBucket }));
+  }, [focusBucket]);
 
   // 把"任意 active lens 的桶选择"合并成一个谓词，AND 联合过滤。
   // 注意：cache lens 的桶只用于联动 CacheTopologyStrip 高亮，不参与 leaf 过滤
