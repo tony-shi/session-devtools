@@ -12,6 +12,11 @@ import { createReadStream, existsSync } from "node:fs";
 import { createGunzip } from "node:zlib";
 import { StringDecoder } from "node:string_decoder";
 import type { Database } from "better-sqlite3";
+import {
+  parseSseText,
+  reconstructAssistantMessage,
+  type ReconstructedMessage,
+} from "./sse-response-reconstructor.ts";
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
@@ -52,6 +57,12 @@ export interface CallDetail {
   rawRequestJson: Record<string, unknown> | null;
   rawResponseJson?: Record<string, unknown> | null;
   rawResponseText?: string | null;
+  /** 流式响应经 SSE 重组得到的 wire 形态消息。**派生物，非原文** —— SSE frame
+   *  边界 / event 时序在重组中丢失；ground truth 永远是 rawResponseText。
+   *  仅 resBody 为 SSE（即 rawResponseJson 为 null）且重组出 message 时存在。 */
+  reconstructedResponseJson?: ReconstructedMessage | null;
+  /** true = SSE 流未正常结束（缺 message_stop），重组结果可能残缺，前端须外显。 */
+  responseTruncated?: boolean;
 }
 
 // ─── JSONL read helpers (copied from proxy-traffic.controller.ts) ─────────────
@@ -222,12 +233,24 @@ export async function loadCallDetail(
     try { rawResParsed = JSON.parse(resBody) as Record<string, unknown>; }
     catch { /* not JSON */ }
   }
+  // resBody 不是 JSON ⇒ 流式 SSE：复用 response-attribution 同一套重组器拼出
+  // wire 形态消息，给 raw tab 默认展示用。重组失败（非 SSE 文本 / 缺
+  // message_start）则保持 null，前端回落 SSE 原文视图。
+  let reconstructed: ReconstructedMessage | null = null;
+  let responseTruncated = false;
+  if (typeof resBody === "string" && rawResParsed === null) {
+    const r = reconstructAssistantMessage(parseSseText(resBody));
+    reconstructed = r.message;
+    responseTruncated = r.truncated;
+  }
   return {
     ...base,
     proxyRequestId: proxyRow.id,
     proxyMatchMode: "exact",
     rawRequestJson: rawReqParsed,
     rawResponseJson: rawResParsed,
-    rawResponseText: resBody ?? null
+    rawResponseText: resBody ?? null,
+    reconstructedResponseJson: reconstructed,
+    responseTruncated,
   };
 }

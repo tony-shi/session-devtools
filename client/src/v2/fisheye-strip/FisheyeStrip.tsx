@@ -25,7 +25,11 @@ function useContainerWidth<T extends HTMLElement>() {
   useLayoutEffect(() => {
     if (!ref.current) return;
     const el = ref.current;
-    const update = () => setWidth(el.getBoundingClientRect().width);
+    // offsetWidth 而非 getBoundingClientRect().width：后者是视口坐标（含祖先
+    // CSS zoom / transform: scale），用它分配局部布局像素会在缩放环境下按系数
+    // 平方溢出，条带被 overflow:hidden 裁掉右侧。offsetWidth 是未缩放的局部
+    // 布局宽，与子元素 left/width 同坐标系。
+    const update = () => setWidth(el.offsetWidth);
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
@@ -162,8 +166,12 @@ export function FisheyeStrip<T extends FisheyeItem>(props: FisheyeStripProps<T>)
     <div
       ref={ref}
       onMouseMove={(e) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        setFocus(e.clientX - rect.left);
+        // clientX/rect 是视口坐标，focus 要的是局部布局坐标 —— 除以缩放系数
+        // （rect.width / offsetWidth）换算，与 useContainerWidth 的 offsetWidth 同系。
+        const el = e.currentTarget;
+        const rect = el.getBoundingClientRect();
+        const scale = el.offsetWidth > 0 ? rect.width / el.offsetWidth : 1;
+        setFocus((e.clientX - rect.left) / scale);
       }}
       onMouseLeave={() => { setFocus(null); setHoveredIdx(null); onHover?.(null); }}
       style={{

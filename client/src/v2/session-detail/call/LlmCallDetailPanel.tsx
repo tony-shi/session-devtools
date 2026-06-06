@@ -22,6 +22,7 @@ import { ResponseTreePanel } from "../../ResponseTreePanel";
 import { ProxyMissingEmptyState } from "../proxy/ProxyMissingEmptyState";
 import { SummaryStat, CacheSummaryStat } from "./CallSummaryStats";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Check, Copy } from "lucide-react";
 import { SegmentedToggle } from "../../shared/SegmentedToggle";
@@ -74,6 +75,9 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
 }) {
   const { t } = useTranslation();
   const [subTab, setSubTab] = useState<"request" | "response" | "meta">("request");
+  // SSE 流式响应的展示模式：默认「拼接 JSON」（语义对齐非流式响应），可切回
+  // SSE 原文（wire ground truth）。非流式 / 重组失败时无此切换。
+  const [respMode, setRespMode] = useState<"reconstructed" | "sse">("reconstructed");
 
   const jsonlObj = useMemo(() => ({
     call_id: call.id,
@@ -111,6 +115,15 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
   }, [callDetail?.rawResponseJson, responseText]);
 
   const isResponseJson = !!parsedResponse;
+
+  // SSE 流式响应的重组结果（派生物，后端 call-detail 由 SSE 原文拼接）。
+  // 仅在响应不是 JSON（= 流式）且重组成功时有值。
+  const reconstructedJson = !isResponseJson ? callDetail?.reconstructedResponseJson ?? null : null;
+  const reconstructedText = useMemo(
+    () => (reconstructedJson ? JSON.stringify(reconstructedJson, null, 2) : null),
+    [reconstructedJson],
+  );
+  const showReconstructed = !!reconstructedJson && respMode === "reconstructed";
 
   if (callDetailLoading) {
     return <div style={{ fontSize: 11, color: "#9ca3af", padding: "20px 0" }}>{t("callDetail.loading")}</div>;
@@ -179,11 +192,32 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
         <>
           {responseText ? (
             <>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                  {t("callDetail.titleResponseSse")}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, gap: 8, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                    {showReconstructed ? t("callDetail.titleResponseReconstructed") : t("callDetail.titleResponseSse")}
+                  </div>
+                  {/* 流未正常结束：两种模式都外显（残缺是流本身的属性，不只是重组的） */}
+                  {callDetail?.responseTruncated && (
+                    <Badge variant="amber" className="text-[10px] px-1.5 py-0 rounded-sm">
+                      {t("callDetail.respTruncated")}
+                    </Badge>
+                  )}
                 </div>
-                <RawCopyButton text={responseText} />
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {/* 仅流式且重组成功时提供切换；非流式 / 重组失败保持原有单视图 */}
+                  {reconstructedJson && (
+                    <SegmentedToggle
+                      options={[
+                        { id: "reconstructed" as const, label: t("callDetail.respModeReconstructed") },
+                        { id: "sse" as const, label: t("callDetail.respModeSse") },
+                      ]}
+                      value={respMode}
+                      onChange={setRespMode}
+                    />
+                  )}
+                  <RawCopyButton text={showReconstructed ? (reconstructedText ?? "") : responseText} />
+                </div>
               </div>
               {isResponseJson && parsedResponse ? (
                 <div style={{
@@ -193,6 +227,21 @@ function RawTab({ call, freshIn, callDetail, callDetailLoading }: {
                 }}>
                   <JsonView
                     value={parsedResponse as object}
+                    collapsed={false}
+                    displayDataTypes={false}
+                    displayObjectSize={false}
+                    enableClipboard
+                    style={jsonViewStyle}
+                  />
+                </div>
+              ) : showReconstructed && reconstructedJson ? (
+                <div style={{
+                  padding: "10px 12px",
+                  backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 6,
+                  maxHeight: 480, overflow: "auto",
+                }}>
+                  <JsonView
+                    value={reconstructedJson as object}
                     collapsed={false}
                     displayDataTypes={false}
                     displayObjectSize={false}

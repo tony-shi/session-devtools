@@ -386,4 +386,9 @@ export interface CallDetail {
   rawRequestJson: Record<string, unknown> | null;
   rawResponseJson?: Record<string, unknown> | null;
   rawResponseText?: string | null;
+  /** 流式响应经 SSE 重组的 wire 形态消息。派生物、非原文 —— ground truth 是
+   *  rawResponseText。仅 SSE 响应且后端重组出 message 时存在。 */
+  reconstructedResponseJson?: Record<string, unknown> | null;
+  /** true = SSE 流未正常结束（缺 message_stop），重组结果可能残缺。 */
+  responseTruncated?: boolean;
 }
