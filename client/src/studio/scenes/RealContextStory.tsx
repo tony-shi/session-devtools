@@ -79,7 +79,7 @@ function RealContextPanelShot({ clock }: { clock: ActClock }) {
 export const realContextEpisode: EpisodeSpec = {
   storyId: STORY_ID,
   shots: [
-    { id: "rc-json", steps: [0, 1], render: () => <RealContextJsonScene /> },
+    { id: "rc-json", steps: [0, 1], render: ({ clock }) => <RealContextJsonScene clock={clock} /> },
     { id: "rc-panel", steps: [2, 3, 4, 5, 6, 7, 8, 9], render: ({ clock }) => <RealContextPanelShot clock={clock} /> },
   ],
 };
