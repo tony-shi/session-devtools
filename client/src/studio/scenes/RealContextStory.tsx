@@ -2,13 +2,16 @@ import { AbsoluteFill, useCurrentFrame } from "remotion";
 import "../../i18n"; // 初始化 react-i18next(真实面板用 useTranslation),headless 渲染必须
 import { Episode, episodeDuration, type Episode as EpisodeSpec } from "../episode";
 import { AttributionGraphProvider } from "../../v2/attribution-graph-context";
+import { AttributionApiProvider } from "../../v2/attribution-api-context"; // main 的取数依赖注入(不改组件喂数据)
 import { AttributionTreeLensPanel } from "../../v2/AttributionTreeLensPanel";
 import { TooltipProvider } from "@/components/ui/tooltip"; // 真实面板用 Radix Tooltip,需 Provider 祖先
 import type { AttributionTreeResult } from "../../v2/attribution-tree-types";
+import type { SessionAttributionGraph } from "../../v2/attribution-graph-types";
 import type { Focus } from "../../v2/walkthrough/types";
 import type { ActClock } from "./storyClock";
 import { RealContextJsonScene } from "./RealContextJsonScene";
 import fixture from "../fixtures/attribution-real-context.json";
+import graphFixture from "../fixtures/attribution-graph-real-context.json";
 
 // 故事二「看见真实的 Context」storyboard —— 单轨 Remotion(Decision C)。
 //
@@ -21,6 +24,15 @@ import fixture from "../fixtures/attribution-real-context.json";
 //   宽度预算:1920 − 边距 ≈ 1820;PANEL_BASE_W × PANEL_ZOOM ≈ 800 × 2.2 = 1760 ≤ 1820 ✓。
 const STORY_ID = "real-context";
 const RC = fixture as unknown as AttributionTreeResult;
+const GRAPH = graphFixture as unknown as SessionAttributionGraph;
+
+// 注入真实数据(不改组件,用 main 的 AttributionApiProvider)。核心数据 = 真实 dump;
+// diffTree reject —— 本片单 call、hideDiff,无需 diff,让组件走容错(不编造假 diff)。
+const STUDIO_API = {
+  attributionTree: async () => RC,
+  attributionGraph: async () => GRAPH,
+  diffTree: () => Promise.reject(new Error("studio: diff not needed")),
+};
 
 const PANEL_BASE_W = 800;   // 面板先按这个窄宽度排版(段自适应回流)
 const PANEL_ZOOM = 2.2;     // 再整体放大 ——「合理字号」的来源
@@ -59,16 +71,18 @@ function RealContextPanelShot({ clock }: { clock: ActClock }) {
           filter: "saturate(1.45) contrast(1.04)",
         }}
       >
+        {/* AttributionApiProvider 必须包在 AttributionGraphProvider 外层(后者内部消费此 context)。 */}
         <TooltipProvider>
-          <AttributionGraphProvider sessionId={RC.sessionId} onJumpToCall={null}>
-            <AttributionTreeLensPanel
-              sessionId={RC.sessionId}
-              callId={RC.callId}
-              hideDiff
-              focusSection={focusSection}
-              injected={RC}
-            />
-          </AttributionGraphProvider>
+          <AttributionApiProvider value={STUDIO_API}>
+            <AttributionGraphProvider sessionId={RC.sessionId} onJumpToCall={null}>
+              <AttributionTreeLensPanel
+                sessionId={RC.sessionId}
+                callId={RC.callId}
+                hideDiff
+                focusSection={focusSection}
+              />
+            </AttributionGraphProvider>
+          </AttributionApiProvider>
         </TooltipProvider>
       </div>
     </AbsoluteFill>

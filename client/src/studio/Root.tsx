@@ -1,6 +1,5 @@
 import { Composition } from "remotion";
 import { HelloProbe } from "./HelloProbe";
-import { RealContextProbe } from "./scenes/RealContextProbe";
 import { ConversationScene } from "./scenes/ConversationScene";
 import { NarrationTrack } from "./scenes/NarrationTrack";
 import { AgentLoopStory, agentLoopStoryDuration } from "./scenes/AgentLoopStory";
@@ -47,15 +46,6 @@ export const RemotionRoot = () => {
       <Composition
         id="HelloProbe"
         component={HelloProbe}
-        durationInFrames={90}
-        fps={FPS}
-        width={1920}
-        height={1080}
-      />
-      {/* 单轨(Decision C)落地探针:真实 AttributionTreeLensPanel + 静态 fixture,验证无头出片可行性。 */}
-      <Composition
-        id="RealContextProbe"
-        component={RealContextProbe}
         durationInFrames={90}
         fps={FPS}
         width={1920}
