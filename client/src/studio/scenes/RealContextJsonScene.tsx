@@ -4,36 +4,47 @@ import type React from "react";
 import request from "../fixtures/request-real-context.json";
 import type { ActClock } from "./storyClock";
 
-// 故事二开场幕:把真实的 request JSON 摊开给观众看 —— 两个阶段:
-//   Phase A(step0 + step1 第一句「庞大的 json…6.4万字符」):原始 pretty-print 全文铺成
-//     一面 ~2.3 万 px 的「墙」,慢→快滚屏 + 右侧假滚动条(thumb 只占 ~4%,本身就是体量提示)。
-//     直观回答「这个 json 有多大」—— 快进着滚都要二十多秒。
-//   Phase B(step1「重点是三个字段」起):交叉淡入折叠总览(JsonView, collapsed=1),
-//     呼应旁白「不要被长度吓倒,重点是 tools / system / messages」。
-// 切点不写死帧数:从 clock.segments 找 {step1, beat1} 的 start —— 改旁白时长自动重排。
+// 故事二开场幕(需求2 重写):放弃「全文滚墙」(巨型 DOM 逐帧重渲 → 帧率差、滚不到头)。
+// 新交互 = 默认只展示第一层结构 → 按拍子逐层点开(内容爆长,示意结构复杂)→ 轻度滚动一小段
+// + 底部渐隐(暗示后面还有很多,不真滚到头)→ 「三个核心字段」拍收回到顶层。
+//
+// 时间锚点不写死帧数,从 clock.segments 取:
+//   expandAt = step1 beat0(「庞大的 JSON…层层嵌套」)→ 进入展开+轻滚
+//   foldAt   = step1 beat1(「顶层其实只有三个核心字段」)→ 收回 collapsed=1
 const REQ = request as unknown as object;
-const WALL = JSON.stringify(REQ, null, 2); // ~7.1 万字符 / wrap 后 ~880 行,这就是「墙」本体
 
-// 滚动终点对齐:translateY(-p·(H−V)) = translateY(-p·100%) + translateY(p·V)。
-// 内容高 H 不必精确知道;V 是裁剪视口的近似像素高(1080 − 上下边距 − 标题区 − 内边距)。
-const VIEW_H = 760;
-const FADE = 10; // 两阶段交叉淡化帧数
+const SCROLL_PX = 760;  // 轻滚总幅度(像素,留有克制 —— 只示意,不读完)
+const FADE = 12;        // 层间交叉淡化帧数
 
 export const RealContextJsonScene = ({ clock }: { clock: ActClock }) => {
   const frame = useCurrentFrame();
-  // 切到折叠总览的帧 = step1 beat1(「先不要被长度吓倒…重点为三个字段」)开始;找不到则退到 60%。
-  const switchAt = clock.segments.find((s) => s.stepIdx === 1 && s.beat === 1)?.start
-    ?? Math.round(clock.total * 0.6);
-  // 滚动进度:慢起步(前几秒还能读清)→ 越滚越快(读不动了),终点恰好滚到墙底。
-  const p = interpolate(frame, [0, switchAt], [0, 1], {
-    easing: Easing.in(Easing.quad),
+  const expandAt = clock.segments.find((s) => s.stepIdx === 1 && s.beat === 0)?.start
+    ?? Math.round(clock.total * 0.4);
+  const foldAt = clock.segments.find((s) => s.stepIdx === 1 && s.beat === 1)?.start
+    ?? Math.round(clock.total * 0.7);
+
+  // 展开期内的进度:前段先「点开第二层」,过 1/3 再「点开第三层」,同时缓滚。
+  const p = interpolate(frame, [expandAt, foldAt], [0, 1], {
+    easing: Easing.inOut(Easing.quad),
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const wallOpacity = interpolate(frame, [switchAt - FADE, switchAt], [1, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const expandPhase = frame >= expandAt && frame < foldAt;
+  const collapsedDepth = p < 0.33 ? 2 : 3;          // 逐层点开:2 层 → 3 层
+  const scrollY = Math.round(p * SCROLL_PX);          // 轻滚
+  const expandOpacity = interpolate(
+    frame,
+    [expandAt, expandAt + FADE, foldAt - FADE, foldAt],
+    [0, 1, 1, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
+  );
+
+  const jsonStyle = {
+    fontSize: 24,
+    lineHeight: 1.75,
+    background: "transparent",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  } as React.CSSProperties;
 
   return (
     <AbsoluteFill
@@ -49,7 +60,7 @@ export const RealContextJsonScene = ({ clock }: { clock: ActClock }) => {
         这一次调用,真正发给模型的 request
       </div>
       <div style={{ color: "#64748b", fontSize: 22 }}>
-        claude-opus-4-8 · tools × 10 · system × 4 · messages × 2 · 共六万多字符
+        claude-opus-4-8 · tools × 10 · system × 4 · messages × 2 · 共约 6.5 万字符
       </div>
       <div
         style={{
@@ -62,60 +73,39 @@ export const RealContextJsonScene = ({ clock }: { clock: ActClock }) => {
           boxShadow: "0 10px 40px rgba(15,23,42,0.06)",
         }}
       >
-        {/* Phase A:原始 JSON 文本墙,整面滚过 */}
-        {frame < switchAt && (
-          <div style={{ position: "absolute", inset: 0, padding: "26px 56px 26px 34px", opacity: wallOpacity }}>
-            <pre
-              style={{
-                margin: 0,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-all", // messages 里上万字符的单行长串必须强制折行
-                fontSize: 17,
-                lineHeight: 1.55,
-                color: "#475569",
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-                transform: `translateY(${p * VIEW_H}px) translateY(${-p * 100}%)`,
-              }}
-            >
-              {WALL}
-            </pre>
-            {/* 假滚动条:thumb 高度 ≈ 视口/全文 ≈ 4% —— 「条有多细,文有多长」 */}
-            <div style={{ position: "absolute", top: 14, bottom: 14, right: 12, width: 8, borderRadius: 4, background: "#e2e8f0" }}>
-              <div
-                style={{
-                  position: "absolute",
-                  top: `${p * 96}%`,
-                  height: "4%",
-                  width: "100%",
-                  borderRadius: 4,
-                  background: "#94a3b8",
-                }}
+        {/* 顶层总览(开场 + 「三个核心字段」收回后) */}
+        <div style={{ position: "absolute", inset: 0, padding: "26px 34px", opacity: 1 - expandOpacity }}>
+          <JsonView
+            value={REQ}
+            collapsed={1}
+            displayDataTypes={false}
+            enableClipboard={false}
+            indentWidth={20}
+            style={jsonStyle}
+          />
+        </div>
+        {/* 展开层:逐层点开 + 轻滚 + 底部渐隐(只在展开期挂载,控制 DOM 量) */}
+        {expandPhase && (
+          <div style={{ position: "absolute", inset: 0, padding: "26px 34px", opacity: expandOpacity }}>
+            <div style={{ transform: `translateY(${-scrollY}px)` }}>
+              <JsonView
+                key={collapsedDepth /* 切层级时重挂,展开状态干净 */}
+                value={REQ}
+                collapsed={collapsedDepth}
+                displayDataTypes={false}
+                enableClipboard={false}
+                indentWidth={20}
+                style={jsonStyle}
               />
             </div>
-          </div>
-        )}
-        {/* Phase B:折叠总览 —— 「重点是三个字段」 */}
-        {frame >= switchAt - FADE && (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              padding: "26px 34px",
-              opacity: 1 - wallOpacity,
-            }}
-          >
-            <JsonView
-              value={REQ}
-              collapsed={1}
-              displayDataTypes={false}
-              enableClipboard={false}
-              indentWidth={20}
+            {/* 底部渐隐:暗示「后面还很长」,不真滚到头 */}
+            <div
               style={{
-                fontSize: 24,
-                lineHeight: 1.75,
-                background: "transparent",
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-              } as React.CSSProperties}
+                position: "absolute",
+                left: 0, right: 0, bottom: 0, height: 180,
+                background: "linear-gradient(to bottom, rgba(248,250,252,0), #f8fafc)",
+                pointerEvents: "none",
+              }}
             />
           </div>
         )}
