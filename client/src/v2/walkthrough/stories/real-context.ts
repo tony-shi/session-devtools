@@ -55,16 +55,17 @@ export const realContextStory: Story = {
       ],
       pauseAfter: [PACE.breath, PACE.beat, PACE.pause],
     },
-    // 3. 点入 tool.Bash(需求5;LEAF_FOCUS → tools.builtin.Bash)。
+    // 3. 点入 tool.Bash(LEAF_FOCUS → tools.builtin.Bash;PANEL_SCROLL 按拍下滑:选中条 → 描述 → 参数)。
     {
       act: "rc-real",
       focus: "sec-tools",
       lines: [
-        "我们点开其中一个看看 —— 就用 tool.Bash。",
-        "每个工具都包含:一个名字、一段描述,加一份用 JSON Schema 写的参数声明。",
-        "有了这些,模型才能生成正确的 tool call,驱动 Agent 去调用。",
+        "我们点开其中一个看看 —— 就用 tool.Bash。注意上方色条:被选中的这一段,就是 Bash 在整个请求里占的长度。",
+        "往下看它的结构。第一部分是描述 —— 它帮助模型理解:这个工具是干什么的、什么时候该调用它。",
+        "第二部分是参数 —— 用 JSON Schema 写的格式声明,让模型能按需构建出正确的参数数据。",
+        "有了这两样,模型才能生成正确的 tool call,驱动 Agent 去调用。",
       ],
-      pauseAfter: [PACE.beat, PACE.breath, PACE.pause],
+      pauseAfter: [PACE.breath, PACE.breath, PACE.breath, PACE.pause],
     },
     // 4. System 总览。
     {
@@ -101,7 +102,7 @@ export const realContextStory: Story = {
       focus: "sec-system",
       lines: [
         "git 状态:当前分支、改动文件 —— 每次调用时,仓库现场的快照。",
-        "这里先记住一句:System 定义了模型「我是谁、我该怎么做事」。",
+        "这里先记住一句:System 定义了模型「我是谁、我该怎么做事」,同时也包含了你项目的部分元信息。",
       ],
       pauseAfter: [PACE.breath, PACE.pause],
     },
@@ -155,17 +156,18 @@ export const realContextStory: Story = {
       ],
       pauseAfter: [PACE.beat, PACE.breath, PACE.pause],
     },
-    // 13. 拓展能力声明(需求9 表述)。
+    // 13. 拓展能力声明 + 点开 defer tool 对比(LEAF_FOCUS → messages.system-message,首条=deferred 清单)。
     {
       act: "rc-real",
       focus: "sec-messages",
       lines: [
-        "对于第一条用户消息,除了你的输入,Claude Code 还会声明一系列拓展能力:",
-        "延迟加载的工具、可用的 agent 类型、还有 skills —— 它们同样被放进 Messages。",
-        "为什么不一次全塞进来?这是 Claude Code 的渐进式披露机制 —— 用得到时才展开,省下宝贵的 context。",
+        "对于第一条用户消息,除了你的输入,Claude Code 还会声明一系列拓展能力。",
+        "比如点开这条 —— 延迟加载的工具清单。注意它有多短:每个工具只报了一个名称,不像前面完整的 tool 声明那么长。",
+        "agent 类型、defer tool、还有 skills,都是类似的逻辑 —— 先报个名,等真正用到时再展开。",
+        "为什么不一次全塞进来?这就是 Claude Code 的渐进式披露机制 —— 用得到时才展开,省下宝贵的 context。",
         "后续我们会用真实的 case,看渐进式披露机制如何生效。",
       ],
-      pauseAfter: [PACE.beat, PACE.breath, PACE.breath, PACE.pause],
+      pauseAfter: [PACE.beat, PACE.breath, PACE.breath, PACE.breath, PACE.pause],
     },
     // 14. 总览回扣:0.01%。
     {
@@ -192,7 +194,18 @@ export const realContextStory: Story = {
       ],
       pauseAfter: [PACE.breath, PACE.pause, PACE.breath, PACE.breath, PACE.beat, PACE.dwell],
     },
-    // 16. 下一章预告。
+    // 16. 回顾本章(rc-recap shot:切回首次请求面板 overview)。
+    {
+      act: "rc-real",
+      focus: "overview",
+      lines: [
+        "回顾本章:一次调用的 context,顶层就三个核心字段。",
+        "Tools 是模型的能力说明书;System 是行为准则,也带着你项目的元信息;Messages 承载注入的上下文、能力声明,和你的对话。",
+        "你输入的,只是其中极小的一部分;其余的一切,都由 Claude Code 为你构建。",
+      ],
+      pauseAfter: [PACE.breath, PACE.pause, PACE.dwell],
+    },
+    // 17. 下一章预告。
     {
       act: "rc-real",
       focus: "overview",

@@ -2,8 +2,8 @@
   "storyId": "real-context",
   "lang": "zh",
   "voice": "mock:default",
-  "builtAt": "2026-06-06T06:31:41.085Z",
-  "totalMs": 327180,
+  "builtAt": "2026-06-06T06:52:09.048Z",
+  "totalMs": 384440,
   "steps": [
     {
       "stepIdx": 0,
@@ -88,23 +88,30 @@
       "lines": [
         {
           "idx": 0,
-          "text": "我们点开其中一个看看 —— 就用 tool.Bash。",
+          "text": "我们点开其中一个看看 —— 就用 tool.Bash。注意上方色条:被选中的这一段,就是 Bash 在整个请求里占的长度。",
           "audio": "zh/3-0.mp3",
-          "durMs": 4320,
-          "gapMs": 200
+          "durMs": 10080,
+          "gapMs": 500
         },
         {
           "idx": 1,
-          "text": "每个工具都包含:一个名字、一段描述,加一份用 JSON Schema 写的参数声明。",
+          "text": "往下看它的结构。第一部分是描述 —— 它帮助模型理解:这个工具是干什么的、什么时候该调用它。",
           "audio": "zh/3-1.mp3",
-          "durMs": 7020,
+          "durMs": 7920,
           "gapMs": 500
         },
         {
           "idx": 2,
-          "text": "有了这些,模型才能生成正确的 tool call,驱动 Agent 去调用。",
+          "text": "第二部分是参数 —— 用 JSON Schema 写的格式声明,让模型能按需构建出正确的参数数据。",
           "audio": "zh/3-2.mp3",
-          "durMs": 6120,
+          "durMs": 7920,
+          "gapMs": 500
+        },
+        {
+          "idx": 3,
+          "text": "有了这两样,模型才能生成正确的 tool call,驱动 Agent 去调用。",
+          "audio": "zh/3-3.mp3",
+          "durMs": 6300,
           "gapMs": 900
         }
       ]
@@ -171,9 +178,9 @@
         },
         {
           "idx": 1,
-          "text": "这里先记住一句:System 定义了模型「我是谁、我该怎么做事」。",
+          "text": "这里先记住一句:System 定义了模型「我是谁、我该怎么做事」,同时也包含了你项目的部分元信息。",
           "audio": "zh/7-1.mp3",
-          "durMs": 5760,
+          "durMs": 8640,
           "gapMs": 900
         }
       ]
@@ -278,29 +285,36 @@
       "lines": [
         {
           "idx": 0,
-          "text": "对于第一条用户消息,除了你的输入,Claude Code 还会声明一系列拓展能力:",
+          "text": "对于第一条用户消息,除了你的输入,Claude Code 还会声明一系列拓展能力。",
           "audio": "zh/13-0.mp3",
           "durMs": 7020,
           "gapMs": 200
         },
         {
           "idx": 1,
-          "text": "延迟加载的工具、可用的 agent 类型、还有 skills —— 它们同样被放进 Messages。",
+          "text": "比如点开这条 —— 延迟加载的工具清单。注意它有多短:每个工具只报了一个名称,不像前面完整的 tool 声明那么长。",
           "audio": "zh/13-1.mp3",
-          "durMs": 8100,
-          "gapMs": 500
-        },
-        {
-          "idx": 2,
-          "text": "为什么不一次全塞进来?这是 Claude Code 的渐进式披露机制 —— 用得到时才展开,省下宝贵的 context。",
-          "audio": "zh/13-2.mp3",
           "durMs": 9720,
           "gapMs": 500
         },
         {
+          "idx": 2,
+          "text": "agent 类型、defer tool、还有 skills,都是类似的逻辑 —— 先报个名,等真正用到时再展开。",
+          "audio": "zh/13-2.mp3",
+          "durMs": 9180,
+          "gapMs": 500
+        },
+        {
           "idx": 3,
-          "text": "后续我们会用真实的 case,看渐进式披露机制如何生效。",
+          "text": "为什么不一次全塞进来?这就是 Claude Code 的渐进式披露机制 —— 用得到时才展开,省下宝贵的 context。",
           "audio": "zh/13-3.mp3",
+          "durMs": 9900,
+          "gapMs": 500
+        },
+        {
+          "idx": 4,
+          "text": "后续我们会用真实的 case,看渐进式披露机制如何生效。",
+          "audio": "zh/13-4.mp3",
           "durMs": 4860,
           "gapMs": 900
         }
@@ -384,15 +398,41 @@
       "lines": [
         {
           "idx": 0,
-          "text": "在下一章,我们将观察每一轮对话中,context 是如何被填充的,工具调用和模型思考又是如何交替进行的。",
+          "text": "回顾本章:一次调用的 context,顶层就三个核心字段。",
           "audio": "zh/16-0.mp3",
+          "durMs": 5040,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "Tools 是模型的能力说明书;System 是行为准则,也带着你项目的元信息;Messages 承载注入的上下文、能力声明,和你的对话。",
+          "audio": "zh/16-1.mp3",
+          "durMs": 11880,
+          "gapMs": 900
+        },
+        {
+          "idx": 2,
+          "text": "你输入的,只是其中极小的一部分;其余的一切,都由 Claude Code 为你构建。",
+          "audio": "zh/16-2.mp3",
+          "durMs": 7020,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 17,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "在下一章,我们将观察每一轮对话中,context 是如何被填充的,工具调用和模型思考又是如何交替进行的。",
+          "audio": "zh/17-0.mp3",
           "durMs": 9180,
           "gapMs": 900
         },
         {
           "idx": 1,
           "text": "同时用可视化分析渐进式披露机制在对话中的生效情况,看它怎么帮我们省下宝贵的上下文资源。",
-          "audio": "zh/16-1.mp3",
+          "audio": "zh/17-1.mp3",
           "durMs": 7740,
           "gapMs": 2000
         }

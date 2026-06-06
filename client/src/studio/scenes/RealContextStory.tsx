@@ -1,4 +1,4 @@
-import { AbsoluteFill, useCurrentFrame } from "remotion";
+import { AbsoluteFill, useCurrentFrame, interpolate, Easing } from "remotion";
 import "../../i18n"; // 初始化 react-i18next(真实面板用 useTranslation),headless 渲染必须
 import { Episode, episodeDuration, type Episode as EpisodeSpec } from "../episode";
 import { AttributionGraphProvider } from "../../v2/attribution-graph-context";
@@ -53,6 +53,13 @@ const LEAF_FOCUS: Record<number, string> = {
   10: "messages.inline.system-reminder.project-instructions", // 需求7:全局提示词(首条=全局 CLAUDE.md)
   11: "messages.inline.system-reminder.memory",               // 需求8:留意记忆
   12: "messages.inline.free-text",                            // 你的 7 个字
+  13: "messages.system-message",                              // defer tool 清单(首条=deferred,对比"只报名称")
+};
+
+// 「下滑看结构」:step → beat → 面板上滑像素(屏幕 px)。拍切时 ~36 帧缓动到位。
+// step3(tool.Bash):beat0 停在条带看选中 → beat1 滚到「描述」→ beat2 滚到「参数」。
+const PANEL_SCROLL: Record<number, Record<number, number>> = {
+  3: { 0: 0, 1: 620, 2: 1480, 3: 1480 },
 };
 // 满载拍(step15)内 beat → 四类大块(需求10:图片/思考/工具结果/工具调用)。
 const FULL_FOCUS: Record<number, string> = {
@@ -85,6 +92,20 @@ function PanelShot({
   const loc = clock.at(frame);
   const focusSection = focusToSection(loc.focus);
   const focusSlotType = leafByBeat?.[loc.beat] ?? leafByStep?.[loc.stepIdx] ?? null;
+  // 拍级滚动:取本拍目标滚距,从上一拍的值在拍首 36 帧内缓动过去。
+  const keys = PANEL_SCROLL[loc.stepIdx];
+  let scroll = 0;
+  if (keys) {
+    const target = keys[loc.beat] ?? 0;
+    const prev = loc.beat > 0 ? (keys[loc.beat - 1] ?? 0) : 0;
+    const seg = clock.segments.find((s) => s.stepIdx === loc.stepIdx && s.beat === loc.beat);
+    const t = seg
+      ? interpolate(frame, [seg.start, seg.start + 36], [0, 1], {
+          easing: Easing.inOut(Easing.quad), extrapolateLeft: "clamp", extrapolateRight: "clamp",
+        })
+      : 1;
+    scroll = prev + (target - prev) * t;
+  }
   return (
     <AbsoluteFill
       style={{
@@ -94,8 +115,8 @@ function PanelShot({
         fontFamily: "'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, -apple-system, sans-serif",
       }}
     >
-      {/* 外层负 margin 做顶部 chrome 裁切(不受 zoom 缩放);内层 zoom 放大。 */}
-      <div style={{ marginTop: CHROME_CLIP }}>
+      {/* 外层负 margin 做顶部 chrome 裁切 + 拍级下滑(不受 zoom 缩放);内层 zoom 放大。 */}
+      <div style={{ marginTop: CHROME_CLIP - scroll }}>
         <div style={{ width: PANEL_BASE_W, zoom: PANEL_ZOOM, filter: "saturate(1.45) contrast(1.04)" }}>
           {/* AttributionApiProvider 必须包在 AttributionGraphProvider 外层(后者内部消费此 context)。 */}
           <TooltipProvider>
@@ -131,9 +152,16 @@ export const realContextEpisode: EpisodeSpec = {
     },
     {
       id: "rc-full",
-      steps: [15, 16],
+      steps: [15],
       render: ({ clock }) => (
         <PanelShot clock={clock} api={STUDIO_API_FULL} sessionId={RC_FULL.sessionId} callId={RC_FULL.callId} leafByBeat={FULL_FOCUS} />
+      ),
+    },
+    {
+      id: "rc-recap",
+      steps: [16, 17],
+      render: ({ clock }) => (
+        <PanelShot clock={clock} api={STUDIO_API} sessionId={RC.sessionId} callId={RC.callId} />
       ),
     },
   ],
