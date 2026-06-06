@@ -2,8 +2,8 @@
   "storyId": "real-context",
   "lang": "zh",
   "voice": "mock:default",
-  "builtAt": "2026-06-06T07:14:46.313Z",
-  "totalMs": 411340,
+  "builtAt": "2026-06-06T07:32:05.148Z",
+  "totalMs": 414540,
   "steps": [
     {
       "stepIdx": 0,
@@ -69,9 +69,9 @@
         },
         {
           "idx": 1,
-          "text": "Bash 执行系统命令;Read、Edit、Write 读写文件;Agent 委托子任务;Skill、ToolSearch 负责动态扩展。",
+          "text": "常见的 tool 有:Bash 执行系统命令;Read、Edit、Write 读写文件;Agent 委托子任务;Skill、ToolSearch 负责动态扩展。",
           "audio": "zh/2-1.mp3",
-          "durMs": 11700,
+          "durMs": 13320,
           "gapMs": 200
         },
         {
@@ -88,9 +88,9 @@
       "lines": [
         {
           "idx": 0,
-          "text": "我们点开其中一个看看 —— 就用 tool.Bash。注意上方色条:被选中的这一段,就是 Bash 在整个请求里占的长度。",
+          "text": "我们点开其中一个看看 —— 就用 tool.Bash。",
           "audio": "zh/3-0.mp3",
-          "durMs": 10080,
+          "durMs": 4320,
           "gapMs": 500
         },
         {
@@ -221,22 +221,29 @@
       "lines": [
         {
           "idx": 0,
-          "text": "比如这条 —— 全局提示词。CLAUDE.md 的作用和 System 有点像,",
+          "text": "你也许了解:要高效使用 Claude Code,你需要配置好自己的 CLAUDE.md。",
           "audio": "zh/10-0.mp3",
-          "durMs": 6300,
+          "durMs": 7380,
           "gapMs": 500
         },
         {
           "idx": 1,
-          "text": "不过 System 是 Claude Code 全局维度的统一提示册;而 CLAUDE.md 是你自己的专属提示词,",
+          "text": "现在,你可以理解它是如何被 LLM 感知的了 —— 就是眼前这条。",
           "audio": "zh/10-1.mp3",
-          "durMs": 9180,
+          "durMs": 5220,
           "gapMs": 500
         },
         {
           "idx": 2,
-          "text": "它可以按全局、项目、本地等不同维度,按你的诉求生效。",
+          "text": "System 是 Claude Code 全局维度的统一提示册;而 CLAUDE.md 是你自己的专属提示词,",
           "audio": "zh/10-2.mp3",
+          "durMs": 8820,
+          "gapMs": 500
+        },
+        {
+          "idx": 3,
+          "text": "它可以按全局、项目、本地等不同维度,按你的诉求生效。",
+          "audio": "zh/10-3.mp3",
           "durMs": 4680,
           "gapMs": 900
         }
@@ -365,9 +372,9 @@
         },
         {
           "idx": 1,
-          "text": "286 万字符 —— 首次请求的 44 倍。Messages 占了 98%,Tools 和 System 被挤成一条细线。",
+          "text": "286 万字符 —— 首次请求的 44 倍。Messages 占了 98%,Tools 和 System 的占比已经小到几乎可以忽略。",
           "audio": "zh/15-1.mp3",
-          "durMs": 9180,
+          "durMs": 10260,
           "gapMs": 900
         },
         {
@@ -452,9 +459,9 @@
       "lines": [
         {
           "idx": 0,
-          "text": "在下一章,我们将观察每一轮对话中,context 是如何被填充的,工具调用和模型思考又是如何交替进行的。",
+          "text": "在下一章,我们将观察每一轮对话中,context 是如何演变的,工具调用和模型思考又是如何交替进行的。",
           "audio": "zh/17-0.mp3",
-          "durMs": 9180,
+          "durMs": 9000,
           "gapMs": 900
         },
         {

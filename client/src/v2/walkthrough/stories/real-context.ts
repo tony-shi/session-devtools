@@ -51,7 +51,7 @@ export const realContextStory: Story = {
       focus: "sec-tools",
       lines: [
         "首先看 Tools。回顾上一章的 tool use 与 tool result —— Tools 这一段,声明了模型可以用哪些工具、以及怎么用。",
-        "Bash 执行系统命令;Read、Edit、Write 读写文件;Agent 委托子任务;Skill、ToolSearch 负责动态扩展。",
+        "常见的 tool 有:Bash 执行系统命令;Read、Edit、Write 读写文件;Agent 委托子任务;Skill、ToolSearch 负责动态扩展。",
         "注意这里 Tools 的数量:当前版本的 Claude Code 默认内置 10 个 Tool;后面会看到,工具数量是可以动态增加的。",
       ],
       pauseAfter: [PACE.breath, PACE.beat, PACE.pause],
@@ -61,7 +61,7 @@ export const realContextStory: Story = {
       act: "rc-real",
       focus: "sec-tools",
       lines: [
-        "我们点开其中一个看看 —— 就用 tool.Bash。注意上方色条:被选中的这一段,就是 Bash 在整个请求里占的长度。",
+        "我们点开其中一个看看 —— 就用 tool.Bash。",
         "往下看它的结构。第一部分是描述 —— 它帮助模型理解:这个工具是干什么的、什么时候该调用它。",
         "第二部分是参数 —— 用 JSON Schema 写的格式声明,让模型能按需构建出正确的参数数据。",
         "有了这两样,模型才能生成正确的 tool call,驱动 Agent 去调用。",
@@ -131,11 +131,12 @@ export const realContextStory: Story = {
       act: "rc-real",
       focus: "sec-messages",
       lines: [
-        "比如这条 —— 全局提示词。CLAUDE.md 的作用和 System 有点像,",
-        "不过 System 是 Claude Code 全局维度的统一提示册;而 CLAUDE.md 是你自己的专属提示词,",
+        "你也许了解:要高效使用 Claude Code,你需要配置好自己的 CLAUDE.md。",
+        "现在,你可以理解它是如何被 LLM 感知的了 —— 就是眼前这条。",
+        "System 是 Claude Code 全局维度的统一提示册;而 CLAUDE.md 是你自己的专属提示词,",
         "它可以按全局、项目、本地等不同维度,按你的诉求生效。",
       ],
-      pauseAfter: [PACE.breath, PACE.breath, PACE.pause],
+      pauseAfter: [PACE.breath, PACE.breath, PACE.breath, PACE.pause],
     },
     // 11. 留意 记忆(需求8 措辞;LEAF_FOCUS → messages.inline.system-reminder.memory)。
     {
@@ -188,7 +189,7 @@ export const realContextStory: Story = {
       focus: "sec-messages",
       lines: [
         "但 context 不会停在首次请求。这,是同一个工具开发会话进行到第 190 次调用时的样子。",
-        "286 万字符 —— 首次请求的 44 倍。Messages 占了 98%,Tools 和 System 被挤成一条细线。",
+        "286 万字符 —— 首次请求的 44 倍。Messages 占了 98%,Tools 和 System 的占比已经小到几乎可以忽略。",
         "占比最大的是模型思考 —— 166 段,占了整整 59%。",
         "两张贴进对话的截图,占 19% —— 单张图片就接近 40 万字符。",
         "213 条工具结果,占 9%;",
@@ -215,7 +216,7 @@ export const realContextStory: Story = {
       act: "rc-real",
       focus: "overview",
       lines: [
-        "在下一章,我们将观察每一轮对话中,context 是如何被填充的,工具调用和模型思考又是如何交替进行的。",
+        "在下一章,我们将观察每一轮对话中,context 是如何演变的,工具调用和模型思考又是如何交替进行的。",
         "同时用可视化分析渐进式披露机制在对话中的生效情况,看它怎么帮我们省下宝贵的上下文资源。",
       ],
       pauseAfter: [PACE.pause, PACE.dwell],

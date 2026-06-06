@@ -10,6 +10,7 @@ import type { SessionAttributionGraph } from "../../v2/attribution-graph-types";
 import type { Focus } from "../../v2/walkthrough/types";
 import type { ActClock } from "./storyClock";
 import { RealContextJsonScene } from "./RealContextJsonScene";
+import { RealContextRecapScene } from "./RealContextRecapScene";
 import fixture from "../fixtures/attribution-real-context.json";
 import graphFixture from "../fixtures/attribution-graph-real-context.json";
 import fullFixture from "../fixtures/attribution-full-context.json";
@@ -32,7 +33,8 @@ const RC_FULL = fullFixture as unknown as AttributionTreeResult;       // 满载
 const GRAPH_FULL = fullGraphFixture as unknown as SessionAttributionGraph;
 
 // 注入真实数据(不改组件)。diffTree reject:单 call、hideDiff,组件容错,不编造假 diff。
-const apiFor = (tree: AttributionTreeResult, graph: SessionAttributionGraph) => ({
+// export:Story 3(ContextGrowthStory)复用同一套面板镜头,只换 fixture。
+export const apiFor = (tree: AttributionTreeResult, graph: SessionAttributionGraph) => ({
   attributionTree: async () => tree,
   attributionGraph: async () => graph,
   diffTree: () => Promise.reject(new Error("studio: diff not needed")),
@@ -57,9 +59,9 @@ const LEAF_FOCUS: Record<number, string> = {
 };
 
 // 「下滑看结构」:step → beat → 面板上滑像素(屏幕 px)。拍切时 ~36 帧缓动到位。
-// step3(tool.Bash):beat0 停在条带看选中 → beat1 滚到「描述」→ beat2 滚到「参数」。
+// step3(tool.Bash):beat0 停在条带看选中 → beat1 滚到「描述」段首 → beat2 滚到「参数」表头。
 const PANEL_SCROLL: Record<number, Record<number, number>> = {
-  3: { 0: 0, 1: 620, 2: 1480, 3: 1480 },
+  3: { 0: 0, 1: 260, 2: 1270, 3: 1270 },
 };
 // 满载拍(step15)内 beat → 四类大块(需求10:图片/思考/工具结果/工具调用)。
 const FULL_FOCUS: Record<number, string> = {
@@ -78,22 +80,26 @@ function focusToSection(focus: Focus): "tools" | "system" | "messages" | null {
 }
 
 // 通用面板镜头:focusSection 跟 step 的 focus;focusSlotType 按 step / beat 映射「点进去」。
-function PanelShot({
-  clock, api, sessionId, callId, leafByStep, leafByBeat,
+// export + scrollByStep 参数化:滚动键按 story 自带(Story 2 传 PANEL_SCROLL,Story 3 不滚)。
+export function PanelShot({
+  clock, api, sessionId, callId, leafByStep, leafByBeat, scrollByStep, chromeClip = CHROME_CLIP,
 }: {
   clock: ActClock;
-  api: typeof STUDIO_API;
+  api: ReturnType<typeof apiFor>;
   sessionId: string;
   callId: number;
   leafByStep?: Record<number, string>;
   leafByBeat?: Record<number, string>;
+  scrollByStep?: Record<number, Record<number, number>>;
+  /** 顶部 chrome 裁切量。默认裁掉「图层叠加/请求组成」;满载拍传 0 露出筛选区(讲占比要看到筛选机制)。 */
+  chromeClip?: number;
 }) {
   const frame = useCurrentFrame();
   const loc = clock.at(frame);
   const focusSection = focusToSection(loc.focus);
   const focusSlotType = leafByBeat?.[loc.beat] ?? leafByStep?.[loc.stepIdx] ?? null;
   // 拍级滚动:取本拍目标滚距,从上一拍的值在拍首 36 帧内缓动过去。
-  const keys = PANEL_SCROLL[loc.stepIdx];
+  const keys = scrollByStep?.[loc.stepIdx];
   let scroll = 0;
   if (keys) {
     const target = keys[loc.beat] ?? 0;
@@ -116,7 +122,7 @@ function PanelShot({
       }}
     >
       {/* 外层负 margin 做顶部 chrome 裁切 + 拍级下滑(不受 zoom 缩放);内层 zoom 放大。 */}
-      <div style={{ marginTop: CHROME_CLIP - scroll }}>
+      <div style={{ marginTop: chromeClip - scroll }}>
         <div style={{ width: PANEL_BASE_W, zoom: PANEL_ZOOM, filter: "saturate(1.45) contrast(1.04)" }}>
           {/* AttributionApiProvider 必须包在 AttributionGraphProvider 外层(后者内部消费此 context)。 */}
           <TooltipProvider>
@@ -147,22 +153,20 @@ export const realContextEpisode: EpisodeSpec = {
       id: "rc-panel",
       steps: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
       render: ({ clock }) => (
-        <PanelShot clock={clock} api={STUDIO_API} sessionId={RC.sessionId} callId={RC.callId} leafByStep={LEAF_FOCUS} />
+        <PanelShot clock={clock} api={STUDIO_API} sessionId={RC.sessionId} callId={RC.callId} leafByStep={LEAF_FOCUS} scrollByStep={PANEL_SCROLL} />
       ),
     },
     {
       id: "rc-full",
       steps: [15],
       render: ({ clock }) => (
-        <PanelShot clock={clock} api={STUDIO_API_FULL} sessionId={RC_FULL.sessionId} callId={RC_FULL.callId} leafByBeat={FULL_FOCUS} />
+        <PanelShot clock={clock} api={STUDIO_API_FULL} sessionId={RC_FULL.sessionId} callId={RC_FULL.callId} leafByBeat={FULL_FOCUS} chromeClip={0} />
       ),
     },
     {
       id: "rc-recap",
       steps: [16, 17],
-      render: ({ clock }) => (
-        <PanelShot clock={clock} api={STUDIO_API} sessionId={RC.sessionId} callId={RC.callId} />
-      ),
+      render: ({ clock }) => <RealContextRecapScene clock={clock} />,
     },
   ],
 };
