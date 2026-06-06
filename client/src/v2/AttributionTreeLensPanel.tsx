@@ -838,7 +838,7 @@ function DiffUnavailableBanner({
 
 export function AttributionTreeLensPanel({
   sessionId, agentFileId, compactIdx, proxyRequestId, callId, prevCallId, hideDiff, onLinkSource, onLeafSelect, prelude,
-  onVersionDiagLoaded,
+  onVersionDiagLoaded, focusSection, focusSlotType,
 }: {
   sessionId: string;
   /** Present iff rendering a sub-agent call — routes to sub-agent endpoint. */
@@ -865,6 +865,11 @@ export function AttributionTreeLensPanel({
    *  让它们与下方 LensSectionBar 在同一容器内自然对齐（同宽 / 同 padding）。 */
   prelude?: React.ReactNode;
   onVersionDiagLoaded?: (diag: VersionDiag | null) => void;
+  /** 受控：外部指定高亮的 section。undefined=不受控（沿用点击）；null=取消；SectionId=高亮该段。 */
+  focusSection?: SectionId | null;
+  /** 受控：外部按 slotType 精确聚焦某个 leaf —— 自动切到它所在 section 并选中（渲染其 detail）。
+   *  undefined=不受控；null=取消 leaf 选中；string=聚焦首个 slotType 匹配的 leaf（含 rule-origin）。 */
+  focusSlotType?: string | null;
 }) {
   const { t } = useTranslation();
   const api = useAttributionApi();
@@ -877,7 +882,7 @@ export function AttributionTreeLensPanel({
   const [activeLenses, setActiveLenses] = useState<Set<string>>(new Set([LENSES[0].id]));
   const [selectedGroupId, setSelectedGroupId] = useState<IntentGroupId | null>(null);
   const [bucketFilters, setBucketFilters] = useState<Record<string, string | null>>({});
-  const [selectedSection, setSelectedSection] = useState<SectionId | null>(null);
+  const [selectedSection, setSelectedSection] = useState<SectionId | null>(focusSection ?? null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
   // 把选中状态外露给父组件（如 CachePanel），用于上方 bar 联动高亮。
@@ -1033,6 +1038,24 @@ export function AttributionTreeLensPanel({
     }
     clearPendingFocus();
   }, [pendingFocus, attributedLeaves, clearPendingFocus]);
+
+  // 段级受控：focusSection 变化 → 同步选中段。undefined=不受控（沿用内部点击状态）。
+  useEffect(() => {
+    if (focusSection !== undefined) setSelectedSection(focusSection ?? null);
+  }, [focusSection]);
+
+  // leaf 级受控：focusSlotType 变化（或数据就绪）→ 按 slotType 找首个匹配 leaf，
+  // 切到它所在 section 并选中（渲染其 SelectedDetail）。覆盖任意 leaf，含 rule-origin
+  // 的 system.* leaf（pendingFocus 只够到 jsonl-origin）。undefined=不受控；null=取消。
+  useEffect(() => {
+    if (focusSlotType === undefined) return;
+    if (focusSlotType === null) { setSelectedNodeId(null); return; }
+    const match = attributedLeaves.find((l) => l.slotType === focusSlotType);
+    if (match) {
+      setSelectedSection(sectionOf(match.rootSlotType));
+      setSelectedNodeId(match.nodeId);
+    }
+  }, [focusSlotType, attributedLeaves]);
 
   // 把"任意 active lens 的桶选择"合并成一个谓词，AND 联合过滤。
   // 注意：cache lens 的桶只用于联动 CacheTopologyStrip 高亮，不参与 leaf 过滤
