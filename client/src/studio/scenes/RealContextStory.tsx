@@ -70,6 +70,15 @@ const FULL_FOCUS: Record<number, string> = {
   4: "messages.tool_result",
   5: "messages.tool_use",
 };
+// 满载拍 beat → structure lens 桶筛选(main ae69fa1 的受控 prop focusBucket):
+// 讲某一类占比时整类点亮(pill 激活 + 非命中 dim),配合 chromeClip=0 露出的筛选区。
+// 注意桶 id 是 lens-framework 的 ROLE_BUCKETS(tool-use/tool-result 连字符,非下划线)。
+const FULL_BUCKET: Record<number, string> = {
+  2: "messages.thinking",
+  3: "messages.image",
+  4: "messages.tool-result",
+  5: "messages.tool-use",
+};
 
 // walkthrough 的 focus → 面板 focusSection(与 DemoStage 同一套映射)。
 function focusToSection(focus: Focus): "tools" | "system" | "messages" | null {
@@ -82,7 +91,7 @@ function focusToSection(focus: Focus): "tools" | "system" | "messages" | null {
 // 通用面板镜头:focusSection 跟 step 的 focus;focusSlotType 按 step / beat 映射「点进去」。
 // export + scrollByStep 参数化:滚动键按 story 自带(Story 2 传 PANEL_SCROLL,Story 3 不滚)。
 export function PanelShot({
-  clock, api, sessionId, callId, leafByStep, leafByBeat, scrollByStep, chromeClip = CHROME_CLIP,
+  clock, api, sessionId, callId, leafByStep, leafByBeat, scrollByStep, chromeClip = CHROME_CLIP, bucketByBeat,
 }: {
   clock: ActClock;
   api: ReturnType<typeof apiFor>;
@@ -93,11 +102,14 @@ export function PanelShot({
   scrollByStep?: Record<number, Record<number, number>>;
   /** 顶部 chrome 裁切量。默认裁掉「图层叠加/请求组成」;满载拍传 0 露出筛选区(讲占比要看到筛选机制)。 */
   chromeClip?: number;
+  /** beat → structure lens 桶 id(main ae69fa1 focusBucket):整类点亮讲占比。 */
+  bucketByBeat?: Record<number, string>;
 }) {
   const frame = useCurrentFrame();
   const loc = clock.at(frame);
   const focusSection = focusToSection(loc.focus);
   const focusSlotType = leafByBeat?.[loc.beat] ?? leafByStep?.[loc.stepIdx] ?? null;
+  const focusBucket = bucketByBeat ? (bucketByBeat[loc.beat] ?? null) : undefined;
   // 拍级滚动:取本拍目标滚距,从上一拍的值在拍首 36 帧内缓动过去。
   const keys = scrollByStep?.[loc.stepIdx];
   let scroll = 0;
@@ -134,6 +146,7 @@ export function PanelShot({
                   hideDiff
                   focusSection={focusSection}
                   focusSlotType={focusSlotType}
+                  focusBucket={focusBucket}
                 />
               </AttributionGraphProvider>
             </AttributionApiProvider>
@@ -160,7 +173,7 @@ export const realContextEpisode: EpisodeSpec = {
       id: "rc-full",
       steps: [15],
       render: ({ clock }) => (
-        <PanelShot clock={clock} api={STUDIO_API_FULL} sessionId={RC_FULL.sessionId} callId={RC_FULL.callId} leafByBeat={FULL_FOCUS} chromeClip={0} />
+        <PanelShot clock={clock} api={STUDIO_API_FULL} sessionId={RC_FULL.sessionId} callId={RC_FULL.callId} leafByBeat={FULL_FOCUS} bucketByBeat={FULL_BUCKET} chromeClip={0} />
       ),
     },
     {
