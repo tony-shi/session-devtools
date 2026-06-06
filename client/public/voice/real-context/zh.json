@@ -2,8 +2,8 @@
   "storyId": "real-context",
   "lang": "zh",
   "voice": "mock:default",
-  "builtAt": "2026-06-06T06:52:09.048Z",
-  "totalMs": 384440,
+  "builtAt": "2026-06-06T07:14:46.313Z",
+  "totalMs": 411340,
   "steps": [
     {
       "stepIdx": 0,
@@ -228,9 +228,16 @@
         },
         {
           "idx": 1,
-          "text": "不过 System 是 Claude Code 全局维度的统一提示册;而 CLAUDE.md 是你自己的专属提示词 —— 可以按全局、项目、本地等不同维度,按你的诉求生效。",
+          "text": "不过 System 是 Claude Code 全局维度的统一提示册;而 CLAUDE.md 是你自己的专属提示词,",
           "audio": "zh/10-1.mp3",
-          "durMs": 13860,
+          "durMs": 9180,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "它可以按全局、项目、本地等不同维度,按你的诉求生效。",
+          "audio": "zh/10-2.mp3",
+          "durMs": 4680,
           "gapMs": 900
         }
       ]
@@ -415,6 +422,27 @@
           "text": "你输入的,只是其中极小的一部分;其余的一切,都由 Claude Code 为你构建。",
           "audio": "zh/16-2.mp3",
           "durMs": 7020,
+          "gapMs": 200
+        },
+        {
+          "idx": 3,
+          "text": "一点说明:本章的素材取自 Claude Code 2.1.167,而 Claude Code 的更新非常频繁。",
+          "audio": "zh/16-3.mp3",
+          "durMs": 8820,
+          "gapMs": 500
+        },
+        {
+          "idx": 4,
+          "text": "当你用 session-devtools 打开自己的会话时,看到的细节可能已经不同。",
+          "audio": "zh/16-4.mp3",
+          "durMs": 7200,
+          "gapMs": 500
+        },
+        {
+          "idx": 5,
+          "text": "但这并不要紧 —— 重点从来不是掌握每一条提示词的细节,而是理解 context 的核心组成,和它的演变机制。",
+          "audio": "zh/16-5.mp3",
+          "durMs": 9180,
           "gapMs": 2000
         }
       ]

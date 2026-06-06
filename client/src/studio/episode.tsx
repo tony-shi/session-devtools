@@ -96,6 +96,22 @@ export const Episode = ({ spec, lang, caption = true }: { spec: Episode; lang: s
 };
 
 // 字幕图层:读当前帧的旁白行,底部居中显示。覆盖在场景之上(预览/分析用;出片可关)。
+//
+// 项目约束(见根目录 CLAUDE.md):字幕永远单行,不允许折行。
+//   实现 = nowrap 强制单行 + 按估宽自动缩字号兜底;但兜底缩到 MIN 仍超宽说明文案过长,
+//   正解是回 stories/*.ts 拆句(中文每行 ≤ ~46 个汉字当量;ASCII 约算半个)。
+const CAPTION_FONT = 33;       // 基准字号(≤ ~46 汉字当量的行用满)
+const CAPTION_MIN_FONT = 22;   // 兜底下限(再长也不折行,但该回源拆句了)
+const CAPTION_TEXT_MAX_W = 1648; // 1920 − 2×56(安全边)− 2×36(气泡内边距)
+// 估宽:CJK(含全角标点)≈ 1em,其余 ≈ 0.55em。Remotion 端无需 canvas 实测,近似足够。
+function captionFontSize(text: string): number {
+  let units = 0;
+  for (const ch of text) {
+    units += /[⺀-鿿豈-﫿＀-￯　-〿]/.test(ch) ? 1 : 0.55;
+  }
+  return Math.max(CAPTION_MIN_FONT, Math.min(CAPTION_FONT, Math.floor(CAPTION_TEXT_MAX_W / units)));
+}
+
 function NarrationCaption({ storyId, lang }: { storyId: string; lang: string }) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -104,14 +120,12 @@ function NarrationCaption({ storyId, lang }: { storyId: string; lang: string }) 
   return (
     <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", padding: "0 56px 52px", pointerEvents: "none" }}>
       <div style={{
-        maxWidth: 1720,
-        // 长英文句易折两行;缩小字号 + 加宽,大多数单行;真正长句折两行时 balance 让两行均衡(无孤字尾巴)。
         background: "rgba(15,23,42,0.84)",
         color: "#fff",
-        fontSize: 33,
+        fontSize: captionFontSize(text),
         lineHeight: 1.45,
         fontWeight: 500,
-        textWrap: "balance",
+        whiteSpace: "nowrap",
         padding: "18px 36px",
         borderRadius: 16,
         textAlign: "center",

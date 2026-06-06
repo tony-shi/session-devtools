@@ -60,7 +60,7 @@ export const RealContextJsonScene = ({ clock }: { clock: ActClock }) => {
         这一次调用,真正发给模型的 request
       </div>
       <div style={{ color: "#64748b", fontSize: 22 }}>
-        claude-opus-4-8 · tools × 10 · system × 4 · messages × 2 · 共约 6.5 万字符
+        Claude Code 2.1.167 · claude-opus-4-8 · tools × 10 · system × 4 · messages × 2 · 共约 6.5 万字符
       </div>
       <div
         style={{

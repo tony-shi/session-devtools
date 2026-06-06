@@ -4,6 +4,7 @@ import { PACE } from "../pace";
 // Story 2:看见真实的 Context —— 一次 Claude Code 调用,到底把什么发给了模型。
 //
 // 取材(ground truth,fixtures 已 dump,studio 直接吃):
+//   版本:两条素材会话均为 Claude Code 2.1.167(jsonl 的 version 字段;step16 文案口播此版本)。
 //   首次请求:session c8d1c726-c7fb-463c-a39c-0056395374cb / turn 1 / call 1
 //     实测 64,942 字符(≈6.5 万)/ 29 叶子;Tools 63.7% / Messages 24.7% / System 11.6%。
 //     用户真实输入:「请输出现在时间」= 7 字符 = 0.01%(万分之一)。
@@ -131,9 +132,10 @@ export const realContextStory: Story = {
       focus: "sec-messages",
       lines: [
         "比如这条 —— 全局提示词。CLAUDE.md 的作用和 System 有点像,",
-        "不过 System 是 Claude Code 全局维度的统一提示册;而 CLAUDE.md 是你自己的专属提示词 —— 可以按全局、项目、本地等不同维度,按你的诉求生效。",
+        "不过 System 是 Claude Code 全局维度的统一提示册;而 CLAUDE.md 是你自己的专属提示词,",
+        "它可以按全局、项目、本地等不同维度,按你的诉求生效。",
       ],
-      pauseAfter: [PACE.breath, PACE.pause],
+      pauseAfter: [PACE.breath, PACE.breath, PACE.pause],
     },
     // 11. 留意 记忆(需求8 措辞;LEAF_FOCUS → messages.inline.system-reminder.memory)。
     {
@@ -194,7 +196,7 @@ export const realContextStory: Story = {
       ],
       pauseAfter: [PACE.breath, PACE.pause, PACE.breath, PACE.breath, PACE.beat, PACE.dwell],
     },
-    // 16. 回顾本章(rc-recap shot:切回首次请求面板 overview)。
+    // 16. 回顾本章(rc-recap shot:切回首次请求面板 overview)+ 版本说明 + 核心要旨。
     {
       act: "rc-real",
       focus: "overview",
@@ -202,8 +204,11 @@ export const realContextStory: Story = {
         "回顾本章:一次调用的 context,顶层就三个核心字段。",
         "Tools 是模型的能力说明书;System 是行为准则,也带着你项目的元信息;Messages 承载注入的上下文、能力声明,和你的对话。",
         "你输入的,只是其中极小的一部分;其余的一切,都由 Claude Code 为你构建。",
+        "一点说明:本章的素材取自 Claude Code 2.1.167,而 Claude Code 的更新非常频繁。",
+        "当你用 session-devtools 打开自己的会话时,看到的细节可能已经不同。",
+        "但这并不要紧 —— 重点从来不是掌握每一条提示词的细节,而是理解 context 的核心组成,和它的演变机制。",
       ],
-      pauseAfter: [PACE.breath, PACE.pause, PACE.dwell],
+      pauseAfter: [PACE.breath, PACE.pause, PACE.beat, PACE.breath, PACE.breath, PACE.dwell],
     },
     // 17. 下一章预告。
     {
