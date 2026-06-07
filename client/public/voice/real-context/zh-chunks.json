@@ -1,0 +1,243 @@
+{
+  "storyId": "real-context",
+  "lang": "zh",
+  "voice": "minimax:speech-2.8-hd:presenter_female:16,audiobook_female_1:55,female-tianmei:29:sp1.242:emneutral",
+  "builtAt": "2026-06-07T06:38:40.318Z",
+  "chunks": [
+    {
+      "stepIdx": 0,
+      "file": "zh-chunks/step-0.mp3",
+      "durMs": 12600,
+      "lines": 3,
+      "gapsMs": [
+        200,
+        500
+      ],
+      "textHash": "810f0f313b32df30",
+      "aligned": true
+    },
+    {
+      "stepIdx": 1,
+      "file": "zh-chunks/step-1.mp3",
+      "durMs": 19560,
+      "lines": 3,
+      "gapsMs": [
+        500,
+        500
+      ],
+      "textHash": "d95b5b79274c574d",
+      "aligned": true
+    },
+    {
+      "stepIdx": 2,
+      "file": "zh-chunks/step-2.mp3",
+      "durMs": 4598,
+      "lines": 1,
+      "gapsMs": [],
+      "textHash": "279b135ec507d8c8",
+      "aligned": true
+    },
+    {
+      "stepIdx": 3,
+      "file": "zh-chunks/step-3.mp3",
+      "durMs": 28152,
+      "lines": 6,
+      "gapsMs": [
+        200,
+        500,
+        200,
+        500,
+        200
+      ],
+      "textHash": "c5ba0aa8cdd28c57",
+      "aligned": true
+    },
+    {
+      "stepIdx": 4,
+      "file": "zh-chunks/step-4.mp3",
+      "durMs": 22776,
+      "lines": 4,
+      "gapsMs": [
+        500,
+        500,
+        500
+      ],
+      "textHash": "8607b1e2e6c9cf53",
+      "aligned": true
+    },
+    {
+      "stepIdx": 5,
+      "file": "zh-chunks/step-5.mp3",
+      "durMs": 19944,
+      "lines": 3,
+      "gapsMs": [
+        500,
+        500
+      ],
+      "textHash": "4b771de594618621",
+      "aligned": true
+    },
+    {
+      "stepIdx": 6,
+      "file": "zh-chunks/step-6.mp3",
+      "durMs": 6840,
+      "lines": 2,
+      "gapsMs": [
+        200
+      ],
+      "textHash": "3d117230c18573e4",
+      "aligned": true
+    },
+    {
+      "stepIdx": 7,
+      "file": "zh-chunks/step-7.mp3",
+      "durMs": 6525,
+      "lines": 1,
+      "gapsMs": [],
+      "textHash": "4548334194f31f4f",
+      "aligned": true
+    },
+    {
+      "stepIdx": 8,
+      "file": "zh-chunks/step-8.mp3",
+      "durMs": 19608,
+      "lines": 3,
+      "gapsMs": [
+        500,
+        900
+      ],
+      "textHash": "d0899d591b39d76f",
+      "aligned": true
+    },
+    {
+      "stepIdx": 9,
+      "file": "zh-chunks/step-9.mp3",
+      "durMs": 5666,
+      "lines": 1,
+      "gapsMs": [],
+      "textHash": "85b2a3714f1c8298",
+      "aligned": true
+    },
+    {
+      "stepIdx": 10,
+      "file": "zh-chunks/step-10.mp3",
+      "durMs": 12576,
+      "lines": 2,
+      "gapsMs": [
+        500
+      ],
+      "textHash": "07f100f207fadefc",
+      "aligned": true
+    },
+    {
+      "stepIdx": 11,
+      "file": "zh-chunks/step-11.mp3",
+      "durMs": 23016,
+      "lines": 4,
+      "gapsMs": [
+        500,
+        500,
+        500
+      ],
+      "textHash": "a121dd0726d0fc8a",
+      "aligned": true
+    },
+    {
+      "stepIdx": 12,
+      "file": "zh-chunks/step-12.mp3",
+      "durMs": 15528,
+      "lines": 3,
+      "gapsMs": [
+        500,
+        200
+      ],
+      "textHash": "8687d0b75bf52831",
+      "aligned": true
+    },
+    {
+      "stepIdx": 13,
+      "file": "zh-chunks/step-13.mp3",
+      "durMs": 12768,
+      "lines": 3,
+      "gapsMs": [
+        200,
+        500
+      ],
+      "textHash": "aab4473d27f16c98",
+      "aligned": true
+    },
+    {
+      "stepIdx": 14,
+      "file": "zh-chunks/step-14.mp3",
+      "durMs": 34872,
+      "lines": 6,
+      "gapsMs": [
+        200,
+        200,
+        500,
+        500,
+        500
+      ],
+      "textHash": "83b069b703c86ac4",
+      "aligned": true
+    },
+    {
+      "stepIdx": 15,
+      "file": "zh-chunks/step-15.mp3",
+      "durMs": 15840,
+      "lines": 3,
+      "gapsMs": [
+        200,
+        900
+      ],
+      "textHash": "91d6c69bb98a6e05",
+      "aligned": true
+    },
+    {
+      "stepIdx": 16,
+      "file": "zh-chunks/step-16.mp3",
+      "durMs": 47088,
+      "lines": 8,
+      "gapsMs": [
+        200,
+        500,
+        500,
+        900,
+        500,
+        500,
+        200
+      ],
+      "textHash": "3ad604b397220b1c",
+      "aligned": true
+    },
+    {
+      "stepIdx": 17,
+      "file": "zh-chunks/step-17.mp3",
+      "durMs": 44568,
+      "lines": 8,
+      "gapsMs": [
+        500,
+        200,
+        900,
+        900,
+        500,
+        500,
+        200
+      ],
+      "textHash": "0338959692450572",
+      "aligned": true
+    },
+    {
+      "stepIdx": 18,
+      "file": "zh-chunks/step-18.mp3",
+      "durMs": 15792,
+      "lines": 3,
+      "gapsMs": [
+        500,
+        500
+      ],
+      "textHash": "36f1d278b75c6a76",
+      "aligned": true
+    }
+  ]
+}

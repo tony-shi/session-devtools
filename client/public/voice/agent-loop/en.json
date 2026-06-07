@@ -2,31 +2,31 @@
   "storyId": "agent-loop",
   "lang": "en",
   "voice": "minimax:default",
-  "builtAt": "2026-05-31T07:59:06.687Z",
-  "totalMs": 223496,
+  "builtAt": "2026-06-07T06:46:14.829Z",
+  "totalMs": 195729,
   "steps": [
     {
       "stepIdx": 0,
       "lines": [
         {
           "idx": 0,
-          "text": "An Agent may look like just a chat interface, but behind it, a whole execution chain is running.",
+          "text": "An Agent looks like a chat interface, but behind it runs a whole execution chain.",
           "audio": "en/0-0.mp3",
-          "durMs": 6480,
-          "gapMs": 900
+          "durMs": 4286,
+          "gapMs": 1766
         },
         {
           "idx": 1,
-          "text": "The outermost layer is the session. For now, you can simply think of opening a terminal as starting a session.",
+          "text": "The outermost layer is the session — for now, opening a terminal starts a session.",
           "audio": "en/0-1.mp3",
-          "durMs": 7656,
-          "gapMs": 900
+          "durMs": 4076,
+          "gapMs": 1787
         },
         {
           "idx": 2,
-          "text": "Every input you send, every model call, and every tool the Agent runs all happen inside that session.",
+          "text": "Every input, every model call, every tool the Agent runs — all happen in that session.",
           "audio": "en/0-2.mp3",
-          "durMs": 7896,
+          "durMs": 5294,
           "gapMs": 2000
         }
       ]
@@ -38,22 +38,22 @@
           "idx": 0,
           "text": "Now move the camera into one turn inside the session.",
           "audio": "en/1-0.mp3",
-          "durMs": 3936,
-          "gapMs": 200
+          "durMs": 2972,
+          "gapMs": 957
         },
         {
           "idx": 1,
-          "text": "For now, think of a turn as one user input, which the Agent keeps processing until it produces a final response.",
+          "text": "For now, a turn is one user input, processed until the Agent gives a final response.",
           "audio": "en/1-1.mp3",
-          "durMs": 7176,
-          "gapMs": 200
+          "durMs": 5057,
+          "gapMs": 1688
         },
         {
           "idx": 2,
           "text": "A single session usually contains many turns.",
           "audio": "en/1-2.mp3",
-          "durMs": 4056,
-          "gapMs": 200
+          "durMs": 3030,
+          "gapMs": 900
         }
       ]
     },
@@ -64,36 +64,36 @@
           "idx": 0,
           "text": "Let's open up one turn.",
           "audio": "en/2-0.mp3",
-          "durMs": 2208,
-          "gapMs": 200
+          "durMs": 1665,
+          "gapMs": 973
         },
         {
           "idx": 1,
           "text": "The first step is the user input.",
           "audio": "en/2-1.mp3",
-          "durMs": 2832,
-          "gapMs": 200
+          "durMs": 1673,
+          "gapMs": 979
         },
         {
           "idx": 2,
           "text": "But the Agent doesn't send that sentence to the model as-is.",
           "audio": "en/2-2.mp3",
-          "durMs": 3792,
-          "gapMs": 200
+          "durMs": 3070,
+          "gapMs": 1298
         },
         {
           "idx": 3,
-          "text": "It first prepares the context, such as the system prompt, memory, tool definitions, and so on.",
+          "text": "It first prepares the context: system prompt, memory, tool definitions, and more.",
           "audio": "en/2-3.mp3",
-          "durMs": 8496,
-          "gapMs": 200
+          "durMs": 4943,
+          "gapMs": 1390
         },
         {
           "idx": 4,
-          "text": "Then it adds the user input and packages everything into one model call, so the model can decide the next step.",
+          "text": "Then it adds your input, packing everything into one model call to decide the next step.",
           "audio": "en/2-4.mp3",
-          "durMs": 7320,
-          "gapMs": 200
+          "durMs": 5105,
+          "gapMs": 900
         }
       ]
     },
@@ -104,36 +104,36 @@
           "idx": 0,
           "text": "For a very simple task, the model might answer right away.",
           "audio": "en/3-0.mp3",
-          "durMs": 3984,
+          "durMs": 4368,
           "gapMs": 200
         },
         {
           "idx": 1,
           "text": "But more often, it first realizes that it needs more information.",
           "audio": "en/3-1.mp3",
-          "durMs": 4848,
+          "durMs": 4056,
           "gapMs": 200
         },
         {
           "idx": 2,
           "text": "So it does not answer directly. Instead, it returns a tool call as its response.",
           "audio": "en/3-2.mp3",
-          "durMs": 6288,
-          "gapMs": 200
+          "durMs": 6360,
+          "gapMs": 500
         },
         {
           "idx": 3,
           "text": "A tool call is not the answer. It means: please run an action for me.",
           "audio": "en/3-3.mp3",
-          "durMs": 5640,
-          "gapMs": 200
+          "durMs": 4752,
+          "gapMs": 900
         },
         {
           "idx": 4,
           "text": "For example: read a file, search the codebase, or run a command.",
           "audio": "en/3-4.mp3",
-          "durMs": 5496,
-          "gapMs": 200
+          "durMs": 4752,
+          "gapMs": 900
         }
       ]
     },
@@ -144,36 +144,36 @@
           "idx": 0,
           "text": "Next, the Agent parses that tool call and actually runs the tool on your computer.",
           "audio": "en/4-0.mp3",
-          "durMs": 5736,
-          "gapMs": 200
+          "durMs": 4621,
+          "gapMs": 1005
         },
         {
           "idx": 1,
           "text": "When it finishes, it extracts the result of that call.",
           "audio": "en/4-1.mp3",
-          "durMs": 3792,
-          "gapMs": 200
+          "durMs": 3027,
+          "gapMs": 1094
         },
         {
           "idx": 2,
           "text": "Then that tool result is placed into the context for the next model call.",
           "audio": "en/4-2.mp3",
-          "durMs": 4488,
-          "gapMs": 200
+          "durMs": 3800,
+          "gapMs": 1238
         },
         {
           "idx": 3,
           "text": "This step matters: the model is no longer just thinking remotely.",
           "audio": "en/4-3.mp3",
-          "durMs": 4680,
-          "gapMs": 200
+          "durMs": 4901,
+          "gapMs": 349
         },
         {
           "idx": 4,
-          "text": "With tools, it can inspect your files, run your code, operate your command line, and truly interact with your world.",
+          "text": "With tools, it can read your files, run your code — truly interact with your world.",
           "audio": "en/4-4.mp3",
-          "durMs": 8448,
-          "gapMs": 200
+          "durMs": 4109,
+          "gapMs": 2000
         }
       ]
     },
@@ -182,45 +182,45 @@
       "lines": [
         {
           "idx": 0,
-          "text": "Let's connect the pieces: model call, tool call, tool result, then back to the next model call.",
+          "text": "Connect the pieces: model call, tool call, tool result, then the next model call.",
           "audio": "en/5-0.mp3",
-          "durMs": 7128,
-          "gapMs": 200
+          "durMs": 6024,
+          "gapMs": 500
         },
         {
           "idx": 1,
           "text": "That repeating chain is the Agent loop.",
           "audio": "en/5-1.mp3",
-          "durMs": 2832,
-          "gapMs": 200
+          "durMs": 2904,
+          "gapMs": 2000
         },
         {
           "idx": 2,
           "text": "Each time through the loop, the model gets one more piece of real information.",
           "audio": "en/5-2.mp3",
-          "durMs": 4944,
+          "durMs": 4752,
           "gapMs": 200
         },
         {
           "idx": 3,
           "text": "Until, at some point, the model decides: it knows enough, and the needed actions are done.",
           "audio": "en/5-3.mp3",
-          "durMs": 7704,
+          "durMs": 6480,
           "gapMs": 200
         },
         {
           "idx": 4,
           "text": "It may answer directly, or it may wrap up after a final tool call changes a file.",
           "audio": "en/5-4.mp3",
-          "durMs": 5592,
-          "gapMs": 200
+          "durMs": 5040,
+          "gapMs": 500
         },
         {
           "idx": 5,
           "text": "When there is no next step to take, the turn ends.",
           "audio": "en/5-5.mp3",
-          "durMs": 4224,
-          "gapMs": 200
+          "durMs": 3432,
+          "gapMs": 900
         }
       ]
     },
@@ -231,80 +231,81 @@
           "idx": 0,
           "text": "Let's review what this chapter covered.",
           "audio": "en/6-0.mp3",
-          "durMs": 2424,
+          "durMs": 2352,
           "gapMs": 500
         },
         {
           "idx": 1,
           "text": "Session — one complete conversation, organizing all the work.",
           "audio": "en/6-1.mp3",
-          "durMs": 4320,
+          "durMs": 4128,
           "gapMs": 500
         },
         {
           "idx": 2,
           "text": "Turn — one user task, and the whole process to complete it.",
           "audio": "en/6-2.mp3",
-          "durMs": 4320,
+          "durMs": 3840,
           "gapMs": 500
         },
         {
           "idx": 3,
           "text": "Model call — carrying context into the model so it can make one decision.",
           "audio": "en/6-3.mp3",
-          "durMs": 4800,
+          "durMs": 5016,
           "gapMs": 500
         },
         {
           "idx": 4,
           "text": "Tool call — what the model wants the Agent to do.",
           "audio": "en/6-4.mp3",
-          "durMs": 3144,
+          "durMs": 2928,
           "gapMs": 500
         },
         {
           "idx": 5,
-          "text": "Tool result — the result after the Agent runs it, which is put back into context and triggers the next model call.",
+          "text": "Tool result — what the run returns; it goes back into context for the next model call.",
           "audio": "en/6-5.mp3",
-          "durMs": 7536,
+          "durMs": 4704,
           "gapMs": 900
         },
         {
           "idx": 6,
-          "text": "A turn can end with a direct answer, or after the final tool call completes a change and the model wraps up.",
+          "text": "A turn may end with a direct answer, or wrap up after the last tool call completes.",
           "audio": "en/6-6.mp3",
-          "durMs": 7392,
+          "durMs": 5280,
           "gapMs": 500
         },
         {
           "idx": 7,
-          "text": "Abstract the loop and it is really three stages: gather context, take action, verify the result.",
+          "text": "Abstract the loop: three stages — gather context, take action, verify the result.",
           "audio": "en/6-7.mp3",
-          "durMs": 8112,
+          "durMs": 5568,
           "gapMs": 500
         },
         {
           "idx": 8,
-          "text": "The model handles reasoning, and the tools handle action. The model is like the brain; the tools are the hands and feet.",
+          "text": "The model handles reasoning; the tools handle action — the brain, and the hands.",
           "audio": "en/6-8.mp3",
-          "durMs": 7896,
+          "durMs": 5160,
           "gapMs": 900
         },
         {
           "idx": 9,
-          "text": "In the next chapter, we move into the core of the Agent: the context prepared before each model call.",
+          "text": "Next chapter, we enter the Agent's core: the context prepared before each model call.",
           "audio": "en/6-9.mp3",
-          "durMs": 7008,
+          "durMs": 5448,
           "gapMs": 500
         },
         {
           "idx": 10,
           "text": "We will see exactly what the model sees before it makes a decision.",
           "audio": "en/6-10.mp3",
-          "durMs": 4272,
+          "durMs": 3432,
           "gapMs": 200
         }
       ]
     }
-  ]
+  ],
+  "aligned": "chunks:4/7"
 }

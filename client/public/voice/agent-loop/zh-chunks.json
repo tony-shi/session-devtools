@@ -1,0 +1,109 @@
+{
+  "storyId": "agent-loop",
+  "lang": "zh",
+  "voice": "minimax:speech-2.8-hd:presenter_female:16,audiobook_female_1:55,female-tianmei:29:sp1.035:emneutral",
+  "builtAt": "2026-06-07T06:42:25.436Z",
+  "chunks": [
+    {
+      "stepIdx": 0,
+      "file": "zh-chunks/step-0.mp3",
+      "durMs": 21936,
+      "lines": 3,
+      "gapsMs": [
+        900,
+        900
+      ],
+      "textHash": "5eb8837516e5a129",
+      "aligned": false
+    },
+    {
+      "stepIdx": 1,
+      "file": "zh-chunks/step-1.mp3",
+      "durMs": 15432,
+      "lines": 3,
+      "gapsMs": [
+        200,
+        900
+      ],
+      "textHash": "fdd06494d20a3f08",
+      "aligned": true
+    },
+    {
+      "stepIdx": 2,
+      "file": "zh-chunks/step-2.mp3",
+      "durMs": 24240,
+      "lines": 5,
+      "gapsMs": [
+        200,
+        200,
+        500,
+        500
+      ],
+      "textHash": "84377fd68e63bfb0",
+      "aligned": true
+    },
+    {
+      "stepIdx": 3,
+      "file": "zh-chunks/step-3.mp3",
+      "durMs": 26040,
+      "lines": 5,
+      "gapsMs": [
+        200,
+        200,
+        500,
+        900
+      ],
+      "textHash": "563c0239a9baf7ab",
+      "aligned": true
+    },
+    {
+      "stepIdx": 4,
+      "file": "zh-chunks/step-4.mp3",
+      "durMs": 28800,
+      "lines": 5,
+      "gapsMs": [
+        200,
+        200,
+        500,
+        500
+      ],
+      "textHash": "f21f30a3f2c66b4b",
+      "aligned": true
+    },
+    {
+      "stepIdx": 5,
+      "file": "zh-chunks/step-5.mp3",
+      "durMs": 36888,
+      "lines": 6,
+      "gapsMs": [
+        500,
+        2000,
+        200,
+        200,
+        500
+      ],
+      "textHash": "7d3f8cbb69050f0f",
+      "aligned": true
+    },
+    {
+      "stepIdx": 6,
+      "file": "zh-chunks/step-6.mp3",
+      "durMs": 67776,
+      "lines": 11,
+      "gapsMs": [
+        500,
+        500,
+        500,
+        500,
+        500,
+        900,
+        500,
+        500,
+        900,
+        500
+      ],
+      "textHash": "ce22a31daf7ef621",
+      "aligned": false
+    }
+  ]
+}

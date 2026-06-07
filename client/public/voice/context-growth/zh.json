@@ -1,0 +1,470 @@
+{
+  "storyId": "context-growth",
+  "lang": "zh",
+  "voice": "mock:default",
+  "builtAt": "2026-06-06T12:50:41.893Z",
+  "totalMs": 292600,
+  "steps": [
+    {
+      "stepIdx": 0,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "上一章,我们解剖了一次真实调用 —— 6.5 万字符的 context。",
+          "audio": "zh/0-0.mp3",
+          "durMs": 5760,
+          "gapMs": 200
+        },
+        {
+          "idx": 1,
+          "text": "但那只是一帧静止的画面。",
+          "audio": "zh/0-1.mp3",
+          "durMs": 2160,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "这一章,把镜头拉远:看 context 如何在对话中一路生长。",
+          "audio": "zh/0-2.mp3",
+          "durMs": 5220,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 1,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "这是一个真实会话的全程:两百五十多次模型调用。",
+          "audio": "zh/1-0.mp3",
+          "durMs": 4140,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "context 从 2 万 token 起步,一路爬到 94 万。",
+          "audio": "zh/1-1.mp3",
+          "durMs": 4680,
+          "gapMs": 900
+        },
+        {
+          "idx": 2,
+          "text": "这条曲线该怎么读?我们从最简单的那个例子说起。",
+          "audio": "zh/1-2.mp3",
+          "durMs": 4140,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 2,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "还是那句「请输出现在时间」。",
+          "audio": "zh/2-0.mp3",
+          "durMs": 2520,
+          "gapMs": 200
+        },
+        {
+          "idx": 1,
+          "text": "模型读完 6.5 万字符后,给出的不是答案,而是一个动作。",
+          "audio": "zh/2-1.mp3",
+          "durMs": 4860,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "看 Messages 的末尾:一个 tool_use —— Bash,参数是一条 date 命令。",
+          "audio": "zh/2-2.mp3",
+          "durMs": 7560,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 3,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "这个参数不是凭空想的。回到 Tools 区的 Bash 声明 ——",
+          "audio": "zh/3-0.mp3",
+          "durMs": 5040,
+          "gapMs": 200
+        },
+        {
+          "idx": 1,
+          "text": "input schema 里定义的 command 字段,就是它的来源。",
+          "audio": "zh/3-1.mp3",
+          "durMs": 5760,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "声明在 Tools,调用在 Messages —— 一一对应,严丝合缝。",
+          "audio": "zh/3-2.mp3",
+          "durMs": 5760,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 4,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Claude Code 执行命令,把输出包成 tool_result,追加回 Messages。",
+          "audio": "zh/4-0.mp3",
+          "durMs": 7920,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "这一条只有 34 个字符:日期本身。",
+          "audio": "zh/4-1.mp3",
+          "durMs": 2880,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 5,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "于是第二次调用发出的请求 = 第一次的全部内容,加三小块:",
+          "audio": "zh/5-0.mp3",
+          "durMs": 4860,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "thinking 316 字符、tool_use 152、tool_result 34。",
+          "audio": "zh/5-1.mp3",
+          "durMs": 7200,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "64,942 → 65,444。没有删改,只有追加。",
+          "audio": "zh/5-2.mp3",
+          "durMs": 4320,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 6,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "这就是 context 增长的基本法则:append-only。",
+          "audio": "zh/6-0.mp3",
+          "durMs": 5400,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "每一次调用,都背着之前的全部历史。",
+          "audio": "zh/6-1.mp3",
+          "durMs": 3060,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 7,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "换一个真实会话。用户说:「使用 web fetch,获取今日的百度头条新闻」。",
+          "audio": "zh/7-0.mp3",
+          "durMs": 6660,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "但打开这次请求的 Tools 区 —— 里面并没有 WebFetch。",
+          "audio": "zh/7-1.mp3",
+          "durMs": 5400,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 8,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "WebFetch 在哪?在这份「延迟加载工具清单」里。",
+          "audio": "zh/8-0.mp3",
+          "durMs": 4680,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "上一章见过它:每个工具只报名字,不带声明 —— 因为声明很贵。",
+          "audio": "zh/8-1.mp3",
+          "durMs": 5220,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 9,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "所以模型的第一步不是抓网页,而是调用 ToolSearch,把 WebFetch 找出来。",
+          "audio": "zh/9-0.mp3",
+          "durMs": 7560,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "工具结果小得惊人 —— 26 个字符:一条 tool_reference 引用。",
+          "audio": "zh/9-1.mp3",
+          "durMs": 6300,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 10,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "再看第二次调用的 Tools 区:WebFetch 出现了。",
+          "audio": "zh/10-0.mp3",
+          "durMs": 4860,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "795 字符的完整声明,这一刻才被装进 context。",
+          "audio": "zh/10-1.mp3",
+          "durMs": 4680,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "接下来,模型才真正调用 WebFetch,抓回新闻。",
+          "audio": "zh/10-2.mp3",
+          "durMs": 4500,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 11,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "这就是上一章预告的渐进式披露:平时只留一行名字,",
+          "audio": "zh/11-0.mp3",
+          "durMs": 4320,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "用到时,26 字符的引用,换来一份完整声明。",
+          "audio": "zh/11-1.mp3",
+          "durMs": 3780,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "context 只为真正用到的能力买单。",
+          "audio": "zh/11-2.mp3",
+          "durMs": 3420,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 12,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "当一个会话全速跑了几十轮,context 会长成什么样?",
+          "audio": "zh/12-0.mp3",
+          "durMs": 4860,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "这是上一章见过的满载请求:286 万字符,Messages 占 98%。",
+          "audio": "zh/12-1.mp3",
+          "durMs": 5940,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 13,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "最大的一类是模型思考:166 段,占 59%。",
+          "audio": "zh/13-0.mp3",
+          "durMs": 3780,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "其次是图片:两张截图占 19%,单张近 40 万字符。",
+          "audio": "zh/13-1.mp3",
+          "durMs": 4320,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "然后是工具结果:216 条,占 9% —— Read、Bash 的输出都堆在这里。",
+          "audio": "zh/13-2.mp3",
+          "durMs": 6480,
+          "gapMs": 500
+        },
+        {
+          "idx": 3,
+          "text": "最后是工具调用本身:216 次,占 6%。",
+          "audio": "zh/13-3.mp3",
+          "durMs": 3420,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 14,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "注意:这些大块,没有一块是你敲进去的。",
+          "audio": "zh/14-0.mp3",
+          "durMs": 3420,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "是模型在想、工具在读、Agent 在持续注入。",
+          "audio": "zh/14-1.mp3",
+          "durMs": 3960,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "你的输入,始终是 context 里最小的部分。",
+          "audio": "zh/14-2.mp3",
+          "durMs": 3960,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 15,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "增长有尽头吗?有。模型的 context window 是有限的。",
+          "audio": "zh/15-0.mp3",
+          "durMs": 5400,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "这个会话爬到 94 万 token 时,已经逼近上限。",
+          "audio": "zh/15-1.mp3",
+          "durMs": 4140,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "于是,发生了这件事 ——",
+          "audio": "zh/15-2.mp3",
+          "durMs": 1980,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 16,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "compact。它本身也是一次模型调用:",
+          "audio": "zh/16-0.mp3",
+          "durMs": 3600,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "把全部历史读一遍,只输出一份文字摘要,不调用任何工具。",
+          "audio": "zh/16-1.mp3",
+          "durMs": 4860,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "之后的对话从摘要轻装出发:94 万 token,跌回不到 5 万。",
+          "audio": "zh/16-2.mp3",
+          "durMs": 5220,
+          "gapMs": 900
+        },
+        {
+          "idx": 3,
+          "text": "历史被压缩了,但任务还在继续 —— 这条曲线,就是证据。",
+          "audio": "zh/16-3.mp3",
+          "durMs": 4680,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 17,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "回顾本章:context 只增不改,每次调用都背着全部历史;",
+          "audio": "zh/17-0.mp3",
+          "durMs": 5220,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "能力按需注入 —— 名字先行,用到再展开;",
+          "audio": "zh/17-1.mp3",
+          "durMs": 3420,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "增长的大头,是思考、图片和工具结果;",
+          "audio": "zh/17-2.mp3",
+          "durMs": 3240,
+          "gapMs": 500
+        },
+        {
+          "idx": 3,
+          "text": "窗口将满时,compact 把历史重新打包。",
+          "audio": "zh/17-3.mp3",
+          "durMs": 3780,
+          "gapMs": 900
+        },
+        {
+          "idx": 4,
+          "text": "但还有一个问题:全部历史,每次都重发一遍 —— 成本怎么办?",
+          "audio": "zh/17-4.mp3",
+          "durMs": 5040,
+          "gapMs": 500
+        },
+        {
+          "idx": 5,
+          "text": "下一章:cache。看 Claude Code 如何不为同样的历史反复全价付费。",
+          "audio": "zh/17-5.mp3",
+          "durMs": 6660,
+          "gapMs": 2000
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,470 @@
+{
+  "storyId": "context-growth",
+  "lang": "en",
+  "voice": "mock:default",
+  "builtAt": "2026-06-06T12:50:42.377Z",
+  "totalMs": 195720,
+  "steps": [
+    {
+      "stepIdx": 0,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Last chapter we dissected one real call — a 65k-character context.",
+          "audio": "en/0-0.mp3",
+          "durMs": 3080,
+          "gapMs": 200
+        },
+        {
+          "idx": 1,
+          "text": "But that was a single frozen frame.",
+          "audio": "en/0-1.mp3",
+          "durMs": 1960,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "This chapter zooms out: watch the context grow across a conversation.",
+          "audio": "en/0-2.mp3",
+          "durMs": 3080,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 1,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Here is one real session, end to end: over 250 model calls.",
+          "audio": "en/1-0.mp3",
+          "durMs": 3360,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "Context starts near 20k tokens and climbs all the way to 940k.",
+          "audio": "en/1-1.mp3",
+          "durMs": 3360,
+          "gapMs": 900
+        },
+        {
+          "idx": 2,
+          "text": "How do we read this curve? Let's start from the simplest example.",
+          "audio": "en/1-2.mp3",
+          "durMs": 3360,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 2,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "The same request: \"what time is it for now?\".",
+          "audio": "en/2-0.mp3",
+          "durMs": 2520,
+          "gapMs": 200
+        },
+        {
+          "idx": 1,
+          "text": "After reading 65k characters, the model answers with an action, not text.",
+          "audio": "en/2-1.mp3",
+          "durMs": 3360,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "At the end of Messages: a tool_use — Bash, whose argument is a date command.",
+          "audio": "en/2-2.mp3",
+          "durMs": 4200,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 3,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "That argument isn't invented. Back in Tools, the Bash declaration —",
+          "audio": "en/3-0.mp3",
+          "durMs": 3080,
+          "gapMs": 200
+        },
+        {
+          "idx": 1,
+          "text": "the command field defined in its input schema is the source.",
+          "audio": "en/3-1.mp3",
+          "durMs": 3080,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "Declared in Tools, invoked in Messages — a perfect match.",
+          "audio": "en/3-2.mp3",
+          "durMs": 2800,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 4,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Claude Code runs it and appends the output back as a tool_result.",
+          "audio": "en/4-0.mp3",
+          "durMs": 3360,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "This one is just 28 characters: the date itself.",
+          "audio": "en/4-1.mp3",
+          "durMs": 2520,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 5,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "So call two sends everything from call one, plus three small blocks:",
+          "audio": "en/5-0.mp3",
+          "durMs": 3360,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "thinking 344 chars, tool_use 123, tool_result 28.",
+          "audio": "en/5-1.mp3",
+          "durMs": 1960,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "64,977 → 65,472. Nothing rewritten — only appended.",
+          "audio": "en/5-2.mp3",
+          "durMs": 2240,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 6,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "That is the law of context growth: append-only.",
+          "audio": "en/6-0.mp3",
+          "durMs": 2240,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "Every call carries the entire history before it.",
+          "audio": "en/6-1.mp3",
+          "durMs": 2240,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 7,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "A different real session: \"using web fetch, today's google top news\".",
+          "audio": "en/7-0.mp3",
+          "durMs": 3080,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "But open this request's Tools section — WebFetch is not there.",
+          "audio": "en/7-1.mp3",
+          "durMs": 3080,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 8,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "So where is it? In this deferred-tools listing.",
+          "audio": "en/8-0.mp3",
+          "durMs": 2240,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "We saw it last chapter: names only, no schemas — declarations are expensive.",
+          "audio": "en/8-1.mp3",
+          "durMs": 3640,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 9,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "So the model's first move is not fetching — it calls ToolSearch for WebFetch.",
+          "audio": "en/9-0.mp3",
+          "durMs": 3920,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "The result is astonishingly small — 26 characters: one tool_reference.",
+          "audio": "en/9-1.mp3",
+          "durMs": 2800,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 10,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Now look at call two's Tools section: WebFetch has appeared.",
+          "audio": "en/10-0.mp3",
+          "durMs": 2800,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "Its full 795-character declaration enters the context only now.",
+          "audio": "en/10-1.mp3",
+          "durMs": 2520,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "Only then does the model actually call WebFetch and get the news.",
+          "audio": "en/10-2.mp3",
+          "durMs": 3360,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 11,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "This is the progressive disclosure we trailed: a one-line name at rest,",
+          "audio": "en/11-0.mp3",
+          "durMs": 3360,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "and when needed, 26 characters buy the full declaration.",
+          "audio": "en/11-1.mp3",
+          "durMs": 2520,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "The context only pays for capabilities it actually uses.",
+          "audio": "en/11-2.mp3",
+          "durMs": 2520,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 12,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "After dozens of full-speed turns, what does a context look like?",
+          "audio": "en/12-0.mp3",
+          "durMs": 3080,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "The loaded request from last chapter: 2.86M characters, Messages at 98%.",
+          "audio": "en/12-1.mp3",
+          "durMs": 3080,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 13,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "The biggest class is model thinking: 166 blocks, 59%.",
+          "audio": "en/13-0.mp3",
+          "durMs": 2520,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "Then images: two screenshots take 19% — nearly 400k characters each.",
+          "audio": "en/13-1.mp3",
+          "durMs": 3080,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "Then tool results: 216 of them, 9% — Read and Bash output piles up here.",
+          "audio": "en/13-2.mp3",
+          "durMs": 4200,
+          "gapMs": 500
+        },
+        {
+          "idx": 3,
+          "text": "And tool calls themselves: 216 of them, at 6%.",
+          "audio": "en/13-3.mp3",
+          "durMs": 2520,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 14,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Notice: none of these big blocks were typed by you.",
+          "audio": "en/14-0.mp3",
+          "durMs": 2800,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "The model thinks, tools read, the agent keeps injecting.",
+          "audio": "en/14-1.mp3",
+          "durMs": 2520,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "Your input stays the smallest part of the context.",
+          "audio": "en/14-2.mp3",
+          "durMs": 2520,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 15,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Does growth ever end? Yes. The context window is finite.",
+          "audio": "en/15-0.mp3",
+          "durMs": 2800,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "At 940k tokens, this session was pressing the limit.",
+          "audio": "en/15-1.mp3",
+          "durMs": 2520,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "And then, this happened —",
+          "audio": "en/15-2.mp3",
+          "durMs": 1400,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 16,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Compaction. It is itself one more model call:",
+          "audio": "en/16-0.mp3",
+          "durMs": 2240,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "read the whole history, output a text summary — and call no tools.",
+          "audio": "en/16-1.mp3",
+          "durMs": 3640,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "The dialogue restarts light: 940k tokens collapse to under 50k.",
+          "audio": "en/16-2.mp3",
+          "durMs": 2800,
+          "gapMs": 900
+        },
+        {
+          "idx": 3,
+          "text": "History is compressed, but the task goes on — this curve is the proof.",
+          "audio": "en/16-3.mp3",
+          "durMs": 3920,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 17,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Recap: a context is append-only — every call carries all history;",
+          "audio": "en/17-0.mp3",
+          "durMs": 3080,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "capabilities load on demand — names first, schemas when used;",
+          "audio": "en/17-1.mp3",
+          "durMs": 2800,
+          "gapMs": 500
+        },
+        {
+          "idx": 2,
+          "text": "the bulk of growth is thinking, images and tool results;",
+          "audio": "en/17-2.mp3",
+          "durMs": 2800,
+          "gapMs": 500
+        },
+        {
+          "idx": 3,
+          "text": "and when the window fills, compaction repacks the past.",
+          "audio": "en/17-3.mp3",
+          "durMs": 2520,
+          "gapMs": 900
+        },
+        {
+          "idx": 4,
+          "text": "One question remains: all that history, resent on every call — at what cost?",
+          "audio": "en/17-4.mp3",
+          "durMs": 3920,
+          "gapMs": 500
+        },
+        {
+          "idx": 5,
+          "text": "Next chapter: cache — how Claude Code avoids paying full price twice.",
+          "audio": "en/17-5.mp3",
+          "durMs": 3360,
+          "gapMs": 2000
+        }
+      ]
+    }
+  ]
+}

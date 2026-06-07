@@ -92,3 +92,8 @@ CLAUDE.local.md
 # Remotion render output (binaries, regenerable)
 client/out/
 out
+
+# 媒体素材只留本地(2026-06-07 决策):voice 下音频二进制不入库,manifest(json)入库
+client/public/voice/**/*.mp3
+client/public/voice/**/*.m4a
+client/public/voice/**/*.wav

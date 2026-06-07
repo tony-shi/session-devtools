@@ -1,9 +1,9 @@
 {
   "storyId": "real-context",
   "lang": "zh",
-  "voice": "mock:default",
-  "builtAt": "2026-06-06T07:32:05.148Z",
-  "totalMs": 414540,
+  "voice": "minimax:default",
+  "builtAt": "2026-06-07T06:46:12.337Z",
+  "totalMs": 390217,
   "steps": [
     {
       "stepIdx": 0,
@@ -12,22 +12,22 @@
           "idx": 0,
           "text": "当你打开 Claude Code,敲下一句话 ——「请输出现在时间」。",
           "audio": "zh/0-0.mp3",
-          "durMs": 5760,
-          "gapMs": 200
+          "durMs": 3733,
+          "gapMs": 1005
         },
         {
           "idx": 1,
           "text": "你也许认为,模型看到的就是你输入的这句话。",
           "audio": "zh/0-1.mp3",
-          "durMs": 3780,
-          "gapMs": 500
+          "durMs": 3327,
+          "gapMs": 1228
         },
         {
           "idx": 2,
-          "text": "但模型这一次真正读到的 ——",
+          "text": "但模型这一次真正读到的,其实不是一句话。",
           "audio": "zh/0-2.mp3",
-          "durMs": 2340,
-          "gapMs": 900
+          "durMs": 3307,
+          "gapMs": 200
         }
       ]
     },
@@ -36,23 +36,23 @@
       "lines": [
         {
           "idx": 0,
-          "text": "是一份庞大的 JSON,约 6.5 万字符。展开看,结构层层嵌套,信息量惊人。",
+          "text": "而是一份庞大的数据,约 6.5 万字符。展开看,结构层层嵌套,信息量惊人。",
           "audio": "zh/1-0.mp3",
-          "durMs": 6480,
-          "gapMs": 500
+          "durMs": 6385,
+          "gapMs": 1097
         },
         {
           "idx": 1,
           "text": "但先别被它吓到 —— 它的顶层,其实只有三个核心字段:Tools、System、Messages。",
           "audio": "zh/1-1.mp3",
-          "durMs": 8460,
-          "gapMs": 500
+          "durMs": 5633,
+          "gapMs": 1166
         },
         {
           "idx": 2,
           "text": "我们用工具拦下 Claude Code 发往远端的原始请求,再对它的内容做归因分析。",
           "audio": "zh/1-2.mp3",
-          "durMs": 7020,
+          "durMs": 5280,
           "gapMs": 900
         }
       ]
@@ -62,23 +62,9 @@
       "lines": [
         {
           "idx": 0,
-          "text": "首先看 Tools。回顾上一章的 tool use 与 tool result —— Tools 这一段,声明了模型可以用哪些工具、以及怎么用。",
+          "text": "还记得上一章片尾那条横条吗?展开之后,就是眼前这三段。",
           "audio": "zh/2-0.mp3",
-          "durMs": 11340,
-          "gapMs": 500
-        },
-        {
-          "idx": 1,
-          "text": "常见的 tool 有:Bash 执行系统命令;Read、Edit、Write 读写文件;Agent 委托子任务;Skill、ToolSearch 负责动态扩展。",
-          "audio": "zh/2-1.mp3",
-          "durMs": 13320,
-          "gapMs": 200
-        },
-        {
-          "idx": 2,
-          "text": "注意这里 Tools 的数量:当前版本的 Claude Code 默认内置 10 个 Tool;后面会看到,工具数量是可以动态增加的。",
-          "audio": "zh/2-2.mp3",
-          "durMs": 10620,
+          "durMs": 4598,
           "gapMs": 900
         }
       ]
@@ -88,30 +74,44 @@
       "lines": [
         {
           "idx": 0,
-          "text": "我们点开其中一个看看 —— 就用 tool.Bash。",
+          "text": "首先看 Tools。回顾上一章的「工具调用」与「调用结果」——",
           "audio": "zh/3-0.mp3",
-          "durMs": 4320,
-          "gapMs": 500
+          "durMs": 3920,
+          "gapMs": 993
         },
         {
           "idx": 1,
-          "text": "往下看它的结构。第一部分是描述 —— 它帮助模型理解:这个工具是干什么的、什么时候该调用它。",
+          "text": "Tools 这一段,声明了模型可以用哪些工具、以及怎么用。",
           "audio": "zh/3-1.mp3",
-          "durMs": 7920,
-          "gapMs": 500
+          "durMs": 3720,
+          "gapMs": 1149
         },
         {
           "idx": 2,
-          "text": "第二部分是参数 —— 用 JSON Schema 写的格式声明,让模型能按需构建出正确的参数数据。",
+          "text": "常见的 tool 有:Bash 执行系统命令;Read、Edit、Write 读写文件;",
           "audio": "zh/3-2.mp3",
-          "durMs": 7920,
-          "gapMs": 500
+          "durMs": 5000,
+          "gapMs": 820
         },
         {
           "idx": 3,
-          "text": "有了这两样,模型才能生成正确的 tool call,驱动 Agent 去调用。",
+          "text": "Agent 委托子任务;Skill、ToolSearch 负责动态扩展。",
           "audio": "zh/3-3.mp3",
-          "durMs": 6300,
+          "durMs": 3797,
+          "gapMs": 1136
+        },
+        {
+          "idx": 4,
+          "text": "注意这里 Tools 的数量:当前版本默认内置 10 个。",
+          "audio": "zh/3-4.mp3",
+          "durMs": 2889,
+          "gapMs": 1425
+        },
+        {
+          "idx": 5,
+          "text": "后面会看到,工具数量是可以动态增加的。",
+          "audio": "zh/3-5.mp3",
+          "durMs": 3302,
           "gapMs": 900
         }
       ]
@@ -121,23 +121,30 @@
       "lines": [
         {
           "idx": 0,
-          "text": "再看 System。它不是你说的话,却决定了模型怎么干活。",
+          "text": "我们点开其中一个看看 —— 就用 Bash。",
           "audio": "zh/4-0.mp3",
-          "durMs": 5040,
-          "gapMs": 500
+          "durMs": 2693,
+          "gapMs": 1276
         },
         {
           "idx": 1,
-          "text": "身份、代码风格、怎么用工具、怎么如实汇报、怎么权衡安全与成本 —— 都在这里。",
+          "text": "往下看它的结构。第一部分是描述 —— 它帮助模型理解:这个工具是干什么的、什么时候该调用它。",
           "audio": "zh/4-1.mp3",
-          "durMs": 6660,
-          "gapMs": 200
+          "durMs": 6586,
+          "gapMs": 1223
         },
         {
           "idx": 2,
-          "text": "它有固定的模板结构,但里面的值,由 Agent 按本次环境提取后注入。我们点开几个字段看看。",
+          "text": "第二部分是参数 —— 一份格式声明,让模型能按需构建出正确的参数数据。",
           "audio": "zh/4-2.mp3",
-          "durMs": 7920,
+          "durMs": 5229,
+          "gapMs": 1229
+        },
+        {
+          "idx": 3,
+          "text": "有了这两样,模型才能生成正确的工具调用,驱动 Agent 去执行。",
+          "audio": "zh/4-3.mp3",
+          "durMs": 4540,
           "gapMs": 900
         }
       ]
@@ -147,9 +154,23 @@
       "lines": [
         {
           "idx": 0,
-          "text": "环境:你的工作目录、操作系统、模型版本 —— 模型对「你在哪干活」的全部感知,都来自这里。",
+          "text": "再看 System。它不是你说的话,却决定了模型怎么干活。",
           "audio": "zh/5-0.mp3",
-          "durMs": 7740,
+          "durMs": 4328,
+          "gapMs": 1191
+        },
+        {
+          "idx": 1,
+          "text": "身份、代码风格、怎么用工具、怎么如实汇报、怎么权衡安全与成本 —— 都在这里。",
+          "audio": "zh/5-1.mp3",
+          "durMs": 6276,
+          "gapMs": 1248
+        },
+        {
+          "idx": 2,
+          "text": "它有固定的模板结构,但里面的值,由 Agent 按本次环境提取后注入。我们点开几个字段看看。",
+          "audio": "zh/5-2.mp3",
+          "durMs": 6902,
           "gapMs": 900
         }
       ]
@@ -159,9 +180,16 @@
       "lines": [
         {
           "idx": 0,
-          "text": "记忆管理:声明记忆该写到哪里、怎么写 —— 由模型驱动生成,跨会话保留。",
+          "text": "记忆管理:声明记忆该写到哪里、怎么写 ——",
           "audio": "zh/6-0.mp3",
-          "durMs": 6120,
+          "durMs": 3378,
+          "gapMs": 917
+        },
+        {
+          "idx": 1,
+          "text": "由模型驱动生成,跨会话保留。",
+          "audio": "zh/6-1.mp3",
+          "durMs": 2545,
           "gapMs": 900
         }
       ]
@@ -171,16 +199,9 @@
       "lines": [
         {
           "idx": 0,
-          "text": "git 状态:当前分支、改动文件 —— 每次调用时,仓库现场的快照。",
+          "text": "环境:你的工作目录、操作系统、模型版本 —— 模型对「你在哪干活」的全部感知,都来自这里。",
           "audio": "zh/7-0.mp3",
-          "durMs": 5580,
-          "gapMs": 500
-        },
-        {
-          "idx": 1,
-          "text": "这里先记住一句:System 定义了模型「我是谁、我该怎么做事」,同时也包含了你项目的部分元信息。",
-          "audio": "zh/7-1.mp3",
-          "durMs": 8640,
+          "durMs": 6525,
           "gapMs": 900
         }
       ]
@@ -190,9 +211,23 @@
       "lines": [
         {
           "idx": 0,
-          "text": "而注入最频繁、长得最快的,是 Messages —— 它随你每一轮对话不断往上堆。",
+          "text": "git 状态:当前分支、改动文件 —— 每次调用时,仓库现场的快照。",
           "audio": "zh/8-0.mp3",
-          "durMs": 6840,
+          "durMs": 5200,
+          "gapMs": 1234
+        },
+        {
+          "idx": 1,
+          "text": "顺带一提:你的项目名和分支名,Anthropic 的服务器自然也都见过了。",
+          "audio": "zh/8-1.mp3",
+          "durMs": 4396,
+          "gapMs": 1616
+        },
+        {
+          "idx": 2,
+          "text": "这里先记住一句:System 定义了模型「我是谁、我该怎么做事」,同时也包含了你项目的部分元信息。",
+          "audio": "zh/8-2.mp3",
+          "durMs": 7161,
           "gapMs": 900
         }
       ]
@@ -202,16 +237,9 @@
       "lines": [
         {
           "idx": 0,
-          "text": "终于到 Messages 了!你也许以为第一条就是你的输入?并不是。",
+          "text": "而注入最频繁、长得最快的,是 Messages —— 它随你每一轮对话不断往上堆。",
           "audio": "zh/9-0.mp3",
-          "durMs": 5760,
-          "gapMs": 500
-        },
-        {
-          "idx": 1,
-          "text": "排在最前面的,是 Claude Code 替你动态注入的:CLAUDE.md、你的项目记忆,还有账号信息。",
-          "audio": "zh/9-1.mp3",
-          "durMs": 9000,
+          "durMs": 5666,
           "gapMs": 900
         }
       ]
@@ -221,30 +249,16 @@
       "lines": [
         {
           "idx": 0,
-          "text": "你也许了解:要高效使用 Claude Code,你需要配置好自己的 CLAUDE.md。",
+          "text": "终于到 Messages 了!你也许以为第一条就是你的输入?并不是。",
           "audio": "zh/10-0.mp3",
-          "durMs": 7380,
-          "gapMs": 500
+          "durMs": 4967,
+          "gapMs": 1136
         },
         {
           "idx": 1,
-          "text": "现在,你可以理解它是如何被 LLM 感知的了 —— 就是眼前这条。",
+          "text": "排在最前面的,是 Claude Code 替你动态注入的:Claude 点 M D、你的项目记忆,还有账号信息。",
           "audio": "zh/10-1.mp3",
-          "durMs": 5220,
-          "gapMs": 500
-        },
-        {
-          "idx": 2,
-          "text": "System 是 Claude Code 全局维度的统一提示册;而 CLAUDE.md 是你自己的专属提示词,",
-          "audio": "zh/10-2.mp3",
-          "durMs": 8820,
-          "gapMs": 500
-        },
-        {
-          "idx": 3,
-          "text": "它可以按全局、项目、本地等不同维度,按你的诉求生效。",
-          "audio": "zh/10-3.mp3",
-          "durMs": 4680,
+          "durMs": 6473,
           "gapMs": 900
         }
       ]
@@ -254,16 +268,30 @@
       "lines": [
         {
           "idx": 0,
-          "text": "让我们留意「记忆」这一块 —— 还记得 System 里那段 Memory 吗?",
+          "text": "你也许了解:要高效使用 Claude Code,你需要配置好自己的 Claude 点 M D。",
           "audio": "zh/11-0.mp3",
-          "durMs": 6120,
-          "gapMs": 500
+          "durMs": 4901,
+          "gapMs": 1218
         },
         {
           "idx": 1,
-          "text": "System 讲的是记忆该写到哪、怎么写;而 Messages 这里,是此刻真正被写进去的内容 —— 一个是规则,一个是产出。",
+          "text": "现在,你可以理解它是如何被 LLM 感知的了 —— 就是眼前这条。",
           "audio": "zh/11-1.mp3",
-          "durMs": 10440,
+          "durMs": 4615,
+          "gapMs": 1243
+        },
+        {
+          "idx": 2,
+          "text": "System 是 Claude Code 全局维度的统一提示词;而 Claude 点 M D 是你自己的专属提示词,",
+          "audio": "zh/11-2.mp3",
+          "durMs": 7582,
+          "gapMs": 158
+        },
+        {
+          "idx": 3,
+          "text": "它可以按全局、项目、本地等不同维度,按你的诉求生效。",
+          "audio": "zh/11-3.mp3",
+          "durMs": 3300,
           "gapMs": 900
         }
       ]
@@ -273,23 +301,23 @@
       "lines": [
         {
           "idx": 0,
-          "text": "再往后,才轮到你真正敲下的第一句话。",
+          "text": "让我们留意「记忆」这一块 —— 还记得 System 里那段记忆管理吗?",
           "audio": "zh/12-0.mp3",
-          "durMs": 3240,
-          "gapMs": 200
+          "durMs": 4082,
+          "gapMs": 1220
         },
         {
           "idx": 1,
-          "text": "就这么一条:「请输出现在时间」—— 7 个字。",
+          "text": "System 讲的是记忆管理规则:该写到哪、怎么写;",
           "audio": "zh/12-1.mp3",
-          "durMs": 3780,
-          "gapMs": 500
+          "durMs": 3530,
+          "gapMs": 957
         },
         {
           "idx": 2,
-          "text": "在整块 context 里,它小到只占 0.01% —— 万分之一。",
+          "text": "而 Messages 这里,是此刻真正被写进去的内容 —— 一个是规则,一个是产出。",
           "audio": "zh/12-2.mp3",
-          "durMs": 5220,
+          "durMs": 5738,
           "gapMs": 900
         }
       ]
@@ -299,38 +327,24 @@
       "lines": [
         {
           "idx": 0,
-          "text": "对于第一条用户消息,除了你的输入,Claude Code 还会声明一系列拓展能力。",
+          "text": "再往后,才轮到你真正敲下的第一句话。",
           "audio": "zh/13-0.mp3",
-          "durMs": 7020,
-          "gapMs": 200
+          "durMs": 3184,
+          "gapMs": 931
         },
         {
           "idx": 1,
-          "text": "比如点开这条 —— 延迟加载的工具清单。注意它有多短:每个工具只报了一个名称,不像前面完整的 tool 声明那么长。",
+          "text": "就这么一条:「请输出现在时间」—— 7 个字。",
           "audio": "zh/13-1.mp3",
-          "durMs": 9720,
-          "gapMs": 500
+          "durMs": 2834,
+          "gapMs": 1255
         },
         {
           "idx": 2,
-          "text": "agent 类型、defer tool、还有 skills,都是类似的逻辑 —— 先报个名,等真正用到时再展开。",
+          "text": "在整块 context 里,它小到只占 0.01% —— 万分之一。",
           "audio": "zh/13-2.mp3",
-          "durMs": 9180,
-          "gapMs": 500
-        },
-        {
-          "idx": 3,
-          "text": "为什么不一次全塞进来?这就是 Claude Code 的渐进式披露机制 —— 用得到时才展开,省下宝贵的 context。",
-          "audio": "zh/13-3.mp3",
-          "durMs": 9900,
-          "gapMs": 500
-        },
-        {
-          "idx": 4,
-          "text": "后续我们会用真实的 case,看渐进式披露机制如何生效。",
-          "audio": "zh/13-4.mp3",
-          "durMs": 4860,
-          "gapMs": 900
+          "durMs": 4564,
+          "gapMs": 2000
         }
       ]
     },
@@ -339,24 +353,45 @@
       "lines": [
         {
           "idx": 0,
-          "text": "让我们回到首次请求的全景。",
+          "text": "对于第一条用户消息,除了你的输入,Claude Code 还会声明一系列拓展能力。",
           "audio": "zh/14-0.mp3",
-          "durMs": 2340,
-          "gapMs": 200
+          "durMs": 4938,
+          "gapMs": 940
         },
         {
           "idx": 1,
-          "text": "你真正输入的那 7 个字,在整个 context 里肉眼根本找不到 —— 只占 0.01%。",
+          "text": "比如点开这条 —— 延迟加载的工具清单。注意它有多短:",
           "audio": "zh/14-1.mp3",
-          "durMs": 7020,
-          "gapMs": 900
+          "durMs": 3786,
+          "gapMs": 993
         },
         {
           "idx": 2,
-          "text": "剩下的 99.99%,是工具、规则、记忆,以及被注入的上下文。",
+          "text": "前面 Tools 里的 10 个完整工具定义,占首次请求约 63.7%;",
           "audio": "zh/14-2.mp3",
-          "durMs": 5400,
-          "gapMs": 2000
+          "durMs": 4953,
+          "gapMs": 1197
+        },
+        {
+          "idx": 3,
+          "text": "而这条延迟工具清单只有 1.9%,因为每个工具只报一个名称。",
+          "audio": "zh/14-3.mp3",
+          "durMs": 4590,
+          "gapMs": 1241
+        },
+        {
+          "idx": 4,
+          "text": "这就是渐进式披露 —— agent 类型、defer tool、skills 都同理:用到时才展开,省下 context。",
+          "audio": "zh/14-4.mp3",
+          "durMs": 6523,
+          "gapMs": 1241
+        },
+        {
+          "idx": 5,
+          "text": "后续我们会用真实的 case,看渐进式披露机制如何生效。",
+          "audio": "zh/14-5.mp3",
+          "durMs": 4471,
+          "gapMs": 900
         }
       ]
     },
@@ -365,44 +400,23 @@
       "lines": [
         {
           "idx": 0,
-          "text": "但 context 不会停在首次请求。这,是同一个工具开发会话进行到第 190 次调用时的样子。",
+          "text": "让我们回到首次请求的全景。",
           "audio": "zh/15-0.mp3",
-          "durMs": 7920,
-          "gapMs": 500
+          "durMs": 2008,
+          "gapMs": 924
         },
         {
           "idx": 1,
-          "text": "286 万字符 —— 首次请求的 44 倍。Messages 占了 98%,Tools 和 System 的占比已经小到几乎可以忽略。",
+          "text": "你真正输入的那 7 个字,在整个 context 里肉眼根本找不到 —— 只占 0.01%。",
           "audio": "zh/15-1.mp3",
-          "durMs": 10260,
-          "gapMs": 900
+          "durMs": 5430,
+          "gapMs": 1660
         },
         {
           "idx": 2,
-          "text": "占比最大的是模型思考 —— 166 段,占了整整 59%。",
+          "text": "剩下的 99.99%,是工具、规则、记忆管理,以及被注入的上下文。",
           "audio": "zh/15-2.mp3",
-          "durMs": 4500,
-          "gapMs": 500
-        },
-        {
-          "idx": 3,
-          "text": "两张贴进对话的截图,占 19% —— 单张图片就接近 40 万字符。",
-          "audio": "zh/15-3.mp3",
-          "durMs": 5220,
-          "gapMs": 500
-        },
-        {
-          "idx": 4,
-          "text": "213 条工具结果,占 9%;",
-          "audio": "zh/15-4.mp3",
-          "durMs": 2340,
-          "gapMs": 200
-        },
-        {
-          "idx": 5,
-          "text": "216 次工具调用,占 6%。你说的每一句话,都淹没在这片海里。",
-          "audio": "zh/15-5.mp3",
-          "durMs": 5400,
+          "durMs": 5817,
           "gapMs": 2000
         }
       ]
@@ -412,44 +426,58 @@
       "lines": [
         {
           "idx": 0,
-          "text": "回顾本章:一次调用的 context,顶层就三个核心字段。",
+          "text": "但 context 不会停在首次请求。这,是同一个工具开发会话进行到第 190 次调用时的样子。",
           "audio": "zh/16-0.mp3",
-          "durMs": 5040,
-          "gapMs": 500
+          "durMs": 7683,
+          "gapMs": 959
         },
         {
           "idx": 1,
-          "text": "Tools 是模型的能力说明书;System 是行为准则,也带着你项目的元信息;Messages 承载注入的上下文、能力声明,和你的对话。",
+          "text": "画面里就是我们开发这个工具的真实会话 —— 项目细节请忽略,只看 context 本身的规模。",
           "audio": "zh/16-1.mp3",
-          "durMs": 11880,
-          "gapMs": 900
+          "durMs": 5709,
+          "gapMs": 1257
         },
         {
           "idx": 2,
-          "text": "你输入的,只是其中极小的一部分;其余的一切,都由 Claude Code 为你构建。",
+          "text": "286 万字符 —— 首次请求的 44 倍。",
           "audio": "zh/16-2.mp3",
-          "durMs": 7020,
-          "gapMs": 200
+          "durMs": 3019,
+          "gapMs": 1255
         },
         {
           "idx": 3,
-          "text": "一点说明:本章的素材取自 Claude Code 2.1.167,而 Claude Code 的更新非常频繁。",
+          "text": "Messages 占了 98%,Tools 和 System 的占比已经小到几乎可以忽略。",
           "audio": "zh/16-3.mp3",
-          "durMs": 8820,
-          "gapMs": 500
+          "durMs": 4917,
+          "gapMs": 1633
         },
         {
           "idx": 4,
-          "text": "当你用 session-devtools 打开自己的会话时,看到的细节可能已经不同。",
+          "text": "占比最大的是模型思考 —— 166 段,占了整整 59%。",
           "audio": "zh/16-4.mp3",
-          "durMs": 7200,
-          "gapMs": 500
+          "durMs": 4416,
+          "gapMs": 1206
         },
         {
           "idx": 5,
-          "text": "但这并不要紧 —— 重点从来不是掌握每一条提示词的细节,而是理解 context 的核心组成,和它的演变机制。",
+          "text": "两张贴进对话的截图,占 19% —— 单张图片就接近 40 万字符。",
           "audio": "zh/16-5.mp3",
-          "durMs": 9180,
+          "durMs": 4833,
+          "gapMs": 1230
+        },
+        {
+          "idx": 6,
+          "text": "216 条工具结果,占 9%;",
+          "audio": "zh/16-6.mp3",
+          "durMs": 2415,
+          "gapMs": 966
+        },
+        {
+          "idx": 7,
+          "text": "216 次工具调用,占 6%。你说的每一句话,都淹没在这片海里。",
+          "audio": "zh/16-7.mp3",
+          "durMs": 5591,
           "gapMs": 2000
         }
       ]
@@ -459,19 +487,88 @@
       "lines": [
         {
           "idx": 0,
-          "text": "在下一章,我们将观察每一轮对话中,context 是如何演变的,工具调用和模型思考又是如何交替进行的。",
+          "text": "回顾本章:一次调用的 context,顶层就三个核心字段。",
           "audio": "zh/17-0.mp3",
-          "durMs": 9000,
-          "gapMs": 900
+          "durMs": 4175,
+          "gapMs": 1214
         },
         {
           "idx": 1,
-          "text": "同时用可视化分析渐进式披露机制在对话中的生效情况,看它怎么帮我们省下宝贵的上下文资源。",
+          "text": "Tools 是模型的能力说明书;System 是行为准则,也带着你项目的元信息;",
           "audio": "zh/17-1.mp3",
-          "durMs": 7740,
+          "durMs": 6546,
+          "gapMs": 231
+        },
+        {
+          "idx": 2,
+          "text": "Messages 承载注入的上下文、能力声明,和你的对话。",
+          "audio": "zh/17-2.mp3",
+          "durMs": 5072,
+          "gapMs": 279
+        },
+        {
+          "idx": 3,
+          "text": "你输入的,只是其中极小的一部分;其余的一切,都由 Claude Code 为你构建。",
+          "audio": "zh/17-3.mp3",
+          "durMs": 6667,
+          "gapMs": 257
+        },
+        {
+          "idx": 4,
+          "text": "一点说明:本章的素材取自 Claude Code 2.1.167,而 Claude Code 的更新非常频繁。",
+          "audio": "zh/17-4.mp3",
+          "durMs": 5352,
+          "gapMs": 1214
+        },
+        {
+          "idx": 5,
+          "text": "当你用 session-devtools 打开自己的会话时,看到的细节可能已经不同。",
+          "audio": "zh/17-5.mp3",
+          "durMs": 4187,
+          "gapMs": 1226
+        },
+        {
+          "idx": 6,
+          "text": "但这并不要紧 —— 重点从来不是掌握每一条提示词的细节,",
+          "audio": "zh/17-6.mp3",
+          "durMs": 3697,
+          "gapMs": 937
+        },
+        {
+          "idx": 7,
+          "text": "而是理解 context 的核心组成,和它的演变机制。",
+          "audio": "zh/17-7.mp3",
+          "durMs": 3513,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 18,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "在下一章,我们将观察每一轮对话中,context 是如何一步步生长的;",
+          "audio": "zh/18-0.mp3",
+          "durMs": 4809,
+          "gapMs": 1302
+        },
+        {
+          "idx": 1,
+          "text": "用真实 case,看渐进式披露如何生效,怎么帮我们省下宝贵的上下文;",
+          "audio": "zh/18-1.mp3",
+          "durMs": 5177,
+          "gapMs": 1173
+        },
+        {
+          "idx": 2,
+          "text": "以及 —— 当增长逼近极限时,会发生什么。",
+          "audio": "zh/18-2.mp3",
+          "durMs": 3331,
           "gapMs": 2000
         }
       ]
     }
-  ]
+  ],
+  "aligned": "chunks:19/19"
 }

@@ -1,0 +1,574 @@
+{
+  "storyId": "real-context",
+  "lang": "en",
+  "voice": "minimax:default",
+  "builtAt": "2026-06-07T06:46:13.404Z",
+  "totalMs": 334233,
+  "steps": [
+    {
+      "stepIdx": 0,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "You open Claude Code and type one line — \"what time is it for now?\".",
+          "audio": "en/0-0.mp3",
+          "durMs": 2917,
+          "gapMs": 884
+        },
+        {
+          "idx": 1,
+          "text": "You might assume the model sees exactly what you typed.",
+          "audio": "en/0-1.mp3",
+          "durMs": 2082,
+          "gapMs": 1099
+        },
+        {
+          "idx": 2,
+          "text": "But what the model actually read this time was not one line.",
+          "audio": "en/0-2.mp3",
+          "durMs": 2739,
+          "gapMs": 200
+        }
+      ]
+    },
+    {
+      "stepIdx": 1,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "It was a huge JSON — about 65k characters. Expand it, and the nesting goes on and on.",
+          "audio": "en/1-0.mp3",
+          "durMs": 4886,
+          "gapMs": 1208
+        },
+        {
+          "idx": 1,
+          "text": "Don't be scared: its top level has only three core fields — Tools, System, Messages.",
+          "audio": "en/1-1.mp3",
+          "durMs": 5103,
+          "gapMs": 1167
+        },
+        {
+          "idx": 2,
+          "text": "We intercepted the raw request Claude Code sends out, then attributed its contents.",
+          "audio": "en/1-2.mp3",
+          "durMs": 4148,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 2,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Remember the bar at the end of last chapter? Unfolded, it becomes these three.",
+          "audio": "en/2-0.mp3",
+          "durMs": 4180,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 3,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "First, Tools. Recall last chapter's tool calls and tool results —",
+          "audio": "en/3-0.mp3",
+          "durMs": 4270,
+          "gapMs": 848
+        },
+        {
+          "idx": 1,
+          "text": "this section declares which tools the model may use, and how.",
+          "audio": "en/3-1.mp3",
+          "durMs": 2952,
+          "gapMs": 1188
+        },
+        {
+          "idx": 2,
+          "text": "The usual suspects: Bash runs commands; Read, Edit and Write handle files;",
+          "audio": "en/3-2.mp3",
+          "durMs": 4908,
+          "gapMs": 854
+        },
+        {
+          "idx": 3,
+          "text": "Agent delegates subtasks; Skill and ToolSearch extend dynamically.",
+          "audio": "en/3-3.mp3",
+          "durMs": 3570,
+          "gapMs": 1221
+        },
+        {
+          "idx": 4,
+          "text": "Note the count: this version ships 10 built-in tools.",
+          "audio": "en/3-4.mp3",
+          "durMs": 2813,
+          "gapMs": 816
+        },
+        {
+          "idx": 5,
+          "text": "Later you'll see that number grow at runtime.",
+          "audio": "en/3-5.mp3",
+          "durMs": 2049,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 4,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Let's open one of them — Bash.",
+          "audio": "en/4-0.mp3",
+          "durMs": 1367,
+          "gapMs": 1234
+        },
+        {
+          "idx": 1,
+          "text": "Scroll its structure. Part one, the description: what the tool does and when to call it.",
+          "audio": "en/4-1.mp3",
+          "durMs": 4478,
+          "gapMs": 1213
+        },
+        {
+          "idx": 2,
+          "text": "Part two, the parameters: a JSON Schema so the model can build correct arguments.",
+          "audio": "en/4-2.mp3",
+          "durMs": 4323,
+          "gapMs": 1147
+        },
+        {
+          "idx": 3,
+          "text": "With these two, the model can produce a correct tool call for the Agent to run.",
+          "audio": "en/4-3.mp3",
+          "durMs": 3734,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 5,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Now System. These aren't your words, yet they decide how the model works.",
+          "audio": "en/5-0.mp3",
+          "durMs": 3872,
+          "gapMs": 1097
+        },
+        {
+          "idx": 1,
+          "text": "Identity, code style, tool usage, honest reporting, the safety-versus-cost tradeoffs.",
+          "audio": "en/5-1.mp3",
+          "durMs": 5102,
+          "gapMs": 1121
+        },
+        {
+          "idx": 2,
+          "text": "The template is fixed; the values are injected per environment. Let's open a few.",
+          "audio": "en/5-2.mp3",
+          "durMs": 4216,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 6,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Memory management: where memories should be written, and how —",
+          "audio": "en/6-0.mp3",
+          "durMs": 3061,
+          "gapMs": 907
+        },
+        {
+          "idx": 1,
+          "text": "model-driven, and it persists across sessions.",
+          "audio": "en/6-1.mp3",
+          "durMs": 2944,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 7,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Environment: your working directory, OS, model version — everything about where you work.",
+          "audio": "en/7-0.mp3",
+          "durMs": 4841,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 8,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Git status: current branch, changed files — a snapshot of the repo at every call.",
+          "audio": "en/8-0.mp3",
+          "durMs": 4316,
+          "gapMs": 1157
+        },
+        {
+          "idx": 1,
+          "text": "Meaning Anthropic's servers have seen your project name and branch names.",
+          "audio": "en/8-1.mp3",
+          "durMs": 2912,
+          "gapMs": 1517
+        },
+        {
+          "idx": 2,
+          "text": "Remember this: System defines who the model is and how it works, plus project metadata.",
+          "audio": "en/8-2.mp3",
+          "durMs": 4954,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 9,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "And the section injected most often, growing fastest, is Messages — it piles up every turn.",
+          "audio": "en/9-0.mp3",
+          "durMs": 5898,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 10,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Finally, Messages! You'd expect your input to come first? It doesn't.",
+          "audio": "en/10-0.mp3",
+          "durMs": 4119,
+          "gapMs": 1102
+        },
+        {
+          "idx": 1,
+          "text": "At the front sits what Claude Code injects for you: CLAUDE.md, project memory, account info.",
+          "audio": "en/10-1.mp3",
+          "durMs": 6083,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 11,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "You may know this: to use Claude Code well, you configure your own CLAUDE.md.",
+          "audio": "en/11-0.mp3",
+          "durMs": 4244,
+          "gapMs": 1308
+        },
+        {
+          "idx": 1,
+          "text": "Now you can see how the LLM actually perceives it — it's this very block.",
+          "audio": "en/11-1.mp3",
+          "durMs": 3023,
+          "gapMs": 1192
+        },
+        {
+          "idx": 2,
+          "text": "System is Claude Code's unified, global prompt; CLAUDE.md is your own,",
+          "audio": "en/11-2.mp3",
+          "durMs": 4666,
+          "gapMs": 1151
+        },
+        {
+          "idx": 3,
+          "text": "scoped however you need: global, per-project, or local.",
+          "audio": "en/11-3.mp3",
+          "durMs": 3400,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 12,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Now notice \"memory\" — remember Memory Management back in System?",
+          "audio": "en/12-0.mp3",
+          "durMs": 3106,
+          "gapMs": 1180
+        },
+        {
+          "idx": 1,
+          "text": "System states the memory-management rules: where memories go, and how to write them;",
+          "audio": "en/12-1.mp3",
+          "durMs": 4113,
+          "gapMs": 889
+        },
+        {
+          "idx": 2,
+          "text": "Messages holds what is actually written right now — one is the rule, one the output.",
+          "audio": "en/12-2.mp3",
+          "durMs": 4369,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 13,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Only after all that comes the first thing you actually typed.",
+          "audio": "en/13-0.mp3",
+          "durMs": 2794,
+          "gapMs": 793
+        },
+        {
+          "idx": 1,
+          "text": "Just this: \"what time is it for now?\" — 42 characters.",
+          "audio": "en/13-1.mp3",
+          "durMs": 3058,
+          "gapMs": 1046
+        },
+        {
+          "idx": 2,
+          "text": "Inside the whole context, that's 0.06% — six parts in ten thousand.",
+          "audio": "en/13-2.mp3",
+          "durMs": 4789,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 14,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Along with your first message, Claude Code also declares a set of extensions.",
+          "audio": "en/14-0.mp3",
+          "durMs": 3710,
+          "gapMs": 879
+        },
+        {
+          "idx": 1,
+          "text": "Open this one — the deferred-tools listing. Notice how short it is:",
+          "audio": "en/14-1.mp3",
+          "durMs": 3053,
+          "gapMs": 790
+        },
+        {
+          "idx": 2,
+          "text": "The 10 full tool definitions in Tools take about 63.7% of this first request;",
+          "audio": "en/14-2.mp3",
+          "durMs": 4989,
+          "gapMs": 1062
+        },
+        {
+          "idx": 3,
+          "text": "this deferred-tools list is only 1.9%, because each tool is just a name.",
+          "audio": "en/14-3.mp3",
+          "durMs": 4685,
+          "gapMs": 1126
+        },
+        {
+          "idx": 4,
+          "text": "That's progressive disclosure — agent types, deferred tools, skills all work this way.",
+          "audio": "en/14-4.mp3",
+          "durMs": 5245,
+          "gapMs": 191
+        },
+        {
+          "idx": 5,
+          "text": "Later, we'll watch this mechanism fire in a real case.",
+          "audio": "en/14-5.mp3",
+          "durMs": 2301,
+          "gapMs": 900
+        }
+      ]
+    },
+    {
+      "stepIdx": 15,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Let's return to the full view of this first request.",
+          "audio": "en/15-0.mp3",
+          "durMs": 2248,
+          "gapMs": 908
+        },
+        {
+          "idx": 1,
+          "text": "The 42 characters you typed are invisible to the naked eye — just 0.06% of the whole.",
+          "audio": "en/15-1.mp3",
+          "durMs": 5334,
+          "gapMs": 1547
+        },
+        {
+          "idx": 2,
+          "text": "The other 99.94% is tools, rules, memories, and injected context.",
+          "audio": "en/15-2.mp3",
+          "durMs": 5155,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 16,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "But context doesn't stop at the first request. This is call 190 of one dev session.",
+          "audio": "en/16-0.mp3",
+          "durMs": 4403,
+          "gapMs": 858
+        },
+        {
+          "idx": 1,
+          "text": "This is us building this very tool — in Chinese. Ignore the details; watch the scale.",
+          "audio": "en/16-1.mp3",
+          "durMs": 4307,
+          "gapMs": 1261
+        },
+        {
+          "idx": 2,
+          "text": "2.86 million characters — 44 times the first request.",
+          "audio": "en/16-2.mp3",
+          "durMs": 3564,
+          "gapMs": 1068
+        },
+        {
+          "idx": 3,
+          "text": "Messages takes 98%; Tools and System are squeezed into a thin sliver.",
+          "audio": "en/16-3.mp3",
+          "durMs": 3756,
+          "gapMs": 1611
+        },
+        {
+          "idx": 4,
+          "text": "The biggest class: model thinking — 166 blocks, a full 59%.",
+          "audio": "en/16-4.mp3",
+          "durMs": 4589,
+          "gapMs": 1261
+        },
+        {
+          "idx": 5,
+          "text": "Two pasted screenshots take 19% — one alone is nearly 400k characters.",
+          "audio": "en/16-5.mp3",
+          "durMs": 4624,
+          "gapMs": 1257
+        },
+        {
+          "idx": 6,
+          "text": "216 tool results: 9%;",
+          "audio": "en/16-6.mp3",
+          "durMs": 2509,
+          "gapMs": 904
+        },
+        {
+          "idx": 7,
+          "text": "216 tool calls: 6%. Every word you said is drowned in this sea.",
+          "audio": "en/16-7.mp3",
+          "durMs": 5020,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 17,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "To recap: one call's context has just three top-level fields.",
+          "audio": "en/17-0.mp3",
+          "durMs": 3720,
+          "gapMs": 500
+        },
+        {
+          "idx": 1,
+          "text": "Tools is the model's capability manual; System is the rulebook, plus project metadata;",
+          "audio": "en/17-1.mp3",
+          "durMs": 4752,
+          "gapMs": 200
+        },
+        {
+          "idx": 2,
+          "text": "Messages carries injected context, capability listings, and your dialogue.",
+          "audio": "en/17-2.mp3",
+          "durMs": 4320,
+          "gapMs": 900
+        },
+        {
+          "idx": 3,
+          "text": "What you typed is a tiny fraction; everything else is built for you by Claude Code.",
+          "audio": "en/17-3.mp3",
+          "durMs": 4224,
+          "gapMs": 900
+        },
+        {
+          "idx": 4,
+          "text": "One note: this chapter's material comes from Claude Code 2.1.167, which updates fast.",
+          "audio": "en/17-4.mp3",
+          "durMs": 5904,
+          "gapMs": 500
+        },
+        {
+          "idx": 5,
+          "text": "When you open your own session in session-devtools, details may already differ.",
+          "audio": "en/17-5.mp3",
+          "durMs": 4224,
+          "gapMs": 500
+        },
+        {
+          "idx": 6,
+          "text": "That's fine — the point was never to memorize every prompt line,",
+          "audio": "en/17-6.mp3",
+          "durMs": 3216,
+          "gapMs": 200
+        },
+        {
+          "idx": 7,
+          "text": "but to understand what a context is made of, and how it evolves.",
+          "audio": "en/17-7.mp3",
+          "durMs": 3384,
+          "gapMs": 2000
+        }
+      ]
+    },
+    {
+      "stepIdx": 18,
+      "lines": [
+        {
+          "idx": 0,
+          "text": "Next chapter: watch the context grow, step by step, across a conversation;",
+          "audio": "en/18-0.mp3",
+          "durMs": 4685,
+          "gapMs": 1285
+        },
+        {
+          "idx": 1,
+          "text": "see progressive disclosure fire in a real case, saving precious context;",
+          "audio": "en/18-1.mp3",
+          "durMs": 3689,
+          "gapMs": 1229
+        },
+        {
+          "idx": 2,
+          "text": "and — what happens when growth approaches the limit.",
+          "audio": "en/18-2.mp3",
+          "durMs": 2048,
+          "gapMs": 2000
+        }
+      ]
+    }
+  ],
+  "aligned": "chunks:18/19"
+}

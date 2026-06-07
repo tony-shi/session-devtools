@@ -1,0 +1,109 @@
+{
+  "storyId": "agent-loop",
+  "lang": "en",
+  "voice": "minimax:speech-2.8-hd:audiobook_male_1:sp1.035:emneutral",
+  "builtAt": "2026-06-07T06:42:47.028Z",
+  "chunks": [
+    {
+      "stepIdx": 0,
+      "file": "en-chunks/step-0.mp3",
+      "durMs": 17208,
+      "lines": 3,
+      "gapsMs": [
+        900,
+        900
+      ],
+      "textHash": "5779c01d64759cb5",
+      "aligned": true
+    },
+    {
+      "stepIdx": 1,
+      "file": "en-chunks/step-1.mp3",
+      "durMs": 13704,
+      "lines": 3,
+      "gapsMs": [
+        200,
+        900
+      ],
+      "textHash": "a0e62e711320fbe5",
+      "aligned": true
+    },
+    {
+      "stepIdx": 2,
+      "file": "en-chunks/step-2.mp3",
+      "durMs": 21096,
+      "lines": 5,
+      "gapsMs": [
+        200,
+        200,
+        500,
+        500
+      ],
+      "textHash": "897b8ce2af9d9c0e",
+      "aligned": true
+    },
+    {
+      "stepIdx": 3,
+      "file": "en-chunks/step-3.mp3",
+      "durMs": 24960,
+      "lines": 5,
+      "gapsMs": [
+        200,
+        200,
+        500,
+        900
+      ],
+      "textHash": "f1db52c30957c603",
+      "aligned": false
+    },
+    {
+      "stepIdx": 4,
+      "file": "en-chunks/step-4.mp3",
+      "durMs": 24144,
+      "lines": 5,
+      "gapsMs": [
+        200,
+        200,
+        500,
+        500
+      ],
+      "textHash": "8f8d01764c5e30c9",
+      "aligned": true
+    },
+    {
+      "stepIdx": 5,
+      "file": "en-chunks/step-5.mp3",
+      "durMs": 32880,
+      "lines": 6,
+      "gapsMs": [
+        500,
+        2000,
+        200,
+        200,
+        500
+      ],
+      "textHash": "b2bc326b63bb84d9",
+      "aligned": false
+    },
+    {
+      "stepIdx": 6,
+      "file": "en-chunks/step-6.mp3",
+      "durMs": 54768,
+      "lines": 11,
+      "gapsMs": [
+        500,
+        500,
+        500,
+        500,
+        500,
+        900,
+        500,
+        500,
+        900,
+        500
+      ],
+      "textHash": "a2c8a0e82aa45d17",
+      "aligned": false
+    }
+  ]
+}

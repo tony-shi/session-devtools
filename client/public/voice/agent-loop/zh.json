@@ -2,8 +2,8 @@
   "storyId": "agent-loop",
   "lang": "zh",
   "voice": "minimax:default",
-  "builtAt": "2026-05-31T07:59:06.059Z",
-  "totalMs": 239551,
+  "builtAt": "2026-06-07T06:46:14.128Z",
+  "totalMs": 224585,
   "steps": [
     {
       "stepIdx": 0,
@@ -12,21 +12,21 @@
           "idx": 0,
           "text": "Agent看上去只是一个聊天界面，但它背后其实有一整套执行链路在运转。",
           "audio": "zh/0-0.mp3",
-          "durMs": 7800,
+          "durMs": 6288,
           "gapMs": 900
         },
         {
           "idx": 1,
           "text": "最外层是会话。当前我们可以简单认为每当你打开一个终端就开启了一次会话。",
           "audio": "zh/0-1.mp3",
-          "durMs": 8183,
+          "durMs": 7104,
           "gapMs": 900
         },
         {
           "idx": 2,
           "text": "你的每次输入、模型的每次调用、Agent执行工具，都发生在这个会话中。",
           "audio": "zh/0-2.mp3",
-          "durMs": 7056,
+          "durMs": 6408,
           "gapMs": 2000
         }
       ]
@@ -38,22 +38,22 @@
           "idx": 0,
           "text": "把镜头推进到会话里的一个轮次。",
           "audio": "zh/1-0.mp3",
-          "durMs": 3264,
-          "gapMs": 200
+          "durMs": 2616,
+          "gapMs": 1066
         },
         {
           "idx": 1,
           "text": "轮次可以先简单理解为，用户发出一次输入，Agent处理它，直到给出最终回复。",
           "audio": "zh/1-1.mp3",
-          "durMs": 8448,
-          "gapMs": 200
+          "durMs": 6840,
+          "gapMs": 1771
         },
         {
           "idx": 2,
           "text": "一个会话里通常会有很多轮次。",
           "audio": "zh/1-2.mp3",
-          "durMs": 3744,
-          "gapMs": 200
+          "durMs": 3138,
+          "gapMs": 900
         }
       ]
     },
@@ -64,36 +64,36 @@
           "idx": 0,
           "text": "让我们把一个轮次拆开看。",
           "audio": "zh/2-0.mp3",
-          "durMs": 2784,
-          "gapMs": 200
+          "durMs": 2407,
+          "gapMs": 1099
         },
         {
           "idx": 1,
           "text": "第一步是用户输入。",
           "audio": "zh/2-1.mp3",
-          "durMs": 2208,
-          "gapMs": 200
+          "durMs": 1666,
+          "gapMs": 1038
         },
         {
           "idx": 2,
           "text": "但Agent不会把这句话原样丢给模型。",
           "audio": "zh/2-2.mp3",
-          "durMs": 4368,
-          "gapMs": 200
+          "durMs": 3117,
+          "gapMs": 1286
         },
         {
           "idx": 3,
           "text": "它会先准备上下文，例如，系统提示词、记忆、工具定义等等。",
           "audio": "zh/2-3.mp3",
-          "durMs": 7056,
-          "gapMs": 200
+          "durMs": 6061,
+          "gapMs": 1406
         },
         {
           "idx": 4,
           "text": "接着把用户输入放进去，打包成一次模型调用，让模型决定下一步。",
           "audio": "zh/2-4.mp3",
-          "durMs": 7272,
-          "gapMs": 200
+          "durMs": 6160,
+          "gapMs": 900
         }
       ]
     },
@@ -104,36 +104,36 @@
           "idx": 0,
           "text": "如果任务很简单，模型可能直接给出结论。",
           "audio": "zh/3-0.mp3",
-          "durMs": 4224,
-          "gapMs": 200
+          "durMs": 4108,
+          "gapMs": 974
         },
         {
           "idx": 1,
           "text": "但更多时候，它会先发现，还需要更多信息。",
           "audio": "zh/3-1.mp3",
-          "durMs": 5160,
-          "gapMs": 200
+          "durMs": 5212,
+          "gapMs": 168
         },
         {
           "idx": 2,
           "text": "所以它不直接回答，而是返回一次“工具调用”作为响应。",
           "audio": "zh/3-2.mp3",
-          "durMs": 6288,
-          "gapMs": 200
+          "durMs": 4347,
+          "gapMs": 1364
         },
         {
           "idx": 3,
           "text": "工具调用不是答案。它的含义是，请帮我执行一个动作。",
           "audio": "zh/3-3.mp3",
-          "durMs": 5952,
-          "gapMs": 200
+          "durMs": 4774,
+          "gapMs": 1758
         },
         {
           "idx": 4,
           "text": "例如读文件、搜代码、运行命令。",
           "audio": "zh/3-4.mp3",
-          "durMs": 4056,
-          "gapMs": 200
+          "durMs": 3336,
+          "gapMs": 900
         }
       ]
     },
@@ -144,36 +144,36 @@
           "idx": 0,
           "text": "接下来，Agent解析这个工具调用，真实地在你的电脑上执行工具。",
           "audio": "zh/4-0.mp3",
-          "durMs": 6048,
-          "gapMs": 200
+          "durMs": 5616,
+          "gapMs": 1053
         },
         {
           "idx": 1,
           "text": "执行完，它提取这个调用的结果。",
           "audio": "zh/4-1.mp3",
-          "durMs": 3840,
-          "gapMs": 200
+          "durMs": 3890,
+          "gapMs": 244
         },
         {
           "idx": 2,
           "text": "然后，这个调用结果会被放进下一次模型调用的上下文。",
           "audio": "zh/4-2.mp3",
-          "durMs": 6048,
-          "gapMs": 200
+          "durMs": 5979,
+          "gapMs": 353
         },
         {
           "idx": 3,
           "text": "这一步很关键，模型不再只是在远端思考。",
           "audio": "zh/4-3.mp3",
-          "durMs": 4944,
-          "gapMs": 200
+          "durMs": 4747,
+          "gapMs": 332
         },
         {
           "idx": 4,
           "text": "它可以借助工具，去查看你的文件，运行你的代码，操作你的命令行，真实地和你的世界互动。",
           "audio": "zh/4-4.mp3",
-          "durMs": 9720,
-          "gapMs": 200
+          "durMs": 6587,
+          "gapMs": 2000
         }
       ]
     },
@@ -184,43 +184,43 @@
           "idx": 0,
           "text": "让我们把这几步连起来看：模型调用、工具调用、调用结果，再回到下一次模型调用。",
           "audio": "zh/5-0.mp3",
-          "durMs": 9168,
-          "gapMs": 200
+          "durMs": 7384,
+          "gapMs": 1273
         },
         {
           "idx": 1,
           "text": "这条反复出现的链路，就是Agent loop。",
           "audio": "zh/5-1.mp3",
-          "durMs": 4104,
-          "gapMs": 200
+          "durMs": 2927,
+          "gapMs": 2836
         },
         {
           "idx": 2,
           "text": "每循环一次，模型就多拿到一块真实信息。",
           "audio": "zh/5-2.mp3",
-          "durMs": 5040,
-          "gapMs": 200
+          "durMs": 3488,
+          "gapMs": 1075
         },
         {
           "idx": 3,
           "text": "直到某一次，模型判断：该知道的已经知道，该做的也已经做完。",
           "audio": "zh/5-3.mp3",
-          "durMs": 7440,
-          "gapMs": 200
+          "durMs": 5275,
+          "gapMs": 1042
         },
         {
           "idx": 4,
           "text": "它可能直接回答，也可能是在最后一次工具调用改变文件之后，再给出收尾说明。",
           "audio": "zh/5-4.mp3",
-          "durMs": 8904,
-          "gapMs": 200
+          "durMs": 6672,
+          "gapMs": 1364
         },
         {
           "idx": 5,
           "text": "当没有新的下一步时，这个轮次就结束。",
           "audio": "zh/5-5.mp3",
-          "durMs": 4008,
-          "gapMs": 200
+          "durMs": 3552,
+          "gapMs": 900
         }
       ]
     },
@@ -231,80 +231,81 @@
           "idx": 0,
           "text": "让我们回顾本章的内容。",
           "audio": "zh/6-0.mp3",
-          "durMs": 2520,
+          "durMs": 2400,
           "gapMs": 500
         },
         {
           "idx": 1,
           "text": "会话，一次完整的对话，组织起全部工作。",
           "audio": "zh/6-1.mp3",
-          "durMs": 5208,
+          "durMs": 3600,
           "gapMs": 500
         },
         {
           "idx": 2,
           "text": "轮次，一次用户任务，以及为完成它的全部过程。",
           "audio": "zh/6-2.mp3",
-          "durMs": 5736,
+          "durMs": 4272,
           "gapMs": 500
         },
         {
           "idx": 3,
           "text": "模型调用，带着上下文，让模型做一次决策。",
           "audio": "zh/6-3.mp3",
-          "durMs": 4992,
+          "durMs": 4560,
           "gapMs": 500
         },
         {
           "idx": 4,
           "text": "工具调用，模型想让Agent做什么。",
           "audio": "zh/6-4.mp3",
-          "durMs": 3984,
+          "durMs": 3528,
           "gapMs": 500
         },
         {
           "idx": 5,
           "text": "调用结果，Agent执行后的结果，它将会塞回上下文，触发下一次模型调用。",
           "audio": "zh/6-5.mp3",
-          "durMs": 8496,
+          "durMs": 6576,
           "gapMs": 900
         },
         {
           "idx": 6,
           "text": "轮次结束时，模型可能直接回答，也可能在最后一次工具调用完成修改后收尾。",
           "audio": "zh/6-6.mp3",
-          "durMs": 8112,
+          "durMs": 6816,
           "gapMs": 500
         },
         {
           "idx": 7,
           "text": "把循环抽象出来，其实就是三个阶段：收集上下文、采取行动、验证结果。",
           "audio": "zh/6-7.mp3",
-          "durMs": 8856,
+          "durMs": 7728,
           "gapMs": 500
         },
         {
           "idx": 8,
           "text": "模型负责推理，工具负责行动。模型就像是人的大脑，工具则是手脚。",
           "audio": "zh/6-8.mp3",
-          "durMs": 7896,
+          "durMs": 6936,
           "gapMs": 900
         },
         {
           "idx": 9,
           "text": "下一章让我们切入Agent的核心，即每次模型调用前那份上下文。",
           "audio": "zh/6-9.mp3",
-          "durMs": 6552,
+          "durMs": 6696,
           "gapMs": 500
         },
         {
           "idx": 10,
           "text": "我们将会了解到，模型在做决定之前到底看见了什么。",
           "audio": "zh/6-10.mp3",
-          "durMs": 5472,
+          "durMs": 4872,
           "gapMs": 200
         }
       ]
     }
-  ]
+  ],
+  "aligned": "chunks:5/7"
 }
