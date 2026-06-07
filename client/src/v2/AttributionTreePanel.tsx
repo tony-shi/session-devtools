@@ -1015,6 +1015,13 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars, color }:
   const isToolUseLeaf = leaf.slotType === "messages.tool_use";
   const isToolResultLeaf = leaf.slotType === "messages.tool_result";
   const isAssistantTextLeaf = leaf.messageRole === "assistant" && !isThinkingLeaf && !isToolUseLeaf;
+  // 用户输入正文（leafLabel 同一判定 → "用户输入"）。排除 tool_result 根下拆出的
+  // free-text（那是工具结果）。不加这条会落到 <SegmentView> fallback：mono 灰底
+  // + 自带第二个复制按钮，与本面板其它文本卡（AI输出/注入）不一致。
+  const isUserTextLeaf =
+    (leaf.slotType === "messages.text" || leaf.slotType === "messages.inline.free-text") &&
+    leaf.messageRole === "user" &&
+    leaf.rootSlotType !== "messages.tool_result" && leaf.rootSlotType !== "messages.tool-result";
   const isImageLeaf = leaf.slotType === "messages.block.image";
   // 特化富展示判定（skill listing / 延迟工具 / agent 类型 / tool 定义）：命中则走"统一头 + 各自 body"。
   const skillListing = leaf.origin.kind === "rule" ? leaf.origin.payload?.skillListing : undefined;
@@ -1024,10 +1031,10 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars, color }:
   // .project-instructions / .global-instructions / .memory / .account），让它们统一走
   // SelectedDetailHeader + 高亮 MD 卡，而不是落到 <SegmentView> fallback（那条自带重复复制按钮）。
   const isInjectionLeaf = leaf.slotType.startsWith("messages.inline.system-reminder") || leaf.slotType === "messages.system-message";
-  const hasRawToggle = isSystemLeaf || isToolLeaf || isAssistantTextLeaf || isThinkingLeaf || isToolUseLeaf || isToolResultLeaf || isImageLeaf || isInjectionLeaf || !!skillListing || isDeferredListing || isAgentListing;
+  const hasRawToggle = isSystemLeaf || isToolLeaf || isAssistantTextLeaf || isUserTextLeaf || isThinkingLeaf || isToolUseLeaf || isToolResultLeaf || isImageLeaf || isInjectionLeaf || !!skillListing || isDeferredListing || isAgentListing;
 
   const rawTextContent = useMemo(() => {
-    if (isAssistantTextLeaf) {
+    if (isAssistantTextLeaf || isUserTextLeaf) {
       return JSON.stringify({
         type: "text",
         text: leaf.rawText ?? leaf.preview,
@@ -1050,7 +1057,7 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars, color }:
       return getToolResultRawJson(leaf.rawText || "", leaf.toolUseId);
     }
     return leaf.rawText ?? leaf.preview;
-  }, [leaf, isAssistantTextLeaf, isThinkingLeaf, isToolUseLeaf, isToolResultLeaf]);
+  }, [leaf, isAssistantTextLeaf, isUserTextLeaf, isThinkingLeaf, isToolUseLeaf, isToolResultLeaf]);
 
   // 特化富展示：统一头（下方 SelectedDetailHeader）+ 各自 body。body 只渲染内容、接 rawMode
   // 决定 parsed/raw，不渲染头（避免 body 反向 import SelectedDetailHeader 成循环依赖）。
@@ -1197,6 +1204,19 @@ export function SelectedDetail({ leaf, onLinkSource, totalContextChars, color }:
           padding: "8px 12px",
         }}>
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentText}</ReactMarkdown>
+        </div>
+      ) : isUserTextLeaf ? (
+        // 用户输入：同壳不同体 —— 外壳与 AI输出/注入卡一致，正文逐字 pre-wrap 而非
+        // markdown（与 TurnCard 用户气泡同惯例）。用户文本未授权 markdown 重排：粘贴的
+        // JSON/代码/缩进会被并段折行；compaction summary 可达 10-30k，限高滚动。
+        <div style={{
+          fontSize: 12, color: "#1f2937", lineHeight: 1.6,
+          border: "1px solid #e5e7eb", borderRadius: 6, background: "#fff",
+          padding: "8px 12px",
+          whiteSpace: "pre-wrap", wordBreak: "break-word",
+          maxHeight: 480, overflow: "auto",
+        }}>
+          {contentText}
         </div>
       ) : isThinkingLeaf ? (
         renderThinkingBlock(contentText)
