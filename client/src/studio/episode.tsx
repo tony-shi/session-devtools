@@ -9,7 +9,7 @@
 //
 // 草稿/终稿通用:manifest 来自 mock(草稿时钟)还是 MiniMax(终稿)都走同一套排布逻辑。
 
-import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig, interpolate } from "remotion";
 import type { ReactNode } from "react";
 import { LangProvider } from "./i18n";
 import { NarrationTrack } from "./scenes/NarrationTrack";
@@ -62,7 +62,8 @@ export function episodeDuration(spec: Episode, lang: string, fps: number): numbe
   return Math.max(1, spec.shots.reduce((t, sh) => t + shotFrames(m, sh, fps), 0));
 }
 
-export const Episode = ({ spec, lang, caption = true }: { spec: Episode; lang: string; caption?: boolean }) => {
+// audioMaster:出片时挂单条母带音轨(master-audio.ts 产物,整条 loudnorm);预览默认逐句。
+export const Episode = ({ spec, lang, caption = true, audioMaster = false }: { spec: Episode; lang: string; caption?: boolean; audioMaster?: boolean }) => {
   const { fps } = useVideoConfig();
   const m = getManifest(spec.storyId, lang);
   if (!m) return <AbsoluteFill style={{ background: "#fff" }} />;
@@ -83,17 +84,25 @@ export const Episode = ({ spec, lang, caption = true }: { spec: Episode; lang: s
   return (
     <LangProvider lang={lang}>
       <AbsoluteFill style={{ background: "#fff" }}>
-        {placed.map((p) => (
+        {placed.map((p, i) => (
           <Sequence key={p.shot.id} from={p.from} durationInFrames={p.frames} name={p.shot.id}>
-            {p.shot.render({ lang, fps, manifest: m, clock: p.clock, frames: p.frames })}
+            <ShotFade skip={i === 0}>{p.shot.render({ lang, fps, manifest: m, clock: p.clock, frames: p.frames })}</ShotFade>
           </Sequence>
         ))}
-        <NarrationTrack storyId={spec.storyId} lang={lang} stepIdxs={allSteps} />
+        <NarrationTrack storyId={spec.storyId} lang={lang} stepIdxs={allSteps} master={audioMaster} />
         {caption && <NarrationCaption storyId={spec.storyId} lang={lang} />}
       </AbsoluteFill>
     </LangProvider>
   );
 };
+
+// shot 入场软化:每个 shot 首 10 帧从白底淡入(全片底色都是近白,等效轻叠化),消除边界硬切。
+// 首个 shot 不淡(避免片头闪一下)。对所有用 <Episode> 的 story 生效。
+function ShotFade({ skip, children }: { skip: boolean; children: ReactNode }) {
+  const f = useCurrentFrame();
+  const opacity = skip ? 1 : interpolate(f, [0, 10], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  return <AbsoluteFill style={{ opacity }}>{children}</AbsoluteFill>;
+}
 
 // 字幕图层:读当前帧的旁白行,底部居中显示。覆盖在场景之上(预览/分析用;出片可关)。
 //

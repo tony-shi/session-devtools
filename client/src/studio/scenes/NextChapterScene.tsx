@@ -14,8 +14,9 @@ export const NextChapterScene = () => {
   const tr = useT();
   const t = interpolate(frame, [0, Math.round(fps * 0.5)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
   const segs = [
-    { label: tr.ctxPrompt, w: 3, bg: "#e2e8f0", fg: "#475569" },
-    { label: tr.ctxUserInput, w: 1.5, bg: "#ede9fe", fg: "#6d28d9" },
+    // 权重与 AgentLoopScene ContextBar 同步(4.0/1.2 —— 示意上压低「用户输入」占比)。
+    { label: tr.ctxPrompt, w: 4.0, bg: "#e2e8f0", fg: "#475569" },
+    { label: tr.ctxUserInput, w: 1.2, bg: "#ede9fe", fg: "#6d28d9" },
     { label: "tool_use 1", w: 1.1, bg: "#e0e7ff", fg: "#4338ca" },
     { label: "tool_result 1", w: 1.6, bg: "#ccfbf1", fg: AGENT },
     { label: "tool_use 2", w: 1.1, bg: "#e0e7ff", fg: "#4338ca" },
@@ -24,8 +25,9 @@ export const NextChapterScene = () => {
   const tw = segs.reduce((s, c) => s + c.w, 0);
   const scale = interpolate(t, [0, 1], [0.94, 1], { easing: Easing.out(Easing.cubic) });
   return (
-    <AbsoluteFill style={{ background: "#f8fafc", fontFamily: FONT, justifyContent: "center", alignItems: "center", opacity: t }}>
-      <div style={{ transform: `scale(${scale})`, width: "100%", maxWidth: 1240, padding: "0 60px 120px", textAlign: "center" }}>
+    // 背景常驻、只淡入内容 —— 整层 opacity 会让底下的白色露出来,造成 recap→本幕的 0.5s 白闪。
+    <AbsoluteFill style={{ background: "#f8fafc", fontFamily: FONT, justifyContent: "center", alignItems: "center" }}>
+      <div style={{ opacity: t, transform: `scale(${scale})`, width: "100%", maxWidth: 1240, padding: "0 60px 120px", textAlign: "center" }}>
         <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: 4, color: "#94a3b8", marginBottom: 16 }}>{tr.nextKicker}</div>
         <div style={{ fontSize: 48, fontWeight: 800, color: "#1e293b", marginBottom: 40 }}>{tr.nextTitle}</div>
         {/* 闪回:Turn 2 最后一次 LLM Call 的 context */}

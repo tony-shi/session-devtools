@@ -49,6 +49,8 @@ interface Cli {
   providerName: "mock" | "google" | "gemini" | "minimax" | "elevenlabs";
   /** 显式指定 voice 名(各 provider 自己解释);不填用 provider 默认 */
   voiceName?: string;
+  /** 按 story 覆盖语速(如 S2 全局 +20% = 1.242);不填走 MINIMAX_SPEED */
+  speed?: number;
   /** 默认留白(ms),仅当 step.pauseAfter[idx] 没填时用。语义上是 PACE.beat */
   defaultGapMs: number;
   outDir: string;
@@ -78,6 +80,8 @@ function parseArgs(): Cli {
     process.exit(2);
   }
   const voiceName = getOptional("--voice");
+  const speedRaw = getOptional("--speed");
+  const speed = speedRaw ? parseFloat(speedRaw) : undefined;
   // 命令行 --gap 仅在 step.pauseAfter[i] 缺省时生效。默认走 PACE.beat,语义对齐 pace.ts。
   const defaultGapMs = parseInt(get("--gap", String(PACE.beat)), 10);
 
@@ -85,10 +89,35 @@ function parseArgs(): Cli {
   const repoRoot = resolve(here, "../..");
   const outDir = resolve(repoRoot, get("--out", "client/public/voice"));
   const cacheDir = resolve(repoRoot, ".cache/voice");
-  return { storyId, lang, providerName, voiceName, defaultGapMs, outDir, cacheDir };
+  return { storyId, lang, providerName, voiceName, speed, defaultGapMs, outDir, cacheDir };
 }
 
-function buildProvider(name: Cli["providerName"], voiceName?: string): TTSProvider {
+// MiniMax 音色按语言解析:MINIMAX_VOICE_EN / MINIMAX_TIMBER_WEIGHTS_EN 存在时覆盖通用值
+// (空字符串 = 显式关闭混音,走单一 voice)。zh 沿用通用键,互不干扰。
+// buildProvider 与 voiceSig(缓存签名)都必须用同一份解析结果,否则换音色不换缓存会放错音。
+export function resolveMinimaxVoice(lang: Lang, voiceName?: string, speedOverride?: number): {
+  timberWeights: Array<{ voiceId: string; weight: number }> | undefined;
+  voiceId: string | undefined;
+  speed: number | undefined;
+  sig: string;
+} {
+  const L = lang.toUpperCase();
+  const rawWeights = process.env[`MINIMAX_TIMBER_WEIGHTS_${L}`] ?? process.env.MINIMAX_TIMBER_WEIGHTS;
+  const timberWeights = parseTimberWeights(rawWeights);
+  const voiceId = voiceName ?? process.env[`MINIMAX_VOICE_${L}`] ?? process.env.MINIMAX_VOICE;
+  // 语速:CLI --speed(按 story 提速,如 S2 1.242)> env。参与缓存签名,改速必重合成。
+  const speed = speedOverride ?? (process.env.MINIMAX_SPEED ? parseFloat(process.env.MINIMAX_SPEED) : undefined);
+  const sig = [
+    "minimax",
+    process.env.MINIMAX_MODEL ?? "speech-02-hd",
+    timberWeights ? rawWeights : (voiceId ?? "default"),
+    `sp${speed ?? "1"}`,
+    `em${process.env.MINIMAX_EMOTION ?? "none"}`,
+  ].join(":");
+  return { timberWeights, voiceId, speed, sig };
+}
+
+function buildProvider(name: Cli["providerName"], lang: Lang, voiceName?: string, speedOverride?: number): TTSProvider {
   if (name === "mock") return new MockProvider();
   if (name === "google") {
     const apiKey = process.env.GOOGLE_TTS_API_KEY;
@@ -110,18 +139,16 @@ function buildProvider(name: Cli["providerName"], voiceName?: string): TTSProvid
     if (!apiKey || !groupId) {
       throw new Error("MINIMAX_API_KEY 和 MINIMAX_GROUP_ID 需在仓库根 .env 设置。见 providers/minimax.ts 顶部。");
     }
-    // MINIMAX_TIMBER_WEIGHTS:音色混合(逗号分隔的 voice_id:weight)。例:
-    //   presenter_female:40,audiobook_female_1:60
-    // 给了就走混音,voiceId 由权重最高者当基底;留空则用单一 MINIMAX_VOICE。
-    const timberWeights = parseTimberWeights(process.env.MINIMAX_TIMBER_WEIGHTS);
+    // 音色按语言解析(见 resolveMinimaxVoice):en 单声 audiobook_male_1,zh 三混。
+    const v = resolveMinimaxVoice(lang, voiceName, speedOverride);
     return new MiniMaxProvider({
       apiKey, groupId,
       host: process.env.MINIMAX_API_HOST,
       model: process.env.MINIMAX_MODEL,
-      voiceId: voiceName ?? process.env.MINIMAX_VOICE,
-      speed: process.env.MINIMAX_SPEED ? parseFloat(process.env.MINIMAX_SPEED) : undefined,
+      voiceId: v.voiceId,
+      speed: v.speed,
       emotion: process.env.MINIMAX_EMOTION,
-      timberWeights,
+      timberWeights: v.timberWeights,
     });
   }
   if (name === "elevenlabs") {
@@ -165,17 +192,11 @@ async function main() {
   const story = STORIES[cli.storyId];
   if (!story) { console.error(`unknown storyId: ${cli.storyId}`); process.exit(2); }
 
-  const provider = buildProvider(cli.providerName, cli.voiceName);
-  // 缓存签名:参与 hash 的"音色身份"。MiniMax 走混音/语速/情绪时,把这些折进来,
-  // 改任一参数 → key 变 → 自动重合成,不会命中旧音。
+  const provider = buildProvider(cli.providerName, cli.lang, cli.voiceName, cli.speed);
+  // 缓存签名:参与 hash 的"音色身份"。与 buildProvider 共用 resolveMinimaxVoice,
+  // 换音色/混音/语速/情绪 → key 变 → 自动重合成,不会命中旧音。
   const voiceSig = cli.providerName === "minimax"
-    ? [
-        "minimax",
-        process.env.MINIMAX_MODEL ?? "speech-02-hd",
-        process.env.MINIMAX_TIMBER_WEIGHTS ?? cli.voiceName ?? process.env.MINIMAX_VOICE ?? "default",
-        `sp${process.env.MINIMAX_SPEED ?? "1"}`,
-        `em${process.env.MINIMAX_EMOTION ?? "none"}`,
-      ].join(":")
+    ? resolveMinimaxVoice(cli.lang, cli.voiceName, cli.speed).sig
     : `${cli.providerName}:${cli.voiceName ?? "default"}`;
   const storyOutDir = join(cli.outDir, story.id);
   const audioOutDir = join(storyOutDir, cli.lang);

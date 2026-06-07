@@ -1,23 +1,33 @@
 import { AbsoluteFill, useCurrentFrame, interpolate, Easing } from "remotion";
 import JsonView from "@uiw/react-json-view";
 import type React from "react";
-import request from "../fixtures/request-real-context.json";
+import requestZh from "../fixtures/request-real-context.json";
+import requestEn from "../fixtures/request-real-context-en.json";
+import { useT, useLang } from "../i18n";
 import type { ActClock } from "./storyClock";
 
 // 故事二开场幕(需求2 重写):放弃「全文滚墙」(巨型 DOM 逐帧重渲 → 帧率差、滚不到头)。
 // 新交互 = 默认只展示第一层结构 → 按拍子逐层点开(内容爆长,示意结构复杂)→ 轻度滚动一小段
 // + 底部渐隐(暗示后面还有很多,不真滚到头)→ 「三个核心字段」拍收回到顶层。
 //
+// 双语:fixture 按 lang 选(zh c8d1c726 / en 64cebb6e,结构同为 tools×10·system×4·messages×2);
+// 标题/统计行走 studio i18n 字典。
+//
 // 时间锚点不写死帧数,从 clock.segments 取:
 //   expandAt = step1 beat0(「庞大的 JSON…层层嵌套」)→ 进入展开+轻滚
 //   foldAt   = step1 beat1(「顶层其实只有三个核心字段」)→ 收回 collapsed=1
-const REQ = request as unknown as object;
+const REQ_BY_LANG: Record<"zh" | "en", object> = {
+  zh: requestZh as unknown as object,
+  en: requestEn as unknown as object,
+};
 
 const SCROLL_PX = 760;  // 轻滚总幅度(像素,留有克制 —— 只示意,不读完)
 const FADE = 12;        // 层间交叉淡化帧数
 
 export const RealContextJsonScene = ({ clock }: { clock: ActClock }) => {
   const frame = useCurrentFrame();
+  const t = useT();
+  const REQ = REQ_BY_LANG[useLang()];
   const expandAt = clock.segments.find((s) => s.stepIdx === 1 && s.beat === 0)?.start
     ?? Math.round(clock.total * 0.4);
   const foldAt = clock.segments.find((s) => s.stepIdx === 1 && s.beat === 1)?.start
@@ -57,10 +67,10 @@ export const RealContextJsonScene = ({ clock }: { clock: ActClock }) => {
       }}
     >
       <div style={{ color: "#0f172a", fontSize: 36, fontWeight: 800, letterSpacing: 0.5 }}>
-        这一次调用,真正发给模型的 request
+        {t.rcJsonTitle}
       </div>
       <div style={{ color: "#64748b", fontSize: 22 }}>
-        Claude Code 2.1.167 · claude-opus-4-8 · tools × 10 · system × 4 · messages × 2 · 共约 6.5 万字符
+        {t.rcJsonSub}
       </div>
       <div
         style={{

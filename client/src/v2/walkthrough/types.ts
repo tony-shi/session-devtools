@@ -10,6 +10,7 @@
 export type ActId =
   | "conversation" | "turn-io" | "llm-call" | "recap"  // ep1: agent loop
   | "rc-real"                                          // ep2(new): 看见真实的 Context — 复用 attribution 面板
+  | "cg-real"                                          // ep3(new): Context 的增长 — 曲线 + attribution 面板对照
   | "cw-stack" | "cw-real"                             // ep2(old): context window
   | "cd-diff" | "cd-real"                              // ep3: context diff
   | "tools-concept" | "tools-real"                     // ep4: tools(context 的关键部分)

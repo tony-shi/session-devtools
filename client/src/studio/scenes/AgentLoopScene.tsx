@@ -84,10 +84,13 @@ function plan(focus: Focus, beat: number, total: number, beatCount: number): { c
     case "tool-use": return { count: 3, ctxStage: "full", showTools: beat >= 1 };
     case "tool-result": return { count: 4, ctxStage: "full", showTools: true };
     case "loop": {
-      // 一拍揭示一个节点,按顺序不跳过:beat0=4(Loop1 回顾)→ beat1 ctx1(塞回)→ beat2 resp1
-      // (Loop2 tool_use)→ beat3 res1(Loop2 tool_result)→ beat4 ctx2(final context)→ beat5 final。
-      void beatCount;
-      return { count: Math.min(total, 4 + Math.max(0, beat)), ctxStage: "full", showTools: true };
+      // 逐拍揭示余下节点,按 fixture 实际节点数对拍数自适应铺开:
+      //   zh(9 节点 / 6 拍)= 一拍一个,与旧公式 4+beat 完全一致;
+      //   en(1 个工具循环仅 6 节点)旧公式在 beat2 就全揭示、Final 提前 3 句剧透 ——
+      //   自适应后 Final 在 beat4(「可能直接回答…」)落屏,与旁白对齐。
+      const span = Math.max(1, beatCount - 1);
+      const progress = Math.round((total - 4) * (Math.max(0, beat) / span));
+      return { count: Math.min(total, 4 + progress), ctxStage: "full", showTools: true };
     }
     default: return { count: total, ctxStage: "full", showTools: true };
   }
@@ -102,7 +105,20 @@ export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActCloc
   const nodes = buildNodes(turn);
   const N = nodes.length;
   const { focus, beat, beatCount } = clock.at(frame);
-  const { count, ctxStage, showTools } = plan(focus, beat, N, beatCount);
+  const planned = plan(focus, beat, N, beatCount);
+  const { ctxStage, showTools } = planned;
+  let count = planned.count;
+
+  // 「让我们把这几步连起来看」(loop 第 0 拍)= 回卷重放:先回到 任务+ctx0,再随旁白
+  // 把链路从头走一遍 —— 模型调用(ctx0)→ 工具调用(resp0)→ 调用结果(res0),节点重新
+  // 入场、高亮逐个下移、组装/执行链路重新点亮;beat 1 顺势揭示 ctx1(塞回),自然成环。
+  const loopSeg0 = useMemo(() => clock.segments.find((s) => s.focus === "loop" && s.beat === 0), [clock]);
+  const sweepLen = loopSeg0 ? loopSeg0.end - loopSeg0.start : 0;
+  const sweepFrame = (i: number) => (loopSeg0 ? loopSeg0.start + Math.round(((i - 1) / 3) * sweepLen) : -Infinity);
+  if (focus === "loop" && beat === 0 && loopSeg0) {
+    const t = interpolate(frame, [loopSeg0.start, loopSeg0.end], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+    count = Math.min(4, 2 + Math.floor(t * 3)); // 2(任务+ctx0)→ 3(+resp0)→ 4(+res0)
+  }
 
   // 工具循环轮数 = 有 toolCalls 的 call 数。context 节点 iter < loopCount → 第几轮;= loopCount → Final 调用。
   const loopCount = turn.calls.filter((c) => c.toolCalls.length).length;
@@ -122,6 +138,10 @@ export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActCloc
     }
     return rf;
   }, [clock, N]);
+  // 重放期的有效揭示帧:进入 loop 第 0 拍后,节点 1-3 的入场/链路锚点改到重放扫描点 ——
+  // 入场动画与 组装/执行 FlowLink 跟着重放再来一遍;loop 拍之前不受影响。
+  const rfEff = (i: number) =>
+    loopSeg0 && frame >= loopSeg0.start && i >= 1 && i <= 3 ? Math.max(revealFrame[i], sweepFrame(i)) : revealFrame[i];
 
   // 链路(塞回 / 执行)的行进与停留包络:draw 0→1(~0.7s 数据包行进),hold 到达后再停留 ~2.4s 再淡出。
   const drawEnv = (rf: number) => Number.isFinite(rf)
@@ -134,7 +154,7 @@ export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActCloc
   const hasLink = (nd: Node) => nd.kind === "context" || nd.kind === "result";
   // 联动进行时,把「源」(活跃节点正上方那个)一并点亮,直到链路淡出再变暗。
   const activeHasLink = activeIdx >= 0 && activeIdx < N && hasLink(nodes[activeIdx]);
-  const activeHold = activeHasLink ? holdEnv(revealFrame[activeIdx]) : 0;
+  const activeHold = activeHasLink ? holdEnv(rfEff(activeIdx)) : 0;
 
   // 右栏解说内容:loop 末段(final 已现)切到"退出"注解,否则按 focus。
   const railLines = focus === "loop" && finalRevealed ? tr.railExit : (tr.rail[focus] ?? []);
@@ -152,8 +172,9 @@ export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActCloc
               const lit = active || (isLinkSource && activeHold > 0.15); // 框高亮(含联动源)
               const op = active ? 1 : isLinkSource ? 0.5 + 0.5 * activeHold : 0.5; // 源随链路提亮,链路淡出再变暗
               // 入场 0→1(~0.6s):节点整体淡入 + 从上方「下拉」就位;内容比框体略晚浮现(见 EventRow/FinalNode)。
-              const enter = Number.isFinite(revealFrame[i])
-                ? interpolate(frame, [revealFrame[i], revealFrame[i] + Math.round(fps * 0.6)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
+              // 锚点用 rfEff:loop 重放期间节点 1-3 重新入场。
+              const enter = Number.isFinite(rfEff(i))
+                ? interpolate(frame, [rfEff(i), rfEff(i) + Math.round(fps * 0.6)], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
                 : 1;
               const enterTy = interpolate(enter, [0, 1], [-26, 0], { easing: Easing.out(Easing.cubic) });
               const enterOp = interpolate(enter, [0, 0.5], [0, 1], { extrapolateRight: "clamp" });
@@ -163,8 +184,8 @@ export const AgentLoopScene = ({ turn, clock }: { turn: LoopTurn; clock: ActCloc
                 : null;
               // 入链(塞回 / 执行)进度:行进 draw + 停留 hold(仅在该节点活跃时显示自己的入链)。
               const linked = hasLink(n);
-              const linkDraw = linked ? drawEnv(revealFrame[i]) : 1;
-              const linkHold = linked && active ? holdEnv(revealFrame[i]) : 0;
+              const linkDraw = linked ? drawEnv(rfEff(i)) : 1;
+              const linkHold = linked && active ? holdEnv(rfEff(i)) : 0;
               const isCtx = n.kind === "context";
               const nodeCtxStage: CtxStage = isCtx ? (linkDraw >= 0.85 ? "full" : "prefix") : ctxStage;
               // 用户输入(task)逐字填入 —— 复用对话幕的打字机感觉。
@@ -412,15 +433,17 @@ function ContextBar({ iter, tokens, lastText, active, stage, inflow = 1, connHol
   const full = stage === "full";
   // 累积的 context 片段(左→右,越往后轮越多 → bar 越长):提示词、用户输入、每轮 tool_use/tool_result。
   // 提示词把「系统/记忆/规则/历史/工具定义」合成一块,不再细分颜色。
+  // 权重是示意而非实测比例;提示词块刻意压过用户输入(4.0 vs 1.2)—— 别让示意图给出
+  // 「你的输入占 context 三分之一」的错误直觉(Story 2 的实测反转是 0.01%)。
   const segs: { label: string; w: number; bg: string; fg: string }[] = [
-    { label: tr.ctxPrompt, w: 3.0, bg: "#e2e8f0", fg: "#475569" },
-    { label: tr.ctxUserInput, w: 1.5, bg: "#ede9fe", fg: "#6d28d9" },
+    { label: tr.ctxPrompt, w: 4.0, bg: "#e2e8f0", fg: "#475569" },
+    { label: tr.ctxUserInput, w: 1.2, bg: "#ede9fe", fg: "#6d28d9" },
   ];
   for (let k = 1; k <= iter; k++) {
     segs.push({ label: `tool_use ${k}`, w: 1.1, bg: "#e0e7ff", fg: "#4338ca" });
     segs.push({ label: `tool_result ${k}`, w: 1.6, bg: "#ccfbf1", fg: TEAL });
   }
-  const FULLW = 10.5; // 满宽对应的总 weight(ctx2 ≈ 94%)
+  const FULLW = 11.3; // 满宽对应的总 weight(ctx2 = 10.6 ≈ 94%)
   const totalW = segs.reduce((s, c) => s + c.w, 0);
   const barPct = Math.min(100, (totalW / FULLW) * 100);
   const newestIdx = segs.length - 1;

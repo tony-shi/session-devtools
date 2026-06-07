@@ -8,6 +8,10 @@
 import agentLoopZh from "../../../public/voice/agent-loop/zh.json";
 import agentLoopEn from "../../../public/voice/agent-loop/en.json";
 import realContextZh from "../../../public/voice/real-context/zh.json";
+import realContextEn from "../../../public/voice/real-context/en.json";
+import { toDisplayText } from "./displayText";
+import contextGrowthZh from "../../../public/voice/context-growth/zh.json";
+import contextGrowthEn from "../../../public/voice/context-growth/en.json";
 import type { Manifest } from "../../v2/walkthrough/voice/types";
 
 // 用规范 Manifest 类型,而不是从 JSON 推断 —— JSON 里 audio 字段有无(mock 无 / 真 TTS 有)
@@ -22,6 +26,11 @@ const MANIFESTS: Record<string, Record<string, Manifest>> = {
   },
   "real-context": {
     zh: realContextZh as unknown as Manifest,
+    en: realContextEn as unknown as Manifest,
+  },
+  "context-growth": {
+    zh: contextGrowthZh as unknown as Manifest,
+    en: contextGrowthEn as unknown as Manifest,
   },
 };
 
@@ -54,6 +63,7 @@ export function buildNarrationClips(
 }
 
 // 给定全局帧 → 当前旁白行(从 manifest 累加 durMs + gapMs)。字幕图层 / 预览用。
+// 出口过 toDisplayText:源文案是 TTS 读法(如「Claude 点 M D」),字幕显示书面形式(CLAUDE.md)。
 export function frameToLine(storyId: string, lang: string, frame: number, fps: number): string {
   const m = getManifest(storyId, lang);
   if (!m) return "";
@@ -62,7 +72,7 @@ export function frameToLine(storyId: string, lang: string, frame: number, fps: n
   for (const step of m.steps) {
     for (const line of step.lines) {
       const dur = f(line.durMs);
-      if (frame < cursor + dur) return line.text;
+      if (frame < cursor + dur) return toDisplayText(line.text);
       cursor += dur + f(line.gapMs);
     }
   }

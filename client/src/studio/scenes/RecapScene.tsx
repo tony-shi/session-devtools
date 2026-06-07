@@ -120,6 +120,7 @@ function Flowchart({ beat }: { beat: number }) {
   const showDecide = beat >= 3;   // 菱形 + tool_use(要)
   const showResult = beat >= 4;   // tool_result + 回边
   const showExit = beat >= 5;     // 不要 → final answer
+  const showStages = beat >= 6;   // 三阶段标签:与「收集上下文、采取行动、验证结果」旁白同拍
 
   return (
     <div style={{ position: "relative", width: W, height: H, flexShrink: 0 }}>
@@ -155,11 +156,14 @@ function Flowchart({ beat }: { beat: number }) {
       {/* 回边说明:竖排在左侧留白里,避开回边线段 */}
       <EdgeLabel x={64} y={302} text={tr.edgeLoop} color={LLM} shown={showResult} rot={-90} />
 
-      {/* 盒子(不再贴三阶段标签 —— 例子简单,先不强调「收集/行动/验证」) */}
-      <FlowBox b={BOX.call} color={LLM} title="LLM Call" sub={tr.boxCallSub} shown={showCall} />
+      {/* 盒子。三阶段标签到「三个阶段」那句旁白(beat 6)才点亮 —— 给抽象一句画面支撑。 */}
+      <FlowBox b={BOX.call} color={LLM} title="LLM Call" sub={tr.boxCallSub} shown={showCall}
+        stage={showStages ? tr.recapStages[0] : undefined} stageColor={LLM} />
       <Diamond shown={showDecide} />
-      <FlowBox b={BOX.use} color={LLM} title="tool_use" sub={tr.boxUseSub} shown={showDecide} />
-      <FlowBox b={BOX.result} color={AGENT} title="tool_result" sub={tr.boxResultSub} shown={showResult} />
+      <FlowBox b={BOX.use} color={LLM} title="tool_use" sub={tr.boxUseSub} shown={showDecide}
+        stage={showStages ? tr.recapStages[1] : undefined} stageColor={AGENT} />
+      <FlowBox b={BOX.result} color={AGENT} title="tool_result" sub={tr.boxResultSub} shown={showResult}
+        stage={showStages ? tr.recapStages[2] : undefined} stageColor={COND} />
       <FlowBox b={BOX.final} color={DONE} title="final answer" sub={tr.boxFinalSub} shown={showExit} double />
     </div>
   );

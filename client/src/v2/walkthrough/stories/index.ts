@@ -1,6 +1,7 @@
 import type { Story } from "../types";
 import { agentLoopStory } from "./agent-loop";
 import { realContextStory } from "./real-context";
+import { contextGrowthStory } from "./context-growth";
 import { contextWindowStory } from "./context-window";
 import { contextDiffStory } from "./context-diff";
 import { toolsStory } from "./tools";
@@ -14,6 +15,7 @@ import { subagentStory } from "./subagent";
 export const STORIES: Record<string, Story> = {
   [agentLoopStory.id]: agentLoopStory,         // /demo/agent-loop
   [realContextStory.id]: realContextStory,     // /demo/real-context  ← 新第二集:看见真实的 Context
+  [contextGrowthStory.id]: contextGrowthStory, // /demo/context-growth ← 新第三集:Context 的增长(studio 主轴)
   [contextWindowStory.id]: contextWindowStory, // /demo/context-window(旧简版,暂留)
   [contextDiffStory.id]: contextDiffStory,     // /demo/context-diff
   [toolsStory.id]: toolsStory,                 // /demo/tools

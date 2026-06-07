@@ -4,6 +4,7 @@ import { ConversationScene } from "./scenes/ConversationScene";
 import { NarrationTrack } from "./scenes/NarrationTrack";
 import { AgentLoopStory, agentLoopStoryDuration } from "./scenes/AgentLoopStory";
 import { RealContextStory, realContextStoryDuration } from "./scenes/RealContextStory";
+import { ContextGrowthStory, contextGrowthStoryDuration } from "./scenes/ContextGrowthStory";
 import { buildConversationTimeline, type SceneTurn } from "./scenes/timeline";
 import { getManifest, buildNarrationClips } from "./scenes/narration";
 import { getConversationFixture } from "./fixtures";
@@ -75,16 +76,33 @@ export const RemotionRoot = () => {
         />
       ))}
       {/* 第二个 story:看见真实的 Context —— 单轨 Remotion(Decision C),渲染真实 attribution 面板。
-          目前只有中文 manifest;focusSection 跟旁白拍子切换(focus 取自 real-context.ts)。 */}
-      <Composition
-        id="RealContextStory"
-        component={RealContextStory}
-        durationInFrames={Math.max(1, realContextStoryDuration("zh", FPS))}
-        fps={FPS}
-        width={1920}
-        height={1080}
-        defaultProps={{ lang: "zh", caption: true }}
-      />
+          双语 manifest 就绪;面板/JSON 幕 fixture 按 lang 选(zh c8d1c726 / en 64cebb6e)。 */}
+      {LANGS.map((lang) => (
+        <Composition
+          key={`rc-${lang}`}
+          id={lang === "zh" ? "RealContextStory" : "RealContextStoryEn"}
+          component={RealContextStory}
+          durationInFrames={Math.max(1, realContextStoryDuration(lang, FPS))}
+          fps={FPS}
+          width={1920}
+          height={1080}
+          defaultProps={{ lang, caption: true }}
+        />
+      ))}
+      {/* 第三个 story:Context 的增长 —— 曲线开场 + 三组真实面板对照 + compact 悬崖。
+          双语 manifest 已就绪(mock),zh / en 各一个 composition。 */}
+      {LANGS.map((lang) => (
+        <Composition
+          key={`cg-${lang}`}
+          id={lang === "zh" ? "ContextGrowthStory" : "ContextGrowthStoryEn"}
+          component={ContextGrowthStory}
+          durationInFrames={Math.max(1, contextGrowthStoryDuration(lang, FPS))}
+          fps={FPS}
+          width={1920}
+          height={1080}
+          defaultProps={{ lang, caption: true }}
+        />
+      ))}
     </>
   );
 };

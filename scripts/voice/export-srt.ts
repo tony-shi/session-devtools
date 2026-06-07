@@ -11,6 +11,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { manifestToSrt } from "../../client/src/v2/walkthrough/voice/srtExport";
 import type { Manifest } from "../../client/src/v2/walkthrough/voice/types";
+import { toDisplayText } from "../../client/src/studio/scenes/displayText";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "../..");
@@ -22,6 +23,8 @@ async function main() {
   for (const lang of langs) {
     const manifestPath = resolve(repoRoot, `client/public/voice/${storyId}/${lang}.json`);
     const m = JSON.parse(readFileSync(manifestPath, "utf8")) as Manifest;
+    // 显示替换:manifest 文本是 TTS 读法(「Claude 点 M D」),SRT 显示书面形式(CLAUDE.md)。
+    for (const step of m.steps) for (const line of step.lines) line.text = toDisplayText(line.text);
     const srt = manifestToSrt(m);
     const outPath = resolve(repoRoot, `out/${storyId}-${lang}.srt`);
     await writeFile(outPath, srt);

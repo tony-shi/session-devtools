@@ -27,10 +27,11 @@ export const agentLoopStory: Story = {
         "最外层是会话。当前我们可以简单认为每当你打开一个终端就开启了一次会话。",
         "你的每次输入、模型的每次调用、Agent执行工具，都发生在这个会话中。",
       ],
+      // en 文案约束:单行字幕 ≤46 汉字当量(拉丁 ≈92 字符)—— 改写收窄,不拆行(保持 zh/en 逐句对齐)。
       linesEn: [
-        "An Agent may look like just a chat interface, but behind it, a whole execution chain is running.",
-        "The outermost layer is the session. For now, you can simply think of opening a terminal as starting a session.",
-        "Every input you send, every model call, and every tool the Agent runs all happen inside that session.",
+        "An Agent looks like a chat interface, but behind it runs a whole execution chain.",
+        "The outermost layer is the session — for now, opening a terminal starts a session.",
+        "Every input, every model call, every tool the Agent runs — all happen in that session.",
       ],
       // 节奏:转折句后停顿,定义句让 "Session" 落地,收尾留白进入 Turn。
       pauseAfter: [PACE.pause, PACE.pause, PACE.dwell],
@@ -46,9 +47,11 @@ export const agentLoopStory: Story = {
       ],
       linesEn: [
         "Now move the camera into one turn inside the session.",
-        "For now, think of a turn as one user input, which the Agent keeps processing until it produces a final response.",
+        "For now, a turn is one user input, processed until the Agent gives a final response.",
         "A single session usually contains many turns.",
       ],
+      // 节奏:定义句(轮次)落地;末句留白,接 conversation→turn-io 的全片最大视觉转场。
+      pauseAfter: [PACE.beat, PACE.pause, PACE.pause],
     },
     // 模型调用 —— 模型决策边界。强化:一个轮次可能多次模型调用;每次带上下文。
     {
@@ -65,9 +68,11 @@ export const agentLoopStory: Story = {
         "Let's open up one turn.",
         "The first step is the user input.",
         "But the Agent doesn't send that sentence to the model as-is.",
-        "It first prepares the context, such as the system prompt, memory, tool definitions, and so on.",
-        "Then it adds the user input and packages everything into one model call, so the model can decide the next step.",
+        "It first prepares the context: system prompt, memory, tool definitions, and more.",
+        "Then it adds your input, packing everything into one model call to decide the next step.",
       ],
+      // 节奏:转折句(不会原样丢)与列举句后呼吸;末句是「模型调用」关键概念 + step 边界 → pause。
+      pauseAfter: [PACE.beat, PACE.beat, PACE.breath, PACE.breath, PACE.pause],
     },
     // 工具调用 —— 模型提出动作(不是答案)。
     {
@@ -87,6 +92,8 @@ export const agentLoopStory: Story = {
         "A tool call is not the answer. It means: please run an action for me.",
         "For example: read a file, search the codebase, or run a command.",
       ],
+      // 节奏:「工具调用不是答案」是本步核心翻转句 → pause;末句列举收尾 + step 边界 → pause。
+      pauseAfter: [PACE.beat, PACE.beat, PACE.breath, PACE.pause, PACE.pause],
     },
     // 调用结果 —— 世界返回的证据,进入下一次模型调用的上下文。
     {
@@ -104,8 +111,10 @@ export const agentLoopStory: Story = {
         "When it finishes, it extracts the result of that call.",
         "Then that tool result is placed into the context for the next model call.",
         "This step matters: the model is no longer just thinking remotely.",
-        "With tools, it can inspect your files, run your code, operate your command line, and truly interact with your world.",
+        "With tools, it can read your files, run your code — truly interact with your world.",
       ],
+      // 节奏:「塞回上下文」是关键机制 → breath;末句「和你的世界互动」是情绪峰值 → dwell。
+      pauseAfter: [PACE.beat, PACE.beat, PACE.breath, PACE.breath, PACE.dwell],
     },
     // 智能体循环 + 停止条件 + 层级归属(在模型调用之间循环)。
     {
@@ -120,13 +129,15 @@ export const agentLoopStory: Story = {
         "当没有新的下一步时，这个轮次就结束。",
       ],
       linesEn: [
-        "Let's connect the pieces: model call, tool call, tool result, then back to the next model call.",
+        "Connect the pieces: model call, tool call, tool result, then the next model call.",
         "That repeating chain is the Agent loop.",
         "Each time through the loop, the model gets one more piece of real information.",
         "Until, at some point, the model decides: it knows enough, and the needed actions are done.",
         "It may answer directly, or it may wrap up after a final tool call changes a file.",
         "When there is no next step to take, the turn ends.",
       ],
+      // 节奏:「就是 Agent loop」全片标题概念 → dwell;末句收束本幕、切 recap → pause。
+      pauseAfter: [PACE.breath, PACE.dwell, PACE.beat, PACE.beat, PACE.breath, PACE.pause],
     },
     // 回收三层模型:会话 > 轮次 > 模型调用 > 工具调用/调用结果 > 最终回答。
     {
@@ -151,11 +162,11 @@ export const agentLoopStory: Story = {
         "Turn — one user task, and the whole process to complete it.",
         "Model call — carrying context into the model so it can make one decision.",
         "Tool call — what the model wants the Agent to do.",
-        "Tool result — the result after the Agent runs it, which is put back into context and triggers the next model call.",
-        "A turn can end with a direct answer, or after the final tool call completes a change and the model wraps up.",
-        "Abstract the loop and it is really three stages: gather context, take action, verify the result.",
-        "The model handles reasoning, and the tools handle action. The model is like the brain; the tools are the hands and feet.",
-        "In the next chapter, we move into the core of the Agent: the context prepared before each model call.",
+        "Tool result — what the run returns; it goes back into context for the next model call.",
+        "A turn may end with a direct answer, or wrap up after the last tool call completes.",
+        "Abstract the loop: three stages — gather context, take action, verify the result.",
+        "The model handles reasoning; the tools handle action — the brain, and the hands.",
+        "Next chapter, we enter the Agent's core: the context prepared before each model call.",
         "We will see exactly what the model sees before it makes a decision.",
       ],
       // 节奏:recap 是「定义清单」,每项后留短停顿让它落地(英文项尤其短、易连读)。

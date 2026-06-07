@@ -28,14 +28,15 @@ export const agentLoopEpisode: EpisodeSpec = {
     {
       id: "conversation",
       steps: [0, 1],
-      render: ({ lang, fps, manifest }) => {
+      render: ({ lang, fps, manifest, frames }) => {
         // 按语言取屏幕素材(zh 手工本地化 / en 来自真实英文 session)。
         const conversationFixture = getConversationFixture(lang);
         const turnFixture = getTurnFixture(lang);
         // 焦点切换点 = 旁白 step 0 长度;「拿出来的那一轮」按 userInput 对齐下一幕展开的同一轮。
         const overviewEndFrame = buildNarrationClips(manifest, [0], fps).totalFrames;
         const focusTurnIdx = conversationFixture.findIndex((t) => t.user === turnFixture.userInput);
-        return <ConversationScene turns={conversationFixture} overviewEndFrame={overviewEndFrame} focusTurnIdx={focusTurnIdx} />;
+        // budgetFrames:en 文本更长,打字速度按本幕旁白预算自适应,避免最后一轮被硬切在半截。
+        return <ConversationScene turns={conversationFixture} overviewEndFrame={overviewEndFrame} focusTurnIdx={focusTurnIdx} budgetFrames={frames} />;
       },
     },
     {
@@ -60,8 +61,9 @@ export const agentLoopEpisode: EpisodeSpec = {
 };
 
 // caption:字幕图层开关。预览默认开;出片要干净母带传 caption:false(字幕走 SRT)。
-export const AgentLoopStory = ({ lang, caption = true }: { lang: string; caption?: boolean }) => (
-  <Episode spec={agentLoopEpisode} lang={lang} caption={caption} />
+// audioMaster:出片传 true 挂单条母带音轨(先跑 scripts/voice/master-audio.ts)。
+export const AgentLoopStory = ({ lang, caption = true, audioMaster = false }: { lang: string; caption?: boolean; audioMaster?: boolean }) => (
+  <Episode spec={agentLoopEpisode} lang={lang} caption={caption} audioMaster={audioMaster} />
 );
 
 // 给 Root 注册 composition 算总时长用。

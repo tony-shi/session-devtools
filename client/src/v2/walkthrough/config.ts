@@ -26,6 +26,9 @@ export const STAGE_CONFIG: Record<ActId, StageTarget> = {
   // 固定到 Story 2 的取材:session 820f368b / turn 1 / call 1
   //   —— 用户一句"图片能不能渲染"的首个 call;实测 ~64.3k 字符,三段 Tools/Messages/System ≈ 64/24/12%。
   "rc-real": { sessionId: "820f368b-ec02-4c59-b0b1-4ec76f0a4439", turnId: 1, callId: 1 },
+  // ep3(new):Context 的增长 —— 幕A 沿用 Story 2 问时间会话的 call 2(64,942 → 65,444)。
+  // studio 侧吃 fixtures(含 ToolSearch 会话 4c6f321d / 90545302);此处仅供 /demo 兜底。
+  "cg-real": { sessionId: "c8d1c726-c7fb-463c-a39c-0056395374cb", turnId: 1, callId: 2 },
   // ep2(old):context window —— 复用同一条 demo 会话的某次 call(real 视图取其 attribution)
   "cw-stack": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 1 },
   "cw-real": { sessionId: "ea0bc205-0a48-4e67-ad2c-84dec67ad72e", turnId: 1, callId: 1 },

@@ -28,15 +28,18 @@ export const ConversationScene = ({
   turns,
   overviewEndFrame,
   focusTurnIdx,
+  budgetFrames,
 }: {
   turns: SceneTurn[];
   overviewEndFrame: number;
   focusTurnIdx?: number;
+  /** 本幕旁白帧预算(可选):传入后打字速度自适应,保证整段会话在预算内打完(见 timeline.ts)。 */
+  budgetFrames?: number;
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const tr = useT();
-  const tl = buildConversationTimeline(turns, fps);
+  const tl = buildConversationTimeline(turns, fps, budgetFrames);
 
   // 聚焦的目标轮 = 下一幕要展开的那一轮(由外部传入);它就是「拿出来的 Turn」(中间那一轮)。
   const target =
@@ -105,9 +108,12 @@ export const ConversationScene = ({
 
             if (i === target) {
               // 目标轮:turn 阶段渐显框选 + 角标 + 底部统计(focusIn 驱动)。框就地淡入,不移动镜头。
+              // 框选后加轻微呼吸光晕(周期 ~2.6s)—— 打字结束后的静止尾段画面仍有生命感。
               const borderCol = interpolateColors(focusIn, [0, 1], ["rgba(99,102,241,0)", "rgba(99,102,241,1)"]);
+              const pulse = 0.5 + 0.5 * Math.sin((frame / fps) * ((2 * Math.PI) / 2.6));
+              const glow = focusIn > 0.01 ? `0 0 0 ${4 + 3 * pulse}px rgba(99,102,241,${(0.06 + 0.09 * pulse) * focusIn})` : "none";
               return (
-                <div key={tt.turn.id} style={{ position: "relative", border: `2px solid ${borderCol}`, borderRadius: 18, padding: 22, background: focusIn > 0.01 ? "#fff" : "transparent" }}>
+                <div key={tt.turn.id} style={{ position: "relative", border: `2px solid ${borderCol}`, borderRadius: 18, padding: 22, background: focusIn > 0.01 ? "#fff" : "transparent", boxShadow: glow }}>
                   {focusIn > 0.01 && (
                     <div style={{ position: "absolute", top: -16, left: 22, background: "#6366f1", color: "#fff", fontSize: 16, fontWeight: 700, padding: "3px 14px", borderRadius: 999, opacity: focusIn }}>
                       {tr.turnBadge(tt.turn.id)}
