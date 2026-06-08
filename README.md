@@ -3,6 +3,8 @@
 **English** · [简体中文](./README.cn.md)
 
 > **Agents harness the LLM. You harness the agent.**
+>
+> See every token in Claude Code's context window attributed to its source — *attribution, not transcript dumps.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/session-devtools.svg)](https://www.npmjs.com/package/session-devtools)

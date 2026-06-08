@@ -1,8 +1,10 @@
 # session-devtools
 
-[English](./README.en.md) · **简体中文**
+[English](./README.md) · **简体中文**
 
 > **Agent 驾驭 LLM。你驾驭 agent。**
+>
+> 看清 Claude Code 上下文窗口里每个 token 的来源 —— *是归因,不是原始转写堆砌。*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/session-devtools.svg)](https://www.npmjs.com/package/session-devtools)
