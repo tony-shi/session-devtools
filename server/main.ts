@@ -196,7 +196,19 @@ async function shutdown(signal: string) {
   } catch (err) {
     console.error("[session-devtools] proxy shutdown error:", err);
   }
-  await app.close();
+
+  // 强制断开所有底层 socket（含 SSE 长连接与 idle keep-alive），否则 Node 的
+  // server.close() 会一直等这些连接自然结束，导致 Ctrl+C 后长时间卡住。
+  try {
+    const httpServer = (app.getHttpAdapter().getInstance() as any).server;
+    httpServer?.closeAllConnections?.();
+  } catch { /* ignore */ }
+
+  // 兜底超时：即使仍有连接没断干净，也不无限等待。
+  await Promise.race([
+    app.close().catch(() => {}),
+    new Promise((resolve) => setTimeout(resolve, 2000)),
+  ]);
   console.log("  ✓ Done. Goodbye.");
   process.exit(0);
 }

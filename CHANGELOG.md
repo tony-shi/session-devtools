@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.9] - 2026-06-08
+
+### Fixed
+- **Ctrl+C 退出卡顿**：关闭时先 `closeAllConnections()` 强制断开所有底层 socket（含 SSE `/api/proxy-traffic/stream` 长连接与 idle keep-alive），并对 `app.close()` 加 2s 兜底超时。此前 Node 的 `server.close()` 会一直等这些连接自然结束，导致 npx 版本按 Ctrl+C 后长时间卡住才退出。
+
+## [0.1.0-alpha.8] - 2026-06-07
+
 ### Added
 - **归因树 · userContext 结构化拆分**：首条 user 消息的 `<system-reminder>` 按真实物理序拆为 wrapper 前缀 / 项目指令×N / 记忆(MEMORY.md) / 账号 / wrapper 后缀，各段可单独点开；新增 5 条 corpus 规则，并区分三类指令文件（项目 CLAUDE.md / 全局 `~/.claude/CLAUDE.md` / 本地 CLAUDE.local.md）。
 - **流式响应重组视图**：raw 标签页对 SSE 流式响应默认展示重组后的完整 message JSON（可切回 SSE 原文）；流未正常结束时显示截断标记。

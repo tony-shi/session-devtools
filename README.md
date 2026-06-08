@@ -1,8 +1,8 @@
 # session-devtools
 
-[English](./README.en.md) · **简体中文**
+**English** · [简体中文](./README.cn.md)
 
-> **Agent 驾驭 LLM。你驾驭 agent。**
+> **Agents harness the LLM. You harness the agent.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![npm](https://img.shields.io/npm/v/session-devtools.svg)](https://www.npmjs.com/package/session-devtools)
@@ -12,62 +12,65 @@
 
 ![session-devtools hero demo](./docs/assets/hero.gif)
 
-> **你在看什么：** 一次含有sub-agent委派的Claude Code session。
-> Session 列表（token / call / tool 计数）→ turn 下钻 → sub-agent 父子边界 → 上下文归因 → call 间 diff。
+> **What you are seeing:** A Claude Code session where the parent agent delegates to a sub-agent.
+> Session list (token / call / tool counts) → turn drilldown → sub-agent parent–child boundary → context attribution → call-to-call diff.
+> Every layer is clickable.
 
-▶ 观看完整DEMO → [Bilibili](https://www.bilibili.com/video/BV19eLA66EBb) · [YouTube](https://youtu.be/REPLACE_ID)  
-📖 **[产品说明：每个界面的含义 →](https://tony-shi.github.io/session-devtools/walkthrough)**
+▶ Watch the full 60s demo → [YouTube](https://youtu.be/krgMob17wVE?si=KX6KlrEh36HLEUFK) · [Bilibili](https://www.bilibili.com/video/BV19eLA66EBb)  
+📖 **[Product walkthrough: what each screen means →](https://tony-shi.github.io/session-devtools/walkthrough)**
 
 ---
 
-### 一眼看产品
+### At a glance
 
 ![session list screenshot](./docs/assets/hero.png)
 
-*Session 列表 — 每一个 Claude Code session，含 token 使用量、LLM call 数、tool call 数、sub-agent 标记。点击任意行进入详情。*
+*Session list — every Claude Code session with token usage, LLM call count, tool call count, and sub-agent indicator. Click any row to drill in.*
 
 ---
 
+**Claude Code is the spaceship. We built the cockpit.**
 
-> "Claude Code 已经变成了一艘宇宙飞船，80% 的功能我根本用不到。基本上没有任何harness允许你检查与模型交互的每一个细节。"
+> "Claude Code has turned into a spaceship with 80% of functionality I have no use for. Basically no harness allows inspecting every aspect of interactions with the model."
 >
-> — Mario Zechner，[*What I learned building an opinionated and minimal coding agent*](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)
+> — Mario Zechner, [*What I learned building an opinionated and minimal coding agent*](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/)
 
-**Claude Code 是宇宙飞船。`session-devtools`尝试构建驾驶舱仪表盘。**
+`session-devtools` is that harness.
 
-> **Alpha** · 当前仅支持 Claude Code 2.x · 本地运行 · 数据不出本机。
-
----
-
-## 隐藏的执行链路
-
-你的终端只给你看最终回答。**产出它的过程，全程不可见。**
-
-一次 Claude Code 的 turn 背后，往往藏着：
-
-- 多次 **LLM call**
-- 十几次 **tool call**
-- 多个 **sub-agent** 在自己的上下文里探索
-- 悄悄注入的指令
-
-**把它当作浏览器 DevTools —— 但针对 LLM 交互。**
-
-点开任何一次 call，看到完整的上下文窗口，并且每一段都带来源标签：哪段 system prompt、哪个 tool result、哪一轮历史 turn 贡献了哪些 token。对比相邻两次 call，看清中间到底变了什么。从父 agent 到子 agent 再回来，每一次 sub-agent 委派都有完整链路。
-
-不只是 *Claude 说了什么*，而是 *它在说这句话时，看到的是什么*。
+> **Alpha** · Claude Code 2.x · Local-only · Your data never leaves your machine.
 
 ---
 
-## 一条命令
+## The hidden loop
+
+Your terminal shows the final answer. What produced it stays invisible.
+
+A single Claude Code turn often hides:
+
+- multiple **LLM calls**
+- a dozen **tool calls**
+- **sub-agents** exploring in their own context
+- silently injected instructions
+- a context compaction
+
+Think of `session-devtools` as browser DevTools — but for LLM interactions.
+
+Click into any call to see the full context window, with every chunk attributed to its source: which system prompt block, which tool result, which prior turn contributed which tokens. Diff two adjacent calls to find exactly what changed. Trace every sub-agent from parent to child and back.
+
+Not just *what Claude said* — but *what it was looking at when it said it*.
+
+
+---
+
+## One command
 
 ```bash
 npx session-devtools
 ```
 
-Node 22+。
-自动在浏览器打开 [http://localhost:5173](http://localhost:5173)。**数据不上传。**
+Node 22+. Opens [http://localhost:5173](http://localhost:5173) automatically. **Nothing is uploaded.**
 
-或者全局安装：
+Or install globally:
 
 ```bash
 npm i -g session-devtools
@@ -76,104 +79,107 @@ session-devtools
 
 ---
 
-## 你可以检查什么
+## What you can inspect
 
-| 能力 | 实际看到的内容 |
+| Capability | What you actually see |
 |---|---|
-| **完整调用层级** | Session → Turn → LLM Call → Tool Call → Tool Result。每一层都是链接，不是日志行。 |
-| **上下文归因** | 对任意一次 LLM call：上下文窗口里的每一段，都标注来源 —— system prompt block、tool result、注入的指令、之前的 turn。 |
-| **Call 间 diff** | 相邻两次 LLM call 之间，准确看出新增和丢弃了什么。捕获悄悄注入的上下文。 |
-| **Sub-agent 全链路** | 完整的父 → 子委派：父 agent 交付了什么、子 agent 实际跑了什么、什么结果回到主对话。 |
-| **回答拆解** | 最终答案由哪些 content block 组成，顺序如何。 |
+| **Full call hierarchy** | Session → Turn → LLM Call → Tool Call → Tool Result. Every layer is a link, not a log line. |
+| **Context attribution** | For any LLM call: every chunk in the context window, labeled by source — system prompt block, tool result, injected instruction, prior turn. |
+| **Call-to-call diff** | Exactly what was added or dropped between two adjacent LLM calls. Catch silent context injections. |
+| **Sub-agent trace** | Full parent → child delegation: what the parent handed off, what the child actually ran, what came back. |
+| **Response decomposition** | Which content blocks composed the final answer, and in what order. |
 
 ---
 
-## 60 秒上手试一下
+## Try it in 60 seconds
 
-先把 `session-devtools` 跑起来。然后在任意你想分析的仓库里打开 Claude Code，输入：
+First, start `session-devtools`. Then open Claude Code in any repo you want to inspect and run:
 
 ```text
-先计算当前仓库下，ls后多少文件？
-之后，分析仓库，回答以下问题：最重要的三个文件是什么？分别完成什么？
-不要进行代码修改！只输出结论！
+Use a subagent to inspect this repository and answer one question:
+What are the three most important files in this codebase, and why?
+
+Do not edit files. The subagent should return file paths and one-sentence reasons.
+After it returns, summarize the answer in a short table.
 ```
 
-跑完后切回 `session-devtools`，依次看：
+Once it finishes, switch back to `session-devtools` and look at:
 
-- 父 agent **决定派单**的那次 LLM call
-- 子 agent **自己的工具链**
-- 结果**交回**父对话的那一刻
-- 父 agent **下一次调用**的上下文从哪里来
+- the LLM call where the parent **decided to delegate**
+- the sub-agent's **own tool chain**
+- the **handoff** back to the parent
+- where the parent's **next call** sourced its context from
 
-跑完这一次，"sub-agent 到底是什么"就不再抽象了。
+One run, and "what a sub-agent really is" stops being abstract.
 
-之后继续探索 —— 每一个 Claude Code 的“小把戏”都能被点开看清，就像你用 Chrome DevTools 探索喜爱的网页那样。
+From there, keep exploring. Every Claude Code's litte tricks becomes inspectable — the way every webpage is, in browser DevTools.
 
 ---
 
-## CLI 参数
+## CLI flags
 
 ```
-session-devtools --port <n>        # 默认 5173
-                 --data-dir <path> # 默认 ~/.api-dashboard
-                 --no-open         # 不自动打开浏览器
-                 --quiet           # 静默日志
-                 --no-proxy        # 跳过 MITM 代理安装（关闭归因）
+session-devtools --port <n>        # default 5173
+                 --data-dir <path> # default ~/.api-dashboard
+                 --no-open         # don't open browser
+                 --quiet           # suppress logs
+                 --no-proxy        # skip MITM proxy install (disables attribution)
 ```
 
 ---
 
-## 上下文归因
+## Context attribution
 
-**归因默认开启。** 首次启动时，`session-devtools` 会自动安装一个本地 MITM 代理，捕获 Claude Code 的出站请求 —— 这是实现"每段上下文都可归因"的基础。代理在本机运行，**不会有任何数据离开你的机器**。
+**Attribution is on by default.** On first launch, `session-devtools` installs a local MITM proxy that captures Claude Code's outbound requests — this is what makes per-chunk attribution possible. The proxy runs locally; nothing leaves your machine.
 
-它做的事：
+What it does:
 
-1. 在 `~/.claude/settings.json` 中添加代理配置
-2. 拦截后续 Claude Code session 的请求体
-3. 与 session 数据一起本地存储
+1. Adds a proxy entry to `~/.claude/settings.json`
+2. Intercepts request bodies from Claude Code on subsequent sessions
+3. Stores them locally alongside session data
 
-**首次启动后请重新开一个 Claude Code session** —— 已有的 session 没有请求数据，归因区域会显示 `Attribution requires proxy data`。
+**Start a new Claude Code session after first launch** — existing sessions won't have request data and will show `Attribution requires proxy data`.
 
-不想启用代理？
+To opt out:
 
 ```bash
 session-devtools --no-proxy
 ```
 
-所有 session 的归因区域都会显示 `Attribution requires proxy data`。
+Attribution will show `Attribution requires proxy data` for all sessions.
 
 ---
 
-## Alpha 阶段
+## Alpha caveats (honest)
 
-- **目前仅支持 Claude Code 2.x。** Codex / Gemini 暂未支持。
-- **归因**需要 MITM 代理（首次启动自动安装，可用 `--no-proxy` 关闭）。
+- **Claude Code 2.x first.** Codex / Gemini are not supported yet.
+- **Attribution** needs the MITM proxy (installed on first launch, opt out with `--no-proxy`).
+- **No cloud upload.** Data stays local in `~/.api-dashboard/sessions.db`.
 
 ---
 
-## 运行要求
+## Requirements
 
 - Node.js v22+
-- Claude Code（用于 session 数据）
+- Claude Code (for session data)
 
-Session数据自动从 `~/.claude/projects/**/*.jsonl` 读取。
-覆盖数据目录：`API_DASHBOARD_DIR=/your/path`。
+Session data is read automatically from `~/.claude/projects/**/*.jsonl`.
+Override the data dir with `API_DASHBOARD_DIR=/your/path`.
 
-发布新版本后，`session-devtools` 在下次启动时会打印升级提示。
-升级命令：`npm i -g session-devtools@latest`。
+When a new version is published, `session-devtools` prints an update notice on next launch.
+Upgrade with `npm i -g session-devtools@latest`.
 
 ---
 
-## 开发
+## Development
 
 ```bash
 git clone https://github.com/tony-shi/session-devtools
 cd session-devtools
 npm install
-npm run dev          # 同时启动 server 与 client，支持热更新
-npm run build        # 生产构建（server + client）
-npx tsc --noEmit     # 类型检查
+npm run dev          # start server + client with hot reload
+npm run build        # production build (server + client)
+npx tsc --noEmit     # type check
 cd client && npm run lint
 ```
 
@@ -185,6 +191,6 @@ cd client && npm run lint
 
 ---
 
-> **Agent 驾驭 LLM。你驾驭 agent。**
+> **Agents harness the LLM. You harness the agent.**
 
-如果这个项目能帮到你，**点个 star ^-^ **，在 [discussions](https://github.com/tony-shi/session-devtools/discussions) 里告诉我们你还想检查什么。
+If this resonates, **star the repo** — and open a [discussion](https://github.com/tony-shi/session-devtools/discussions) for what you'd want to inspect next.
