@@ -26,6 +26,10 @@ export const EVENT_PALETTES: Record<IntervalEventKind, EventPalette> = {
   "user:human":               { bg: "#faf5ff", border: "#d8b4fe", fg: "#a855f7" },
   "user:tool_result":         { bg: "#f0fdf4", border: "#86efac", fg: "#16a34a" },
   "user:command":             { bg: "#fffbeb", border: "#fde68a", fg: "#d97706" },
+  // 后台任务完成回执：sub-agent 紫系淡化（与 sub-agent 域同源、与人类输入区分）
+  "user:task-notification":   { bg: "#faf5ff", border: "#e9d5ff", fg: "#7e22ce" },
+  // teams 入站消息：青系（teams 域专属色，区别于 workflow/sub-agent 紫系）
+  "user:teammate-message":    { bg: "#ecfeff", border: "#a5f3fc", fg: "#0e7490" },
   // skill_injection：用 attachment:skill_listing 同款灰，与右侧 proxy 视图对齐
   "user:skill_injection":     { bg: "#f8fafc", border: "#e2e8f0", fg: "#475569" },
   // Compact 类事件统一橙色色板：与 left rail 的 🗜 行 / CompactEventNavItem 对齐。

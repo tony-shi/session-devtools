@@ -24,6 +24,8 @@ export function SubAgentSessionPanel({
   agentFileId,
   parentLabel,
   onReturnToParent,
+  runLabel,
+  onReturnToRun,
   selectedTurnId,
   selectedCallId,
   onSelectTurn,
@@ -40,6 +42,10 @@ export function SubAgentSessionPanel({
   agentFileId: string;
   parentLabel?: string;          // e.g. "Turn 3"
   onReturnToParent?: () => void; // closes sub-turn, returns to parent turn detail
+  // 双父级（workflow agent）：所属 run 面板是第二个返回路径 —— launch turn 是
+  // 物理父级、run 是逻辑父级，两者都给。Task 型缺省。
+  runLabel?: string;             // e.g. "wf-visualization-research"
+  onReturnToRun?: () => void;
   // Phase 4：内部 turn/call 由 URL 驱动（lift up 到 SessionDetailV2）。本面板
   // 变成受控组件 —— 从 props 拿选中 id，点击通过回调上报，不再持有 local state。
   selectedTurnId: number | null;
@@ -87,16 +93,39 @@ export function SubAgentSessionPanel({
   // empty sessionId skips the attribution-graph API fetch; null onJumpToCall
   // suppresses every "↗ jump to call #N" UI inside descendant components.
   // Re-enabling is Phase 2 (banner explains).
+  // 单 turn 扁平化（05 文档 §8）：workflow agent 几乎总是单 turn 转录——内层
+  // 只有一行的 turn 导航是纯冗余（堆叠感的主要来源）。仅 1 turn 时不渲染内层
+  // nav rail、不渲染 turn 层级，主画布直接 call 链。URL/路由/受控状态全不动，
+  // 纯展示降维；多 turn 转录保留 session-in-session 完整结构。
+  const flattened = turns.length === 1;
+
   return (
     <AttributionGraphProvider sessionId="" onJumpToCall={null}>
       <div style={{ display: "flex", flex: 1, overflow: "hidden", flexDirection: "column" }}>
         {/* ── Top breadcrumb-style bar: back-to-parent + side-branch meta ── */}
-        {onReturnToParent && parentLabel && (
+        {((onReturnToParent && parentLabel) || onReturnToRun) && (
           <div style={{
             display: "flex", alignItems: "center", gap: 8,
             padding: "6px 16px", background: BRAND.violetGradient50,
             borderBottom: "1px dashed #c4b5fd", flexShrink: 0,
           }}>
+            {/* 双父级：run 面板（逻辑父级，workflow 限定）在前，launch turn
+                （物理父级）在后。Task 型只有后者。 */}
+            {onReturnToRun && runLabel && (
+              <button
+                onClick={onReturnToRun}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  fontSize: 11, fontWeight: 600, color: "#7e22ce",
+                  background: "#faf5ff", border: "1px solid #e9d5ff",
+                  borderRadius: 4, padding: "2px 8px", cursor: "pointer",
+                }}
+              >
+                <span style={{ fontSize: 12, lineHeight: 1 }}>↩</span>
+                {runLabel}
+              </button>
+            )}
+            {onReturnToParent && parentLabel && (
             <button
               onClick={onReturnToParent}
               style={{
@@ -109,12 +138,14 @@ export function SubAgentSessionPanel({
               <span style={{ fontSize: 12, lineHeight: 1 }}>↩</span>
               {t("sessionOverview.subAgent.backTo", { name: parentLabel })}
             </button>
+            )}
             <span style={{ fontSize: 10, color: BRAND.violet600, letterSpacing: "0.04em" }}>
               <ForkIcon size={10} color={BRAND.violet600} /> {t("sessionOverview.subAgent.sideBranch")} · {turns.length} · {drilldown.subAgents.length > 0 ? t("sessionOverview.subAgent.nested", { n: drilldown.subAgents.length }) : t("sessionOverview.subAgent.leaf")}
             </span>
             {/* Mini inline breadcrumb so the position inside the sub-agent
-                is always visible — parallels the main session's header. */}
-            {innerTurn && (
+                is always visible — parallels the main session's header.
+                扁平化时 turn 级 crumb 无意义（唯一 turn 已隐含），只留 call。 */}
+            {innerTurn && !flattened && (
               <>
                 <span style={{ color: "#d1d5db", flexShrink: 0 }}>›</span>
                 <span style={{
@@ -139,12 +170,11 @@ export function SubAgentSessionPanel({
           </div>
         )}
 
-        {/* ── Body: 200px left nav + Main Canvas — same structure as main session ── */}
+        {/* ── Body: 200px left nav + Main Canvas — same structure as main session.
+            扁平化（单 turn）时整个左 nav 不渲染：call 定位由主画布的 call 链
+            与面包屑 call crumb 承担。 ── */}
         <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-          {/* Left nav — NavItem rows, one per sub-agent turn, with badges +
-              indented Call sub-rows under the currently selected turn.
-              Mirrors SessionDetailV2's left rail (lines ~5495+) but scoped
-              to this sub-agent's drilldown. */}
+          {!flattened && (
           <div style={{ width: 200, borderRight: "1px solid #e5e7eb", overflowY: "auto", flexShrink: 0, background: "#fafafa" }}>
             <div style={{ padding: "12px 12px 4px", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.07em" }}>
               {t("sessionOverview.subAgent.turnsHeader")}
@@ -211,6 +241,7 @@ export function SubAgentSessionPanel({
               );
             })}
           </div>
+          )}
 
           {/* Main Canvas — reuses the exact same Turn/Call panels as the
               main session, so all interactions (Token ledger hover, Diff vs

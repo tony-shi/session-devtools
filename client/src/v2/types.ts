@@ -24,6 +24,10 @@ export interface SessionV2 {
   llm_call_count: number;
   human_input_count: number;
   sub_agent_count: number;
+  // agent teams：成员会话的 team 名与成员名（null = 非 team 会话 / lead 无成员名）。
+  // v16 起从行级 teamName/agentName 提取（编排目录 cleanup 即删，行级是唯一强键）。
+  team_name?: string | null;
+  team_agent_name?: string | null;
   claude_code_api_error_count: number;
   parser_warnings: string[];
   proxy_count: number;

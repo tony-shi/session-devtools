@@ -2,7 +2,9 @@ import { Controller, Get, Param, Query } from "@nestjs/common";
 import { getDb } from "./db.ts";
 import { runSyncV2 } from "./sync-v2.ts";
 import { parseJsonField } from "./parser-utils.ts";
-import { parseSessionDrilldown, parseSubAgentDrilldown } from "./session-drilldown-parser.ts";
+import { parseSessionDrilldown, parseSubAgentDrilldown, resolveSubAgentPaths } from "./session-drilldown-parser.ts";
+import { readWorkflowRunJson, readWorkflowRunsFromDisk, firstAssistantRequestId, transcriptFirstPrompt } from "./workflow-runs.ts";
+import { readTeamDomain } from "./team-domain.ts";
 import { loadCallDetail, readProxyRecord, findProxyRowForCall, computeCallProxyMatchModes } from "./call-detail.ts";
 import { resolveSideCallLinks, type GhostQueryKind } from "./ghost-attribution.ts";
 import { ensureSessionScanned } from "./side-call/enricher.ts";
@@ -281,6 +283,201 @@ export class SessionsV2Controller {
     return drilldown;
   }
 
+  // Workflow run 的脚本源码。脚本全文（17KB+ 常见）不进 drilldown payload
+  // （WorkflowRunSummary 只带 scriptLength/scriptPath），前端 Script tab 按需取。
+  // 数据源是 wf json 内嵌的 script 字段（与 scripts/ 目录下的 .js 文件逐字节冗余，
+  // 但 json 是终止时一次性写出的权威副本）。
+  @Get("sessions/:id/workflows/:runId/script")
+  async workflowScript(@Param("id") id: string, @Param("runId") runId: string) {
+    // runId 直接进 path join —— 白名单格式校验挡路径穿越
+    if (!/^wf_[A-Za-z0-9-]+$/.test(runId)) {
+      throw Object.assign(new Error(`invalid runId: ${runId}`), { status: 400 });
+    }
+    const db = getDb();
+    const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+
+    const { dirname, basename, join } = await import("node:path");
+    const sessionDir = join(dirname(row.source_file), basename(row.source_file, ".jsonl"));
+    const wfJson = readWorkflowRunJson(sessionDir, runId);
+    if (!wfJson) throw Object.assign(new Error(`workflow run not found: ${runId}`), { status: 404 });
+
+    return {
+      runId,
+      workflowName: typeof wfJson.workflowName === "string" ? wfJson.workflowName : "",
+      scriptPath: typeof wfJson.scriptPath === "string" ? wfJson.scriptPath : "",
+      script: typeof wfJson.script === "string" ? wfJson.script : "",
+    };
+  }
+
+  // agent teams 域：输入任一成员 session，返回该 team 的成员列表 + 消息时间线
+  // （成员发现走 meta team_name 列；消息从各成员转录重建——见 team-domain.ts
+  // 头注释的数据模型与明确不支持清单）。非 team 会话 → 404（显式，不猜）。
+  @Get("sessions/:id/team")
+  async sessionTeam(@Param("id") id: string) {
+    const db = getDb();
+    const row = db.prepare(`SELECT team_name FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { team_name: string | null } | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+    if (!row.team_name) throw Object.assign(new Error("not a team session"), { status: 404 });
+    return readTeamDomain(db, row.team_name);
+  }
+
+  // Workflow run 内各 agent 的 StructuredOutput schema —— 真值来自 proxy dump：
+  // agent 请求的 tools[] 含发送到 API 的完整 schema（脚本里的 schema 是任意 JS
+  // 运行时构造，不可靠静态提取；proxy 是逐字节确定的）。per-agent 取转录任一
+  // requestId → proxy join → reqBody.tools[StructuredOutput].input_schema。
+  // 取不到时显式 reason，不伪造：no-request（转录无 assistant 行）/
+  // proxy-missing（proxy 未捕获）/ no-structured-output（schema-less agent）。
+  @Get("sessions/:id/workflows/:runId/schemas")
+  async workflowSchemas(@Param("id") id: string, @Param("runId") runId: string) {
+    if (!/^wf_[A-Za-z0-9-]+$/.test(runId)) {
+      throw Object.assign(new Error(`invalid runId: ${runId}`), { status: 400 });
+    }
+    const db = getDb();
+    const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+
+    const { dirname, basename, join } = await import("node:path");
+    const sessionDir = join(dirname(row.source_file), basename(row.source_file, ".jsonl"));
+    const run = readWorkflowRunsFromDisk(sessionDir).find((r) => r.runId === runId);
+    if (!run) throw Object.assign(new Error(`workflow run not found: ${runId}`), { status: 404 });
+
+    const schemas: Record<string, { schema: Record<string, unknown> | null; reason?: string }> = {};
+    for (const agent of run.agents) {
+      const agentPath = join(run.agentsDir, `agent-${agent.agentId}.jsonl`);
+      const reqId = firstAssistantRequestId(agentPath);
+      if (!reqId) {
+        schemas[agent.agentId] = { schema: null, reason: "no-request" };
+        continue;
+      }
+      const proxyRow = findProxyRowForCall(db, id, { apiRequestId: reqId });
+      if (!proxyRow) {
+        schemas[agent.agentId] = { schema: null, reason: "proxy-missing" };
+        continue;
+      }
+      const rec = await readProxyRecord(proxyRow.jsonl_file, proxyRow.jsonl_byte_offset);
+      let tools: Array<{ name?: string; input_schema?: Record<string, unknown> }> = [];
+      try {
+        const reqBody = JSON.parse((rec?.reqBody as string) ?? "") as { tools?: Array<{ name?: string; input_schema?: Record<string, unknown> }> };
+        tools = Array.isArray(reqBody.tools) ? reqBody.tools : [];
+      } catch { /* body 不可解 → 按无 schema 处理 */ }
+      const so = tools.find((t) => t?.name === "StructuredOutput");
+      schemas[agent.agentId] = so?.input_schema
+        ? { schema: so.input_schema }
+        : { schema: null, reason: "no-structured-output" };
+    }
+    return { runId, schemas };
+  }
+
+  // Workflow run 内的数据流（F）+ 结果回流主线（G）。两者都是**确定性验证**，
+  // 不是概率归因（05 文档 §5）：
+  //   F：脚本把上游 agent 的 result 经 JSON.stringify/模板插值逐字节内联进下游
+  //      prompt —— 验证手段是文本包含检查，命中即 100% 确定；脚本若加工过
+  //      （slice/摘要）则不命中，如实不列（"未确认" ≠ "无数据流"）。
+  //      因果序约束：journal 物理行序（上游 result 行 < 下游 started 行）。
+  //   G：主 agent 收到 notification 后自己 Bash 读 wf json/tmp，常带 jq/head
+  //      加工 —— 两级置信：exact（result 全文出现在某 tool_result）/
+  //      field（对象 result 的某顶层 string 字段全文出现，覆盖 jq 提取场景）。
+  //      前缀/模糊匹配不做（任意阈值易误报）。
+  @Get("sessions/:id/workflows/:runId/dataflow")
+  async workflowDataflow(@Param("id") id: string, @Param("runId") runId: string) {
+    if (!/^wf_[A-Za-z0-9-]+$/.test(runId)) {
+      throw Object.assign(new Error(`invalid runId: ${runId}`), { status: 400 });
+    }
+    const db = getDb();
+    const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
+    if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
+
+    const { dirname, basename, join } = await import("node:path");
+    const sessionDir = join(dirname(row.source_file), basename(row.source_file, ".jsonl"));
+    const run = readWorkflowRunsFromDisk(sessionDir).find((r) => r.runId === runId);
+    if (!run) throw Object.assign(new Error(`workflow run not found: ${runId}`), { status: 404 });
+
+    // result 太短的包含检查会误命中（"ok" 在任何 prompt 里都可能出现）—— 跳过，
+    // 不出边也不报错（短 result 的真实依赖无法用包含法确认）。
+    const MIN_RESULT_CHARS = 100;
+
+    // ── F: agent → agent ──
+    const edges: Array<{ fromAgentId: string; fromLabel: string; toAgentId: string; toLabel: string; matchedChars: number }> = [];
+    for (const down of run.agents) {
+      const downStarted = run.journalStartedLine.get(down.agentId);
+      if (downStarted === undefined) continue;
+      const prompt = transcriptFirstPrompt(join(run.agentsDir, `agent-${down.agentId}.jsonl`));
+      if (!prompt) continue;
+      for (const up of run.agents) {
+        if (up.agentId === down.agentId) continue;
+        const upResultLine = run.journalResultLine.get(up.agentId);
+        if (upResultLine === undefined || upResultLine > downStarted) continue;
+        const result = run.journalResults.get(up.agentId);
+        if (!result || result.length < MIN_RESULT_CHARS) continue;
+        if (prompt.includes(result)) {
+          edges.push({
+            fromAgentId: up.agentId, fromLabel: up.label,
+            toAgentId: down.agentId, toLabel: down.label,
+            matchedChars: result.length,
+          });
+        }
+      }
+    }
+
+    // ── G: 回流主线 ──
+    // 主 JSONL 全量 user tool_result 行（0-based 文件行号，与 IntervalEvent.lineIdx
+    // 同口径），对每个 agent result 找首个 exact / field 命中。
+    const mainline: Array<{ agentId: string; label: string; lineIdx: number; confidence: "exact" | "field"; matchedField?: string }> = [];
+    let mainLines: string[];
+    try {
+      mainLines = readFileSync(row.source_file, "utf-8").split("\n");
+    } catch {
+      mainLines = [];
+    }
+    const toolResultTexts: Array<{ lineIdx: number; text: string }> = [];
+    for (let i = 0; i < mainLines.length; i++) {
+      if (!mainLines[i].trim()) continue;
+      let rec: { type?: string; message?: { content?: unknown } };
+      try { rec = JSON.parse(mainLines[i]) as typeof rec; } catch { continue; }
+      if (rec.type !== "user" || !Array.isArray(rec.message?.content)) continue;
+      const text = (rec.message!.content as Array<{ type?: string; content?: unknown }>)
+        .filter((b) => b?.type === "tool_result")
+        .map((b) => typeof b.content === "string" ? b.content
+          : Array.isArray(b.content) ? (b.content as Array<{ text?: string }>).map((c) => c?.text ?? "").join("") : "")
+        .join("");
+      if (text) toolResultTexts.push({ lineIdx: i, text });
+    }
+    for (const agent of run.agents) {
+      const result = run.journalResults.get(agent.agentId);
+      if (!result || result.length < MIN_RESULT_CHARS) continue;
+      let hit: (typeof mainline)[number] | null = null;
+      for (const { lineIdx, text } of toolResultTexts) {
+        if (text.includes(result)) {
+          hit = { agentId: agent.agentId, label: agent.label, lineIdx, confidence: "exact" };
+          break;
+        }
+      }
+      if (!hit) {
+        // field 级：对象 result 的顶层 string 字段全文（jq '.findings' 提取场景）
+        let obj: Record<string, unknown> | null = null;
+        try {
+          const v = JSON.parse(result) as unknown;
+          if (v !== null && typeof v === "object" && !Array.isArray(v)) obj = v as Record<string, unknown>;
+        } catch { /* string result 无字段级 */ }
+        if (obj) {
+          outer: for (const [k, v] of Object.entries(obj)) {
+            if (typeof v !== "string" || v.length < MIN_RESULT_CHARS) continue;
+            for (const { lineIdx, text } of toolResultTexts) {
+              if (text.includes(v)) {
+                hit = { agentId: agent.agentId, label: agent.label, lineIdx, confidence: "field", matchedField: k };
+                break outer;
+              }
+            }
+          }
+        }
+      }
+      if (hit) mainline.push(hit);
+    }
+
+    return { runId, edges, mainline };
+  }
+
   // Side calls：本 session 在对话主线之外发起的后台 LLM 请求（生成标题 / quota /
   // prompt suggestion / agent summary 等）。它们带正确的 session_id 但不在 transcript
   // turn/call 结构里。这里把它们集中列出供 Background tab 消费。
@@ -444,10 +641,9 @@ export class SessionsV2Controller {
     const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
 
-    // Resolve the sub-agent JSONL path the same way parseSubAgentDrilldown does.
-    const { dirname, basename, join } = await import("node:path");
-    const sessionBase = basename(row.source_file, ".jsonl");
-    const subAgentFile = join(dirname(row.source_file), sessionBase, "subagents", `agent-${agentFileId}.jsonl`);
+    // Resolve the sub-agent JSONL path the same way parseSubAgentDrilldown does
+    // (single source of truth — handles flat and workflow-composite ids alike).
+    const subAgentFile = resolveSubAgentPaths(row.source_file, agentFileId).agentPath;
 
     const drilldown = await parseSubAgentDrilldown(row.source_file, agentFileId);
     const callId = parseInt(callIdStr, 10);
@@ -522,9 +718,7 @@ export class SessionsV2Controller {
     const row = db.prepare(`SELECT source_file FROM sessions_meta_v2 WHERE session_id = ?`).get(id) as { source_file: string } | undefined;
     if (!row) throw Object.assign(new Error("session not found"), { status: 404 });
 
-    const { dirname, basename, join } = await import("node:path");
-    const sessionBase = basename(row.source_file, ".jsonl");
-    const subAgentFile = join(dirname(row.source_file), sessionBase, "subagents", `agent-${agentFileId}.jsonl`);
+    const subAgentFile = resolveSubAgentPaths(row.source_file, agentFileId).agentPath;
 
     const drilldown = await parseSubAgentDrilldown(row.source_file, agentFileId);
     const callId = parseInt(callIdStr, 10);

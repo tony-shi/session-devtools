@@ -65,7 +65,100 @@ export interface SubAgentSummary {
   // sub-agent card's expanded view; `resultPreview` (300-char head) is kept
   // for compact contexts (mock lists / collapsed card). Optional so older
   // payloads stay shape-compatible.
+  //
+  // workflow agent（agentSource="workflow"）语义差异：父 JSONL 没有逐 agent 的
+  // tool_result —— result/resultPreview 换源为 journal.jsonl 的 result 行
+  // （结构化返回值，对象 stringify）。
   result?: string;
+
+  // ── workflow agent 扩展（agentSource="workflow" 时填充；Task 型全部缺省）──
+  // workflow agent 的转录在 subagents/workflows/<runId>/ 嵌套目录下，agentFileId
+  // 为复合形式 "<runId>__<agentId>"（不能含斜杠 —— Nest @Param 会在 "/" 上断裂）。
+  // 父锚是 name="Workflow" 的 tool_use（run 级，resume 时同 runId 有多个 launch，
+  // 按 agent 转录首行时间落入哪个 launch 窗口归属）。
+  agentSource?: "task" | "workflow";
+  workflowRunId?: string;
+  workflowName?: string;
+  // 1-based phase 序号 + 标题（来自 wf json workflowProgress，run 内 phase 映射的唯一来源）
+  phaseIndex?: number;
+  phaseName?: string;
+  // agent() 调用的展示标签（opts.label 或 prompt 摘要）
+  agentLabel?: string;
+}
+
+// ─── Workflow run（dynamic workflow 的 run 级概览）──────────────────────────
+// 数据源：<sessionDir>/workflows/wf_<runId>.json（终止时写出 —— 只有完结 run 可见）
+// + journal.jsonl。语义与 resume 口径详见 server/src/workflow-runs.ts 头注释。
+
+// attempt 槽位模型（05 文档 §5）：journal key 是 agent() 调用槽位的跨执行稳定
+// 身份；同 key 多个 started = 同一槽位的多次尝试（resume 重跑）。一次尝试一个
+// agentId、一份独立转录。
+export interface WorkflowAgentAttempt {
+  agentId: string;
+  // "<runId>__<agentId>" — 喂给 subagent 系列端点下钻该次尝试的转录
+  agentFileId: string;
+  // journal 有该 agentId 的 result 行（false = 失败/中断的尝试）
+  hasResult: boolean;
+  hasTranscript: boolean;
+  // 最终 workflowProgress 引用的胜出尝试
+  final: boolean;
+}
+
+export interface WorkflowRunAgent {
+  agentId: string;
+  // "<runId>__<agentId>" — 直接喂给 subagent 系列端点做下钻
+  agentFileId: string;
+  label: string;
+  phaseIndex: number | null;
+  phaseTitle: string;
+  model: string;
+  state: string;
+  // true = resume 时从上一轮 journal 回放（无新转录；转录文件来自上一轮执行）
+  cached: boolean;
+  // epoch ms；cached 条目记录的是回放时刻而非原始执行时刻
+  startedAt: number | null;
+  promptPreview: string;
+  resultPreview: string;
+  // 转录文件是否存在（理论上 progress 引用的都有；防御缺失场景，false 时前端禁下钻）
+  hasTranscript: boolean;
+  // 该槽位的全部尝试（journal 物理行序，含胜出者）。仅多次尝试时下发 ——
+  // 单次尝试（绝大多数）缺省，避免 payload 膨胀。
+  attempts?: WorkflowAgentAttempt[];
+}
+
+export interface WorkflowRunSummary {
+  runId: string;
+  workflowName: string;
+  // 终止态：completed | killed（带 error 字段）。进行中的 run 不会出现在列表里。
+  status: string;
+  // 末次物理执行的 task id（resume 后旧 taskId 不可见 —— wf json 被覆盖）
+  taskId: string;
+  // 末次物理执行口径
+  startTime: number;
+  completedAt: string;
+  durationMs: number;
+  totalTokens: number;
+  totalToolCalls: number;
+  // 逻辑 run 口径（含 cached 回放的 agent() 调用数）。与 durationMs/totalTokens
+  // 口径不同，前端并排展示时须分别标注，避免自相矛盾。
+  agentCount: number;
+  defaultModel: string;
+  summary: string;
+  error?: string;
+  scriptPath: string;
+  // 脚本全文不进本 payload（17KB+ 且 launch tool_use 的 rawJson 里已有一份）；
+  // 走 GET /sessions/:id/workflows/:runId/script 取
+  scriptLength: number;
+  // Workflow tool args 入参（JSON.stringify 原值），缺省 = 未传
+  args?: string;
+  phases: Array<{ title: string; detail?: string }>;
+  agents: WorkflowRunAgent[];
+  // 回指主 session 的锚点。resume → 同 runId 多个 launch（各自的 tool_use / taskId），
+  // 按物理序排列。lineIdx 是发出 tool_use 的 assistant 事件行号。
+  launches: Array<{ toolUseId: string; lineIdx: number; taskId: string | null }>;
+  // 有转录文件但不被最终 workflowProgress 引用的 agent 数（上一轮失败/被
+  // resume 前缀规则作废）。只计数不展开 —— 完结视角下它们不属于逻辑 run。
+  supersededAgentCount: number;
 }
 
 // ─── Interval events: all raw JSONL events between two LLM calls ─────────────
@@ -77,6 +170,10 @@ export type IntervalEventKind =
   | "user:human"         // user turn start — human typed text
   | "user:tool_result"   // tool_result block(s) in user event
   | "user:command"       // <local-command-caveat> / <command-name> etc.
+  | "user:task-notification" // 后台任务（Workflow / background Agent / Monitor）完成回执，
+                             // origin.kind==="task-notification" 确定性识别 —— 非人类输入
+  | "user:teammate-message"  // agent teams 入站消息（spawn prompt / peer DM / idle 通知），
+                             // teamName 字段 + 内容前缀判别 —— 非人类输入
   | "user:skill_injection" // isMeta=true user.text 行，外层 sourceToolUseID 命中 Skill tool_use
   | "user:compact_summary" // jsonl user.isCompactSummary=true，CompactEvent 合成 turn 用
   | "system:api_error"   // API error / retry
@@ -248,6 +345,27 @@ export interface UserTurn {
    * Null if the parser somehow didn't capture a line for this turn (defensive).
    */
   userInputLineIdx: number | null;
+  /**
+   * turn opener 的来源。"human" = 用户真实输入；"task-notification" = 后台任务
+   * （Workflow / background Agent）完成时注入的 <task-notification> user 行
+   * （origin.kind 确定性识别）；"teammate-message" = agent teams 成员会话里
+   * 他人发来的 <teammate-message> 行（含 spawn prompt 首行 / peer DM / idle
+   * 通知 —— teamName 字段 + 内容前缀判别，该行无 origin.kind）。三者都开启
+   * 一轮真实的主循环推理（其后的 LlmCall 是真实调用），turn 切分保留 ——
+   * 只是 opener 不是人。前端据此换渲染 opener 节点。缺省 = "human"（旧 payload）。
+   */
+  openerSource?: "human" | "task-notification" | "teammate-message";
+  /** openerSource="task-notification" 时：notification 内 <task-id> 原文。 */
+  openerTaskId?: string;
+  /**
+   * openerSource="task-notification" 时：notification 内 <tool-use-id> 原文 ——
+   * 回指发起该后台任务的 tool_use（如 Workflow launch），前端做跳链。
+   * Monitor 型事件通知没有这个 tag，缺省。
+   */
+  openerToolUseId?: string;
+  /** openerSource="teammate-message" 时：发送者（teammate_id 属性，如
+   *  "team-lead" / "reviewer-server"）。tag 缺失时缺省。 */
+  openerTeammateId?: string;
   finalOutput: string | null;
   midTurnInjections: MidTurnInjection[];
   /**
@@ -422,6 +540,10 @@ export interface SessionDrilldown {
   hasJsonlSource: boolean;
   subAgentCount: number;
   subAgents: SubAgentSummary[];
+  // 本 session 内已完结的 dynamic workflow run（按 startTime 升序）。
+  // workflow agent 的逐 agent 条目同时平铺进 subAgents（agentSource="workflow"）；
+  // 这里是 run 级概览（phase/launch/聚合指标）。进行中的 run 不可见（无 wf json）。
+  workflowRuns?: WorkflowRunSummary[];
   turns: UserTurn[];
   interTurnBlocks: InterTurnBlock[];
   // /compact 事件。按 timestamp 升序。当前是 session 顶层第一个非 turn 的 sibling

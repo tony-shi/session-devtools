@@ -178,6 +178,10 @@ function buildData(turn: UserTurn): MinimapData {
     const agents: SubAgentAgent[] = [];
     let totalSavings = 0;
     for (const sa of (call.subAgents ?? [])) {
+      // workflow agent 跳过：异步后台执行，"若 inline 跑主上下文会涨到多少"的
+      // 反事实口径不成立；且 1:N 共享 launch tool_use，逐个累加会把 counterfactual
+      // 线抬高数十万 token、把真实 context 曲线压成底部一条线。run 级展示后续做。
+      if (sa.agentSource === "workflow") continue;
       const slot = call.toolCalls.find(tc => tc.toolUseId === sa.toolUseId);
       const returnedSize = slot?.outputSize ?? 0;
       const savings = Math.max(0, sa.peakContext - returnedSize);

@@ -30,6 +30,9 @@ import { LlmCallDetailPanel } from "./session-detail/call/LlmCallDetailPanel";
 import { BackgroundCallsPanel } from "./session-detail/background/BackgroundCallsPanel";
 import { SideCallDetailPanel } from "./session-detail/sidecall/SideCallDetailPanel";
 import { SubAgentSessionPanel } from "./session-detail/subagent/SubAgentSessionPanel";
+import { WorkflowRunPanel, WorkflowRunNotFoundPanel } from "./session-detail/workflow/WorkflowRunPanel";
+import { TeamOverviewPanel, TeamNotFoundPanel } from "./session-detail/team/TeamOverviewPanel";
+import type { TeamDomainResponse } from "./api";
 import { LinkedContextPanel } from "./session-detail/linked/LinkedContextPanel";
 import { SessionNavRail } from "./session-detail/SessionNavRail";
 import { SessionDetailHeader } from "./session-detail/SessionDetailHeader";
@@ -68,6 +71,20 @@ export function SessionDetailV2({ session, onClose }: Props) {
     return () => { alive = false; };
   }, [session.session_id]);
 
+  // agent teams 域（成员列表 + 消息时间线）。非阻塞旁路 fetch：404 = 非 team
+  // 会话（预期路径，置 null —— 左导航不出 TEAM 小节）；其余错误同样置 null
+  //（team 深链时由 TeamNotFoundPanel 显式呈现，不静默吞）。
+  const [teamDomain, setTeamDomain] = useState<TeamDomainResponse | null>(null);
+  useEffect(() => {
+    let alive = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setTeamDomain(null);
+    apiV2.sessionTeam(session.session_id)
+      .then((r) => { if (alive) setTeamDomain(r); })
+      .catch(() => { /* 非 team 会话 / 读失败 → null */ });
+    return () => { alive = false; };
+  }, [session.session_id]);
+
   const turns: UserTurn[] = drilldown?.turns ?? buildFallbackTurns();
   const interTurnBlocks: InterTurnBlock[] = drilldown?.interTurnBlocks ?? [];
   const compactEvents: CompactEvent[] = drilldown?.compactEvents ?? [];
@@ -82,6 +99,9 @@ export function SessionDetailV2({ session, onClose }: Props) {
   const [selectedCall, setSelectedCall] = useState<MockLlmCall | null>(null);
   // side-call 详情用 proxyRequestId 寻址（proxy-only，不依赖 turns 加载）。
   const [selectedProxyRequestId, setSelectedProxyRequestId] = useState<number | null>(null);
+  // workflow run 概览面板的 runId。坏 id 不在 applyNav 拦截 —— 主画布渲染显式
+  // 错误面板（不静默退 session）。
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [, setInspector] = useState<InspectorState>({ type: "hotspots" });
   const [selectedSubAgent, setSelectedSubAgent] = useState<SubAgentSummary | null>(null);
   const [subAgentDrilldown, setSubAgentDrilldown] = useState<SessionDrilldown | null>(null);
@@ -95,19 +115,55 @@ export function SessionDetailV2({ session, onClose }: Props) {
 
   const title = getSessionDisplayName(session, drilldown?.title);
 
-  // agentFileId → SubAgentSummary 查找表。sub-agent 分散在各 turn 的 call 上，
-  // URL 只带 agentFileId，靠这张表还原出 SubAgentSummary（agentType 等显示信息）。
+  // agentFileId → SubAgentSummary 查找表。数据源用 drilldown.subAgents 全量 ——
+  // 而不是从各 turn 的 call.subAgents 收集：launch 锚缺失的 workflow agent
+  // （toolUseId=""，parentCallId=0）不挂任何 call，但它在 subAgents 平铺列表里、
+  // 在 run 面板里有入口，深链必须可达（旧实现会静默退 session，半死链）。
   const subAgentByFileId = useMemo(() => {
     const m = new Map<string, SubAgentSummary>();
-    for (const turn of turns) {
-      for (const call of turn.calls) {
-        for (const sa of call.subAgents ?? []) {
-          if (!m.has(sa.agentFileId)) m.set(sa.agentFileId, sa);
+    for (const sa of drilldown?.subAgents ?? []) {
+      if (!m.has(sa.agentFileId)) m.set(sa.agentFileId, sa);
+    }
+    // attempt 槽位的非胜出尝试（失败/被作废）：不在 subAgents 平铺列表里，但
+    // 转录在盘上、尝试历史里有下钻入口 —— 注册 stub 让导航可达。统计字段全 0
+    // 不会被展示（SubAgentSessionPanel 用自己 fetch 的 drilldown 渲染数据，
+    // summary 只供 header 标签），不构成伪造数字。
+    for (const run of drilldown?.workflowRuns ?? []) {
+      for (const agent of run.agents) {
+        for (const at of agent.attempts ?? []) {
+          if (m.has(at.agentFileId) || !at.hasTranscript) continue;
+          m.set(at.agentFileId, {
+            agentFileId: at.agentFileId,
+            agentType: "workflow-subagent",
+            description: `${agent.label} (${t("workflow.attemptStubLabel", { defaultValue: "历史尝试" })})`,
+            toolUseId: "", toolUseName: "Workflow",
+            parentLineIdx: -1, parentCallId: 0,
+            llmCallCount: 0, toolCallCount: 0,
+            totalCacheRead: 0, totalCacheWrite: 0, totalFreshIn: 0, totalOutputTokens: 0,
+            peakContext: 0, lastContext: 0,
+            startedAt: "", endedAt: "", durationMs: 0,
+            resultPreview: "",
+            agentSource: "workflow",
+            workflowRunId: run.runId,
+            workflowName: run.workflowName,
+            agentLabel: agent.label,
+          });
+        }
+      }
+    }
+    if (!drilldown) {
+      // mock fallback（drilldown 未加载）：维持旧行为从 turns 收集
+      for (const turn of turns) {
+        for (const call of turn.calls) {
+          for (const sa of call.subAgents ?? []) {
+            if (!m.has(sa.agentFileId)) m.set(sa.agentFileId, sa);
+          }
         }
       }
     }
     return m;
-  }, [turns]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drilldown, turns]);
 
   // sub-agent 的真实父 turn —— 由 sa.parentCallId 反查（哪个主 turn 的 calls 含
   // 这个 call），而不是用 selectedTurn（浏览历史里停留的 turn）。后者会在深链 /
@@ -274,6 +330,27 @@ export function SessionDetailV2({ session, onClose }: Props) {
         setInspector({ type: "hotspots" });
         return;
       }
+      case "workflow-run": {
+        // 不在这里校验 runId 存在性 —— 找不到由主画布渲染显式
+        // WorkflowRunNotFoundPanel（产品决策：坏链暴露，不静默退 session）。
+        setNavLevel("workflow-run");
+        setSelectedRunId(nav.runId);
+        setSelectedTurn(null); setSelectedCall(null);
+        setSelectedInterTurnBlock(null); setSelectedCompactEventIdx(null);
+        if (!linkedPanelPinned) setLinkedPanel(null);
+        setInspector({ type: "hotspots" });
+        return;
+      }
+      case "team": {
+        // 非 team 会话由主画布渲染 TeamNotFoundPanel（显式，不静默退 session）。
+        setNavLevel("team");
+        setSelectedTurn(null); setSelectedCall(null);
+        setSelectedInterTurnBlock(null); setSelectedCompactEventIdx(null);
+        setSelectedRunId(null);
+        if (!linkedPanelPinned) setLinkedPanel(null);
+        setInspector({ type: "hotspots" });
+        return;
+      }
       case "session":
       default:
         applySessionLevel();
@@ -288,6 +365,7 @@ export function SessionDetailV2({ session, onClose }: Props) {
     setSelectedCall(null);
     setSelectedCompactEventIdx(null);
     setSelectedProxyRequestId(null);
+    setSelectedRunId(null);
     if (!linkedPanelPinned) setLinkedPanel(null);
     setInspector({ type: "hotspots" });
   }
@@ -492,6 +570,16 @@ export function SessionDetailV2({ session, onClose }: Props) {
             sideCalls={sideCalls}
             selectedProxyRequestId={selectedProxyRequestId}
             onSelectSideCall={(pid) => goNav({ level: "side-call", proxyRequestId: pid })}
+            workflowRuns={drilldown?.workflowRuns ?? []}
+            selectedRunId={selectedRunId}
+            onSelectWorkflowRun={(runId) => goNav({ level: "workflow-run", runId })}
+            taskSubAgents={(drilldown?.subAgents ?? []).filter(sa => sa.agentSource !== "workflow")}
+            selectedAgentFileId={navLevel === "subagent" ? (selectedSubAgent?.agentFileId ?? null) : null}
+            onSelectSubAgent={(agentFileId) => goNav({ level: "subagent", agentFileId })}
+            teamDomain={teamDomain}
+            currentSessionId={session.session_id}
+            onNavTeam={() => goNav({ level: "team" })}
+            onOpenSession={(sid) => navigate(`/sessions/${encodeURIComponent(sid)}`)}
           />
 
           {/* Main Canvas */}
@@ -594,6 +682,12 @@ export function SessionDetailV2({ session, onClose }: Props) {
                 agentFileId={selectedSubAgent.agentFileId}
                 parentLabel={subAgentParentTurn ? `${t("sessionOverview.turn.label")} ${subAgentParentTurn.id}` : undefined}
                 onReturnToParent={subAgentParentTurn ? handleReturnFromSubAgent : undefined}
+                runLabel={selectedSubAgent.agentSource === "workflow" && selectedSubAgent.workflowRunId
+                  ? (selectedSubAgent.workflowName || selectedSubAgent.workflowRunId)
+                  : undefined}
+                onReturnToRun={selectedSubAgent.agentSource === "workflow" && selectedSubAgent.workflowRunId
+                  ? () => goNav({ level: "workflow-run", runId: selectedSubAgent.workflowRunId! })
+                  : undefined}
                 selectedTurnId={subAgentTurnId}
                 selectedCallId={subAgentCallId}
                 onSelectTurn={(turnId) => goNav({ level: "subagent-turn", agentFileId: selectedSubAgent.agentFileId, turnId })}
@@ -601,6 +695,35 @@ export function SessionDetailV2({ session, onClose }: Props) {
                 onClearCall={() => goNav({ level: "subagent-turn", agentFileId: selectedSubAgent.agentFileId, turnId: subAgentTurnId ?? 0 })}
               />
             )}
+            {navLevel === "team" && (
+              teamDomain ? (
+                <TeamOverviewPanel
+                  team={teamDomain}
+                  currentSessionId={session.session_id}
+                  onOpenSession={(sid) => navigate(`/sessions/${encodeURIComponent(sid)}`)}
+                />
+              ) : (
+                <TeamNotFoundPanel onBackToOverview={handleNavSession} />
+              )
+            )}
+            {navLevel === "workflow-run" && selectedRunId != null && (() => {
+              const run = (drilldown?.workflowRuns ?? []).find(r => r.runId === selectedRunId);
+              return run && drilldown ? (
+                <WorkflowRunPanel
+                  run={run}
+                  drilldown={drilldown}
+                  sessionId={session.session_id}
+                  onSelectAgent={(agentFileId) => goNav({ level: "subagent", agentFileId })}
+                  onJumpToCall={(turnId, callId) => goNav({ level: "call", turnId, callId })}
+                />
+              ) : (
+                <WorkflowRunNotFoundPanel
+                  runId={selectedRunId}
+                  knownRunIds={(drilldown?.workflowRuns ?? []).map(r => r.runId)}
+                  onBackToOverview={handleNavSession}
+                />
+              );
+            })()}
             {navLevel === "background" && (
               <BackgroundCallsPanel
                 sessionId={session.session_id}

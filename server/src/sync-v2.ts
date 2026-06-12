@@ -78,7 +78,8 @@ function stmtUpsert() {
       input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, models,
       tool_call_count, llm_call_count, human_input_count, sub_agent_count,
       claude_code_api_error_count, parser_warnings,
-      away_summary, last_assistant_text
+      away_summary, last_assistant_text,
+      team_name, team_agent_name
     ) VALUES (
       ?, ?, ?,
       ?, ?, ?, ?, 1,
@@ -87,6 +88,7 @@ function stmtUpsert() {
       ?,
       ?, ?, ?, ?, ?,
       ?, ?, ?, ?,
+      ?, ?,
       ?, ?,
       ?, ?
     )
@@ -108,6 +110,7 @@ function upsertSessionMetaV2(meta: SessionMetaV2, fileMtime: number, fileSize: n
     meta.tool_call_count, meta.llm_call_count, meta.human_input_count, meta.sub_agent_count,
     meta.claude_code_api_error_count, JSON.stringify(meta.parser_warnings),
     meta.away_summary ?? null, meta.last_assistant_text ?? null,
+    meta.team_name, meta.team_agent_name,
   );
 }
 

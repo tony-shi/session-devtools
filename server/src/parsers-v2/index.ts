@@ -25,6 +25,12 @@ export interface SessionMetaV2 {
   human_input_count: number;
   sub_agent_count: number;
 
+  // agent teams（实测 wf-review，2026-06-12）：teammate 会话每行带 teamName+agentName，
+  // lead 会话只带 teamName。编排目录（config/任务板）cleanup 即删——行级字段是
+  // 事后发现 team 成员的唯一强键。null = 非 team 会话。
+  team_name: string | null;
+  team_agent_name: string | null;
+
   claude_code_api_error_count: number;  // Claude Code "system/api_error" events; NOT HTTP errors
   parser_warnings: string[];
   schema_fingerprint: string;
@@ -64,4 +70,14 @@ export const PARSERS_V2: Record<string, ParserV2> = {
 //      instructions, not checked in") 不再 STRUCTURAL 裸 slug,独立命中、显示「本地指令」;同
 //      project-instructions slot、靠 desc 区分(与 global/project 三者 pattern 互斥)。
 //      对真实 2.1.158 session(31b1334b T1C1) 验证。
-export const PARSER_VERSION = 14;
+// v15: workflow 工件纳入 + notification 修正 —— countSubAgents 递归数
+//      subagents/workflows/<runId>/ 下已完结 run 的 agent(与 drilldown subAgents 同口径,
+//      superseded 转录不计);human_input_count 不再把 <task-notification> 回执
+//      (origin.kind 确定性识别)当人类输入。对真实 2.1.167/2.1.170 session
+//      (bd5d3dd7、3915787e) 验证。
+// v16: agent teams 纳入 —— 提取行级 teamName/agentName 进 team_name/team_agent_name
+//      两列(team 域分组键;编排目录 cleanup 即删,行级字段是唯一事后强键);
+//      human_input_count 不再把入站 <teammate-message>(含 spawn prompt 行)当人类
+//      输入(teamName 字段+内容前缀判别——该行无 origin.kind)。对真实 wf-review
+//      四会话(2.1.170+)验证。
+export const PARSER_VERSION = 16;

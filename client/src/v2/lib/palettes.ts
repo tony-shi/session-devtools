@@ -13,7 +13,7 @@ import { EVENT_PALETTES } from "../shared/eventPalette";
 // 共享于 IntervalEventRow、JsonlCallChain、UserTurnDetailPanel 的 filter UI。
 
 export const ALL_KINDS: IntervalEventKind[] = [
-  "user:human", "user:tool_result", "user:command",
+  "user:human", "user:tool_result", "user:command", "user:task-notification", "user:teammate-message",
   "system:api_error", "system:local_command", "system:turn_duration",
   "system:stop_hook_summary", "system:away_summary",
   "attachment:skill_listing", "attachment:task_reminder", "attachment:queued_command",
@@ -26,6 +26,8 @@ export const KIND_LABEL: Record<IntervalEventKind, string> = {
   "user:human":               "User input",
   "user:tool_result":         "Tool result",
   "user:command":             "Command",
+  "user:task-notification":   "Task 回执",
+  "user:teammate-message":    "队友消息",
   "user:skill_injection":     "激活 SKILL",
   "user:compact_summary":     "Compact summary",
   "system:api_error":         "API error",

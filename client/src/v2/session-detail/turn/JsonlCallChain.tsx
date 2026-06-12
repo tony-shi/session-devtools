@@ -16,7 +16,7 @@ import { ForwardArrowIcon, LinkIcon } from "../../shared/EventUnitCard";
 import { useAttributionGraph } from "../../attribution-graph-context";
 import { RenderRawCopyActions } from "../../shared/RenderRawCopyActions";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { ChainNarrativeNode, ToolCallRow, IntervalEventRow } from "./call-chain-rows";
+import { ChainNarrativeNode, ToolCallRow, IntervalEventRow, AsyncReceiptNode, TeammateMessageNode } from "./call-chain-rows";
 import { CommandGroupCard } from "./CommandGroupCard";
 
 export function JsonlCallChain({
@@ -32,15 +32,20 @@ export function JsonlCallChain({
   const [filterOpen, setFilterOpen] = useState(false);
   const [showFoldedSubAgentResults, setShowFoldedSubAgentResults] = useState(false);
   const [activeToolUseId, setActiveToolUseId] = useState<string | null>(null);
+  // Hover 高亮的 sub-agent 行。与 activeToolUseId 分开：后者驱动 ToolCallRow 联动
+  // 高亮（按 toolUseId），但 workflow 下一个 launch tool_use 挂 N 个 agent（1:N
+  // 共享 toolUseId）——行自身的高亮/展开必须按全局唯一的 agentFileId 键控，否则
+  // hover/展开任意一行会让同 launch 的所有行一起动。
+  const [activeAgentFileId, setActiveAgentFileId] = useState<string | null>(null);
   // Per-sub-agent expanded state. Default = collapsed (one-line preview);
   // toggling via the header chevron shows full description / full result
-  // (no truncation, no maxHeight cap). Keyed by toolUseId.
+  // (no truncation, no maxHeight cap). Keyed by agentFileId (globally unique).
   const [expandedSubAgentIds, setExpandedSubAgentIds] = useState<Set<string>>(new Set());
-  const toggleSubAgentExpanded = useCallback((toolUseId: string) => {
+  const toggleSubAgentExpanded = useCallback((agentFileId: string) => {
     setExpandedSubAgentIds(prev => {
       const next = new Set(prev);
-      if (next.has(toolUseId)) next.delete(toolUseId);
-      else next.add(toolUseId);
+      if (next.has(agentFileId)) next.delete(agentFileId);
+      else next.add(agentFileId);
       return next;
     });
   }, []);
@@ -163,13 +168,22 @@ export function JsonlCallChain({
         {/* Vertical spine */}
         <div style={{ position: "absolute", left: 11, top: 8, bottom: 8, width: 2, background: "#e5e7eb", zIndex: 0 }} />
 
-        <ChainNarrativeNode
-          kind="user"
-          label={t("terms.userInput")}
-          text={turn.userInput}
-          meta={turn.startedAt ? turn.startedAt.slice(11, 19) : undefined}
-          lineIdx={turn.userInputLineIdx}
-        />
+        {/* turn opener：人类输入 → USER INPUT 节点；后台任务回执
+            （openerSource="task-notification"）→ 异步回执节点；teams 入站消息
+            （openerSource="teammate-message"）→ 队友消息节点。 */}
+        {turn.openerSource === "task-notification" ? (
+          <AsyncReceiptNode turn={turn} />
+        ) : turn.openerSource === "teammate-message" ? (
+          <TeammateMessageNode turn={turn} />
+        ) : (
+          <ChainNarrativeNode
+            kind="user"
+            label={t("terms.userInput")}
+            text={turn.userInput}
+            meta={turn.startedAt ? turn.startedAt.slice(11, 19) : undefined}
+            lineIdx={turn.userInputLineIdx}
+          />
+        )}
         {turn.midTurnInjections
           .filter(inj => inj.afterCallIndex === 0)
           .map((inj, injIdx) => {
@@ -401,11 +415,11 @@ export function JsonlCallChain({
                       ↳ {t("terms.subAgentEvents")}
                     </div>
 	                  {call.subAgents.map(sa => {
-                      const active = activeToolUseId === sa.toolUseId;
+                      const active = activeAgentFileId === sa.agentFileId;
                       const branchColor = active ? "#f59e0b" : BRAND.indigo500;
-                      const handleHoverEnter = () => setActiveToolUseId(sa.toolUseId);
-                      const handleHoverLeave = () => setActiveToolUseId(null);
-                      const expanded = expandedSubAgentIds.has(sa.toolUseId);
+                      const handleHoverEnter = () => { setActiveAgentFileId(sa.agentFileId); setActiveToolUseId(sa.toolUseId); };
+                      const handleHoverLeave = () => { setActiveAgentFileId(null); setActiveToolUseId(null); };
+                      const expanded = expandedSubAgentIds.has(sa.agentFileId);
                       // Show the toggle whenever there's actual body content
                       // (description or result preview). Even short content
                       // benefits from the toggle so users can fold large
@@ -433,7 +447,15 @@ export function JsonlCallChain({
                           padding: "5px 4px",
                           borderBottom: "none",
                         }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: BRAND.indigo700 }}>{sa.agentType}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: BRAND.indigo700 }}>
+                            {/* workflow agent：身份主键是 agent() 的 label，agentType 退居其次 */}
+                            {sa.agentSource === "workflow" && sa.agentLabel ? sa.agentLabel : sa.agentType}
+                          </span>
+                          {sa.agentSource === "workflow" && sa.phaseName && (
+                            <span style={{ fontSize: 9, fontWeight: 700, color: "#7e22ce", background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: 3, padding: "0 5px" }}>
+                              {sa.phaseName}
+                            </span>
+                          )}
                           <span style={{ fontSize: 9, color: BRAND.indigo500 }}>{sa.llmCallCount}c · {sa.toolCallCount}t · {fmtDuration(sa.durationMs)}</span>
                           <span style={{ fontSize: 9, color: BRAND.indigo500, background: "#eff6ff", borderRadius: 3, padding: "1px 5px" }}>+{fmtK(sa.totalOutputTokens)}</span>
                           <span style={{ fontSize: 9, color: active ? "#d97706" : "#c4c9d4" }}>{shortToolUseId(sa.toolUseId)}</span>
@@ -445,7 +467,7 @@ export function JsonlCallChain({
                             {hasBodyContent && (
                               <button
                                 type="button"
-                                onClick={() => toggleSubAgentExpanded(sa.toolUseId)}
+                                onClick={() => toggleSubAgentExpanded(sa.agentFileId)}
                                 style={{
                                   fontSize: 10, color: "#9ca3af",
                                   background: "none", border: "none", cursor: "pointer",

@@ -32,6 +32,9 @@ const PALETTES: Record<string, ToolPalette> = {
   Glob:      { accent: "#4f46e5", fg: "#4f46e5", bg: "#eef2ff", border: "#c7d2fe" },
   // sub-agent (Agent / Task share the sub-agent semantic purple)
   Agent:     { accent: "#a855f7", fg: "#a855f7", bg: "#faf5ff", border: "#e9d5ff" },
+  // workflow orchestration —— sub-agent 紫系加深（同域不同件：Agent=单 fork，
+  // Workflow=run 级编排）。
+  Workflow:  { accent: "#7e22ce", fg: "#7e22ce", bg: "#faf5ff", border: "#e9d5ff" },
   // web
   WebFetch:  { accent: "#0891b2", fg: "#0891b2", bg: "#ecfeff", border: "#a5f3fc" },
 };

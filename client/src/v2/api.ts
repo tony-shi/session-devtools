@@ -63,6 +63,21 @@ export const apiV2 = {
   subAgentDrilldown: (sessionId: string, agentFileId: string) =>
     get<SessionDrilldown>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/subagent/${encodeURIComponent(agentFileId)}/drilldown`),
 
+  // Workflow run 的脚本源码。脚本全文不在 drilldown payload（WorkflowRunSummary
+  // 只带 scriptLength/scriptPath），run 面板 Script tab 按需取。
+  workflowScript: (sessionId: string, runId: string) =>
+    get<WorkflowScriptResponse>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/workflows/${encodeURIComponent(runId)}/script`),
+
+  // run 内各 agent 的 StructuredOutput schema（proxy 真值）。Result tab 用
+  // schema.properties[k].description 给字段加标注。null 带显式 reason。
+  workflowSchemas: (sessionId: string, runId: string) =>
+    get<WorkflowSchemasResponse>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/workflows/${encodeURIComponent(runId)}/schemas`),
+
+  // run 内 agent→agent 数据流（F，逐字节包含的确定性验证）+ 结果回流主线
+  // （G，exact/field 两级置信）。"未确认" ≠ "无数据流"——脚本加工过则不可确认。
+  workflowDataflow: (sessionId: string, runId: string) =>
+    get<WorkflowDataflowResponse>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/workflows/${encodeURIComponent(runId)}/dataflow`),
+
   // Sub-agent variants of the per-call endpoints. URL path encodes the
   // parent session id (where proxy_requests rows live) plus the agentFileId
   // identifying which sub-agent JSONL to parse.
@@ -90,6 +105,11 @@ export const apiV2 = {
 
   compactResponseTree: (sessionId: string, compactIdx: number) =>
     get<ResponseTreeResult>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/compact/${compactIdx}/response-tree`),
+
+  // agent teams 域：任一成员 session → 该 team 的成员列表 + 消息时间线。
+  // 非 team 会话返回 404（预期路径，调用方静默置 null）。
+  sessionTeam: (sessionId: string) =>
+    get<TeamDomainResponse>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/team`),
 
   // Side calls —— session 在对话主线之外发的后台 LLM 请求（标题生成 / quota
   // 探测 / 提示建议 …）。captured=false 时 proxy 没抓到（仅 JSONL 留痕），
@@ -147,6 +167,80 @@ export interface SideCall {
 export interface SideCallsResponse {
   sideCalls: SideCall[];
   tokenTotals: { input: number; output: number };
+}
+
+export interface WorkflowScriptResponse {
+  runId: string;
+  workflowName: string;
+  scriptPath: string;
+  script: string;
+}
+
+export interface WorkflowAgentSchema {
+  schema: Record<string, unknown> | null;
+  /** schema 为 null 的显式原因：no-request（转录无 assistant 行）/
+   *  proxy-missing（proxy 未捕获）/ no-structured-output（schema-less agent）。 */
+  reason?: string;
+}
+
+export interface WorkflowSchemasResponse {
+  runId: string;
+  schemas: Record<string, WorkflowAgentSchema>;
+}
+
+export interface WorkflowDataflowEdge {
+  fromAgentId: string;
+  fromLabel: string;
+  toAgentId: string;
+  toLabel: string;
+  /** 逐字节匹配的 result 长度（= 注入进下游 prompt 的字符数）。 */
+  matchedChars: number;
+}
+
+export interface WorkflowMainlineHit {
+  agentId: string;
+  label: string;
+  /** 主 JSONL 0-based 文件行号（与 IntervalEvent.lineIdx 同口径）。 */
+  lineIdx: number;
+  /** exact = result 全文出现在主线 tool_result；field = 某顶层字段全文（jq 提取场景）。 */
+  confidence: "exact" | "field";
+  matchedField?: string;
+}
+
+export interface WorkflowDataflowResponse {
+  runId: string;
+  edges: WorkflowDataflowEdge[];
+  mainline: WorkflowMainlineHit[];
+}
+
+// ─── agent teams（mirrors server/src/team-domain.ts）─────────────────────────
+
+export interface TeamMember {
+  sessionId: string;
+  agentName: string | null;   // null = lead
+  role: "lead" | "teammate";
+  firstEventAt: string;
+  lastEventAt: string;
+  llmCallCount: number;
+  subAgentCount: number;
+}
+
+export interface TeamTimelineEvent {
+  kind: "spawn" | "message" | "shutdown_request" | "idle" | "terminated" | "shutdown";
+  from: string;               // 成员 agentName；lead 为 "team-lead"
+  to?: string;
+  summary?: string;
+  textPreview: string;
+  textLength: number;
+  timestamp: string;
+  sessionId: string;          // 留痕所在会话
+  lineIdx: number;            // 0-based 文件行号
+}
+
+export interface TeamDomainResponse {
+  teamName: string;
+  members: TeamMember[];
+  events: TeamTimelineEvent[];
 }
 
 export interface ProxyBodyResponse {
