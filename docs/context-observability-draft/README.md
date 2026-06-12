@@ -49,6 +49,7 @@ learn/
 1. [看见真实 Context：一次 Claude Code LLM Call 的组成](./01-real-context-anatomy.md)
 2. [Context 不是静态的：相邻 LLM Call 之间发生了什么变化](./02-context-diff.md)
 3. [从机制到 Context：Hooks、Memory、Skills、Sub-agent 最终如何体现](./03-mechanisms-to-context.md)
+4. [Claude Code 配置能力可视化落地方案](./04-claude-capability-visualization.md)
 
 ## 一份素材如何复用
 
