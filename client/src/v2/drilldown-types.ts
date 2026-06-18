@@ -152,7 +152,7 @@ export type IntervalEventKind =
   | "system:compact_boundary" // jsonl system.subtype=compact_boundary（仅 CompactEvent 合成 turn 用）
   | "system:stop_hook_summary" | "system:away_summary"
   | "attachment:skill_listing" | "attachment:task_reminder" | "attachment:queued_command"
-  | "attachment:edited_text_file" | "attachment:file"
+  | "attachment:edited_text_file" | "attachment:file" | "attachment:hook_additional_context"
   | "file-history-snapshot" | "last-prompt" | "ai-title" | "permission-mode"
   | "custom-title" | "agent-name" | "queue-operation" | "worktree-state" | "unknown";
 

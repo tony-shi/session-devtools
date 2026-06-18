@@ -17,7 +17,7 @@ export const ALL_KINDS: IntervalEventKind[] = [
   "system:api_error", "system:local_command", "system:turn_duration",
   "system:stop_hook_summary", "system:away_summary",
   "attachment:skill_listing", "attachment:task_reminder", "attachment:queued_command",
-  "attachment:edited_text_file", "attachment:file",
+  "attachment:edited_text_file", "attachment:file", "attachment:hook_additional_context",
   "file-history-snapshot", "last-prompt", "ai-title", "permission-mode",
   "custom-title", "agent-name", "queue-operation", "worktree-state", "unknown",
 ];
@@ -41,6 +41,7 @@ export const KIND_LABEL: Record<IntervalEventKind, string> = {
   "attachment:queued_command": "Queued msg",
   "attachment:edited_text_file": "File edited",
   "attachment:file":          "File attach",
+  "attachment:hook_additional_context": "Hook context",
   "file-history-snapshot":    "File snapshot",
   "last-prompt":              "Last prompt",
   "ai-title":                 "AI title",

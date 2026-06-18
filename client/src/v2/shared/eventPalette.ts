@@ -47,6 +47,7 @@ export const EVENT_PALETTES: Record<IntervalEventKind, EventPalette> = {
   "attachment:queued_command":    { bg: "#fff7ed", border: "#fed7aa", fg: "#c2410c" },
   "attachment:edited_text_file":  { bg: "#ecfeff", border: "#a5f3fc", fg: "#0e7490" },
   "attachment:file":              { bg: "#f0f9ff", border: "#bae6fd", fg: "#0369a1" },
+  "attachment:hook_additional_context": { bg: "#faf5ff", border: "#d8b4fe", fg: "#7e22ce" },
 
   // ── 不进 context 的会话元数据：统一 META_NONCONTEXT 样式 ──────────────────
   // (ai-title 的 proxy 跳转 chip 仍是靛色 LinkIcon，作为“动作”强调；行底色归入元数据组)

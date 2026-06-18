@@ -399,6 +399,18 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
       preview = snippet ? `${fname}\n──────\n${snippet}` : fname;
     }
     else if (attType === "file") { kind = "attachment:file"; preview = String(att.content ?? "").slice(0, 300); }
+    else if (attType === "hook_additional_context") {
+      // Context injected by a configured hook (SessionStart / UserPromptSubmit /
+      // PreToolUse / PostToolUse ...). `content` is an array of strings, one per
+      // hook that fired for the event; `hookName`/`hookEvent` identify the source.
+      kind = "attachment:hook_additional_context";
+      const att2 = att as { content?: unknown; hookName?: string; hookEvent?: string };
+      const body = Array.isArray(att2.content)
+        ? (att2.content as unknown[]).map((c) => String(c ?? "")).join("\n")
+        : String(att2.content ?? "");
+      const src = att2.hookName || att2.hookEvent || "hook";
+      preview = `[${src}] ${body}`.slice(0, 800);
+    }
     else { kind = "unknown"; preview = raw.slice(0, 300); }
   } else if (iev.type === "file-history-snapshot") {
     kind = "file-history-snapshot";
