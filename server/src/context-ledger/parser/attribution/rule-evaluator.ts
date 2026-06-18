@@ -114,6 +114,31 @@ function appliesToMatches(rule: ContextRule, ccVersion: string | undefined): boo
  *
  * 不命中或 queryScope 不符返回 null。
  */
+/**
+ * tools.builtin.* 节点的匹配域：matcher 有意把 rawText 设为完整 tool JSON
+ * （name+description+input_schema，字节真实、cache 口径正确——见 matcher.ts tools
+ * 段注释），但 tools_schema 类规则的 pattern 锚的是 description 纯文本——两者直接
+ * exact/prefix 比对永不命中（v11 在旧链路修过同义问题；AST 链路自 rawText 改
+ * stringify 后全部 tool 规则静默退 wire 兜底，verifiedFor/displayName 富信息丢失）。
+ *
+ * 这里把匹配域切到 parse 出的 description，命中后 matchedRange 映射回 rawText 中
+ * description 的 JSON 转义字面区间（真实偏移）；coverage 按该区间计——pattern 只
+ * 解释了 desc 部分，input_schema 不在其覆盖里，诚实表达为部分覆盖。
+ */
+function toolDescMatchDomain(node: SegmentNode): { text: string; start: number; end: number } | null {
+  if (!node.slotType.startsWith("tools.builtin.")) return null;
+  try {
+    const tool = JSON.parse(node.rawText) as { description?: unknown };
+    if (typeof tool.description !== "string" || !tool.description) return null;
+    const escaped = JSON.stringify(tool.description).slice(1, -1);
+    const at = node.rawText.indexOf(escaped);
+    if (at === -1) return null;
+    return { text: tool.description, start: at, end: at + escaped.length };
+  } catch {
+    return null;
+  }
+}
+
 export function evaluateRuleForNode(
   node: SegmentNode,
   rule: ContextRule,
@@ -126,13 +151,26 @@ export function evaluateRuleForNode(
   const { pattern, matchMode } = rule.attribution;
   if (pattern === null) return null;
 
-  const text = node.rawText;
-  const rawChars = text.length;
+  const rawChars = node.rawText.length;
+
+  // tools_schema 规则在 tools.builtin.* 节点上以 description 为匹配域；
+  // 命中后 matchedRange 统一报 desc 字面在 rawText 中的区间（regex 子匹配的
+  // 域内偏移不再细分——材料化语义上 desc 整段由该规则解释）。
+  const toolDomain = rule.attribution.category === "tools_schema" ? toolDescMatchDomain(node) : null;
+  const text = toolDomain ? toolDomain.text : node.rawText;
 
   if (matchMode === "regex") {
     // d flag 开启 indices，用于命名捕获组偏移与 matchedRange 计算。
     const m = new RegExp(pattern, "sd").exec(text);
     if (!m) return null;
+    if (toolDomain) {
+      return {
+        rule,
+        matchMode: "regex",
+        matchedRange: { start: toolDomain.start, end: toolDomain.end },
+        charCoverage: charCoverage({ rawChars, matchedChars: toolDomain.end - toolDomain.start }),
+      };
+    }
 
     const overall = m.indices?.[0];
     const start = overall?.[0] ?? m.index ?? 0;
@@ -157,6 +195,14 @@ export function evaluateRuleForNode(
 
   if (matchMode === "exact") {
     if (text !== pattern) return null;
+    if (toolDomain) {
+      return {
+        rule,
+        matchMode: "exact",
+        matchedRange: { start: toolDomain.start, end: toolDomain.end },
+        charCoverage: charCoverage({ rawChars, matchedChars: toolDomain.end - toolDomain.start }),
+      };
+    }
     return {
       rule,
       matchMode: "exact",
@@ -173,6 +219,14 @@ export function evaluateRuleForNode(
   const trimmedLeading = text.length - text.trimStart().length;
   if (!text.trimStart().startsWith(pattern)) return null;
 
+  if (toolDomain) {
+    return {
+      rule,
+      matchMode: "prefix",
+      matchedRange: { start: toolDomain.start, end: toolDomain.end },
+      charCoverage: charCoverage({ rawChars, matchedChars: toolDomain.end - toolDomain.start }),
+    };
+  }
   const matchedChars = pattern.length;
   return {
     rule,

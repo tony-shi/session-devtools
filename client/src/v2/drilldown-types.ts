@@ -67,22 +67,92 @@ export interface SubAgentSummary {
   endedAt: string;
   durationMs: number;
 
-  // The text returned in the tool_result to the parent session
+  // The text returned in the tool_result to the parent session.
+  // workflow agent（agentSource="workflow"）语义差异：父 JSONL 没有逐 agent 的
+  // tool_result —— result/resultPreview 换源为 journal.jsonl 的 result 行。
   resultPreview: string;      // first 300 chars of tool_result content
   result?: string;            // full tool_result text (verbatim, no truncation)
+
+  // ── workflow agent 扩展（agentSource="workflow" 时填充；Task 型全部缺省）──
+  // 转录在 subagents/workflows/<runId>/ 嵌套目录，agentFileId 为复合形式
+  // "<runId>__<agentId>"；父锚是 name="Workflow" 的 tool_use（run 级）。
+  agentSource?: "task" | "workflow";
+  workflowRunId?: string;
+  workflowName?: string;
+  phaseIndex?: number;        // 1-based（来自 wf json workflowProgress）
+  phaseName?: string;
+  agentLabel?: string;        // agent() 的 opts.label 或 prompt 摘要
+}
+
+// ─── Workflow run（dynamic workflow 的 run 级概览）──────────────────────────
+// Mirrors server `WorkflowRunSummary` / `WorkflowRunAgent`. Keep in sync with
+// server/src/session-drilldown-types.ts（语义与 resume 口径详见 server/src/workflow-runs.ts）。
+
+// attempt 槽位模型：journal key 是 agent() 调用槽位的跨执行稳定身份；同 key 多
+// started = 同槽位多次尝试（resume 重跑），一次尝试一个 agentId、一份独立转录。
+export interface WorkflowAgentAttempt {
+  agentId: string;
+  agentFileId: string;        // "<runId>__<agentId>" — 下钻该次尝试的转录
+  hasResult: boolean;         // journal 有 result 行（false = 失败/中断的尝试）
+  hasTranscript: boolean;
+  final: boolean;             // 最终 workflowProgress 引用的胜出尝试
+}
+
+export interface WorkflowRunAgent {
+  agentId: string;
+  agentFileId: string;        // "<runId>__<agentId>" — 直接喂给 subagent 系列端点
+  label: string;
+  phaseIndex: number | null;
+  phaseTitle: string;
+  model: string;
+  state: string;
+  cached: boolean;            // true = resume 时从上一轮 journal 回放（转录来自上一轮）
+  startedAt: number | null;   // epoch ms；cached 条目是回放时刻而非原始执行时刻
+  promptPreview: string;
+  resultPreview: string;
+  hasTranscript: boolean;     // false 时禁下钻（防御）
+  // 该槽位全部尝试（journal 物理行序，含胜出者）。仅多次尝试时下发。
+  attempts?: WorkflowAgentAttempt[];
+}
+
+export interface WorkflowRunSummary {
+  runId: string;
+  workflowName: string;
+  status: string;             // 终止态：completed | killed（带 error）。进行中 run 不可见。
+  taskId: string;             // 末次物理执行（resume 覆盖旧 taskId）
+  startTime: number;          // 末次物理执行口径 ↓
+  completedAt: string;
+  durationMs: number;
+  totalTokens: number;
+  totalToolCalls: number;
+  agentCount: number;         // 逻辑 run 口径（含 cached 回放）—— 与上面口径不同，并排展示须分别标注
+  defaultModel: string;
+  summary: string;
+  error?: string;
+  scriptPath: string;
+  scriptLength: number;       // 脚本全文走 GET /sessions/:id/workflows/:runId/script
+  args?: string;              // Workflow tool args 入参（JSON.stringify 原值）
+  phases: Array<{ title: string; detail?: string }>;
+  agents: WorkflowRunAgent[];
+  // 回指主 session 的锚点；resume → 同 runId 多个 launch，按物理序排列
+  launches: Array<{ toolUseId: string; lineIdx: number; taskId: string | null }>;
+  // 有转录但不被最终 workflowProgress 引用的 agent 数（resume 作废/失败），只计数不展开
+  supersededAgentCount: number;
 }
 
 // Mirrors server `IntervalEventKind`. Keep in sync with
 // server/src/session-drilldown-types.ts.
 export type IntervalEventKind =
   | "user:human" | "user:tool_result" | "user:command"
+  | "user:task-notification" // 后台任务（Workflow / background Agent）完成回执 —— 非人类输入
+  | "user:teammate-message"  // agent teams 入站消息（spawn prompt / peer DM / idle）—— 非人类输入
   | "user:skill_injection"
   | "user:compact_summary"   // jsonl user.isCompactSummary=true（仅 CompactEvent 合成 turn 用）
   | "system:api_error" | "system:local_command" | "system:turn_duration"
   | "system:compact_boundary" // jsonl system.subtype=compact_boundary（仅 CompactEvent 合成 turn 用）
   | "system:stop_hook_summary" | "system:away_summary"
   | "attachment:skill_listing" | "attachment:task_reminder" | "attachment:queued_command"
-  | "attachment:edited_text_file" | "attachment:file"
+  | "attachment:edited_text_file" | "attachment:file" | "attachment:hook_additional_context"
   | "file-history-snapshot" | "last-prompt" | "ai-title" | "permission-mode"
   | "custom-title" | "agent-name" | "queue-operation" | "worktree-state" | "unknown";
 
@@ -218,6 +288,18 @@ export interface UserTurn {
    *  `useAttributionGraph().getEventAnnotation(lineIdx)` to surface a
    *  jump chip on the human-input card. */
   userInputLineIdx: number | null;
+  /** turn opener 来源。"task-notification" = 后台任务（Workflow / background Agent）
+   *  完成回执注入的 user 行；"teammate-message" = agent teams 入站消息（spawn
+   *  prompt / peer DM / idle 通知）。都不是人类输入，但其后的 LlmCall 是真实推理，
+   *  切分保留。前端据此换渲染 opener 节点。缺省 = "human"（旧 payload）。 */
+  openerSource?: "human" | "task-notification" | "teammate-message";
+  /** openerSource="task-notification" 时：notification 内 <task-id> 原文。 */
+  openerTaskId?: string;
+  /** openerSource="task-notification" 时：<tool-use-id> 原文 —— 回指发起后台任务的
+   *  tool_use（如 Workflow launch），做跳链。Monitor 型事件通知无此 tag。 */
+  openerToolUseId?: string;
+  /** openerSource="teammate-message" 时：发送者 teammate_id（如 "team-lead"）。 */
+  openerTeammateId?: string;
   // Full text of the model's final end_turn response (null if not available)
   finalOutput: string | null;
   // User messages injected while LLM was executing tool calls within this turn
@@ -349,6 +431,9 @@ export interface SessionDrilldown {
   // Sub agents spawned during this session (all turns combined)
   subAgentCount: number;
   subAgents: SubAgentSummary[];
+  // 本 session 内已完结的 dynamic workflow run（startTime 升序）。agent 逐条目
+  // 同时平铺在 subAgents（agentSource="workflow"）；这里是 run 级概览。
+  workflowRuns?: WorkflowRunSummary[];
 
   turns: UserTurn[];
   interTurnBlocks: InterTurnBlock[];

@@ -25,6 +25,10 @@ digest.cfg
 # Internal design docs (local only)
 docs/inner
 docs/pr
+doc/inner
+
+# Local project-level MCP config (dev LSP server; relies on untracked .claude/settings.local.json)
+.mcp.json
 
 # Python virtualenv
 .venv/

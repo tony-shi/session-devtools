@@ -6,9 +6,9 @@
 
 import React from "react";
 import { useTranslation } from "react-i18next";
-import type { CompactEvent } from "../drilldown-types";
+import type { CompactEvent, WorkflowRunSummary, SubAgentSummary } from "../drilldown-types";
 import type { MockUserTurn, MockLlmCall } from "../lib/mock-data";
-import type { SideCall, SideCallKind } from "../api";
+import type { SideCall, SideCallKind, TeamDomainResponse } from "../api";
 import type { NavLevel } from "./session-nav";
 import type { LinkedPanelState } from "./SessionDetailContext";
 import { fmtK } from "../lib/format";
@@ -17,6 +17,8 @@ import { StatusBadgeStrip, type StatusBadge } from "../shared/HeaderStats";
 import { renderStatusIcon } from "../shared/SessionBadges";
 import { NoProxyDot } from "../shared/NoProxyDot";
 import { NavItem, CompactEventNavItem } from "./nav";
+import { computeGutterLanes, laneStateAtTurn, laneStateAtSubRow } from "./workflow/gutterLanes";
+import { GutterCell, type GutterLaneCell } from "./workflow/GutterCell";
 
 // side call kind → 平面文本标签（与 BackgroundCallsPanel 一致，暂不加 icon）。
 const SIDE_CALL_KIND_LABEL: Record<SideCallKind, string> = {
@@ -34,6 +36,9 @@ export function SessionNavRail({
   selectedCompactEventIdx, linkedPanel, allCallsForNav,
   onNavSession, onSelectTurn, onSelectCall, onSelectCompact, onNavBackground,
   sideCalls, selectedProxyRequestId, onSelectSideCall,
+  workflowRuns, selectedRunId, onSelectWorkflowRun,
+  taskSubAgents, selectedAgentFileId, onSelectSubAgent,
+  teamDomain, currentSessionId, onNavTeam, onOpenSession,
 }: {
   turns: MockUserTurn[];
   compactEvents: CompactEvent[];
@@ -53,9 +58,50 @@ export function SessionNavRail({
   sideCalls: SideCall[];
   selectedProxyRequestId: number | null;
   onSelectSideCall: (proxyRequestId: number) => void;
+  // 已完结 workflow run —— turns 列表底部的独立小节（不占 tab 位）。
+  workflowRuns: WorkflowRunSummary[];
+  selectedRunId: string | null;
+  onSelectWorkflowRun: (runId: string) => void;
+  // Task 型 sub agent（含 background Agent）—— SUBAGENTS 小节的 session 级
+  // 直接入口（之前必须 turn→call→sub-agent 块三跳）。
+  taskSubAgents: SubAgentSummary[];
+  // 当前下钻中的 agent（workflow 或 task）—— 用于 run 子行/SUBAGENTS 行高亮，
+  // 以及"在某 run 的 agent 里时该 run 保持展开"。
+  selectedAgentFileId: string | null;
+  onSelectSubAgent: (agentFileId: string) => void;
+  // agent teams：本会话所属 team（null = 非 team 会话，小节不渲染）。
+  // 成员行点击 = 跨 session 跳转（成员是平级完整 session）。
+  teamDomain: TeamDomainResponse | null;
+  currentSessionId: string;
+  onNavTeam: () => void;
+  onOpenSession: (sessionId: string) => void;
 }) {
   const { t } = useTranslation();
   const inBackground = navLevel === "background" || navLevel === "side-call";
+
+  // run-lane gutter（A 案）：turn 列表旁的 git-graph 列。无 workflow / 全部
+  // 失锚的 session laneCount=0 → 完全不渲染，零变化。
+  const gutter = React.useMemo(() => computeGutterLanes(workflowRuns, turns), [workflowRuns, turns]);
+  const hasGutter = gutter.laneCount > 0;
+  const lanesAt = (turnId: number, subRow: boolean): GutterLaneCell[] => {
+    const cells: GutterLaneCell[] = Array.from(
+      { length: gutter.laneCount },
+      () => ({ state: "none", runId: "", workflowName: "" }),
+    );
+    for (const s of gutter.spans) {
+      const st = subRow ? laneStateAtSubRow(s, turnId) : laneStateAtTurn(s, turnId);
+      if (st !== "none") cells[s.lane] = { state: st, runId: s.runId, workflowName: s.workflowName };
+    }
+    return cells;
+  };
+  // gutter 行包裹：左 lane 段 + 原行（行高可变也不断线 —— 竖线 height:100%）。
+  const withGutter = (turnId: number, subRow: boolean, row: React.ReactNode) =>
+    hasGutter ? (
+      <div style={{ display: "flex", alignItems: "stretch" }}>
+        <GutterCell lanes={lanesAt(turnId, subRow)} onSelectRun={onSelectWorkflowRun} />
+        <div style={{ flex: 1, minWidth: 0 }}>{row}</div>
+      </div>
+    ) : row;
   return (
     <div style={{ width: 200, borderRight: "1px solid #e5e7eb", flexShrink: 0, background: "#fafafa", display: "flex", flexDirection: "column", minHeight: 0 }}>
       {/* 总览：独立置顶项，在 tab 栏之上、始终可见。 */}
@@ -142,13 +188,14 @@ export function SessionNavRail({
           );
           return (
             <React.Fragment key={`turn-${turn.id}`}>
+              {withGutter(turn.id, false,
               <NavItem
                 label={turnLabel}
                 sublabel={`${turn.netContextDelta > 0 ? "+" : ""}${fmtK(turn.netContextDelta)} · ${turn.llmCallCount} ${t("terms.callsSuffix")}${turn.toolCallCount > 0 ? ` · ${turn.toolCallCount} ${t("terms.toolsSuffix")}` : ""}`}
                 active={navLevel === "turn" && isThisTurnSelected && !selectedCall}
                 badges={turnBadges}
                 onClick={() => onSelectTurn(turn)}
-              />
+              />)}
               {isThisTurnSelected && allCallsForNav.length > 0 && allCallsForNav.map(call => {
                 // Call-level nav: a single global id everywhere.
                 // Label is `${callPrefix} ${call.id}` (e.g. `LLM 调用 4`)
@@ -183,8 +230,9 @@ export function SessionNavRail({
                   </div>
                 ) : undefined;
                 return (
+                  <React.Fragment key={call.id}>
+                  {withGutter(turn.id, true,
                   <NavItem
-                    key={call.id}
                     indent
                     label={callLabel}
                     sublabel={`${fmtK(call.contextSize)}${deltaTxt}${toolsTxt}`}
@@ -195,7 +243,8 @@ export function SessionNavRail({
                     }
                     badges={badgesNode}
                     onClick={() => onSelectCall(call)}
-                  />
+                  />)}
+                  </React.Fragment>
                 );
               })}
               {/* 在 turn N 之后插入归属于 "afterTurnId === turn.id" 的
@@ -207,17 +256,131 @@ export function SessionNavRail({
                   || (ev.belonging.kind === "post-session" && ev.belonging.afterTurnId === turn.id)
                 )
                 .map(ev => (
+                  <React.Fragment key={`compact-${ev.index}`}>
+                  {withGutter(turn.id, true,
                   <CompactEventNavItem
-                    key={`compact-${ev.index}`}
                     ev={ev}
                     active={navLevel === "compact-event" && selectedCompactEventIdx === ev.index}
                     onClick={() => onSelectCompact(ev.index)}
-                  />
+                  />)}
+                  </React.Fragment>
                 ))}
             </React.Fragment>
           );
         });
       })()}
+      {/* TEAM 小节：本会话属于某 agent team 时出现（成员是平级完整 session，
+          点击成员 = 跨 session 跳转；team 是 session 间关系，置于 WORKFLOWS 之上）。 */}
+      {teamDomain && (
+        <>
+          <div style={{
+            fontSize: 9, fontWeight: 800, color: "#9ca3af", letterSpacing: "0.08em",
+            padding: "10px 16px 3px", borderTop: "1px solid #f3f4f6", marginTop: 6,
+          }}>
+            TEAM {teamDomain.teamName} ({teamDomain.members.length})
+          </div>
+          <NavItem
+            label={t("team.navOverview", { defaultValue: "总览" })}
+            sublabel={`${teamDomain.events.length} ${t("team.navEvents", { defaultValue: "消息事件" })}`}
+            active={navLevel === "team"}
+            onClick={onNavTeam}
+          />
+          {teamDomain.members.map((m) => {
+            const isSelf = m.sessionId === currentSessionId;
+            return (
+              <NavItem
+                key={m.sessionId}
+                indent
+                label={
+                  <>
+                    <strong style={{ fontWeight: 700, color: m.role === "lead" ? "#0e7490" : undefined }}>
+                      {m.agentName ?? "team-lead"}
+                    </strong>
+                    {isSelf && <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 5 }}>{t("team.thisSession", { defaultValue: "(本会话)" })}</span>}
+                  </>
+                }
+                sublabel={`${m.role} · ${fmtK(m.llmCallCount)} calls`}
+                active={false}
+                onClick={isSelf ? onNavTeam : () => onOpenSession(m.sessionId)}
+              />
+            );
+          })}
+        </>
+      )}
+      {/* Workflows 独立小节：turns 列表底部，仅当有已完结 run 时出现。
+          物理位置语义：run 由某个 turn 内的 launch 发起、在后续 turn 回执 ——
+          它不属于任何单个 turn，所以做 session 级条目而不是 turn 子行。
+          选中（run 面板打开 / 正在其某个 agent 内）时展开 agent 子行 ——
+          与 turn 展开 call 的交互同构，agent 一跳直达下钻。 */}
+      {workflowRuns.length > 0 && (
+        <>
+          <div style={{
+            fontSize: 9, fontWeight: 800, color: "#9ca3af", letterSpacing: "0.08em",
+            padding: "10px 16px 3px", borderTop: "1px solid #f3f4f6", marginTop: 6,
+          }}>
+            WORKFLOWS ({workflowRuns.length})
+          </div>
+          {workflowRuns.map((run) => {
+            const failed = run.status !== "completed";
+            const inThisRun = selectedAgentFileId != null
+              && run.agents.some((a) => a.agentFileId === selectedAgentFileId
+                || a.attempts?.some((at) => at.agentFileId === selectedAgentFileId));
+            const expanded = (navLevel === "workflow-run" && selectedRunId === run.runId) || inThisRun;
+            return (
+              <React.Fragment key={run.runId}>
+                <NavItem
+                  label={
+                    <>
+                      <strong style={{ fontWeight: 700 }}>{run.workflowName || run.runId}</strong>
+                      {failed && <span style={{ color: "#dc2626", marginLeft: 5, fontWeight: 700 }}>{run.status}</span>}
+                    </>
+                  }
+                  sublabel={`${run.agents.length} agents · ${fmtK(run.totalTokens)} tok · ${run.launches.length > 1 ? `×${run.launches.length} · ` : ""}${run.runId.slice(0, 14)}`}
+                  active={navLevel === "workflow-run" && selectedRunId === run.runId}
+                  onClick={() => onSelectWorkflowRun(run.runId)}
+                />
+                {expanded && run.agents.map((agent) => (
+                  <NavItem
+                    key={agent.agentFileId}
+                    indent
+                    label={agent.label}
+                    sublabel={`${agent.phaseTitle}${agent.cached ? " · cached" : ""}`}
+                    active={selectedAgentFileId === agent.agentFileId}
+                    onClick={() => onSelectSubAgent(agent.agentFileId)}
+                  />
+                ))}
+              </React.Fragment>
+            );
+          })}
+        </>
+      )}
+      {/* SUBAGENTS 小节：Task 型（含 background Agent）的 session 级直接入口。 */}
+      {taskSubAgents.length > 0 && (
+        <>
+          <div style={{
+            fontSize: 9, fontWeight: 800, color: "#9ca3af", letterSpacing: "0.08em",
+            padding: "10px 16px 3px", borderTop: "1px solid #f3f4f6", marginTop: 6,
+          }}>
+            SUBAGENTS ({taskSubAgents.length})
+          </div>
+          {taskSubAgents.map((sa) => (
+            <NavItem
+              key={sa.agentFileId}
+              label={
+                <>
+                  <strong style={{ fontWeight: 700 }}>{sa.agentType}</strong>
+                  {sa.description && (
+                    <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: 6 }}>{sa.description}</span>
+                  )}
+                </>
+              }
+              sublabel={`${sa.llmCallCount} ${t("terms.callsSuffix")} · ${fmtK(sa.totalOutputTokens)} out`}
+              active={selectedAgentFileId === sa.agentFileId}
+              onClick={() => onSelectSubAgent(sa.agentFileId)}
+            />
+          ))}
+        </>
+      )}
         </>
       )}
       {inBackground && (

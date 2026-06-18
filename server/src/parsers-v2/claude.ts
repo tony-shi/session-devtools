@@ -4,6 +4,7 @@ import { join, dirname } from "path";
 import type { SessionMetaV2 } from "./index.ts";
 import { computeFingerprint } from "./fingerprint.ts";
 import { decodeClaudeProjectHash } from "../parser-utils.ts";
+import { readWorkflowRunsFromDisk } from "../workflow-runs.ts";
 
 const KNOWN_TYPES = new Set([
   "user", "assistant", "system", "last-prompt", "attachment",
@@ -14,6 +15,18 @@ const KNOWN_TYPES = new Set([
 function isCommandContent(content: unknown): boolean {
   const text = extractText(content).trimStart();
   return text.startsWith("<command-name>") || text.startsWith("<local-command-caveat>");
+}
+
+/**
+ * teams 入站消息内容判别（与 drilldown parser 同口径）：spawn prompt 行直接以
+ * <teammate-message 开头；运行中入站消息带 "Another Claude session sent a
+ * message:" 引导句。调用方须同时校验行级 teamName 字段（user 粘贴同款文本的
+ * 防误伤）。
+ */
+export function isTeammateMessageContent(content: unknown): boolean {
+  const text = (typeof content === "string" ? content : extractText(content)).trimStart();
+  return text.startsWith("<teammate-message")
+    || text.startsWith("Another Claude session sent a message");
 }
 
 function isHumanInput(content: unknown): boolean {
@@ -59,6 +72,10 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
   const modelCounts = new Map<string, number>();
   const eventTypeSet = new Set<string>();
   const unknownTypes = new Set<string>();
+  // agent teams：teammate 会话每行带 teamName+agentName，lead 只带 teamName。
+  // 编排目录 cleanup 即删，行级字段是事后发现 team 成员的唯一强键。取首个非空。
+  let teamName: string | null = null;
+  let teamAgentName: string | null = null;
 
   for (const line of lines) {
     let rec: any;
@@ -76,6 +93,14 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
     }
 
     if (!cwd && rec.cwd) cwd = rec.cwd;
+    if (!teamName && typeof rec.teamName === "string" && rec.teamName) teamName = rec.teamName;
+    // agentName 只认与 teamName 同行出现的（teams 行级字段成对）——lead 会话里
+    // type:"agent-name" 的会话命名事件也带 agentName 字段但无 teamName，语义无关
+    //（实测 wf-review lead 被它误标）。
+    if (!teamAgentName && typeof rec.agentName === "string" && rec.agentName
+        && typeof rec.teamName === "string" && rec.teamName) {
+      teamAgentName = rec.agentName;
+    }
 
     if (t === "ai-title" && typeof rec.aiTitle === "string") {
       aiTitle = rec.aiTitle.trim() || null;
@@ -87,9 +112,20 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
     }
 
     if (t === "user" && !rec.isMeta && !rec.isSidechain) { // Claude Code wrapper fields — best-effort; may drift silently
+      // 后台任务完成回执（<task-notification>）以 user 行注入，但不是人类输入。
+      // origin.kind 确定性识别（本机 corpus 2.1.139→2.1.170 全样本恒在）。
+      if (rec.origin?.kind === "task-notification") continue;
+      // compact 注入的 summary user 行不是人类输入（存量口径问题，v16 顺带修——
+      // drilldown parser 的 isHumanInput 早已排除它，这里口径对齐）。
+      if (rec.isCompactSummary) continue;
       const msg = rec.message;
       if (!msg) continue;
       const content = msg.content;
+      // teams 入站消息（含 spawn prompt 行）同样不是人类输入。注意它没有
+      // origin.kind/promptSource（实测 2.1.170+），判别 = 行级 teamName 字段
+      // + 内容前缀（spawn 行直接 <teammate-message 开头；后续入站行带
+      // "Another Claude session sent a message" 引导句）。
+      if (typeof rec.teamName === "string" && rec.teamName && isTeammateMessageContent(content)) continue;
       if (!isHumanInput(content)) continue;
       humanInputCount++;
       if (!firstUserMessage) {
@@ -159,6 +195,8 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
     llm_call_count: llmCallMsgIds.size + llmCallNoIdCount,
     human_input_count: humanInputCount,
     sub_agent_count: subAgentCount,
+    team_name: teamName,
+    team_agent_name: teamAgentName,
     claude_code_api_error_count: apiErrorCount,
     parser_warnings: Array.from(unknownTypes),
     schema_fingerprint: computeFingerprint(eventTypeSet),
@@ -168,14 +206,30 @@ export async function parseClaudeSessionV2(filePath: string): Promise<SessionMet
 }
 
 async function countSubAgents(filePath: string, sessionId: string): Promise<number> {
-  const subagentsDir = join(dirname(filePath), sessionId, "subagents");
+  const sessionDir = join(dirname(filePath), sessionId);
+  const subagentsDir = join(sessionDir, "subagents");
   if (!existsSync(subagentsDir)) return 0;
+
+  // 平铺 Task 型：subagents/ 直下的 agent-*.jsonl
+  let flat = 0;
   try {
     const entries = await readdir(subagentsDir);
-    return entries.filter(f => f.endsWith(".jsonl")).length;
+    flat = entries.filter(f => f.endsWith(".jsonl")).length;
   } catch {
     return 0;
   }
+
+  // workflow 型：只数已完结 run（有 wf json）最终 workflowProgress 引用且有转录
+  // 的 agent —— 与 drilldown subAgents 同口径（目录裸文件数会把 resume 作废的
+  // superseded 转录也算进去，badge 与下钻列表对不上）。
+  let workflow = 0;
+  try {
+    for (const run of readWorkflowRunsFromDisk(sessionDir)) {
+      workflow += run.agents.filter(a => run.transcriptAgentIds.has(a.agentId)).length;
+    }
+  } catch { /* 工件损坏退化为只数平铺 */ }
+
+  return flat + workflow;
 }
 
 function extractText(content: unknown): string {

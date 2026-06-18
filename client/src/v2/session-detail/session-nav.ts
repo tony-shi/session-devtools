@@ -12,7 +12,7 @@
 export type NavLevel =
   | "session" | "turn" | "inter-turn" | "call"
   | "subagent" | "compact-event" | "compact-call"
-  | "background" | "side-call";
+  | "background" | "side-call" | "workflow-run" | "team";
 
 // Call 详情面板内部的 tab。不进 URL（tab 选择属于次要 / 对比状态），但属于
 // session-detail 的导航词汇，所以和 SessionNav 放一起，供 context / 面板共享。
@@ -33,7 +33,14 @@ export type SessionNav =
   // 后台 side call（标题生成 / quota 探测 / 提示建议 …）—— session 级旁路视图，
   // 不依赖 turns 加载。side-call 详情用 proxyRequestId 寻址（proxy-only）。
   | { level: "background" }
-  | { level: "side-call"; proxyRequestId: number };
+  | { level: "side-call"; proxyRequestId: number }
+  // 已完结 dynamic workflow run 的概览面板。runId 形如 wf_xxx。
+  // 注意：runId 不在 drilldown.workflowRuns 里时**不**静默退 session ——
+  // 渲染显式错误面板（产品决策：问题直接暴露，不兜底）。
+  | { level: "workflow-run"; runId: string }
+  // agent teams 总览（成员列表 + 消息时序图）。team 域数据独立 fetch，
+  // 非 team 会话深链 → 显式错误面板（不静默回退）。
+  | { level: "team" };
 
 export function buildSessionPath(sessionId: string, nav: SessionNav): string {
   const base = `/sessions/${encodeURIComponent(sessionId)}`;
@@ -49,6 +56,8 @@ export function buildSessionPath(sessionId: string, nav: SessionNav): string {
     case "subagent-call":  return `${base}/subagent/${encodeURIComponent(nav.agentFileId)}/turn/${nav.turnId}/call/${nav.callId}`;
     case "background":     return `${base}/background`;
     case "side-call":      return `${base}/side-call/${nav.proxyRequestId}`;
+    case "workflow-run":   return `${base}/workflow/${encodeURIComponent(nav.runId)}`;
+    case "team":           return `${base}/team`;
   }
 }
 
@@ -94,6 +103,12 @@ export function parseSessionNav(pathname: string, sessionId: string): SessionNav
     return { level: "subagent", agentFileId };
   }
   if (a === "background") return { level: "background" };
+  if (a === "workflow" && b != null) {
+    // runId 原样透传（含非法形态）—— 校验在 applyNav/面板层做，坏 id 走显式
+    // 错误面板而不是这里静默吞掉退 session。
+    return { level: "workflow-run", runId: decodeURIComponent(b) };
+  }
+  if (a === "team") return { level: "team" };
   if (a === "side-call" && b != null) {
     const proxyRequestId = Number(b);
     return Number.isFinite(proxyRequestId)

@@ -9,6 +9,7 @@ import {
 } from "@nestjs/platform-fastify";
 import fastifyStatic from "@fastify/static";
 import { AppModule } from "./src/app.module.ts";
+import { StatusErrorFilter } from "./src/status-error.filter.ts";
 import { checkDbHealth, initDb, initV2Schema } from "./src/db.ts";
 import { discoverFiles, startAutoSyncV2 } from "./src/sync-v2.ts";
 
@@ -58,6 +59,8 @@ const app = await NestFactory.create<NestFastifyApplication>(
   AppModule,
   new FastifyAdapter({ logger: false }),
 );
+// {status} 标注错误 → HTTP 状态码（此前全落 500，见 filter 头注释）
+app.useGlobalFilters(new StatusErrorFilter());
 
 await app.register(
   (await import("@fastify/cors")).default,

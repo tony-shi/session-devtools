@@ -6,12 +6,14 @@
 
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { IntervalEvent, ToolCallSlot } from "../../drilldown-types";
-import { toolUseIdsFromIntervalEvent, tryParseJson } from "../../lib/format";
+import type { IntervalEvent, ToolCallSlot, UserTurn } from "../../drilldown-types";
+import { toolUseIdsFromIntervalEvent, tryParseJson, fmtK, fmtDuration } from "../../lib/format";
 import { KIND_LABEL, KIND_COLOR, RAW_ONLY_KINDS } from "../../lib/palettes";
 import { BRAND } from "../../shared/brand";
 import { EventUnitCard, LinkIcon } from "../../shared/EventUnitCard";
 import { useAttributionGraph } from "../../attribution-graph-context";
+import { useSessionDetail } from "../SessionDetailContext";
+import { findRunByLaunchToolUseId, resolveLaunchAnchor } from "../workflow/runJoin";
 
 const CORE_EVENT_KINDS = new Set<string>([
   "user:tool_result",
@@ -157,10 +159,40 @@ export function ToolCallRow({
 }) {
   const { t } = useTranslation();
   const { onJumpToCall, highlightedToolUseId } = useAttributionGraph();
+  const { drilldown, turns: mainTurns, navigate } = useSessionDetail();
   // Amber flash outline when an Attribution-leaf back-link targets this
   // specific tool_use row. Mirrors `IntervalEventRow`'s `isFlashing` /
   // boxShadow pattern. Cleared automatically after ~2s by the context.
   const isFlashing = highlightedToolUseId !== null && highlightedToolUseId === tc.toolUseId;
+
+  // Workflow launch 特化：toolUseId → 已完结 run（drilldown.workflowRuns 的
+  // launches 精确反查）+ 回执 turn（openerToolUseId 回指本 launch）。
+  // run 反查不到 = 未完结/不可见（无 wf json）—— 中性标注，不编造状态。
+  // 注意 sub-agent 视图也在同一 Provider 下，但 agent 转录里没有 Workflow
+  // 工具（不在其 toolset），这条路径只会在主 session turn 里命中。
+  const workflowLaunch = tc.name === "Workflow"
+    ? {
+        run: drilldown ? findRunByLaunchToolUseId(drilldown, tc.toolUseId) : null,
+        receiptTurn: mainTurns.find((tn) => tn.openerToolUseId === tc.toolUseId) ?? null,
+      }
+    : undefined;
+  const workflowSegments = workflowLaunch?.run
+    ? [{
+        label: "WORKFLOW",
+        content: [
+          workflowLaunch.run.workflowName,
+          `status: ${workflowLaunch.run.status}${workflowLaunch.run.error ? ` — ${workflowLaunch.run.error.split("\n")[0]}` : ""}`,
+          `agents: ${workflowLaunch.run.agents.length} · tokens(末次执行): ${fmtK(workflowLaunch.run.totalTokens)} · ${fmtDuration(workflowLaunch.run.durationMs)}`,
+          `runId: ${workflowLaunch.run.runId}`,
+        ].join("\n"),
+        monospace: false,
+      }]
+    : undefined;
+  const workflowPreview = workflowLaunch
+    ? workflowLaunch.run
+      ? `${workflowLaunch.run.workflowName} · ${workflowLaunch.run.status} · ${workflowLaunch.run.agents.length} agents`
+      : t("workflow.launchInflight", { defaultValue: "Workflow（未完结 run，不可见）" })
+    : undefined;
 
   // Extract the tool_use's `description` field (the human intent label
   // Claude Code attaches to most tool calls — "List top-level entries",
@@ -235,9 +267,10 @@ export function ToolCallRow({
         // 配对 token，不属于 LLM 语义产出。要看 wire 原物，通过 jump chip
         // 跳到右侧 ResponseTreePanel（那里是 HTTP response 权威 view）。
         size={{ bytes: tc.inputSize, direction: "out" }}
-        preview={skillRequest?.preview ?? description}
-        description={skillRequest?.preview ?? description}
+        preview={workflowPreview ?? skillRequest?.preview ?? description}
+        description={workflowPreview ?? skillRequest?.preview ?? description}
         segments={
+          workflowSegments ?? (
           skillRequest
             ? skillRequest.segments
             : tc.inputPreview
@@ -275,6 +308,7 @@ export function ToolCallRow({
                   })()
                 ]
               : []
+          )
         }
         active={active}
         onMouseEnter={() => onHoverToolUse(tc.toolUseId)}
@@ -283,9 +317,183 @@ export function ToolCallRow({
         jumpLabel={t("terms.returnedByCall", { callId })}
         jumpTooltip={t("terms.openCallResponseTooltip", { callId })}
       />
+      {/* Workflow launch 卡的跳链 chips：run 面板 + 回执 turn（双向导航的去程端）。
+          未完结 run 无面板入口 —— 中性标注，不提供假链接。 */}
+      {workflowLaunch && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "3px 0 5px 26px", flexWrap: "wrap" }}>
+          {workflowLaunch.run && (
+            <button
+              onClick={() => navigate({ level: "workflow-run", runId: workflowLaunch.run!.runId })}
+              className="hover:bg-purple-100 transition-colors"
+              style={{
+                fontSize: 10, fontWeight: 700, color: "#7e22ce", background: "#faf5ff",
+                border: "1px solid #e9d5ff", borderRadius: 4, padding: "2px 8px", cursor: "pointer",
+              }}
+            >
+              {t("workflow.openRunPanel", { defaultValue: "run 面板" })} ›
+            </button>
+          )}
+          {workflowLaunch.receiptTurn && (
+            <button
+              onClick={() => navigate({ level: "turn", turnId: workflowLaunch.receiptTurn!.id })}
+              className="hover:bg-purple-100 transition-colors"
+              style={{
+                fontSize: 10, color: "#7e22ce", background: "transparent",
+                border: "1px solid #e9d5ff", borderRadius: 4, padding: "2px 8px", cursor: "pointer",
+              }}
+            >
+              {t("workflow.jumpToReceipt", { defaultValue: "回执" })} → {t("sessionOverview.turn.label")} {workflowLaunch.receiptTurn.id}
+            </button>
+          )}
+          {!workflowLaunch.run && (
+            <span style={{ fontSize: 10, color: "#9ca3af" }}>
+              {t("workflow.launchNoPanel", { defaultValue: "未完结 run（无汇总文件），无面板入口" })}
+            </span>
+          )}
+        </div>
+      )}
       {/* SkillInvocationChip（之前版本）已撤销 —— 改由 IntervalEventRow 在两条
           后续 jsonl 行（user:tool_result 的 "Launching skill: ..." + user:skill_injection
           的 SKILL.md body）上特化渲染，避免把"请求"和"结果"塞到同一张卡片。 */}
+    </div>
+  );
+}
+
+// ── TeammateMessageNode：agent teams 入站消息的 turn-opener 节点 ──────────────
+// openerSource="teammate-message" 的 turn 用它替换 USER INPUT 节点：这行是
+// 队友（或 lead）发来的 <teammate-message>（含 spawn prompt 首行 / peer DM /
+// idle 通知），不是人类输入。青系（teams 域色）。跳链 → team 总览。
+export function TeammateMessageNode({ turn }: { turn: UserTurn }) {
+  const { t } = useTranslation();
+  const { navigate } = useSessionDetail();
+  const [expanded, setExpanded] = useState(false);
+
+  const tone = { bg: "#ecfeff", border: "#a5f3fc", fg: "#155e75", dot: "#0e7490" };
+  const sender = turn.openerTeammateId;
+
+  return (
+    <div style={{ position: "relative", zIndex: 1, display: "flex", gap: 10, padding: "6px 0", alignItems: "flex-start" }}>
+      <div style={{ width: 24, display: "flex", justifyContent: "center", flexShrink: 0, paddingTop: 3 }}>
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: tone.dot, border: "2px solid #fff", boxShadow: "0 0 0 1px " + tone.border }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0, background: tone.bg, border: `1px solid ${tone.border}`, borderRadius: 6, padding: "7px 11px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 9, fontWeight: 800, color: tone.dot, letterSpacing: "0.05em" }}>
+            {t("team.inboundLabel", { defaultValue: "队友消息" })}
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: tone.fg }}>
+            {sender
+              ? t("team.inboundFrom", { defaultValue: "来自 {{sender}}", sender })
+              : t("team.inboundUnknownSender", { defaultValue: "发送者未知（无 teammate_id）" })}
+          </span>
+          {turn.startedAt && <span style={{ fontSize: 9, color: "#9ca3af" }}>{turn.startedAt.slice(11, 19)}</span>}
+          <button
+            onClick={() => navigate({ level: "team" })}
+            className="hover:bg-cyan-100 transition-colors"
+            style={{ marginLeft: "auto", fontSize: 10, fontWeight: 700, color: tone.dot, background: "#fff", border: `1px solid ${tone.border}`, borderRadius: 4, padding: "1px 7px", cursor: "pointer" }}
+          >
+            {t("team.openOverview", { defaultValue: "team 总览" })} ›
+          </button>
+        </div>
+        <div style={{ marginTop: 4 }}>
+          <div style={{
+            fontSize: 12, color: "#374151", lineHeight: 1.6,
+            ...(expanded ? {} : { overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as const }),
+            whiteSpace: "pre-wrap", wordBreak: "break-word",
+          }}>{turn.userInput}</div>
+          {turn.userInput.length > 200 && (
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              style={{ fontSize: 10, color: "#9ca3af", background: "none", border: "none", cursor: "pointer", padding: "2px 0 0" }}
+            >
+              {expanded ? `▴ ${t("team.collapse", { defaultValue: "收起" })}` : `▾ ${t("team.expandFull", { defaultValue: "展开全文" })}`}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── AsyncReceiptNode：后台任务完成回执的 turn-opener 节点 ─────────────────────
+// openerSource="task-notification" 的 turn 用它替换 USER INPUT 节点：这行不是
+// 人类输入，是 <task-notification> 注入（其后的 call 是真实推理，turn 切分保留）。
+// 锚点缺失（Monitor 事件型通知无 <tool-use-id>）→ 显式标注，不提供假链接。
+export function AsyncReceiptNode({ turn }: { turn: UserTurn }) {
+  const { t } = useTranslation();
+  const { drilldown, navigate } = useSessionDetail();
+  const [expanded, setExpanded] = useState(false);
+
+  const run = turn.openerToolUseId && drilldown
+    ? findRunByLaunchToolUseId(drilldown, turn.openerToolUseId)
+    : null;
+  const launchAnchor = turn.openerToolUseId && drilldown
+    ? resolveLaunchAnchor(turn.openerToolUseId, drilldown.turns)
+    : null;
+
+  const tone = { bg: "#faf5ff", border: "#e9d5ff", fg: "#581c87", dot: "#7e22ce" };
+  const summary = [
+    t("workflow.receiptTask", { defaultValue: "任务" }),
+    turn.openerTaskId ?? "?",
+    run ? `· ${run.workflowName}` : "",
+  ].filter(Boolean).join(" ");
+
+  return (
+    <div style={{ position: "relative", zIndex: 1, display: "flex", gap: 10, padding: "6px 0", alignItems: "flex-start" }}>
+      <div style={{ width: 24, display: "flex", justifyContent: "center", flexShrink: 0, paddingTop: 3 }}>
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: tone.dot, border: "2px solid #fff", boxShadow: "0 0 0 1px " + tone.border }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0, background: tone.bg, border: `1px solid ${tone.border}`, borderRadius: 6, padding: "7px 11px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 9, fontWeight: 800, color: tone.dot, letterSpacing: "0.05em" }}>
+            {t("workflow.receiptLabel", { defaultValue: "异步任务回执" })}
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: tone.fg }}>{summary}</span>
+          {turn.startedAt && <span style={{ fontSize: 9, color: "#9ca3af" }}>{turn.startedAt.slice(11, 19)}</span>}
+          <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
+            {launchAnchor && (
+              <button
+                onClick={() => navigate({ level: "call", turnId: launchAnchor.turnId, callId: launchAnchor.callId })}
+                className="hover:bg-purple-100 transition-colors"
+                style={{ fontSize: 10, color: tone.dot, background: "transparent", border: `1px solid ${tone.border}`, borderRadius: 4, padding: "1px 7px", cursor: "pointer" }}
+              >
+                ↑ {t("workflow.backToLaunch", { defaultValue: "回到 launch" })} ({t("sessionOverview.turn.label")} {launchAnchor.turnId})
+              </button>
+            )}
+            {run && (
+              <button
+                onClick={() => navigate({ level: "workflow-run", runId: run.runId })}
+                className="hover:bg-purple-100 transition-colors"
+                style={{ fontSize: 10, fontWeight: 700, color: tone.dot, background: "#fff", border: `1px solid ${tone.border}`, borderRadius: 4, padding: "1px 7px", cursor: "pointer" }}
+              >
+                {t("workflow.openRunPanel", { defaultValue: "run 面板" })} ›
+              </button>
+            )}
+            {!turn.openerToolUseId && (
+              <span style={{ fontSize: 10, color: "#9ca3af" }}>
+                {t("workflow.receiptNoAnchor", { defaultValue: "无回链锚点（事件型通知）" })}
+              </span>
+            )}
+          </span>
+        </div>
+        {/* 原文 XML 默认折叠 —— 全文已截断过（notification 本身截断 result），
+            完整结果以 run 面板的 journal result 为准。 */}
+        <div style={{ marginTop: 4 }}>
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            style={{ fontSize: 10, color: "#9ca3af", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+          >
+            {expanded ? `▴ ${t("workflow.receiptHideRaw", { defaultValue: "收起原文" })}` : `▾ ${t("workflow.receiptShowRaw", { defaultValue: "查看通知原文" })}`}
+          </button>
+          {expanded && (
+            <pre style={{
+              fontSize: 10, color: "#6b7280", whiteSpace: "pre-wrap", wordBreak: "break-word",
+              margin: "4px 0 0", maxHeight: 320, overflowY: "auto",
+              background: "#fff", border: `1px solid ${tone.border}`, borderRadius: 4, padding: "6px 8px",
+            }}>{turn.userInput}</pre>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

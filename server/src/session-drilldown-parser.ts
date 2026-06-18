@@ -1,9 +1,10 @@
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join, dirname, basename } from "path";
 import type { Database } from "better-sqlite3";
-import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData, ModelStats, SubAgentSummary, InterTurnBlock, IntervalEvent, CompactEvent, EventBelonging } from "./session-drilldown-types.ts";
+import type { SessionDrilldown, UserTurn, LlmCall, ProxyCallData, ModelStats, SubAgentSummary, InterTurnBlock, IntervalEvent, CompactEvent, EventBelonging, WorkflowRunSummary, WorkflowAgentAttempt } from "./session-drilldown-types.ts";
 import { normaliseModelName } from "./model-info.ts";
 import { matchCompactCallsForSession, type CompactBoundaryEvidence } from "./compact-proxy-matcher.ts";
+import { readWorkflowRunsFromDisk, type WorkflowRunDisk } from "./workflow-runs.ts";
 
 // ─── JSONL record shapes (loose, best-effort) ────────────────────────────────
 
@@ -18,10 +19,26 @@ interface JUserEvent {
   timestamp?: string;
   ts?: string;
   cwd?: string;
+  promptId?: string;
   // cli.js SkillTool 通过 tagMessagesWithToolUseID 把 skill 调用产出的所有
   // user / attachment 行外层挂 sourceToolUseID === 触发的 Skill tool_use id。
   // 我们用它聚合"这次 Skill 注入了哪些行 / 多少字节"。
   sourceToolUseID?: string;
+  // 后台任务（Workflow / background Agent / Monitor）完成时注入的
+  // <task-notification> user 行带 origin.kind === "task-notification"
+  // （实测本机 corpus 2.1.139→2.1.170 56/56 恒在，识别无需版本分支）。
+  // 它不是人类输入，但确实开启一轮真实的主循环推理 —— turn 切分保留，
+  // 仅在 UserTurn.openerSource 上区分（见 turn 构建处）。
+  origin?: { kind?: string };
+  // agent teams：teammate 会话每行带 agentName+teamName，lead 行带 teamName。
+  // 入站 <teammate-message> user 行（含 spawn prompt 首行）没有 origin.kind /
+  // promptSource（实测 2.1.170+）—— 判别 = teamName 字段 + 内容前缀。
+  teamName?: string;
+  agentName?: string;
+  // tool_result user 行的顶层富对象。Workflow launch 回执形如
+  // { status:"async_launched", taskType:"local_workflow", runId, taskId, ... } ——
+  // runId 是回链 workflow 工件目录的强键。
+  toolUseResult?: unknown;
 }
 
 interface JAssistantEvent {
@@ -266,6 +283,14 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
           break;
         }
       }
+    } else if (uev.origin?.kind === "task-notification") {
+      // 后台任务完成回执 —— 确定性识别（origin 字段），非人类输入。
+      kind = "user:task-notification";
+      preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
+    } else if (isInboundTeammateMessage(uev)) {
+      // teams 入站消息（peer DM / lead 消息 / idle 通知）—— 非人类输入。
+      kind = "user:teammate-message";
+      preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
     } else if (isCommandContent(content)) {
       kind = "user:command";
       preview = (typeof content === "string" ? content : extractUserText(content)).slice(0, 300);
@@ -374,6 +399,18 @@ function makeIntervalEvent(iev: JEvent, lineIdx: number): IntervalEvent {
       preview = snippet ? `${fname}\n──────\n${snippet}` : fname;
     }
     else if (attType === "file") { kind = "attachment:file"; preview = String(att.content ?? "").slice(0, 300); }
+    else if (attType === "hook_additional_context") {
+      // Context injected by a configured hook (SessionStart / UserPromptSubmit /
+      // PreToolUse / PostToolUse ...). `content` is an array of strings, one per
+      // hook that fired for the event; `hookName`/`hookEvent` identify the source.
+      kind = "attachment:hook_additional_context";
+      const att2 = att as { content?: unknown; hookName?: string; hookEvent?: string };
+      const body = Array.isArray(att2.content)
+        ? (att2.content as unknown[]).map((c) => String(c ?? "")).join("\n")
+        : String(att2.content ?? "");
+      const src = att2.hookName || att2.hookEvent || "hook";
+      preview = `[${src}] ${body}`.slice(0, 800);
+    }
     else { kind = "unknown"; preview = raw.slice(0, 300); }
   } else if (iev.type === "file-history-snapshot") {
     kind = "file-history-snapshot";
@@ -549,7 +586,219 @@ interface ParentAgentToolUse {
   result: string;
 }
 
-function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSummary[] {
+// ─── Workflow launch 锚点 ─────────────────────────────────────────────────────
+// name="Workflow" 的 tool_use 是 run 级锚（不是 agent 级）。runId 来自其 tool_result
+// user 行的顶层 toolUseResult.runId（taskType==="local_workflow"）。resume 复用同一
+// runId、发新 taskId —— 所以一个 runId 可对应多个 launch（按物理序排列）。
+
+interface WorkflowLaunch {
+  toolUseId: string;
+  lineIdx: number;        // 发出该 tool_use 的 assistant 事件行号
+  tsMs: number;           // assistant 事件时间戳（attempt 窗口匹配用）
+  taskId: string | null;  // toolUseResult.taskId —— 一次物理执行的 id
+}
+
+function collectWorkflowLaunches(mainEvents: JEvent[]): Map<string, WorkflowLaunch[]> {
+  // pass 1: 收集全部 Workflow tool_use（id → 位置/时间）
+  const byToolUseId = new Map<string, { lineIdx: number; tsMs: number }>();
+  for (let i = 0; i < mainEvents.length; i++) {
+    const ev = mainEvents[i];
+    if (ev.type !== "assistant") continue;
+    for (const b of (ev as JAssistantEvent).message?.content ?? []) {
+      const bc = b as { type?: string; name?: string; id?: string };
+      if (bc.type === "tool_use" && bc.name === "Workflow" && bc.id) {
+        byToolUseId.set(bc.id, { lineIdx: i, tsMs: Date.parse(tsOf(ev)) || 0 });
+      }
+    }
+  }
+  if (byToolUseId.size === 0) return new Map();
+
+  // pass 2: 从 tool_result user 行的 toolUseResult 取 runId/taskId，join 回 tool_use。
+  // 注意不要硬卡 taskType==="local_workflow"：旧版 CC 的 launch 回执没有 taskType
+  // 字段（实样本 8e685b5d，2026-05-31，killed run，硬卡会让整个 run 失锚）——
+  // pass 1 的 name==="Workflow" 约束 + runId 形态已足够判定。
+  const launches = new Map<string, WorkflowLaunch[]>();
+  const claimedLaunchToolUseIds = new Set<string>();
+  for (const ev of mainEvents) {
+    if (ev.type !== "user") continue;
+    const uev = ev as JUserEvent;
+    const tr = uev.toolUseResult as { runId?: string; taskId?: string } | undefined;
+    if (!tr || typeof tr.runId !== "string" || !tr.runId.startsWith("wf_")) continue;
+    const content = uev.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const b of content) {
+      const bc = b as { type?: string; tool_use_id?: string };
+      if (bc.type !== "tool_result" || !bc.tool_use_id) continue;
+      const tu = byToolUseId.get(bc.tool_use_id);
+      if (!tu) continue;
+      // 同一 tool_use_id 的重复 tool_result 帧（CC 重写历史）防御 —— 首条为准
+      if (claimedLaunchToolUseIds.has(bc.tool_use_id)) continue;
+      claimedLaunchToolUseIds.add(bc.tool_use_id);
+      const arr = launches.get(tr.runId) ?? [];
+      arr.push({ toolUseId: bc.tool_use_id, lineIdx: tu.lineIdx, tsMs: tu.tsMs, taskId: typeof tr.taskId === "string" ? tr.taskId : null });
+      launches.set(tr.runId, arr);
+    }
+  }
+  for (const arr of launches.values()) arr.sort((a, b) => a.tsMs - b.tsMs);
+  return launches;
+}
+
+// 已完结 run 的 launch 集合：剔除晚于 wf json 写出时刻的 launch —— 那是同 runId
+// 的下一次 resume 正在进行中，不属于本快照覆盖的物理执行（wf json last-write-wins，
+// 该次执行完结覆盖 json 后这些 launch 自然纳入）。
+function launchesForCompletedRun(run: WorkflowRunDisk, wfLaunches: Map<string, WorkflowLaunch[]>): WorkflowLaunch[] {
+  const all = wfLaunches.get(run.runId) ?? [];
+  const completedMs = Date.parse(run.completedAt);
+  if (!Number.isFinite(completedMs)) return all;
+  return all.filter((l) => l.tsMs <= completedMs);
+}
+
+/** <task-notification> 文本里的回链键。tag 缺失（Monitor 事件型通知）返回 null。 */
+function parseTaskNotificationAnchor(text: string): { taskId: string | null; toolUseId: string | null } {
+  return {
+    taskId: /<task-id>([^<]+)<\/task-id>/.exec(text)?.[1] ?? null,
+    toolUseId: /<tool-use-id>([^<]+)<\/tool-use-id>/.exec(text)?.[1] ?? null,
+  };
+}
+
+// ─── agent teams 入站消息 ────────────────────────────────────────────────────
+// teams 成员会话里，他人发来的消息（含 lead 的 spawn prompt 首行、peer DM、
+// idle/shutdown 通知）以 user 行注入，正文 <teammate-message teammate_id …> 包裹。
+// 它不是人类输入，但与 task-notification 同构地驱动一轮真实推理 —— turn 切分
+// 保留、opener 换语义。判别须 teamName 字段 + 内容前缀双条件（无 origin.kind；
+// 单看内容会误伤用户粘贴同款文本的非 team 会话）。
+
+function isInboundTeammateMessage(ev: JUserEvent): boolean {
+  if (typeof ev.teamName !== "string" || !ev.teamName) return false;
+  const c = ev.message?.content;
+  const text = (typeof c === "string" ? c : extractUserText(c)).trimStart();
+  return text.startsWith("<teammate-message")
+    || text.startsWith("Another Claude session sent a message");
+}
+
+/** 发送者标识（<teammate-message teammate_id="…">）。缺失返回 null。 */
+function parseTeammateMessageSender(text: string): string | null {
+  return /<teammate-message[^>]*\bteammate_id="([^"]+)"/.exec(text)?.[1] ?? null;
+}
+
+// agent 转录文件的统计聚合（Task 型与 workflow 型共用 —— 两类转录行级同构，
+// 均 isSidechain=true、assistant 按 message.id 去重取末次）。读失败返回 null。
+interface AgentTranscriptStats {
+  llmCallCount: number;
+  toolCallCount: number;
+  totalCacheRead: number;
+  totalCacheWrite: number;
+  totalFreshIn: number;
+  totalOutputTokens: number;
+  peakContext: number;
+  lastContext: number;
+  startedAt: string;
+  endedAt: string;
+  durationMs: number;
+  // 首行 user 的 promptId + 逐字 prompt（Task 型 (promptId, prompt) 反查用；
+  // workflow 型不用 —— promptId 是 run 级键，5 个 agent 同值，匹配会静默错配）
+  firstUserPromptId: string | null;
+  firstUserPrompt: string;
+}
+
+function readAgentTranscriptStats(agentPath: string): AgentTranscriptStats | null {
+  let agentLines: string[];
+  try {
+    agentLines = readFileSync(agentPath, "utf-8").trim().split("\n").filter(Boolean);
+  } catch { return null; }
+
+  let llmCallCount = 0;
+  let toolCallCount = 0;
+  let totalCacheRead = 0;
+  let totalCacheWrite = 0;
+  let totalFreshIn = 0;
+  let totalOutputTokens = 0;
+  let peakContext = 0;
+  let lastContext = 0;
+  let startedAt = "";
+  let endedAt = "";
+
+  // Parse all events first, then dedup by msg.id keeping the LAST occurrence
+  // (same logic as main parser — thinking event has usage=0, real tool_use event has the data)
+  const agentEvents: JEvent[] = [];
+  for (const line of agentLines) {
+    try { agentEvents.push(JSON.parse(line)); } catch { /* skip */ }
+  }
+
+  // Sub agent JSONL: all events are isSidechain=true (it's a sidechain branch
+  // of the main session). So we do NOT filter by isSidechain here.
+  const lastIdxByMsgId = new Map<string, number>();
+  agentEvents.forEach((ev, i) => {
+    if (ev.type !== "assistant") return;
+    const mid = (ev as JAssistantEvent).message?.id;
+    if (mid) lastIdxByMsgId.set(mid, i);
+  });
+
+  agentEvents.forEach((rec, i) => {
+    const ts = tsOf(rec);
+    if (ts && !startedAt) startedAt = ts;
+    if (ts) endedAt = ts;
+
+    if (rec.type !== "assistant") return;
+    const aev = rec as JAssistantEvent;
+    const msgId = aev.message?.id;
+    const isCanonical = msgId ? lastIdxByMsgId.get(msgId) === i : true;
+    if (!isCanonical) return;
+
+    const usage = aev.message?.usage ?? {};
+    const fi  = usage.input_tokens ?? 0;
+    const cr  = usage.cache_read_input_tokens ?? 0;
+    const cw  = usage.cache_creation_input_tokens ?? 0;
+    const out = usage.output_tokens ?? 0;
+    if (fi + cr + cw + out > 0) {
+      llmCallCount++;
+      totalCacheRead  += cr;
+      totalCacheWrite += cw;
+      totalFreshIn    += fi;
+      totalOutputTokens += out;
+      const ctx = fi + cr + cw;
+      if (ctx > peakContext) peakContext = ctx;
+      lastContext = ctx;
+    }
+    for (const b of aev.message?.content ?? []) {
+      if (b.type === "tool_use") toolCallCount++;
+    }
+  });
+
+  const durationMs = startedAt && endedAt
+    ? Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime())
+    : 0;
+
+  // 首行 user 的 promptId + 逐字 prompt（旧格式 content 可能是 text block 数组）
+  let firstUserPromptId: string | null = null;
+  let firstUserPrompt = "";
+  if (agentEvents.length > 0) {
+    const first = agentEvents[0] as JEvent & { promptId?: string };
+    if (first.type === "user") {
+      if (typeof first.promptId === "string") firstUserPromptId = first.promptId;
+      const c = (first as JUserEvent).message?.content;
+      if (typeof c === "string") firstUserPrompt = c;
+      else if (Array.isArray(c)) {
+        firstUserPrompt = c.map((b) => (b as { text?: string })?.text ?? "").join("");
+      }
+    }
+  }
+
+  return {
+    llmCallCount, toolCallCount,
+    totalCacheRead, totalCacheWrite, totalFreshIn, totalOutputTokens,
+    peakContext, lastContext,
+    startedAt, endedAt, durationMs,
+    firstUserPromptId, firstUserPrompt,
+  };
+}
+
+function parseSubAgents(
+  sourceFile: string,
+  mainEvents: JEvent[],
+  wfRuns: WorkflowRunDisk[],
+  wfLaunches: Map<string, WorkflowLaunch[]>,
+): SubAgentSummary[] {
   const sessionBase = basename(sourceFile, ".jsonl");
   const subagentsDir = join(dirname(sourceFile), sessionBase, "subagents");
   if (!existsSync(subagentsDir)) return [];
@@ -636,98 +885,17 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
       } catch { /* ignore */ }
     }
 
-    // Parse the sub agent JSONL
-    let agentLines: string[];
-    try {
-      agentLines = readFileSync(agentPath, "utf-8").trim().split("\n").filter(Boolean);
-    } catch { continue; }
-
-    let llmCallCount = 0;
-    let toolCallCount = 0;
-    let totalCacheRead = 0;
-    let totalCacheWrite = 0;
-    let totalFreshIn = 0;
-    let totalOutputTokens = 0;
-    let peakContext = 0;
-    let lastContext = 0;
-    let startedAt = "";
-    let endedAt = "";
-
-    // Parse all events first, then dedup by msg.id keeping the LAST occurrence
-    // (same logic as main parser — thinking event has usage=0, real tool_use event has the data)
-    const agentEvents: JEvent[] = [];
-    for (const line of agentLines) {
-      try { agentEvents.push(JSON.parse(line)); } catch { /* skip */ }
-    }
-
-    // Sub agent JSONL: all events are isSidechain=true (it's a sidechain branch
-    // of the main session). So we do NOT filter by isSidechain here.
-    const lastIdxByMsgId = new Map<string, number>();
-    agentEvents.forEach((ev, i) => {
-      if (ev.type !== "assistant") return;
-      const mid = (ev as JAssistantEvent).message?.id;
-      if (mid) lastIdxByMsgId.set(mid, i);
-    });
-
-    agentEvents.forEach((rec, i) => {
-      const ts = tsOf(rec);
-      if (ts && !startedAt) startedAt = ts;
-      if (ts) endedAt = ts;
-
-      if (rec.type !== "assistant") return;
-      const aev = rec as JAssistantEvent;
-      const msgId = aev.message?.id;
-      const isCanonical = msgId ? lastIdxByMsgId.get(msgId) === i : true;
-      if (!isCanonical) return;
-
-      const usage = aev.message?.usage ?? {};
-      const fi  = usage.input_tokens ?? 0;
-      const cr  = usage.cache_read_input_tokens ?? 0;
-      const cw  = usage.cache_creation_input_tokens ?? 0;
-      const out = usage.output_tokens ?? 0;
-      if (fi + cr + cw + out > 0) {
-        llmCallCount++;
-        totalCacheRead  += cr;
-        totalCacheWrite += cw;
-        totalFreshIn    += fi;
-        totalOutputTokens += out;
-        const ctx = fi + cr + cw;
-        if (ctx > peakContext) peakContext = ctx;
-        lastContext = ctx;
-      }
-      for (const b of aev.message?.content ?? []) {
-        if (b.type === "tool_use") toolCallCount++;
-      }
-    });
-
-    const durationMs = startedAt && endedAt
-      ? Math.max(0, new Date(endedAt).getTime() - new Date(startedAt).getTime())
-      : 0;
+    const stats = readAgentTranscriptStats(agentPath);
+    if (!stats) continue;
 
     // Match to a parent Agent tool_use via (promptId, prompt-text). The first
     // event of the sub-agent JSONL is a user event whose message.content is
     // the verbatim prompt that was passed to the Task tool. Its promptId
     // scopes which parent turn this belongs to.
-    let subFirstPromptId: string | null = null;
-    let subFirstPrompt = "";
-    if (agentEvents.length > 0) {
-      const first = agentEvents[0] as JEvent & { promptId?: string };
-      if (first.type === "user") {
-        const pid = first.promptId;
-        if (typeof pid === "string") subFirstPromptId = pid;
-        const c = (first as JUserEvent).message?.content;
-        if (typeof c === "string") subFirstPrompt = c;
-        else if (Array.isArray(c)) {
-          // older format: content could be a list of text blocks
-          subFirstPrompt = c.map((b) => (b as { text?: string })?.text ?? "").join("");
-        }
-      }
-    }
-
     const candidate = agentToolUses.find((tu) =>
       !claimedToolUseIds.has(tu.id)
-      && tu.prompt === subFirstPrompt
-      && (subFirstPromptId === null || tu.promptId === null || tu.promptId === subFirstPromptId),
+      && tu.prompt === stats.firstUserPrompt
+      && (stats.firstUserPromptId === null || tu.promptId === null || tu.promptId === stats.firstUserPromptId),
     );
     const tu = candidate ?? { id: "", lineIdx: -1, promptId: null, prompt: "", resultPreview: "", result: "" };
     if (candidate) claimedToolUseIds.add(candidate.id);
@@ -740,23 +908,166 @@ function parseSubAgents(sourceFile: string, mainEvents: JEvent[]): SubAgentSumma
       toolUseName: "Agent",
       parentLineIdx: tu.lineIdx,
       parentCallId: 0,
-      llmCallCount,
-      toolCallCount,
-      totalCacheRead,
-      totalCacheWrite,
-      totalFreshIn,
-      totalOutputTokens,
-      peakContext,
-      lastContext,
-      startedAt,
-      endedAt,
-      durationMs,
+      llmCallCount: stats.llmCallCount,
+      toolCallCount: stats.toolCallCount,
+      totalCacheRead: stats.totalCacheRead,
+      totalCacheWrite: stats.totalCacheWrite,
+      totalFreshIn: stats.totalFreshIn,
+      totalOutputTokens: stats.totalOutputTokens,
+      peakContext: stats.peakContext,
+      lastContext: stats.lastContext,
+      startedAt: stats.startedAt,
+      endedAt: stats.endedAt,
+      durationMs: stats.durationMs,
       resultPreview: tu.resultPreview,
       result: tu.result,
+      agentSource: "task",
     });
   }
 
+  // ── workflow agent（subagents/workflows/<runId>/ 嵌套目录）────────────────
+  // 只展开已完结 run（wfRuns 本身就只含有 wf json 的 run）最终 workflowProgress
+  // 引用的 agent。父锚是 run 级的 Workflow tool_use；禁用 (promptId, prompt)
+  // 反查 —— workflow 下 promptId 是 run 级键（同 run 全部 agent 同值，且等于
+  // 触发 workflow 的用户输入的 promptId），按它匹配会静默错配。
+  // result 换源 journal.jsonl（父 JSONL 没有逐 agent 的 tool_result）。
+  for (const run of wfRuns) {
+    const launches = launchesForCompletedRun(run, wfLaunches);
+    for (const pa of run.agents) {
+      // progress 引用但转录缺失（防御）→ 无可下钻内容，跳过
+      if (!run.transcriptAgentIds.has(pa.agentId)) continue;
+      const agentPath = join(run.agentsDir, `agent-${pa.agentId}.jsonl`);
+      const metaPath  = join(run.agentsDir, `agent-${pa.agentId}.meta.json`);
+
+      let agentType = "workflow-subagent";
+      if (existsSync(metaPath)) {
+        try {
+          const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as { agentType?: string };
+          // workflow meta 仅 {agentType}；opts.agentType override 时为自定义类型（如 Explore）
+          agentType = meta.agentType ?? agentType;
+        } catch { /* ignore */ }
+      }
+
+      const stats = readAgentTranscriptStats(agentPath);
+      if (!stats) continue;
+
+      // attempt 归属（resume 下同 runId 多个 launch）：cached=false 的 agent 必属
+      // 末次物理执行（wf json 正是它写出的）→ 确定性锚最后一个 launch，不依赖
+      // 时钟；cached=true 的转录来自更早的 attempt → 在其余 launch 里按转录首行
+      // 时间落窗（+2s 容差只兜时钟抖动，两次 launch 间隔极短时也不会误归末次）。
+      let launch: WorkflowLaunch | null = launches.length > 0 ? launches[launches.length - 1] : null;
+      if (pa.cached && launches.length > 1) {
+        const earlier = launches.slice(0, -1);
+        launch = earlier[0];
+        const startMs = stats.startedAt ? Date.parse(stats.startedAt) : NaN;
+        if (Number.isFinite(startMs)) {
+          for (const l of earlier) {
+            if (l.tsMs <= startMs + 2000) launch = l;
+          }
+        }
+      }
+
+      const journalResult = run.journalResults.get(pa.agentId);
+
+      summaries.push({
+        agentFileId: `${run.runId}__${pa.agentId}`,
+        agentType,
+        description: "",
+        toolUseId: launch?.toolUseId ?? "",
+        toolUseName: "Workflow",
+        parentLineIdx: launch?.lineIdx ?? -1,
+        parentCallId: 0,
+        llmCallCount: stats.llmCallCount,
+        toolCallCount: stats.toolCallCount,
+        totalCacheRead: stats.totalCacheRead,
+        totalCacheWrite: stats.totalCacheWrite,
+        totalFreshIn: stats.totalFreshIn,
+        totalOutputTokens: stats.totalOutputTokens,
+        peakContext: stats.peakContext,
+        lastContext: stats.lastContext,
+        startedAt: stats.startedAt,
+        endedAt: stats.endedAt,
+        durationMs: stats.durationMs,
+        resultPreview: (journalResult ?? pa.resultPreview).slice(0, 300),
+        ...(journalResult !== undefined ? { result: journalResult } : {}),
+        agentSource: "workflow",
+        workflowRunId: run.runId,
+        workflowName: run.workflowName,
+        ...(pa.phaseIndex !== null ? { phaseIndex: pa.phaseIndex } : {}),
+        phaseName: pa.phaseTitle,
+        agentLabel: pa.label,
+      });
+    }
+  }
+
   return summaries;
+}
+
+// run 级概览（SessionDrilldown.workflowRuns）。agent 全文 result 不放这里 ——
+// 已平铺在 subAgents 的 result 字段，避免 payload 双倍膨胀。
+function buildWorkflowRunSummaries(
+  wfRuns: WorkflowRunDisk[],
+  wfLaunches: Map<string, WorkflowLaunch[]>,
+): WorkflowRunSummary[] {
+  return wfRuns.map((run) => ({
+    runId: run.runId,
+    workflowName: run.workflowName,
+    status: run.status,
+    taskId: run.taskId,
+    startTime: run.startTime,
+    completedAt: run.completedAt,
+    durationMs: run.durationMs,
+    totalTokens: run.totalTokens,
+    totalToolCalls: run.totalToolCalls,
+    agentCount: run.agentCount,
+    defaultModel: run.defaultModel,
+    summary: run.summary,
+    ...(run.error !== undefined ? { error: run.error } : {}),
+    scriptPath: run.scriptPath,
+    scriptLength: run.scriptLength,
+    ...(run.args !== undefined ? { args: run.args } : {}),
+    phases: run.phases,
+    agents: run.agents.map((pa) => {
+      // attempt 槽位（05 文档 §5）：胜出 agentId → 所在 journal key → 该 key 的
+      // 全部 started 序列。多次尝试（resume 重跑）才下发 attempts；一个 agentId
+      // 只会出现在一个 key 的 started 里（journal key 是调用槽位身份）。
+      let attempts: WorkflowAgentAttempt[] | undefined;
+      for (const seq of run.journalStartedByKey.values()) {
+        if (!seq.includes(pa.agentId)) continue;
+        if (seq.length > 1) {
+          attempts = seq.map((aid) => ({
+            agentId: aid,
+            agentFileId: `${run.runId}__${aid}`,
+            hasResult: run.journalResultAgentIds.has(aid),
+            hasTranscript: run.transcriptAgentIds.has(aid),
+            final: aid === pa.agentId,
+          }));
+        }
+        break;
+      }
+      return {
+        agentId: pa.agentId,
+        agentFileId: `${run.runId}__${pa.agentId}`,
+        label: pa.label,
+        phaseIndex: pa.phaseIndex,
+        phaseTitle: pa.phaseTitle,
+        model: pa.model,
+        state: pa.state,
+        cached: pa.cached,
+        startedAt: pa.startedAt,
+        promptPreview: pa.promptPreview,
+        resultPreview: pa.resultPreview,
+        hasTranscript: run.transcriptAgentIds.has(pa.agentId),
+        ...(attempts ? { attempts } : {}),
+      };
+    }),
+    launches: launchesForCompletedRun(run, wfLaunches).map((l) => ({
+      toolUseId: l.toolUseId,
+      lineIdx: l.lineIdx,
+      taskId: l.taskId,
+    })),
+    supersededAgentCount: run.supersededAgentCount,
+  }));
 }
 
 // ─── Core parser ─────────────────────────────────────────────────────────────
@@ -892,11 +1203,19 @@ export async function parseSessionDrilldown(
     while (j < events.length) {
       const jev = events[j];
       if (jev.type === "user" && isHumanInput(jev as JUserEvent)) {
-        midTurnInjections.push({
-          text: extractUserText((jev as JUserEvent).message?.content),
-          timestamp: tsOf(jev),
-          afterCallIndex: rawCalls.length,
-        });
+        // mid-turn 到达的后台任务回执（多任务同时完结时会批量注入，实样本
+        // e24ccf5e 连续三条）不是"用户打断输入"——它已由 interval event
+        // （user:task-notification）按真实位置承载；进 midTurnInjections 会被
+        // 前端渲染成人类打断卡，与 openerSource / human_input_count 口径矛盾。
+        // teams 入站消息（mid-turn 到达的 peer DM / idle 通知）同理。
+        if ((jev as JUserEvent).origin?.kind !== "task-notification"
+            && !isInboundTeammateMessage(jev as JUserEvent)) {
+          midTurnInjections.push({
+            text: extractUserText((jev as JUserEvent).message?.content),
+            timestamp: tsOf(jev),
+            afterCallIndex: rawCalls.length,
+          });
+        }
       } else if (jev.type === "system") {
         if (((jev as JSystemEvent).subtype ?? "") === "api_error") turnErrorCount++;
       } else if (jev.type === "assistant" && !(jev as JAssistantEvent).isSidechain) {
@@ -944,11 +1263,12 @@ export async function parseSessionDrilldown(
       const content = aev.message?.content ?? [];
       const isCompaction = false;
 
-      // Collect ALL Agent tool_use ids in this call (parallel spawn supported).
+      // Collect ALL Agent / Workflow tool_use ids in this call (parallel spawn
+      // supported). Workflow 是 run 级锚 —— 一个 tool_use 可挂多个 workflow agent。
       const agentToolUseIds: string[] = [];
       for (const b of content) {
         const bc = b as { type?: string; name?: string; id?: string };
-        if (bc.type === "tool_use" && bc.name === "Agent" && bc.id) {
+        if (bc.type === "tool_use" && (bc.name === "Agent" || bc.name === "Workflow") && bc.id) {
           agentToolUseIds.push(bc.id);
         }
       }
@@ -1292,10 +1612,26 @@ export async function parseSessionDrilldown(
       continue;
     }
 
+    // turn opener 来源标记：<task-notification>（origin.kind 确定性识别）与
+    // teams 入站 <teammate-message>（teamName 字段 + 内容前缀）都不是人类输入，
+    // 但确实驱动一轮真实推理 —— 切分保留，opener 换语义。
+    // 不在 isHumanInput 里排除它们：排除会让其后的 LlmCall 落不进任何 turn
+    // （孤儿化），丢失 usage/context 追踪，比误标更糟。
+    const isNotificationOpener = userEv.origin?.kind === "task-notification";
+    const notifAnchor = isNotificationOpener ? parseTaskNotificationAnchor(userText) : null;
+    const isTeammateOpener = !isNotificationOpener && isInboundTeammateMessage(userEv);
+    const teammateSender = isTeammateOpener ? parseTeammateMessageSender(userText) : null;
+
     turns.push({
       id: turns.length + 1,
       userInput: userText,
       userInputLineIdx,
+      openerSource: isNotificationOpener ? "task-notification"
+        : isTeammateOpener ? "teammate-message"
+        : "human",
+      ...(notifAnchor?.taskId ? { openerTaskId: notifAnchor.taskId } : {}),
+      ...(notifAnchor?.toolUseId ? { openerToolUseId: notifAnchor.toolUseId } : {}),
+      ...(teammateSender ? { openerTeammateId: teammateSender } : {}),
       finalOutput,
       midTurnInjections,
       leadingEvents,
@@ -1610,11 +1946,21 @@ export async function parseSessionDrilldown(
   }
 
   // ── 6. Parse sub agents and join to LlmCalls ─────────────────────────────
-  const subAgents = parseSubAgents(sourceFile, events);
-  // Build lookup: toolUseId → SubAgentSummary
-  const subAgentByToolUseId = new Map<string, typeof subAgents[number]>();
+  // workflow 工件（已完结 run）+ run 级 launch 锚一次性读出，供 agent 平铺与
+  // run 概览两处共用。sub-agent drilldown（treatSidechainAsMain）场景下 agent
+  // 文件旁没有 workflows 目录 → 自然为空，零开销。
+  const sessionDirForWf = join(dirname(sourceFile), basename(sourceFile, ".jsonl"));
+  const wfRuns = readWorkflowRunsFromDisk(sessionDirForWf);
+  const wfLaunches = collectWorkflowLaunches(events);
+  const subAgents = parseSubAgents(sourceFile, events, wfRuns, wfLaunches);
+  // Build lookup: toolUseId → SubAgentSummary[]。Task 型 1:1；Workflow 型一个
+  // launch tool_use 挂整个 attempt 的多个 agent（1:N），所以是 multimap。
+  const subAgentsByToolUseId = new Map<string, SubAgentSummary[]>();
   for (const sa of subAgents) {
-    if (sa.toolUseId) subAgentByToolUseId.set(sa.toolUseId, sa);
+    if (!sa.toolUseId) continue;
+    const arr = subAgentsByToolUseId.get(sa.toolUseId) ?? [];
+    arr.push(sa);
+    subAgentsByToolUseId.set(sa.toolUseId, arr);
   }
   // Attach sub agents to matching LlmCalls, then strip temp field. Also
   // back-fill SubAgentSummary.parentCallId now that we know each call's id.
@@ -1622,8 +1968,7 @@ export async function parseSessionDrilldown(
     for (const call of turn.calls) {
       const c = call as LlmCall & { _agentToolUseIds?: string[] };
       for (const id of c._agentToolUseIds ?? []) {
-        const sa = subAgentByToolUseId.get(id);
-        if (sa) {
+        for (const sa of subAgentsByToolUseId.get(id) ?? []) {
           sa.parentCallId = call.id;
           c.subAgents.push(sa);
         }
@@ -1631,6 +1976,7 @@ export async function parseSessionDrilldown(
       delete c._agentToolUseIds;
     }
   }
+  const workflowRuns = buildWorkflowRunSummaries(wfRuns, wfLaunches);
 
   // ── 7. Session-level aggregates ──────────────────────────────────────────
   const allCalls = turns.flatMap(t => t.calls);
@@ -1711,6 +2057,7 @@ export async function parseSessionDrilldown(
 
     subAgentCount: subAgents.length,
     subAgents,
+    workflowRuns,
 
     turns,
     interTurnBlocks,
@@ -1722,17 +2069,50 @@ export async function parseSessionDrilldown(
 // Parses a sub-agent JSONL as a standalone SessionDrilldown so the frontend
 // can display it with the same components as a regular session.
 
+/**
+ * agentFileId → 转录/meta 物理路径的唯一解析点（parser 与 controller 共用，
+ * 不再各自硬拼）。两种形态：
+ *   - 平铺 Task 型："a92adf579bd9e9f82" → subagents/agent-<id>.jsonl
+ *   - workflow 复合型："wf_<runId>__<agentId>" → subagents/workflows/<runId>/agent-<agentId>.jsonl
+ * 格式白名单校验顺带挡住路径穿越（id 会直接进 path join）。
+ */
+export function resolveSubAgentPaths(
+  parentSourceFile: string,
+  agentFileId: string,
+): { agentPath: string; metaPath: string; workflowRunId: string | null } {
+  const sessionBase = basename(parentSourceFile, ".jsonl");
+  const subagentsDir = join(dirname(parentSourceFile), sessionBase, "subagents");
+
+  const composite = /^(wf_[A-Za-z0-9-]+)__([A-Za-z0-9]+)$/.exec(agentFileId);
+  if (composite) {
+    const dir = join(subagentsDir, "workflows", composite[1]);
+    return {
+      agentPath: join(dir, `agent-${composite[2]}.jsonl`),
+      metaPath:  join(dir, `agent-${composite[2]}.meta.json`),
+      workflowRunId: composite[1],
+    };
+  }
+  // 平铺 id 放宽到 [-_alnum]：parseSubAgents 枚举端对文件名无字母表约束，这里若
+  // 比枚举端更严会出现"列表列得出、下钻 400"的口径不对称（现 corpus 全部 17 位
+  // 纯 alnum，放宽是对 CC 未来改 id 形态的防御）。仍不含 / 与 .，路径穿越挡得住。
+  if (!/^[A-Za-z0-9_-]+$/.test(agentFileId)) {
+    throw Object.assign(new Error(`invalid agentFileId: ${agentFileId}`), { status: 400 });
+  }
+  return {
+    agentPath: join(subagentsDir, `agent-${agentFileId}.jsonl`),
+    metaPath:  join(subagentsDir, `agent-${agentFileId}.meta.json`),
+    workflowRunId: null,
+  };
+}
+
 export async function parseSubAgentDrilldown(
   parentSourceFile: string,
   agentFileId: string,
 ): Promise<SessionDrilldown> {
-  const sessionBase = basename(parentSourceFile, ".jsonl");
-  const subagentsDir = join(dirname(parentSourceFile), sessionBase, "subagents");
-  const agentPath = join(subagentsDir, `agent-${agentFileId}.jsonl`);
-  const metaPath  = join(subagentsDir, `agent-${agentFileId}.meta.json`);
+  const { agentPath, metaPath, workflowRunId } = resolveSubAgentPaths(parentSourceFile, agentFileId);
 
   if (!existsSync(agentPath)) {
-    throw Object.assign(new Error(`sub-agent file not found: agent-${agentFileId}.jsonl`), { status: 404 });
+    throw Object.assign(new Error(`sub-agent file not found: ${basename(agentPath)}`), { status: 404 });
   }
 
   let agentType = "unknown";
@@ -1743,6 +2123,16 @@ export async function parseSubAgentDrilldown(
       agentType   = meta.agentType   ?? "unknown";
       description = meta.description ?? "";
     } catch { /* ignore */ }
+  }
+
+  // workflow agent 的 meta 只有 {agentType}（无 description）——用 wf json 里的
+  // agent label 充当展示名（agent() 的 opts.label，如 "recon:proxy-dump"）。
+  if (workflowRunId && !description) {
+    const sessionDir = join(dirname(parentSourceFile), basename(parentSourceFile, ".jsonl"));
+    const agentId = agentFileId.slice(workflowRunId.length + 2);
+    const run = readWorkflowRunsFromDisk(sessionDir).find((r) => r.runId === workflowRunId);
+    const label = run?.agents.find((a) => a.agentId === agentId)?.label;
+    if (label) description = label;
   }
 
   // Re-use the core parser with a synthetic sessionRow.

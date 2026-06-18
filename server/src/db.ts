@@ -213,6 +213,11 @@ export function initV2Schema(): void {
   if (!v2colSet.has("llm_call_count")) {
     db.exec("ALTER TABLE sessions_meta_v2 ADD COLUMN llm_call_count INTEGER NOT NULL DEFAULT 0");
   }
+  // Migrate: agent teams 成员标识（team 域分组键；NULL = 非 team 会话）
+  if (!v2colSet.has("team_name")) {
+    db.exec("ALTER TABLE sessions_meta_v2 ADD COLUMN team_name TEXT");
+    db.exec("ALTER TABLE sessions_meta_v2 ADD COLUMN team_agent_name TEXT");
+  }
 }
 
 // ── DB health check ───────────────────────────────────────────────────────────
