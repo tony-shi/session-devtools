@@ -444,7 +444,7 @@ export function SessionNavRail({
                           {failed && <span style={{ color: "#dc2626", marginLeft: 5, fontWeight: 700 }}>{run.status}</span>}
                         </>
                       }
-                      sublabel={`${run.agents.length} agents · ${fmtK(run.totalTokens)} tok · ${run.launches.length > 1 ? `×${run.launches.length} · ` : ""}${run.runId.slice(0, 14)}`}
+                      sublabel={`${run.agents.length} ${t("terms.agentsSuffix")} · ${fmtK(run.totalTokens)} ${t("terms.tokensSuffix")} · ${run.launches.length > 1 ? `×${run.launches.length} · ` : ""}${run.runId.slice(0, 14)}`}
                       active={navLevel === "workflow-run" && selectedRunId === run.runId}
                       onClick={() => onSelectWorkflowRun(run.runId)}
                     />
@@ -453,7 +453,7 @@ export function SessionNavRail({
                         key={agent.agentFileId}
                         indent
                         label={agent.label}
-                        sublabel={`${agent.phaseTitle}${agent.cached ? " · cached" : ""}`}
+                        sublabel={`${agent.phaseTitle}${agent.cached ? ` · ${t("terms.cachedSuffix")}` : ""}`}
                         active={selectedAgentFileId === agent.agentFileId}
                         onClick={() => onSelectSubAgent(agent.agentFileId)}
                       />
@@ -487,7 +487,7 @@ export function SessionNavRail({
                       )}
                     </>
                   }
-                  sublabel={`${sa.llmCallCount} ${t("terms.callsSuffix")} · ${fmtK(sa.totalOutputTokens)} out`}
+                  sublabel={`${sa.llmCallCount} ${t("terms.callsSuffix")} · ${fmtK(sa.totalOutputTokens)} ${t("terms.outSuffix")}`}
                   active={selectedAgentFileId === sa.agentFileId}
                   onClick={() => onSelectSubAgent(sa.agentFileId)}
                 />

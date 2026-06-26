@@ -207,6 +207,8 @@
     "nav": {
       "session": "Session",
       "mainSession": "Main Session",
+      "workflows": "Workflows",
+      "subAgents": "Sub Agents",
       "background": "Background Calls",
       "backgroundEmpty": "(No background calls / Scanning…)"
     },
@@ -771,6 +773,10 @@
     "callLabel": "Call",
     "callsSuffix": "calls",
     "toolsSuffix": "tools",
+    "agentsSuffix": "agents",
+    "tokensSuffix": "tok",
+    "outSuffix": "out",
+    "cachedSuffix": "cached",
     "ledgerInterpretation": "New input this round: {{freshIn}} ({{cacheWrite}} written to cache for reuse) · loaded from cache: {{cacheRead}} · model output: {{output}}{{ratio}}",
     "ledgerInterpretationRatio": " · cache hit rate {{pct}}",
     "viewDetails": "View details",
