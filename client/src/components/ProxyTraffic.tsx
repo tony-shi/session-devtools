@@ -10,7 +10,7 @@ import { useTranslation } from "react-i18next";
 import { Check, Copy, ExternalLink } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { TablePagination } from "@/components/ui/table-pagination";
 import {
   Sheet,
   SheetContent,
@@ -704,64 +704,9 @@ function VisibilityFilterBar({ active, onChange }: {
   );
 }
 
-// ── 表格 footer：页大小选择 + 分页器同一行 ─────────────────────────────────
-
-function TableFooter({ page, totalPages, loading, onPageChange, pageSize, onPageSizeChange }: {
-  page: number;
-  totalPages: number;
-  loading: boolean;
-  onPageChange: (p: number) => void;
-  pageSize: number;
-  onPageSizeChange: (n: number) => void;
-}) {
-  const { t } = useTranslation();
-  const canPrev = page > 1 && !loading;
-  const canNext = page < totalPages && !loading;
-  const hasPager = totalPages > 1;
-  return (
-    <div className="flex items-center gap-3 border-t bg-card px-4 py-2 text-xs text-muted-foreground">
-      <label className="inline-flex items-center gap-1.5">
-        {t("proxyTraffic.pageSizeLabel")}
-        <select
-          value={pageSize}
-          onChange={(e) => onPageSizeChange(Number(e.target.value))}
-          className="rounded-md border border-input bg-background px-1.5 py-0.5 text-xs"
-        >
-          {PAGE_SIZE_OPTIONS.map((n) => (
-            <option key={n} value={n}>{n}</option>
-          ))}
-        </select>
-      </label>
-      {hasPager && (
-        <div className="ml-auto flex items-center gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 px-2.5 text-xs"
-            disabled={!canPrev}
-            onClick={() => onPageChange(page - 1)}
-          >
-            {t("proxyTraffic.prevPage")}
-          </Button>
-          <span>
-            {loading
-              ? t("proxyTraffic.loadingMore")
-              : t("proxyTraffic.page", { current: page, total: totalPages })}
-          </span>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 px-2.5 text-xs"
-            disabled={!canNext}
-            onClick={() => onPageChange(page + 1)}
-          >
-            {t("proxyTraffic.nextPage")}
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
+// 表格 footer 分页已收敛到共享 <TablePagination>（见 ui/table-pagination）。
+// ProxyTraffic 传 zeroIndexed={false} 保住 1-based 页状态（page===1 绑定 SSE 直播流，
+// 不可改），hideWhenSinglePage 保住"单页隐藏页码"的旧行为，info 保住 loadingMore 文案。
 
 // ── 主组件 ────────────────────────────────────────────────────────────────────
 
@@ -790,8 +735,6 @@ export function ProxyTraffic() {
 
   const evtRef = useRef<EventSource | null>(null);
   const streamCursorRef = useRef<{ startedAt: string; id: number }>({ startedAt: "", id: 0 });
-
-  const totalPages = Math.max(1, Math.ceil(serverTotal / pageSize));
 
   const fetchPage = useCallback(async (targetPage: number, size: number, updateCursor = false) => {
     setLoadingPage(true);
@@ -1012,13 +955,21 @@ export function ProxyTraffic() {
               </tbody>
             </table>
 
-            <TableFooter
+            <TablePagination
               page={page}
-              totalPages={totalPages}
+              pageSize={pageSize}
+              total={serverTotal}
               loading={loadingPage}
               onPageChange={setPage}
-              pageSize={pageSize}
               onPageSizeChange={handlePageSizeChange}
+              pageSizeOptions={PAGE_SIZE_OPTIONS}
+              zeroIndexed={false}
+              hideWhenSinglePage
+              className="border-t bg-card px-4 py-2"
+              perPageLabel={t("proxyTraffic.pageSizeLabel")}
+              info={({ page1, totalPages: tp, loading }) =>
+                loading ? t("proxyTraffic.loadingMore") : t("proxyTraffic.page", { current: page1, total: tp })
+              }
             />
           </>
         )}

@@ -5,23 +5,8 @@ import { getSessionTitle, getSessionSubtitle } from "./session-display";
 import { AggregateLedger } from "./shared/AggregateLedger";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Pagination as PaginationNav,
-  PaginationContent,
-  PaginationItem,
-  PaginationLink,
-  PaginationPrevious,
-  PaginationNext,
-  PaginationEllipsis,
-} from "@/components/ui/pagination";
+import { TablePagination } from "@/components/ui/table-pagination";
 import { RefreshCw, Search, ChevronRight } from "lucide-react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { BRAND } from "./shared/brand";
 import { selectionRowShadow } from "./shared/selection";
 import { StatusBadgeStrip, type StatusBadge } from "./shared/HeaderStats";
@@ -212,94 +197,6 @@ interface Props {
   onOpenSession?: (sessionId: string) => void;
 }
 
-function Pagination({ page, pageSize, total, loading, onChange, onPageSizeChange }: {
-  page: number; pageSize: number; total: number; loading: boolean;
-  onChange: (p: number) => void;
-  onPageSizeChange: (size: number) => void;
-}) {
-  const { t } = useTranslation();
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
-  const pageNums: (number | "…")[] = [];
-  if (totalPages <= 7) {
-    for (let i = 0; i < totalPages; i++) pageNums.push(i);
-  } else {
-    pageNums.push(0);
-    if (page > 2) pageNums.push("…");
-    for (let i = Math.max(1, page - 1); i <= Math.min(totalPages - 2, page + 1); i++) pageNums.push(i);
-    if (page < totalPages - 3) pageNums.push("…");
-    pageNums.push(totalPages - 1);
-  }
-
-  const prevDisabled = page === 0 || loading;
-  const nextDisabled = page >= totalPages - 1 || loading;
-
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ fontSize: 11, color: "#9ca3af" }}>{t("dashboard.perPage")}</span>
-        <Select
-          value={String(pageSize)}
-          onValueChange={(v) => onPageSizeChange(Number(v))}
-          disabled={loading}
-        >
-          <SelectTrigger size="sm" className="h-7 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PAGE_SIZE_OPTIONS.map((s) => (
-              <SelectItem key={s} value={String(s)} className="text-xs">{s}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <PaginationNav className="mx-0 w-auto justify-start">
-        <PaginationContent>
-          <PaginationItem>
-            <PaginationPrevious
-              href="#"
-              aria-disabled={prevDisabled}
-              className={prevDisabled ? "pointer-events-none opacity-40 h-7 text-xs" : "h-7 text-xs"}
-              onClick={(e) => { e.preventDefault(); if (!prevDisabled) onChange(page - 1); }}
-            />
-          </PaginationItem>
-          {pageNums.map((p, i) =>
-            p === "…" ? (
-              <PaginationItem key={`ellipsis-${i}`}>
-                <PaginationEllipsis className="h-7" />
-              </PaginationItem>
-            ) : (
-              <PaginationItem key={p}>
-                <PaginationLink
-                  href="#"
-                  isActive={p === page}
-                  className="h-7 min-w-7 text-xs"
-                  onClick={(e) => { e.preventDefault(); if (p !== page) onChange(p); }}
-                >
-                  {p + 1}
-                </PaginationLink>
-              </PaginationItem>
-            )
-          )}
-          <PaginationItem>
-            <PaginationNext
-              href="#"
-              aria-disabled={nextDisabled}
-              className={nextDisabled ? "pointer-events-none opacity-40 h-7 text-xs" : "h-7 text-xs"}
-              onClick={(e) => { e.preventDefault(); if (!nextDisabled) onChange(page + 1); }}
-            />
-          </PaginationItem>
-        </PaginationContent>
-      </PaginationNav>
-
-      <span style={{ fontSize: 11, color: "#9ca3af" }}>
-        {t("dashboard.pageInfo", { page: page + 1, total: totalPages, count: total })}
-      </span>
-    </div>
-  );
-}
-
 export function SessionListV2({ data, loading, page, pageSize, search, onPageChange, onPageSizeChange, onSearchChange, onSync, selectedId = null, onOpenSession }: Props) {
   const { t } = useTranslation();
   const [syncing, setSyncing] = useState(false);
@@ -373,7 +270,13 @@ export function SessionListV2({ data, loading, page, pageSize, search, onPageCha
               >×</Button>
             )}
           </div>
-          <Pagination page={page} pageSize={pageSize} total={total} loading={loading} onChange={onPageChange} onPageSizeChange={onPageSizeChange} />
+          <TablePagination
+            page={page} pageSize={pageSize} total={total} loading={loading}
+            onPageChange={onPageChange} onPageSizeChange={onPageSizeChange}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            perPageLabel={t("dashboard.perPage")}
+            info={({ page1, totalPages, count }) => t("dashboard.pageInfo", { page: page1, total: totalPages, count })}
+          />
         </div>
       </div>
 
