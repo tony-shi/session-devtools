@@ -203,10 +203,10 @@
   "sessionOverview": {
     "nav": {
       "session": "会话",
-      "userTurns": "用户轮次",
-      "overview": "总览",
+      "mainSession": "主会话",
+      "workflows": "工作流",
+      "subAgents": "子代理",
       "background": "后台请求",
-      "backgroundAll": "全部后台请求",
       "backgroundEmpty": "（无后台请求 / 扫描中…）"
     },
     "activity": {
@@ -780,6 +780,10 @@
     "callLabel": "调用",
     "callsSuffix": "次调用",
     "toolsSuffix": "工具",
+    "agentsSuffix": "个 agent",
+    "tokensSuffix": "tok",
+    "outSuffix": "输出",
+    "cachedSuffix": "已缓存",
     "ledgerInterpretation": "本轮新输入: {{freshIn}} ({{cacheWrite}} 写入缓存以备复用) · 缓存加载: {{cacheRead}} · 模型输出: {{output}}{{ratio}}",
     "ledgerInterpretationRatio": " · 缓存命中率 {{pct}}",
     "viewDetails": "查看详情",

@@ -7,10 +7,9 @@
 
 import React from "react";
 import type { StatusBadgeKind } from "./HeaderStats";
-import type { MockDiffEntry, MockLlmCall } from "../lib/mock-data";
+import type { MockDiffEntry } from "../lib/mock-data";
 import type { SubAgentSummary } from "../drilldown-types";
-import type { TrustMode } from "../drilldown-mock-fill";
-import { fmtK, fmtDuration } from "../lib/format";
+import { fmtK } from "../lib/format";
 import { BRAND } from "./brand";
 
 // ─── ForkIcon (sub-agent fork 标记) ───────────────────────────────────────────
@@ -231,24 +230,6 @@ export function SectionLabel({ children, mock }: { children: React.ReactNode; mo
   return (
     <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
       {children}{mock && <MockBadge />}
-    </div>
-  );
-}
-
-// ─── TrustBadge：attribution 的来源 / 置信度顶部 banner ──────────────────────
-
-export function TrustBadge({ mode, proxy }: { mode: TrustMode; proxy?: MockLlmCall["proxy"] }) {
-  const cfg: Record<TrustMode, { icon: string; label: string; detail: string; bg: string; border: string; color: string }> = {
-    "proxy-exact": { icon: "✓", label: "Proxy exact",     detail: proxy ? `duration: ${fmtDuration(proxy.durationMs ?? 0)} · stop: ${proxy.resStopReason ?? "—"}` : "", bg: "#f0fdf4", border: "#bbf7d0", color: "#16a34a" },
-    "jsonl-only":  { icon: "⚠", label: "JSONL observed",  detail: "Attribution estimated · No exact request payload · Link proxy to upgrade", bg: "#fffbeb", border: "#fde68a", color: "#d97706" },
-    "mixed":       { icon: "~", label: "Mixed",            detail: "Partial proxy coverage · Some ranges estimated",                           bg: "#f0f9ff", border: "#bae6fd", color: "#0284c7" },
-    "mock":        { icon: "◎", label: "Mock data",        detail: "UI mock — not computed from real session",                                 bg: "#f9fafb", border: "#e5e7eb", color: "#9ca3af" },
-  };
-  const c = cfg[mode];
-  return (
-    <div style={{ fontSize: 10, background: c.bg, border: `1px solid ${c.border}`, borderRadius: 6, padding: "5px 10px", marginBottom: 10, display: "flex", gap: 6, alignItems: "center" }}>
-      <span style={{ fontWeight: 700, color: c.color }}>{c.icon} {c.label}</span>
-      {c.detail && <span style={{ color: "#6b7280" }}>· {c.detail}</span>}
     </div>
   );
 }
