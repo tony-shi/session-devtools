@@ -203,10 +203,8 @@
   "sessionOverview": {
     "nav": {
       "session": "会话",
-      "userTurns": "用户轮次",
-      "overview": "总览",
+      "mainSession": "主会话",
       "background": "后台请求",
-      "backgroundAll": "全部后台请求",
       "backgroundEmpty": "（无后台请求 / 扫描中…）"
     },
     "activity": {

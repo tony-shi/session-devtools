@@ -206,10 +206,8 @@
   "sessionOverview": {
     "nav": {
       "session": "Session",
-      "userTurns": "User Turns",
-      "overview": "Overview",
+      "mainSession": "Main Session",
       "background": "Background Calls",
-      "backgroundAll": "All Background Calls",
       "backgroundEmpty": "(No background calls / Scanning…)"
     },
     "activity": {
