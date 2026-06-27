@@ -1,0 +1,8 @@
+{
+  "$schema": "./freeze.ts",
+  "comment": "Sessions to freeze into the static demo. `id` is the Claude Code session id (the .jsonl basename / what the dashboard URL uses). Optional `title` overrides the display title in the demo. Order here = display order in the demo session list. Run `npm run demo:freeze` (with the dev server running locally) to (re)generate demo/data/.",
+  "sessions": [
+    { "id": "8f543858-fd5d-46fb-b029-6c9c0a4bb4b1", "title": "Optimize LLM call attribution performance" },
+    { "id": "bd5d3dd7-179d-4dca-bcba-276a8e1159c3", "title": "Add Workflow tool subagent support" }
+  ]
+}

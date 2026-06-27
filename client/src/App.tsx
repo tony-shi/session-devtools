@@ -12,6 +12,7 @@ import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/ca
 import { BarChart3, TrendingUp, Zap, ChevronLeft, ChevronRight } from "lucide-react";
 import type { SessionsV2Response, SummaryV2, SessionV2 } from "./v2/types";
 import { BRAND } from "./v2/shared/brand";
+import { IS_DEMO } from "./demo-mode";
 
 // Optional local-only dev routes. To mount routes like /demo, create
 // `client/src/local-routes.tsx` (gitignored) exporting a default React component
@@ -173,7 +174,8 @@ function AppShell() {
   const NAV_ITEMS: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "sessions-v2", label: t("nav.sessions"), icon: <BarChart3 size={15} /> },
     { id: "trends",      label: t("nav.trends"),   icon: <TrendingUp size={15} /> },
-    { id: "proxy-v2",    label: t("nav.proxy"),    icon: <Zap size={15} /> },
+    // Proxy is live-traffic control with no static equivalent — hidden in the demo.
+    ...(IS_DEMO ? [] : [{ id: "proxy-v2" as Tab, label: t("nav.proxy"), icon: <Zap size={15} /> }]),
   ];
 
   return (
@@ -291,7 +293,7 @@ function AppShell() {
                 </Card>
               }
             />
-            <Route path="/proxy" element={<ProxyV2Setup />} />
+            {!IS_DEMO && <Route path="/proxy" element={<ProxyV2Setup />} />}
           </Routes>
           {LocalRoutes && (
             <Suspense fallback={null}><LocalRoutes /></Suspense>

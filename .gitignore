@@ -4,6 +4,13 @@ dist/
 server/public/
 server/src/proxy/dist/
 
+# Demo: frozen session JSON (large; regenerate locally via `npm run demo:freeze`)
+# and the static demo build output. The built site is published to the gh-pages
+# branch, so neither belongs on main. The freeze tooling (demo/freeze.ts,
+# demo/sessions.config.json) IS tracked.
+demo/data/
+dist-demo/
+
 # Lockfiles from other package managers (this repo is npm-only)
 bun.lock
 bun.lockb
