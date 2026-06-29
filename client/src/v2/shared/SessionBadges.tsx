@@ -37,6 +37,9 @@ export const BADGE_ICONS = {
   subAgent: (size: number, color: string) => (
     <ForkIcon size={size} color={color} />
   ),
+  workflow: (size: number, color: string) => (
+    <span style={{ fontSize: size, fontWeight: 700, lineHeight: 1, color }}>⚙</span>
+  ),
   command: (size: number, color: string) => (
     <span style={{ fontSize: size, fontWeight: 700, lineHeight: 1, color }}>/</span>
   ),
@@ -58,6 +61,7 @@ export function renderStatusIcon(kind: StatusBadgeKind, px: number, color: strin
     case "compaction": return BADGE_ICONS.compaction(px, color);
     case "error":      return BADGE_ICONS.error(px, color);
     case "subAgent":   return BADGE_ICONS.subAgent(px, color);
+    case "workflow":   return BADGE_ICONS.workflow(px, color);
     case "command":    return BADGE_ICONS.command(px, color);
     case "unknown":    return BADGE_ICONS.unknown(px, color);
     case "noProxy":    return BADGE_ICONS.noProxy(px, color);

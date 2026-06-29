@@ -2055,7 +2055,10 @@ export async function parseSessionDrilldown(
     hasProxyData,
     hasJsonlSource: true,
 
-    subAgentCount: subAgents.length,
+    // workflow agent 不计入 —— 归 Workflows 域；与各 turn subAgent 徽章 / meta
+    // sub_agent_count 同口径（均排除 workflow）。subAgents 列表仍全量（Workflows
+    // 域 + agentFileId 查找需要）。
+    subAgentCount: subAgents.filter(sa => sa.agentSource !== "workflow").length,
     subAgents,
     workflowRuns,
 

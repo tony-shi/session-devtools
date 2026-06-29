@@ -521,15 +521,13 @@ export function SessionDetailV2({ session, onClose }: Props) {
           // need":
           //   · linkedPanel open → widest (1560px) since right panel eats
           //     a big chunk
-          //   · subagent open → 1480px because the sub-agent view has its
-          //     own 200px left nav + breadcrumb + amber notice
-          //   · default (session / turn / call) → 1480px so unified lens
-          //     view has room to breathe (旧版 1200 太挤；用户反馈调宽)
-          width: linkedPanel
-            ? "calc(100vw - 64px)"
-            : navLevel === "subagent"
-              ? "calc(100vw - 96px)"
-              : "calc(100vw - 120px)",
+          //   · everything else → 1480px so the unified lens view has room to
+          //     breathe (旧版 1200 太挤；用户反馈调宽)
+          // NB: sub-agent used to widen to 100vw-96 for its "own 200px left nav",
+          // but that nav is now the shared accordion rail present at every
+          // navLevel — so the special case only made the whole drawer jump 24px
+          // wider when entering a sub-agent. Keep width constant across levels.
+          width: linkedPanel ? "calc(100vw - 64px)" : "calc(100vw - 120px)",
           maxWidth: linkedPanel ? 1560 : 1480,
           transition: "width 180ms ease, max-width 180ms ease",
         }}

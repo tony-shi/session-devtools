@@ -40,8 +40,6 @@ import { renderStatusIcon } from "../shared/SessionBadges";
 import { NoProxyDot } from "../shared/NoProxyDot";
 import { NavItem, CompactEventNavItem } from "./nav";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
-import { computeGutterLanes, laneStateAtTurn, laneStateAtSubRow } from "./workflow/gutterLanes";
-import { GutterCell, type GutterLaneCell } from "./workflow/GutterCell";
 
 // side call kind → 平面文本标签（与 BackgroundCallsPanel 一致，暂不加 icon）。
 const SIDE_CALL_KIND_LABEL: Record<SideCallKind, string> = {
@@ -155,30 +153,6 @@ export function SessionNavRail({
 }) {
   const { t } = useTranslation();
 
-  // run-lane gutter（A 案）：turn 列表旁的 git-graph 列。无 workflow / 全部
-  // 失锚的 session laneCount=0 → 完全不渲染，零变化。
-  const gutter = React.useMemo(() => computeGutterLanes(workflowRuns, turns), [workflowRuns, turns]);
-  const hasGutter = gutter.laneCount > 0;
-  const lanesAt = (turnId: number, subRow: boolean): GutterLaneCell[] => {
-    const cells: GutterLaneCell[] = Array.from(
-      { length: gutter.laneCount },
-      () => ({ state: "none", runId: "", workflowName: "" }),
-    );
-    for (const s of gutter.spans) {
-      const st = subRow ? laneStateAtSubRow(s, turnId) : laneStateAtTurn(s, turnId);
-      if (st !== "none") cells[s.lane] = { state: st, runId: s.runId, workflowName: s.workflowName };
-    }
-    return cells;
-  };
-  // gutter 行包裹：左 lane 段 + 原行（行高可变也不断线 —— 竖线 height:100%）。
-  const withGutter = (turnId: number, subRow: boolean, row: React.ReactNode) =>
-    hasGutter ? (
-      <div style={{ display: "flex", alignItems: "stretch" }}>
-        <GutterCell lanes={lanesAt(turnId, subRow)} onSelectRun={onSelectWorkflowRun} />
-        <div style={{ flex: 1, minWidth: 0 }}>{row}</div>
-      </div>
-    ) : row;
-
   // 哪些域当前在场（总览 / 后台请求 恒在；团队 / 工作流 / 子代理 按数据存在性）。
   const hasTeam = teamDomain != null;
   const hasWorkflows = workflowRuns.length > 0;
@@ -247,7 +221,7 @@ export function SessionNavRail({
         className="flex-1 min-h-0"
       >
         {/* 主会话（本 session 自身）：点域头 = 看 session summary（不强选 turn），其面板
-            就是 turn → call 子行 + 夹在 turn 之间的 compact 事件行（含 run-lane gutter）。
+            就是 turn → call 子行 + 夹在 turn 之间的 compact 事件行。
             域头 selected 仅当 navLevel=session；进某个 turn 后高亮移到 turn 子行。 */}
         <AccordionItem value="main-session" className={itemClass("main-session")}>
           <DomainTrigger
@@ -279,7 +253,10 @@ export function SessionNavRail({
               );
               // Status badges — same source-of-truth + same icon+count format
               // as the right-slot pills in UserTurnDetailPanel.
-              const subAgentCount = turn.calls.reduce((s, c) => s + (c.subAgents?.length ?? 0), 0);
+              // subAgent 计数只数 Task 型 —— workflow agent 归 Workflows 域，单独用
+              // ⚙ workflow 徽章表达"该 turn 发起了 workflow"（不再混进 subAgent 数）。
+              const subAgentCount = turn.calls.reduce((s, c) => s + (c.subAgents?.filter(sa => sa.agentSource !== "workflow").length ?? 0), 0);
+              const workflowLaunchCount = turn.calls.reduce((s, c) => s + (c.toolCalls?.filter(tc => tc.name === "Workflow").length ?? 0), 0);
               const commandCount = turn.calls.reduce(
                 (s, c) => s + c.intervalEvents.filter(e => e.kind === "user:command").length, 0);
               const unknownCount = turn.calls.reduce(
@@ -289,6 +266,7 @@ export function SessionNavRail({
               if (turn.hasCompaction)   navBadgeItems.push({ kind: "compaction", count: 1,              tooltip: t("sessionOverview.badges.compaction") });
               if (turn.errorCount > 0)  navBadgeItems.push({ kind: "error",      count: turn.errorCount,tooltip: t("sessionOverview.badges.errors") });
               if (subAgentCount > 0)    navBadgeItems.push({ kind: "subAgent",   count: subAgentCount,  tooltip: t("sessionOverview.badges.subAgents") });
+              if (workflowLaunchCount > 0) navBadgeItems.push({ kind: "workflow", count: workflowLaunchCount, tooltip: t("sessionOverview.badges.workflows", { defaultValue: "工作流" }) });
               if (commandCount > 0)     navBadgeItems.push({ kind: "command",    count: commandCount,   tooltip: t("sessionOverview.badges.commands") });
               if (unknownCount > 0)     navBadgeItems.push({ kind: "unknown",    count: unknownCount,   tooltip: t("sessionOverview.badges.unknown") });
               if (noProxyCount > 0)     navBadgeItems.push({ kind: "noProxy",    count: noProxyCount,   tooltip: t("sessionOverview.badges.noProxyDetail", { count: noProxyCount })});
@@ -297,14 +275,13 @@ export function SessionNavRail({
               );
               return (
                 <React.Fragment key={`turn-${turn.id}`}>
-                  {withGutter(turn.id, false,
                   <NavItem
                     label={turnLabel}
                     sublabel={`${turn.netContextDelta > 0 ? "+" : ""}${fmtK(turn.netContextDelta)} · ${turn.llmCallCount} ${t("terms.callsSuffix")}${turn.toolCallCount > 0 ? ` · ${turn.toolCallCount} ${t("terms.toolsSuffix")}` : ""}`}
                     active={navLevel === "turn" && isThisTurnSelected && !selectedCall}
                     badges={turnBadges}
                     onClick={() => onSelectTurn(turn)}
-                  />)}
+                  />
                   {isThisTurnSelected && allCallsForNav.length > 0 && allCallsForNav.map(call => {
                     // Call-level nav: a single global id everywhere.
                     // Label is `${callPrefix} ${call.id}` (e.g. `LLM 调用 4`)
@@ -340,7 +317,6 @@ export function SessionNavRail({
                     ) : undefined;
                     return (
                       <React.Fragment key={call.id}>
-                      {withGutter(turn.id, true,
                       <NavItem
                         indent
                         label={callLabel}
@@ -352,7 +328,7 @@ export function SessionNavRail({
                         }
                         badges={badgesNode}
                         onClick={() => onSelectCall(call)}
-                      />)}
+                      />
                       </React.Fragment>
                     );
                   })}
@@ -366,12 +342,11 @@ export function SessionNavRail({
                     )
                     .map(ev => (
                       <React.Fragment key={`compact-${ev.index}`}>
-                      {withGutter(turn.id, true,
                       <CompactEventNavItem
                         ev={ev}
                         active={navLevel === "compact-event" && selectedCompactEventIdx === ev.index}
                         onClick={() => onSelectCompact(ev.index)}
-                      />)}
+                      />
                       </React.Fragment>
                     ))}
                 </React.Fragment>

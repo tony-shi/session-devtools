@@ -12,7 +12,7 @@ import { useTranslation } from "react-i18next";
 import type { IntervalEvent } from "../../drilldown-types";
 import { BRAND } from "../../shared/brand";
 import { useAttributionGraph } from "../../attribution-graph-context";
-import { IntervalEventRow } from "./call-chain-rows";
+import { IntervalEventRow } from "./rows/IntervalEventRow";
 
 function isCaveatMember(m: IntervalEvent): boolean {
   return m.rawJson.includes("<local-command-caveat>")

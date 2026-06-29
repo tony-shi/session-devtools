@@ -87,7 +87,9 @@ export function UserTurnDetailPanel({
 
   // Status badges (icon + count, unified format across the app)
   const turnStatusBadges: StatusBadge[] = (() => {
-    const subAgentCount = turn.calls.reduce((s, c) => s + c.subAgents.length, 0);
+    // subAgent 计数只数 Task 型；workflow agent 归 Workflows 域，单独 ⚙ 徽章。
+    const subAgentCount = turn.calls.reduce((s, c) => s + c.subAgents.filter(sa => sa.agentSource !== "workflow").length, 0);
+    const workflowLaunchCount = turn.calls.reduce((s, c) => s + c.toolCalls.filter(tc => tc.name === "Workflow").length, 0);
     const commandCount = turn.calls.reduce(
       (s, c) => s + c.intervalEvents.filter(e => e.kind === "user:command").length, 0);
     const unknownCount = turn.calls.reduce(
@@ -96,6 +98,7 @@ export function UserTurnDetailPanel({
     if (turn.hasCompaction)   items.push({ kind: "compaction", count: 1,              tooltip: t("sessionOverview.badges.compaction") });
     if (turn.errorCount > 0)  items.push({ kind: "error",      count: turn.errorCount,tooltip: t("sessionOverview.badges.errors") });
     if (subAgentCount > 0)    items.push({ kind: "subAgent",   count: subAgentCount,  tooltip: t("sessionOverview.badges.subAgents") });
+    if (workflowLaunchCount > 0) items.push({ kind: "workflow", count: workflowLaunchCount, tooltip: t("sessionOverview.badges.workflows", { defaultValue: "工作流" }) });
     if (commandCount > 0)     items.push({ kind: "command",    count: commandCount,   tooltip: t("sessionOverview.badges.commands") });
     if (unknownCount > 0)     items.push({ kind: "unknown",    count: unknownCount,   tooltip: t("sessionOverview.badges.unknown") });
     const noProxyCount = turn.calls.filter(c => c.proxyMatchMode === "unmatched").length;

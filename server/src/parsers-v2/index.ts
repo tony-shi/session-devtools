@@ -80,4 +80,9 @@ export const PARSERS_V2: Record<string, ParserV2> = {
 //      human_input_count 不再把入站 <teammate-message>(含 spawn prompt 行)当人类
 //      输入(teamName 字段+内容前缀判别——该行无 origin.kind)。对真实 wf-review
 //      四会话(2.1.170+)验证。
-export const PARSER_VERSION = 16;
+// v17: sub_agent_count 口径改为只数 Task 型 —— workflow agent 不再计入 sub-agent
+//      数（drilldown subAgentCount / 各 turn subAgent 徽章 / meta sub_agent_count
+//      三处统一排除 workflow，与 Workflows 域分离一致）；countSubAgents 不再递归数
+//      subagents/workflows/<runId>/。发起 workflow 的 turn 改用独立 ⚙ workflow 徽章。
+//      逆转 v15 的 countSubAgents 合并口径。
+export const PARSER_VERSION = 17;

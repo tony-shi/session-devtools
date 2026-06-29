@@ -1,5 +1,6 @@
 // JsonlCallChain —— 把一个 turn 的 calls + 其间的 JSONL 事件组织成"叙事链"渲染。
-// 组合 call-chain-rows 的三个叶子原件。抽自 UserTurnDetailPanel.tsx，逻辑零改动。
+// 组合 rows/ 下的叶子原件（ChainNarrativeNode / ToolCallRow / IntervalEventRow /
+// openers），per-tool 渲染走 tool-adapters/。
 
 import React, { useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
@@ -16,7 +17,11 @@ import { ForwardArrowIcon, LinkIcon } from "../../shared/EventUnitCard";
 import { useAttributionGraph } from "../../attribution-graph-context";
 import { RenderRawCopyActions } from "../../shared/RenderRawCopyActions";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { ChainNarrativeNode, ToolCallRow, IntervalEventRow, AsyncReceiptNode, TeammateMessageNode } from "./call-chain-rows";
+import { ChainNarrativeNode } from "./rows/ChainNarrativeNode";
+import { ToolCallRow } from "./rows/ToolCallRow";
+import { IntervalEventRow } from "./rows/IntervalEventRow";
+import { TurnOpener } from "./openers";
+import { isWorkflowLaunchAck } from "./tool-adapters";
 import { CommandGroupCard } from "./CommandGroupCard";
 
 export function JsonlCallChain({
@@ -168,22 +173,9 @@ export function JsonlCallChain({
         {/* Vertical spine */}
         <div style={{ position: "absolute", left: 11, top: 8, bottom: 8, width: 2, background: "#e5e7eb", zIndex: 0 }} />
 
-        {/* turn opener：人类输入 → USER INPUT 节点；后台任务回执
-            （openerSource="task-notification"）→ 异步回执节点；teams 入站消息
-            （openerSource="teammate-message"）→ 队友消息节点。 */}
-        {turn.openerSource === "task-notification" ? (
-          <AsyncReceiptNode turn={turn} />
-        ) : turn.openerSource === "teammate-message" ? (
-          <TeammateMessageNode turn={turn} />
-        ) : (
-          <ChainNarrativeNode
-            kind="user"
-            label={t("terms.userInput")}
-            text={turn.userInput}
-            meta={turn.startedAt ? turn.startedAt.slice(11, 19) : undefined}
-            lineIdx={turn.userInputLineIdx}
-          />
-        )}
+        {/* turn opener：按 openerSource 分发（human / task-notification /
+            teammate-message）—— 见 openers/ 层。 */}
+        <TurnOpener turn={turn} />
         {turn.midTurnInjections
           .filter(inj => inj.afterCallIndex === 0)
           .map((inj, injIdx) => {
@@ -225,6 +217,14 @@ export function JsonlCallChain({
           // the result wasn't consumed (no follow-up assistant call) and
           // we hide the jump-to-consumer button.
           const consumerCall = turn.calls[callArrIdx + 1] ?? null;
+          // Option A — workflow agents run in a background process and return
+          // at a LATER turn (the task-notification receipt), so they are NOT
+          // consumed by this turn's next call. Don't flatten them inline here:
+          // the launch is represented by the Workflow tool_use card (run 面板 /
+          // 回执 → Turn N) and the agents live in the Workflows domain + run
+          // panel. Only synchronous task sub-agents (Agent tool, whose
+          // tool_result feeds the next call) render inline below.
+          const inlineSubAgents = call.subAgents.filter(sa => sa.agentSource !== "workflow");
           // Look up the JSONL lineIdx of each sub-agent's tool_result so the
           // jump can auto-locate the matching leaf inside the consumer call's
           // Attribution Tree (request lens). Mirrors how IntervalEventRow
@@ -249,7 +249,11 @@ export function JsonlCallChain({
           const matchedSubAgentIds = new Set(call.toolCalls.map(tc => tc.toolUseId).filter(id => subAgentByToolUseId.has(id)));
           const isFoldedSubAgentResult = (ev: IntervalEvent) =>
             ev.kind === "user:tool_result"
-            && toolUseIdsFromIntervalEvent(ev).some(id => matchedSubAgentIds.has(id));
+            && toolUseIdsFromIntervalEvent(ev).some(id => matchedSubAgentIds.has(id))
+            // Workflow launch-ack 共享 launch toolUseId（多个 agent 挂同一 launch），
+            // 会被误判成「子代理结果」折叠；但它是 launch 回执（submit success），
+            // 应当可见并带 ⚙ 特别渲染 + 跳转 —— 排除出折叠。
+            && !isWorkflowLaunchAck(ev);
           const visibleIntervals = call.intervalEvents.filter(ev =>
             !hiddenKinds.has(ev.kind)
             && (showFoldedSubAgentResults || !isFoldedSubAgentResult(ev))
@@ -409,12 +413,12 @@ export function JsonlCallChain({
 	                          request in the right-side LinkedPanel
 	                      Both chips use the same shape / LinkIcon / typography;
 	                      only the color differentiates intent. */}
-		              {call.subAgents.length > 0 && (
+		              {inlineSubAgents.length > 0 && (
 	                <div style={{ marginLeft: 32, marginTop: 3 }}>
                     <div style={{ fontSize: 9, color: BRAND.indigo400, fontWeight: 800, letterSpacing: "0.04em", margin: "0 0 3px 0" }}>
                       ↳ {t("terms.subAgentEvents")}
                     </div>
-	                  {call.subAgents.map(sa => {
+	                  {inlineSubAgents.map(sa => {
                       const active = activeAgentFileId === sa.agentFileId;
                       const branchColor = active ? "#f59e0b" : BRAND.indigo500;
                       const handleHoverEnter = () => { setActiveAgentFileId(sa.agentFileId); setActiveToolUseId(sa.toolUseId); };

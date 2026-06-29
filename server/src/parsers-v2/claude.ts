@@ -4,7 +4,6 @@ import { join, dirname } from "path";
 import type { SessionMetaV2 } from "./index.ts";
 import { computeFingerprint } from "./fingerprint.ts";
 import { decodeClaudeProjectHash } from "../parser-utils.ts";
-import { readWorkflowRunsFromDisk } from "../workflow-runs.ts";
 
 const KNOWN_TYPES = new Set([
   "user", "assistant", "system", "last-prompt", "attachment",
@@ -219,17 +218,11 @@ async function countSubAgents(filePath: string, sessionId: string): Promise<numb
     return 0;
   }
 
-  // workflow 型：只数已完结 run（有 wf json）最终 workflowProgress 引用且有转录
-  // 的 agent —— 与 drilldown subAgents 同口径（目录裸文件数会把 resume 作废的
-  // superseded 转录也算进去，badge 与下钻列表对不上）。
-  let workflow = 0;
-  try {
-    for (const run of readWorkflowRunsFromDisk(sessionDir)) {
-      workflow += run.agents.filter(a => run.transcriptAgentIds.has(a.agentId)).length;
-    }
-  } catch { /* 工件损坏退化为只数平铺 */ }
-
-  return flat + workflow;
+  // workflow agent 不计入 sub_agent_count —— 它们归 Workflows 域（run 级），与
+  // drilldown subAgentCount / 各 turn 的 subAgent 徽章同口径（均排除 workflow）。
+  // subagents/ 直下只有 Task 型 agent-*.jsonl；workflow 转录在 subagents/workflows/
+  // <runId>/ 子目录，不以 .jsonl 结尾的目录项已被上面的 filter 排除。
+  return flat;
 }
 
 function extractText(content: unknown): string {
